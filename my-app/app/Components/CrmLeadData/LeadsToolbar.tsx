@@ -42,10 +42,16 @@ function SmallButton({ label }: { label: string }) {
 function DensityToggle() {
   return (
     <div className="flex items-center rounded-xl bg-white p-1 ring-1 ring-slate-200">
-      <button type="button" className="rounded-lg bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700">
+      <button
+        type="button"
+        className="rounded-lg bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-700"
+      >
         Comfortable
       </button>
-      <button type="button" className="rounded-lg px-3 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-50">
+      <button
+        type="button"
+        className="rounded-lg px-3 py-1 text-[11px] font-semibold text-slate-500 hover:bg-slate-50"
+      >
         Compact
       </button>
     </div>

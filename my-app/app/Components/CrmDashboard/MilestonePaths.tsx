@@ -7,7 +7,11 @@ function formatCompact(n: number) {
   return `${n}`;
 }
 
-function AccentBar({ kind }: { kind: NonNullable<MilestonePathItem["leftAccent"]> }) {
+function AccentBar({
+  kind,
+}: {
+  kind: NonNullable<MilestonePathItem["leftAccent"]>;
+}) {
   const cls =
     kind === "success"
       ? "bg-emerald-400"
@@ -134,8 +138,12 @@ export default function MilestonePaths({
               <CompassIcon />
             </div>
             <div>
-              <div className="text-[18px] font-semibold capitalize text-slate-700">{stageTitle}</div>
-              <div className="mt-0.5 text-[12px] font-medium text-slate-400">{stageSubtitle}</div>
+              <div className="text-[18px] font-semibold capitalize text-slate-700">
+                {stageTitle}
+              </div>
+              <div className="mt-0.5 text-[12px] font-medium text-slate-400">
+                {stageSubtitle}
+              </div>
             </div>
           </div>
 
@@ -143,7 +151,9 @@ export default function MilestonePaths({
             <div className="text-[32px] font-semibold tracking-tight text-slate-800">
               {totalActiveLeads.toLocaleString()}
             </div>
-            <div className="mt-1 text-[11px] font-semibold tracking-wide text-slate-400">TOTAL ACTIVE LEADS</div>
+            <div className="mt-1 text-[11px] font-semibold tracking-wide text-slate-400">
+              TOTAL ACTIVE LEADS
+            </div>
           </div>
         </div>
 
@@ -161,7 +171,9 @@ export default function MilestonePaths({
                     No won substages for this stage.
                   </div>
                 ) : (
-                  wonItems.map((item) => <StatCard key={item.title} item={item} />)
+                  wonItems.map((item) => (
+                    <StatCard key={item.title} item={item} />
+                  ))
                 )}
               </div>
             </div>
@@ -178,7 +190,9 @@ export default function MilestonePaths({
                     No lost substages for this stage.
                   </div>
                 ) : (
-                  lostItems.map((item) => <StatCard key={item.title} item={item} />)
+                  lostItems.map((item) => (
+                    <StatCard key={item.title} item={item} />
+                  ))
                 )}
               </div>
             </div>
