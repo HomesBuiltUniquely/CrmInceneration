@@ -7,7 +7,8 @@ type PathItem = {
 };
 
 function formatCompact(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000_000)
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
   return `${n}`;
 }
@@ -33,17 +34,25 @@ function StatCard({ item }: { item: PathItem }) {
         : "bg-white border-slate-200";
 
   return (
-    <div className={`flex items-center justify-between rounded-2xl border px-5 py-4 shadow-sm ${toneCls} `}>
+    <div
+      className={`flex items-center justify-between rounded-2xl border px-5 py-4 shadow-sm ${toneCls} `}
+    >
       <div className="flex items-center gap-4">
         <AccentBar kind={item.leftAccent ?? "neutral"} />
         <div className="leading-tight">
-          <div className="text-[12px] font-semibold tracking-wide text-slate-600">{item.title}</div>
+          <div className="text-[12px] font-semibold tracking-wide text-slate-600">
+            {item.title}
+          </div>
           {item.subtitle ? (
-            <div className="mt-1 text-[11px] font-medium text-slate-400">{item.subtitle}</div>
+            <div className="mt-1 text-[11px] font-medium text-slate-400">
+              {item.subtitle}
+            </div>
           ) : null}
         </div>
       </div>
-      <div className="text-[16px] font-semibold text-slate-700">{item.value}</div>
+      <div className="text-[16px] font-semibold text-slate-700">
+        {item.value}
+      </div>
     </div>
   );
 }
@@ -57,13 +66,17 @@ function SectionHeader({
   total: number;
   underline: "success" | "danger";
 }) {
-  const underlineCls = underline === "success" ? "bg-emerald-400" : "bg-rose-400";
-  const totalCls = underline === "success" ? "text-emerald-500" : "text-rose-500";
+  const underlineCls =
+    underline === "success" ? "bg-emerald-400" : "bg-rose-400";
+  const totalCls =
+    underline === "success" ? "text-emerald-500" : "text-rose-500";
   return (
     <div className="flex items-center justify-between">
       <div className="flex items-end gap-3">
         <div className="text-[14px] font-semibold text-slate-700">{title}</div>
-        <div className={`text-[12px] font-semibold ${totalCls}`}>{formatCompact(total)} Leads</div>
+        <div className={`text-[12px] font-semibold ${totalCls}`}>
+          {formatCompact(total)} Leads
+        </div>
       </div>
       <div className={`h-1 w-40 rounded-full ${underlineCls}`} />
     </div>
@@ -72,7 +85,12 @@ function SectionHeader({
 
 function CompassIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5 text-blue-600" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg
+      viewBox="0 0 24 24"
+      className="h-5 w-5 text-blue-600"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
       <path
         d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10Z"
         stroke="currentColor"
@@ -84,7 +102,12 @@ function CompassIcon() {
         strokeWidth="1.5"
         strokeLinejoin="round"
       />
-      <path d="M12 7.25v.75M12 16v.75M7.25 12H8M16 12h.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path
+        d="M12 7.25v.75M12 16v.75M7.25 12H8M16 12h.75"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -95,16 +118,52 @@ export default function MilestonePaths() {
   const lostTotal = 160;
 
   const wonItems: PathItem[] = [
-    { title: "FRESH LEAD", subtitle: "Avg. Response: 2h", value: 400, leftAccent: "neutral" },
-    { title: "ATTEMPTING CONNECT", subtitle: "SLA Alert: 2d – Dwell", value: 350, leftAccent: "warning" },
-    { title: "CALL SCHEDULED", subtitle: "85% · Show Rate", value: 200, leftAccent: "neutral" },
-    { title: "QUALIFIED", subtitle: "Ready for Qualification Phase", value: 130, tone: "success", leftAccent: "success" },
+    {
+      title: "FRESH LEAD",
+      subtitle: "Avg. Response: 2h",
+      value: 400,
+      leftAccent: "neutral",
+    },
+    {
+      title: "ATTEMPTING CONNECT",
+      subtitle: "SLA Alert: 2d – Dwell",
+      value: 350,
+      leftAccent: "warning",
+    },
+    {
+      title: "CALL SCHEDULED",
+      subtitle: "85% · Show Rate",
+      value: 200,
+      leftAccent: "neutral",
+    },
+    {
+      title: "QUALIFIED",
+      subtitle: "Ready for Qualification Phase",
+      value: 130,
+      tone: "success",
+      leftAccent: "success",
+    },
   ];
 
   const lostItems: PathItem[] = [
-    { title: "INVALID LEAD", subtitle: "Missing Contact Info", value: 50, leftAccent: "danger" },
-    { title: "NOT INTERESTED", subtitle: "Competitor Selected", value: 80, leftAccent: "neutral" },
-    { title: "WRONG PERSONA", subtitle: "ICP Mismatch", value: 30, leftAccent: "neutral" },
+    {
+      title: "INVALID LEAD",
+      subtitle: "Missing Contact Info",
+      value: 50,
+      leftAccent: "danger",
+    },
+    {
+      title: "NOT INTERESTED",
+      subtitle: "Competitor Selected",
+      value: 80,
+      leftAccent: "neutral",
+    },
+    {
+      title: "WRONG PERSONA",
+      subtitle: "ICP Mismatch",
+      value: 30,
+      leftAccent: "neutral",
+    },
   ];
 
   return (
@@ -117,14 +176,22 @@ export default function MilestonePaths() {
               <CompassIcon />
             </div>
             <div>
-              <div className="text-[18px] font-semibold text-slate-700">Discovery</div>
-              <div className="mt-0.5 text-[12px] font-medium text-slate-400">Initial Engagement Phase</div>
+              <div className="text-[18px] font-semibold text-slate-700">
+                Discovery
+              </div>
+              <div className="mt-0.5 text-[12px] font-medium text-slate-400">
+                Initial Engagement Phase
+              </div>
             </div>
           </div>
 
           <div className="mt-7 rounded-2xl bg-white px-6 py-6 shadow-sm">
-            <div className="text-[32px] font-semibold tracking-tight text-slate-800">{discoveryTotal.toLocaleString()}</div>
-            <div className="mt-1 text-[11px] font-semibold tracking-wide text-slate-400">TOTAL ACTIVE LEADS</div>
+            <div className="text-[32px] font-semibold tracking-tight text-slate-800">
+              {discoveryTotal.toLocaleString()}
+            </div>
+            <div className="mt-1 text-[11px] font-semibold tracking-wide text-slate-400">
+              TOTAL ACTIVE LEADS
+            </div>
           </div>
         </div>
 
@@ -132,7 +199,11 @@ export default function MilestonePaths() {
         <div className="flex-1">
           <div className="grid grid-cols-2 gap-8">
             <div>
-              <SectionHeader title="Won Path" total={wonTotal} underline="success" />
+              <SectionHeader
+                title="Won Path"
+                total={wonTotal}
+                underline="success"
+              />
               <div className="mt-4 flex flex-col gap-3">
                 {wonItems.map((item) => (
                   <StatCard key={item.title} item={item} />
@@ -141,7 +212,11 @@ export default function MilestonePaths() {
             </div>
 
             <div>
-              <SectionHeader title="Lost Path" total={lostTotal} underline="danger" />
+              <SectionHeader
+                title="Lost Path"
+                total={lostTotal}
+                underline="danger"
+              />
               <div className="mt-4 flex flex-col gap-3">
                 {lostItems.map((item) => (
                   <StatCard key={item.title} item={item} />
@@ -154,4 +229,3 @@ export default function MilestonePaths() {
     </section>
   );
 }
-
