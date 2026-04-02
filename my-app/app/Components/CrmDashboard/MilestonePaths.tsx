@@ -1,10 +1,4 @@
-type PathItem = {
-  title: string;
-  subtitle?: string;
-  value: number | string;
-  tone?: "neutral" | "success" | "danger";
-  leftAccent?: "success" | "warning" | "danger" | "neutral";
-};
+import type { MilestonePathItem } from "@/types/crm-pipeline";
 
 function formatCompact(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
@@ -12,7 +6,7 @@ function formatCompact(n: number) {
   return `${n}`;
 }
 
-function AccentBar({ kind }: { kind: NonNullable<PathItem["leftAccent"]> }) {
+function AccentBar({ kind }: { kind: NonNullable<MilestonePathItem["leftAccent"]> }) {
   const cls =
     kind === "success"
       ? "bg-emerald-400"
@@ -24,7 +18,7 @@ function AccentBar({ kind }: { kind: NonNullable<PathItem["leftAccent"]> }) {
   return <div className={`h-10 w-1.5 rounded-full ${cls}`} />;
 }
 
-function StatCard({ item }: { item: PathItem }) {
+function StatCard({ item }: { item: MilestonePathItem }) {
   const toneCls =
     item.tone === "success"
       ? "bg-emerald-50 border-emerald-100"
@@ -89,63 +83,72 @@ function CompassIcon() {
   );
 }
 
-export default function MilestonePaths() {
-  const discoveryTotal = 1240;
-  const wonTotal = 1080;
-  const lostTotal = 160;
+type Props = {
+  stageTitle: string;
+  stageSubtitle: string;
+  totalActiveLeads: number;
+  wonTotal: number;
+  lostTotal: number;
+  wonItems: MilestonePathItem[];
+  lostItems: MilestonePathItem[];
+};
 
-  const wonItems: PathItem[] = [
-    { title: "FRESH LEAD", subtitle: "Avg. Response: 2h", value: 400, leftAccent: "neutral" },
-    { title: "ATTEMPTING CONNECT", subtitle: "SLA Alert: 2d – Dwell", value: 350, leftAccent: "warning" },
-    { title: "CALL SCHEDULED", subtitle: "85% · Show Rate", value: 200, leftAccent: "neutral" },
-    { title: "QUALIFIED", subtitle: "Ready for Qualification Phase", value: 130, tone: "success", leftAccent: "success" },
-  ];
-
-  const lostItems: PathItem[] = [
-    { title: "INVALID LEAD", subtitle: "Missing Contact Info", value: 50, leftAccent: "danger" },
-    { title: "NOT INTERESTED", subtitle: "Competitor Selected", value: 80, leftAccent: "neutral" },
-    { title: "WRONG PERSONA", subtitle: "ICP Mismatch", value: 30, leftAccent: "neutral" },
-  ];
-
+export default function MilestonePaths({
+  stageTitle,
+  stageSubtitle,
+  totalActiveLeads,
+  wonTotal,
+  lostTotal,
+  wonItems,
+  lostItems,
+}: Props) {
   return (
     <section className="xl:ml-6 xl:mt-10 xl:w-263.75">
       <div className="flex gap-6">
-        {/* Left: Discovery summary */}
         <div className="w-64 rounded-3xl bg-[#F5F7FF] px-7 py-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white shadow-sm">
               <CompassIcon />
             </div>
             <div>
-              <div className="text-[18px] font-semibold text-slate-700">Discovery</div>
-              <div className="mt-0.5 text-[12px] font-medium text-slate-400">Initial Engagement Phase</div>
+              <div className="text-[18px] font-semibold capitalize text-slate-700">{stageTitle}</div>
+              <div className="mt-0.5 text-[12px] font-medium text-slate-400">{stageSubtitle}</div>
             </div>
           </div>
 
           <div className="mt-7 rounded-2xl bg-white px-6 py-6 shadow-sm">
-            <div className="text-[32px] font-semibold tracking-tight text-slate-800">{discoveryTotal.toLocaleString()}</div>
+            <div className="text-[32px] font-semibold tracking-tight text-slate-800">
+              {totalActiveLeads.toLocaleString()}
+            </div>
             <div className="mt-1 text-[11px] font-semibold tracking-wide text-slate-400">TOTAL ACTIVE LEADS</div>
           </div>
         </div>
 
-        {/* Right: Won/Lost paths */}
         <div className="flex-1">
           <div className="grid grid-cols-2 gap-8">
             <div>
               <SectionHeader title="Won Path" total={wonTotal} underline="success" />
               <div className="mt-4 flex flex-col gap-3">
-                {wonItems.map((item) => (
-                  <StatCard key={item.title} item={item} />
-                ))}
+                {wonItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 px-5 py-6 text-center text-sm text-slate-400">
+                    No won substages for this stage.
+                  </div>
+                ) : (
+                  wonItems.map((item) => <StatCard key={item.title} item={item} />)
+                )}
               </div>
             </div>
 
             <div>
               <SectionHeader title="Lost Path" total={lostTotal} underline="danger" />
               <div className="mt-4 flex flex-col gap-3">
-                {lostItems.map((item) => (
-                  <StatCard key={item.title} item={item} />
-                ))}
+                {lostItems.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 px-5 py-6 text-center text-sm text-slate-400">
+                    No lost substages for this stage.
+                  </div>
+                ) : (
+                  lostItems.map((item) => <StatCard key={item.title} item={item} />)
+                )}
               </div>
             </div>
           </div>
@@ -154,4 +157,3 @@ export default function MilestonePaths() {
     </section>
   );
 }
-

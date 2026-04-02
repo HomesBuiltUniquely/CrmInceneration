@@ -1,11 +1,14 @@
 import Image from 'next/image';
 import AnalyticsBar from './AnalyticsBar';
 import LeadFilters from './LeadFilters';
-import Milestones from './Milestones';
-import MilestonePaths from './MilestonePaths';
+import CrmPipeline from './CrmPipeline';
 import InsightsStrip from './InsightsStrip';
 
-export default function Header() {
+type Props = {
+    role?: "sales_admin" | "sales_manager" | "super_admin";
+}
+
+export default function Header({ role = "sales_admin" }: Props) {
     return (
         <div className="">
             <div className="xl:grid xl:grid-cols-8 xl:h-screen xl:w-screen">
@@ -25,10 +28,9 @@ export default function Header() {
                         </div>
                     </div>
                     <div>
-                        <LeadFilters/>
+                        <LeadFilters role={role}/>
                         <AnalyticsBar/>
-                        <Milestones/>
-                        <MilestonePaths/>
+                        <CrmPipeline/>
                         <InsightsStrip/>
                     </div>
                 </div>
