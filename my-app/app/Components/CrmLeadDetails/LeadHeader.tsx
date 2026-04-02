@@ -1,0 +1,61 @@
+"use client";
+
+import { MonoTag, StatusPill } from "./ui";
+import type { Lead } from "@/lib/data";
+
+export default function LeadHeader({
+  lead,
+  onCompleteTask,
+}: {
+  lead: Lead;
+  onCompleteTask: () => void;
+}) {
+  return (
+    <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-slate-200 bg-white px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
+      {/* Left accent bar */}
+      <div className="absolute bottom-0 left-0 top-0 w-1 rounded-l-[24px] bg-gradient-to-b from-[#38bdf8] to-[#2dd4bf]" />
+
+      {/* Avatar */}
+      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-2xl font-bold text-blue-600">
+        {lead.name.charAt(0)}
+      </div>
+
+      {/* Meta */}
+      <div className="flex-1 min-w-0">
+        <h1 className="mb-1.5 text-[22px] font-bold tracking-[-0.4px] text-slate-900">
+          {lead.name}
+        </h1>
+        <div className="flex items-center gap-3 flex-wrap">
+          <MonoTag>{lead.customerId}</MonoTag>
+          <StatusPill status={lead.status} />
+          <span className="flex items-center gap-1 text-[11px] text-slate-500">
+            🕐 Created {lead.createdAt}
+          </span>
+        </div>
+      </div>
+
+      {/* Right: Assignee + CTA */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {/* Assignee badge */}
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-800">
+          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-violet-400 text-[10px] font-bold text-white">
+            {lead.assignee.split(" ").map((w) => w[0]).join("")}
+          </div>
+          {lead.assignee}
+        </div>
+
+        {/* Complete Task */}
+        <button
+          onClick={onCompleteTask}
+          className="group relative inline-flex cursor-pointer items-center gap-3 overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-sky-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-[0_14px_30px_rgba(37,99,235,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(37,99,235,0.28)]"
+        >
+          <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent_10%,rgba(255,255,255,0.24)_45%,transparent_80%)] translate-x-[-140%] transition-transform duration-700 group-hover:translate-x-[140%]" />
+          <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/18 text-[19px] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] ring-1 ring-white/25 backdrop-blur-sm">
+            <span className="translate-y-[-0.5px]">📝</span>
+          </span>
+          <span className="relative tracking-[0.1px]">Complete Task</span>
+        </button>
+      </div>
+    </div>
+  );
+}
