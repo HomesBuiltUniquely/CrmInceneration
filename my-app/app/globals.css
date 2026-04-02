@@ -3,6 +3,21 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* CRM theme variables */
+  --crm-bg: #fcfbf7;
+  --crm-surface: #f4f1e8;
+  --crm-border: #d9d4c9;
+  --crm-muted: #bdb9af;
+  --crm-icon-bg: #d9e7fb;
+  --crm-icon-text: #3569b4;
+  --crm-accent: #5e933f;
+  --crm-accent-bg: #e5efd8;
+  --crm-accent-text: #2d6b2e;
+  --crm-accent-hover: #ddeac9;
+  --crm-warning-bg: #f8efd8;
+  --crm-warning-border: #a67d2c;
+  --crm-warning-text: #7b5a16;
+  --crm-required: #9e3d34;
 }
 
 @theme inline {
@@ -23,4 +38,57 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.animate-fade-up {
+  animation: fade-up 0.45s ease-out both;
+}
+
+.delay-1 {
+  animation-delay: 0.04s;
+}
+
+.delay-2 {
+  animation-delay: 0.08s;
+}
+
+.delay-3 {
+  animation-delay: 0.12s;
+}
+
+.delay-4 {
+  animation-delay: 0.16s;
+}
+
+.delay-5 {
+  animation-delay: 0.2s;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
 }

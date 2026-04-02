@@ -1,11 +1,19 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { leads } from "@/lib/data";
+import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
+
 type ChipTone = "blue" | "green" | "amber" | "rose" | "slate";
 
 type Chip = { label: string; tone: ChipTone };
 
 type LeadRowModel = {
+  id: string;
   name: string;
   company: string;
-  hierarchy: Chip[];
+  statusLabel?: string;
   journey: {
     stage: string;
     progressLabel: string;
@@ -70,9 +78,16 @@ function BoltIcon() {
   );
 }
 
-function AlertButton() {
+function AlertButton({
+  onClick,
+}: {
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+}) {
   return (
-    <button className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500 text-white shadow-sm hover:bg-rose-600">
+    <button
+      onClick={onClick}
+      className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500 text-white shadow-sm hover:bg-rose-600"
+    >
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M12 9v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         <path d="M12 17h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
@@ -82,10 +97,22 @@ function AlertButton() {
 }
 
 function LeadRow({ row }: { row: LeadRowModel }) {
+  const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
 
   return (
-    <div className="grid grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4">
+    <div
+      onClick={() => router.push(`/Leads/${row.id}`)}
+      className="grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4 transition-colors hover:bg-slate-50"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          router.push(`/Leads/${row.id}`);
+        }
+      }}
+    >
       <div className="col-span-3 flex items-center gap-3">
         <div className="h-9 w-9 rounded-full bg-slate-200" />
         <div className="leading-tight">
@@ -95,11 +122,7 @@ function LeadRow({ row }: { row: LeadRowModel }) {
       </div>
 
       <div className="col-span-3">
-        <div className="flex flex-wrap gap-2">
-          {row.hierarchy.map((c) => (
-            <ChipPill key={c.label} chip={c} />
-          ))}
-        </div>
+        {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "green" }} /> : null}
       </div>
 
       <div className="col-span-2">
@@ -124,7 +147,20 @@ function LeadRow({ row }: { row: LeadRowModel }) {
       </div>
 
       <div className="col-span-0 flex justify-end">
-        {row.actionIcon === "alert" ? <AlertButton /> : <button className="rounded-xl p-2 hover:bg-slate-50"><BoltIcon /></button>}
+        {row.actionIcon === "alert" ? (
+          <AlertButton
+            onClick={(event) => {
+              event?.stopPropagation?.();
+            }}
+          />
+        ) : (
+          <button
+            onClick={(event) => event.stopPropagation()}
+            className="rounded-xl p-2 hover:bg-slate-50"
+          >
+            <BoltIcon />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -151,15 +187,11 @@ export function LeadsPagination() {
 }
 
 export default function LeadsTable() {
-  const rows: LeadRowModel[] = [
+  const baseRows: LeadRowModel[] = [
     {
       name: "Jonathan Harker",
+      id: "jonathan-harker",
       company: "Transylvania Logistics",
-      hierarchy: [
-        { label: "QUALIFYING", tone: "blue" },
-        { label: "Positive intent", tone: "green" },
-        { label: "Discovery Call", tone: "blue" },
-      ],
       journey: { stage: "DISCOVERY", progressLabel: "2/4", progressPct: 55 },
       owner: { name: "Sarah Miller" },
       engagement: { time: "2 hours ago", action: "Follow-up Call", tone: "ok" },
@@ -167,13 +199,8 @@ export default function LeadsTable() {
     },
     {
       name: "Arthur Holcombe",
+      id: "arthur-holcombe",
       company: "Holcombe Industries",
-      hierarchy: [
-        { label: "NEGOTIATION", tone: "blue" },
-        { label: "STALE", tone: "rose" },
-        { label: "Blocked", tone: "rose" },
-        { label: "Legal Review", tone: "blue" },
-      ],
       journey: {
         stage: "OVERDUE 3D",
         progressLabel: "3/4",
@@ -186,12 +213,8 @@ export default function LeadsTable() {
     },
     {
       name: "Elena Richardson",
+      id: "elena-richardson",
       company: "Peak Software",
-      hierarchy: [
-        { label: "EDUCATION", tone: "blue" },
-        { label: "Informed", tone: "green" },
-        { label: "Trial Demo", tone: "blue" },
-      ],
       journey: { stage: "DEVELOPING", progressLabel: "1/4", progressPct: 30 },
       owner: { name: "Sarah Miller" },
       engagement: { time: "Yesterday", action: "Onboarding Call", tone: "ok" },
@@ -199,12 +222,47 @@ export default function LeadsTable() {
     },
   ];
 
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const readOverrides = () => {
+      const nextOverrides = leads.reduce<Record<string, string>>((result, lead) => {
+        result[lead.id] = getStoredLeadStatus(lead.id, lead.status);
+        return result;
+      }, {});
+
+      setStatusOverrides(nextOverrides);
+    };
+
+    readOverrides();
+
+    const handleStatusUpdate = () => {
+      readOverrides();
+    };
+
+    window.addEventListener(LEAD_STATUS_EVENT, handleStatusUpdate);
+    window.addEventListener("storage", handleStatusUpdate);
+
+    return () => {
+      window.removeEventListener(LEAD_STATUS_EVENT, handleStatusUpdate);
+      window.removeEventListener("storage", handleStatusUpdate);
+    };
+  }, []);
+
+  const rows = baseRows.map((row) => {
+    const nextStatus = statusOverrides[row.id];
+    return {
+      ...row,
+      statusLabel: nextStatus,
+    };
+  });
+
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-12 gap-3 bg-slate-50 px-6 py-4 text-[10px] font-bold tracking-wide text-slate-400">
           <div className="col-span-3">LEAD NAME</div>
-          <div className="col-span-3">HIERARCHY</div>
+          <div className="col-span-3">STATUS</div>
           <div className="col-span-2">JOURNEY TRACK</div>
           <div className="col-span-2">OWNER</div>
           <div className="col-span-2">ENGAGEMENT</div>
@@ -218,4 +276,3 @@ export default function LeadsTable() {
     </section>
   );
 }
-
