@@ -30,16 +30,28 @@ function toDateTimeLocalValue(value: string) {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
+export type CompleteTaskApiPayload = {
+  feedback: string;
+  milestoneStage: string;
+  milestoneStageCategory: string;
+  note: string;
+  nextCallDateLocal: string;
+};
+
 export default function CompleteTaskModal({
   lead,
   open,
   onClose,
   onSave,
+  onApiComplete,
 }: {
   lead: Lead;
   open: boolean;
   onClose: () => void;
-  onSave: (status: string) => void;
+  /** Legacy: local-only status update */
+  onSave?: (status: string) => void;
+  /** CRM API: PUT details + POST note */
+  onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
 }) {
   const defaultNextCallDate = useMemo(() => {
     return toDateTimeLocalValue(lead.followUpDate);
@@ -55,6 +67,8 @@ export default function CompleteTaskModal({
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
   const [showErrors, setShowErrors] = useState(false);
+  const [apiBusy, setApiBusy] = useState(false);
+  const [apiError, setApiError] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -158,14 +172,34 @@ export default function CompleteTaskModal({
   const noteMissing = note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setShowErrors(true);
 
     if (nextCallDateMissing || noteMissing || feedbackMissing) {
       return;
     }
 
-    onSave(feedback);
+    if (onApiComplete) {
+      setApiBusy(true);
+      setApiError("");
+      try {
+        await onApiComplete({
+          feedback,
+          milestoneStage: status,
+          milestoneStageCategory: path,
+          note,
+          nextCallDateLocal: nextCallDate,
+        });
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Could not save");
+      } finally {
+        setApiBusy(false);
+      }
+      return;
+    }
+
+    onSave?.(feedback);
   };
 
   return (
@@ -385,17 +419,22 @@ export default function CompleteTaskModal({
           </div>
         </div>
 
+        {apiError ? (
+          <p className="border-t border-[#d8d3c8] bg-rose-50 px-4 py-2 text-[12px] text-rose-700 md:px-5">{apiError}</p>
+        ) : null}
         <div className="flex flex-col-reverse items-stretch justify-end gap-2 border-t border-[#d8d3c8] bg-[#f4f1e8] px-4 py-3 md:flex-row md:px-5">
           <Button
             variant="ghost"
             onClick={onClose}
+            disabled={apiBusy}
             className="h-[40px] rounded-[12px] border-[#c4c0b7] bg-white px-5 text-[13px] font-medium text-slate-700 hover:bg-[#faf8f2]"
           >
             Cancel
           </Button>
           <Button
             variant="primary"
-            onClick={handleSave}
+            onClick={() => void handleSave()}
+            disabled={apiBusy}
             className="h-[40px] rounded-[12px] border border-[#5a8fe8] bg-[#dce8fc] px-5 text-[13px] font-medium text-[#346ac0] shadow-none hover:translate-y-0 hover:bg-[#cdddfb]"
             icon={
               <svg

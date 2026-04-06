@@ -4,26 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
+import type { LeadRowModel } from "@/lib/leads-filter";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "slate";
 
 type Chip = { label: string; tone: ChipTone };
-
-type LeadRowModel = {
-  id: string;
-  name: string;
-  company: string;
-  statusLabel?: string;
-  journey: {
-    stage: string;
-    progressLabel: string;
-    progressPct: number; // 0-100
-    status?: { label: string; tone: "critical" | "intervention" };
-  };
-  owner: { name: string };
-  engagement: { time: string; action: string; tone?: "ok" | "late" };
-  actionIcon?: "bolt" | "alert";
-};
 
 function ChipPill({ chip }: { chip: Chip }) {
   const cls =
@@ -102,14 +87,14 @@ function LeadRow({ row }: { row: LeadRowModel }) {
 
   return (
     <div
-      onClick={() => router.push(`/Leads/${row.id}`)}
+      onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
       className="grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4 transition-colors hover:bg-slate-50"
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          router.push(`/Leads/${row.id}`);
+          router.push(`/Leads/${row.leadType}/${row.id}`);
         }
       }}
     >
@@ -166,62 +151,65 @@ function LeadRow({ row }: { row: LeadRowModel }) {
   );
 }
 
-export function LeadsPagination() {
+export function LeadsPagination({
+  page,
+  totalPages,
+  onPrev,
+  onNext,
+  disabled,
+}: {
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+  disabled?: boolean;
+}) {
+  const safeTotal = Math.max(1, totalPages);
+  const canPrev = page > 0 && !disabled;
+  const canNext = page < safeTotal - 1 && !disabled;
+
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
-      <button className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+      <button
+        type="button"
+        disabled={!canPrev}
+        onClick={onPrev}
+        className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
         &lt; Previous
       </button>
-      <div className="flex items-center gap-2">
-        <button className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-[12px] font-semibold text-white">1</button>
-        <button className="flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold text-slate-600 hover:bg-slate-50">2</button>
-        <button className="flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold text-slate-600 hover:bg-slate-50">3</button>
-        <span className="px-2 text-slate-400">…</span>
-        <button className="flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-semibold text-slate-600 hover:bg-slate-50">12</button>
+      <div className="text-[12px] font-semibold text-slate-500">
+        Page {page + 1} / {safeTotal}
       </div>
-      <button className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+      <button
+        type="button"
+        disabled={!canNext}
+        onClick={onNext}
+        className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+      >
         Next &gt;
       </button>
     </div>
   );
 }
 
-export default function LeadsTable() {
-  const baseRows: LeadRowModel[] = [
-    {
-      name: "Jonathan Harker",
-      id: "jonathan-harker",
-      company: "Transylvania Logistics",
-      journey: { stage: "DISCOVERY", progressLabel: "2/4", progressPct: 55 },
-      owner: { name: "Sarah Miller" },
-      engagement: { time: "2 hours ago", action: "Follow-up Call", tone: "ok" },
-      actionIcon: "bolt",
-    },
-    {
-      name: "Arthur Holcombe",
-      id: "arthur-holcombe",
-      company: "Holcombe Industries",
-      journey: {
-        stage: "OVERDUE 3D",
-        progressLabel: "3/4",
-        progressPct: 82,
-        status: { label: "NEEDS INTERVENTION", tone: "critical" },
-      },
-      owner: { name: "David Chen" },
-      engagement: { time: "3 days ago", action: "Contract Signed (Late)", tone: "late" },
-      actionIcon: "alert",
-    },
-    {
-      name: "Elena Richardson",
-      id: "elena-richardson",
-      company: "Peak Software",
-      journey: { stage: "DEVELOPING", progressLabel: "1/4", progressPct: 30 },
-      owner: { name: "Sarah Miller" },
-      engagement: { time: "Yesterday", action: "Onboarding Call", tone: "ok" },
-      actionIcon: "bolt",
-    },
-  ];
+type LeadsTableProps = {
+  rows: LeadRowModel[];
+  loading?: boolean;
+  page?: number;
+  totalPages?: number;
+  onPrevPage?: () => void;
+  onNextPage?: () => void;
+};
 
+export default function LeadsTable({
+  rows: rowsProp,
+  loading,
+  page = 0,
+  totalPages = 1,
+  onPrevPage,
+  onNextPage,
+}: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -249,13 +237,15 @@ export default function LeadsTable() {
     };
   }, []);
 
-  const rows = baseRows.map((row) => {
+  const rows = rowsProp.map((row) => {
     const nextStatus = statusOverrides[row.id];
     return {
       ...row,
-      statusLabel: nextStatus,
+      statusLabel: nextStatus ?? row.statusLabel,
     };
   });
+
+  const showPagination = onPrevPage && onNextPage;
 
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
@@ -268,10 +258,26 @@ export default function LeadsTable() {
           <div className="col-span-2">ENGAGEMENT</div>
           <div className="col-span-0 text-right">ACTIONS</div>
         </div>
-        {rows.map((r) => (
-          <LeadRow key={r.name} row={r} />
-        ))}
-        <LeadsPagination />
+        {loading ? (
+          <div className="border-t border-slate-100 px-6 py-10 text-center text-[12px] text-slate-500">
+            Loading leads…
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="border-t border-slate-100 px-6 py-10 text-center text-[12px] text-slate-500">
+            No leads found.
+          </div>
+        ) : (
+          rows.map((r) => <LeadRow key={r.id} row={r} />)
+        )}
+        {showPagination ? (
+          <LeadsPagination
+            page={page}
+            totalPages={totalPages}
+            disabled={loading}
+            onPrev={onPrevPage}
+            onNext={onNextPage}
+          />
+        ) : null}
       </div>
     </section>
   );

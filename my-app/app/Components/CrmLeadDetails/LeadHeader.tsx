@@ -39,7 +39,11 @@ export default function LeadHeader({
         {/* Assignee badge */}
         <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-800">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-violet-400 text-[10px] font-bold text-white">
-            {lead.assignee.split(" ").map((w) => w[0]).join("")}
+            {lead.assignee
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((w) => w[0])
+              .join("") || "—"}
           </div>
           {lead.assignee}
         </div>

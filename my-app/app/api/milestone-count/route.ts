@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 
-const COUNT_URL = "http://localhost:9090/Milestone/count";
-const SUB_STATUS_URL = "http://localhost:9090/Milestone/sub-status";
-const CRM_PIPELINE_URL = "http://localhost:8081/Leads/crm-pipeline?nested=true";
+const CRM_BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
+const CRM_PIPELINE_URL = `${CRM_BASE}/Leads/crm-pipeline?nested=true`;
+
+/** Optional legacy milestone microservice (often not running locally → avoid 500). */
+const COUNT_URL =
+  process.env.MILESTONE_COUNT_URL ?? "http://localhost:9090/Milestone/count";
+const SUB_STATUS_URL =
+  process.env.MILESTONE_SUB_STATUS_URL ?? "http://localhost:9090/Milestone/sub-status";
 
 type MilestoneCountMap = Record<string, number>;
 type SubStatusMapping = {
@@ -163,13 +168,24 @@ function normalizeMappingsFromPipeline(data: unknown): SubStatusMapping[] {
   return result;
 }
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const resource = searchParams.get("resource");
-    const isSubStatusRequest = resource === "sub-status";
-    const backendUrl = isSubStatusRequest ? SUB_STATUS_URL : COUNT_URL;
+async function fetchPipelineMappings(): Promise<SubStatusMapping[]> {
+  const pipelineResponse = await fetch(CRM_PIPELINE_URL, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+  if (!pipelineResponse.ok) return [];
+  const pipelineRaw: unknown = await pipelineResponse.json();
+  return normalizeMappingsFromPipeline(pipelineRaw);
+}
 
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const resource = searchParams.get("resource");
+  const isSubStatusRequest = resource === "sub-status";
+  const backendUrl = isSubStatusRequest ? SUB_STATUS_URL : COUNT_URL;
+
+  try {
     const response = await fetch(backendUrl, {
       method: "GET",
       cache: "no-store",
@@ -179,13 +195,16 @@ export async function GET(request: Request) {
     });
 
     if (!response.ok) {
-      return NextResponse.json(
-        { error: "Backend request failed." },
-        { status: response.status },
-      );
+      throw new Error(`upstream ${response.status}`);
     }
 
-    const rawData: unknown = await response.json();
+    const rawText = await response.text();
+    let rawData: unknown;
+    try {
+      rawData = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      throw new Error("invalid json");
+    }
 
     if (isSubStatusRequest) {
       const subStatuses = normalizeSubStatuses(rawData);
@@ -193,20 +212,9 @@ export async function GET(request: Request) {
 
       if (mappings.length === 0) {
         try {
-          const pipelineResponse = await fetch(CRM_PIPELINE_URL, {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-              Accept: "application/json",
-            },
-          });
-
-          if (pipelineResponse.ok) {
-            const pipelineRaw: unknown = await pipelineResponse.json();
-            mappings = normalizeMappingsFromPipeline(pipelineRaw);
-          }
+          mappings = await fetchPipelineMappings();
         } catch {
-          // Keep empty mappings; frontend already has fallbacks.
+          // ignore
         }
       }
       return NextResponse.json({ subStatuses, mappings });
@@ -214,13 +222,17 @@ export async function GET(request: Request) {
 
     const counts = normalizeCounts(rawData);
     return NextResponse.json({ counts });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: "Could not connect to backend.",
-        details: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 },
-    );
+  } catch {
+    /** Legacy :9090 down or not JSON — degrade gracefully so the Leads page still loads. */
+    if (isSubStatusRequest) {
+      try {
+        const mappings = await fetchPipelineMappings();
+        const subStatuses = mappings.map((m) => m.subStageName);
+        return NextResponse.json({ subStatuses, mappings });
+      } catch {
+        return NextResponse.json({ subStatuses: [], mappings: [] });
+      }
+    }
+    return NextResponse.json({ counts: {} });
   }
 }

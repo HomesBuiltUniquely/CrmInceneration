@@ -15,6 +15,9 @@ interface StatCard {
 export default function StatsRow({ lead }: { lead: Lead }) {
   const [phoneRevealed, setPhoneRevealed] = useState(false);
 
+  const phone = lead.phone || "";
+  const maskedPhone = phone.length >= 4 ? `${phone.slice(0, 4)}xxxxxx` : phone.length > 0 ? "xxxxxx" : "—";
+
   const stats: StatCard[] = [
     {
       icon: "📍",
@@ -26,7 +29,7 @@ export default function StatsRow({ lead }: { lead: Lead }) {
     {
       icon: "📞",
       label: "Phone Number",
-      value: phoneRevealed ? lead.phone : lead.phone.slice(0, 4) + "xxxxxx",
+      value: phoneRevealed ? phone || "—" : maskedPhone,
       iconBg: "bg-[rgba(247,127,75,0.15)]",
       iconColor: "text-[#f77f4b]",
       masked: !phoneRevealed,

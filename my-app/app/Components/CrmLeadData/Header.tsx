@@ -1,6 +1,5 @@
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
-import LeadsTable from "./LeadsTable";
-import LeadsToolbar from "./LeadsToolbar";
+import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 
 export default function Header() {
@@ -8,8 +7,8 @@ export default function Header() {
     <div className="min-h-screen bg-slate-50">
       <TopNav />
       <JourneyPhaseHeatmap />
-      <LeadsToolbar />
-      <LeadsTable />
-      <div className="h-10"/></div>
+      <LeadsDataSection />
+      <div className="h-10" />
+    </div>
   );
 }

@@ -1,3 +1,5 @@
+import type { CrmLeadType } from "@/lib/leads-filter";
+
 export type ActivityType = "assignment" | "note" | "update" | "status";
 
 export interface ActivityItem {
@@ -12,6 +14,14 @@ export interface ActivityItem {
     new: string;
   };
 }
+
+export type LeadStageBlock = {
+  milestoneStage?: string | null;
+  milestoneStageCategory?: string | null;
+  milestoneSubStage?: string | null;
+  stage?: string | null;
+  substage?: { substage?: string | null } | null;
+};
 
 export interface Lead {
   id: string;
@@ -40,6 +50,10 @@ export interface Lead {
   followUpDate: string;
   agentName: string;
   activities: ActivityItem[];
+  /** Set when opened from `/v1/leads/filter` CRM list */
+  leadType?: CrmLeadType;
+  /** Pipeline + legacy stage for GET/PUT */
+  stageBlock?: LeadStageBlock;
 }
 
 export const LANGUAGE_OPTIONS = [
