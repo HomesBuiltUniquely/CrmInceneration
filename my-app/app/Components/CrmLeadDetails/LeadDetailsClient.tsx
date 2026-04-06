@@ -28,7 +28,7 @@ export default function LeadDetailsClient({ lead }: { lead: Lead }) {
   };
 
   return (
-    <main className="min-h-screen bg-white px-4 py-6 md:px-6 lg:px-8">
+    <main className="min-h-screen bg-[#f7f9fc] px-4 py-6 md:px-6 lg:px-8">
       <div className="mx-auto max-w-[1440px]">
         <TopBar />
         <LeadHeader lead={leadWithCurrentStatus} onCompleteTask={() => setCompleteTaskOpen(true)} />
