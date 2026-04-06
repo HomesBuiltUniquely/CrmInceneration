@@ -542,6 +542,11 @@ export default function QuickAccessSidebar({
     setActiveSubItemId(item.id);
 
     if (item.href) {
+      if (/^https?:\/\//.test(item.href)) {
+        window.location.href = item.href;
+        return;
+      }
+
       router.push(item.href);
     }
   };

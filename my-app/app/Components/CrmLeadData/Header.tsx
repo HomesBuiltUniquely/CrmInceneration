@@ -22,8 +22,7 @@ export default function Header() {
         <div className="xl:h-screen xl:overflow-y-auto">
           <TopNav />
           <JourneyPhaseHeatmap />
-          <LeadsToolbar />
-          <LeadsTable />
+          <LeadsDataSection />
           <div className="h-10" />
         </div>
       </div>
