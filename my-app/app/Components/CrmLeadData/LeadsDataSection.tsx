@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 import { asCrmLeadType, mapApiLeadToRow } from "@/lib/leads-filter";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
@@ -23,8 +24,9 @@ async function fetchMergedPage(page: number, size: number, token?: string | null
 
 function readBearer(): string | null {
   if (typeof window === "undefined") return null;
-  const keys = ["crm_access_token", "access_token", "token", "authToken"];
-  for (const k of keys) {
+  const fromLogin = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+  if (fromLogin) return fromLogin;
+  for (const k of ["crm_access_token", "access_token", "token", "authToken"]) {
     const v = window.localStorage.getItem(k);
     if (v) return v;
   }
@@ -75,6 +77,7 @@ export default function LeadsDataSection() {
               Set <code className="rounded bg-slate-100 px-1">CRM_DEV_BEARER_TOKEN</code> in{" "}
               <code className="rounded bg-slate-100 px-1">.env.local</code> or store a token in{" "}
               <code className="rounded bg-slate-100 px-1">localStorage</code> as{" "}
+              <code className="rounded bg-slate-100 px-1">crm_token</code> (login) or{" "}
               <code className="rounded bg-slate-100 px-1">access_token</code>.
             </span>
           ) : null}

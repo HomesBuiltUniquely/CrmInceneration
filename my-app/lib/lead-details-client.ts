@@ -1,7 +1,10 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 
 function readBearer(): string | null {
   if (typeof window === "undefined") return null;
+  const fromLogin = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+  if (fromLogin) return fromLogin;
   for (const k of ["crm_access_token", "access_token", "token", "authToken"]) {
     const v = window.localStorage.getItem(k);
     if (v) return v;
