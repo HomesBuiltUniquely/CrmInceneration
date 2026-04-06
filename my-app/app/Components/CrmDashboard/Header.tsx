@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import LogoutButton from '../LogoutButton';
 import AnalyticsBar from './AnalyticsBar';
 import LeadFilters from './LeadFilters';
 import CrmPipeline from './CrmPipeline';
@@ -19,11 +20,12 @@ export default function Header({ role = "sales_admin" }: Props) {
                         <div><Image src="/HowsCrmLogo.png" alt="Description" width={50} height={50} /></div>
                         <h1 className="xl:font-bold xl:pl-3 text-black">Lead Journey<span className="xl:text-blue-400 xl:font-bold xl:pl-4">Simplified</span></h1>
                         </div>
-                        <div className='xl:items-center xl:flex'>
+                        <div className='xl:items-center xl:flex xl:gap-3'>
                             <div className='xl:mr-4 xl:w-25 xl:h-7.5 xl:bg-gray-200 xl:text-gray-500 xl:font-bold xl:rounded-lg xl:pl-4.5 xl:pt-1'>
                             Q3 FY24
                             </div>
-                            <h1 className='xl:font-bold xl:pr-4 xl:text-black'>Global Sales</h1>
+                            <h1 className='xl:font-bold xl:pr-2 xl:text-black'>Global Sales</h1>
+                            <LogoutButton className="border border-gray-300 bg-white px-3 py-1.5 text-gray-800 hover:bg-gray-50" />
                             <div className='w-10 h-10 xl:rounded-full bg-gray-200'></div>
                         </div>
                     </div>

@@ -1,4 +1,5 @@
 import Image from "next/image";
+import LogoutButton from "../LogoutButton";
 
 function SearchIcon() {
   return (
@@ -33,6 +34,7 @@ export default function TopNav() {
         </div>
 
         <div className="flex items-center gap-3">
+          <LogoutButton className="border border-slate-200 bg-white px-3 py-2 text-slate-700 hover:bg-slate-50" />
           <div className="flex w-[340px] items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
             <SearchIcon />
             <input
