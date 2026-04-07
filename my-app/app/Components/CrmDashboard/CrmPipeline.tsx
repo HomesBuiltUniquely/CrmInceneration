@@ -67,6 +67,7 @@ export default function CrmPipeline({ filters }: Props) {
 
   const sharedFilters = filters ?? {
     assignee: "",
+    assignees: [],
     milestoneStage: "",
     milestoneStageCategory: "",
     milestoneSubStage: "",
@@ -81,6 +82,9 @@ export default function CrmPipeline({ filters }: Props) {
         const baseQ = new URLSearchParams();
         baseQ.set("leadType", "all");
         if (sharedFilters.assignee) baseQ.set("assignee", sharedFilters.assignee);
+        if ((sharedFilters.assignees ?? []).length > 0) {
+          baseQ.set("assignees", (sharedFilters.assignees ?? []).join(","));
+        }
         if (sharedFilters.dateFrom) baseQ.set("dateFrom", sharedFilters.dateFrom);
         if (sharedFilters.dateTo) baseQ.set("dateTo", sharedFilters.dateTo);
         if (sharedFilters.milestoneStageCategory) baseQ.set("milestoneStageCategory", sharedFilters.milestoneStageCategory);
@@ -135,6 +139,7 @@ export default function CrmPipeline({ filters }: Props) {
     };
   }, [
     sharedFilters.assignee,
+    (sharedFilters.assignees ?? []).join("|"),
     sharedFilters.dateFrom,
     sharedFilters.dateTo,
     sharedFilters.milestoneStageCategory,
@@ -162,6 +167,9 @@ export default function CrmPipeline({ filters }: Props) {
         q.set("milestoneStage", selectedStage);
         q.set("leadType", "all");
         if (sharedFilters.assignee) q.set("assignee", sharedFilters.assignee);
+        if ((sharedFilters.assignees ?? []).length > 0) {
+          q.set("assignees", (sharedFilters.assignees ?? []).join(","));
+        }
         if (sharedFilters.dateFrom) q.set("dateFrom", sharedFilters.dateFrom);
         if (sharedFilters.dateTo) q.set("dateTo", sharedFilters.dateTo);
         if (sharedFilters.milestoneStageCategory) q.set("milestoneStageCategory", sharedFilters.milestoneStageCategory);
@@ -231,6 +239,7 @@ export default function CrmPipeline({ filters }: Props) {
   }, [
     selectedStage,
     sharedFilters.assignee,
+    (sharedFilters.assignees ?? []).join("|"),
     sharedFilters.dateFrom,
     sharedFilters.dateTo,
     sharedFilters.milestoneStageCategory,

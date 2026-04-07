@@ -23,6 +23,7 @@ export default function Header({ role = "sales_admin" }: Props) {
   >("overview");
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilterState>({
     assignee: "",
+    assignees: [],
     milestoneStage: "",
     milestoneStageCategory: "",
     milestoneSubStage: "",
@@ -39,6 +40,7 @@ export default function Header({ role = "sales_admin" }: Props) {
     setDashboardFilters((prev: DashboardFilterState) => {
       if (
         prev.assignee === next.assignee &&
+        (prev.assignees ?? []).join("|") === (next.assignees ?? []).join("|") &&
         prev.milestoneStage === next.milestoneStage &&
         prev.milestoneStageCategory === next.milestoneStageCategory &&
         prev.milestoneSubStage === next.milestoneSubStage &&

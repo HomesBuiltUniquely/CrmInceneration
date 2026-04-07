@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
-import { CRM_TOKEN_STORAGE_KEY, getAuthApiBaseUrl } from "@/lib/auth/api";
 import { asCrmLeadType, mapApiLeadToRow } from "@/lib/leads-filter";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
@@ -31,15 +30,6 @@ type Props = {
 
 type SubStatusResp = {
   mappings?: Array<{ stage: string; stageCategory: string; subStageName: string }>;
-};
-
-type HierarchyUser = {
-  id: number;
-  fullName?: string;
-  username?: string;
-  role?: string;
-  managerId?: number | null;
-  active?: boolean;
 };
 
 async function fetchMergedPage(
@@ -78,20 +68,6 @@ async function fetchMergedPage(
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.json();
-}
-
-async function fetchUsersByRole(role: string, token: string): Promise<HierarchyUser[]> {
-  const res = await fetch(`${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(role)}`, {
-    cache: "no-store",
-    headers: { Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}` },
-  });
-  if (!res.ok) return [];
-  const data = (await res.json()) as HierarchyUser[];
-  return Array.isArray(data) ? data : [];
-}
-
-function userLabel(u: HierarchyUser): string {
-  return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
 }
 
 async function fetchFilterOptions(): Promise<{
@@ -176,16 +152,6 @@ export default function LeadsDataSection({
   const [milestoneStageOptions, setMilestoneStageOptions] = useState<string[]>([]);
   const [milestoneStageCategoryOptions, setMilestoneStageCategoryOptions] = useState<string[]>([]);
   const [milestoneSubStageOptions, setMilestoneSubStageOptions] = useState<string[]>([]);
-  const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
-  const [salesManagers, setSalesManagers] = useState<HierarchyUser[]>([]);
-  const [salesExecs, setSalesExecs] = useState<HierarchyUser[]>([]);
-  const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
-  const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
-  const [selectedSalesAdminId, setSelectedSalesAdminId] = useState("");
-  const [selectedSalesManagerId, setSelectedSalesManagerId] = useState("");
-  const [selectedSalesExecId, setSelectedSalesExecId] = useState("");
-  const [selectedPresalesManagerId, setSelectedPresalesManagerId] = useState("");
-  const [selectedPresalesExecId, setSelectedPresalesExecId] = useState("");
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
@@ -235,70 +201,6 @@ export default function LeadsDataSection({
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
-        if (!token) return;
-        const meRes = await fetch(`${getAuthApiBaseUrl()}/api/auth/me`, {
-          headers: { Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const meJson = meRes.ok
-          ? ((await meRes.json()) as { user?: HierarchyUser })
-          : { user: undefined };
-        const me = meJson.user;
-
-        const [sa, sm, se, pm, pe] = await Promise.all([
-          fetchUsersByRole("SALES_ADMIN", token),
-          fetchUsersByRole("SALES_MANAGER", token),
-          fetchUsersByRole("SALES_EXECUTIVE", token),
-          fetchUsersByRole("PRESALES_MANAGER", token),
-          fetchUsersByRole("PRESALES_EXECUTIVE", token),
-        ]);
-        if (cancelled) return;
-
-        const admins: HierarchyUser[] = [
-          ...sa.filter((u) => u.active !== false),
-          ...(me && me.role === "SALES_ADMIN" ? [me] : []),
-        ].filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i);
-        setSalesAdmins(admins);
-        setSalesManagers(sm.filter((u) => u.active !== false));
-        setSalesExecs(se.filter((u) => u.active !== false));
-        setPresalesManagers(pm.filter((u) => u.active !== false));
-        setPresalesExecs(pe.filter((u) => u.active !== false));
-        if (admins[0]) setSelectedSalesAdminId(String(admins[0].id));
-      } catch {
-        // ignore hierarchy fetch failure, filters still work
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const visibleSalesManagers = selectedSalesAdminId
-    ? salesManagers.filter((u) => String(u.managerId ?? "") === selectedSalesAdminId)
-    : salesManagers;
-  const visibleSalesExecs = selectedSalesManagerId
-    ? salesExecs.filter((u) => String(u.managerId ?? "") === selectedSalesManagerId)
-    : salesExecs;
-  const visiblePresalesExecs = selectedPresalesManagerId
-    ? presalesExecs.filter((u) => String(u.managerId ?? "") === selectedPresalesManagerId)
-    : presalesExecs;
-
-  const selectedUserName =
-    visibleSalesExecs.find((u) => String(u.id) === selectedSalesExecId)?.fullName ??
-    visibleSalesExecs.find((u) => String(u.id) === selectedSalesExecId)?.username ??
-    visiblePresalesExecs.find((u) => String(u.id) === selectedPresalesExecId)?.fullName ??
-    visiblePresalesExecs.find((u) => String(u.id) === selectedPresalesExecId)?.username ??
-    visibleSalesManagers.find((u) => String(u.id) === selectedSalesManagerId)?.fullName ??
-    visibleSalesManagers.find((u) => String(u.id) === selectedSalesManagerId)?.username ??
-    presalesManagers.find((u) => String(u.id) === selectedPresalesManagerId)?.fullName ??
-    presalesManagers.find((u) => String(u.id) === selectedPresalesManagerId)?.username ??
-    assignee;
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -309,7 +211,7 @@ export default function LeadsDataSection({
         leadType,
         sort,
         debouncedSearch,
-        selectedUserName,
+        assignee,
         dateFrom,
         dateTo,
         milestoneStage,
@@ -353,16 +255,6 @@ export default function LeadsDataSection({
         milestoneStage={milestoneStage}
         milestoneStageCategory={milestoneStageCategory}
         milestoneSubStage={milestoneSubStage}
-        salesAdminOptions={salesAdmins.map((u) => ({ value: String(u.id), label: userLabel(u) }))}
-        salesManagerOptions={visibleSalesManagers.map((u) => ({ value: String(u.id), label: userLabel(u) }))}
-        salesExecOptions={visibleSalesExecs.map((u) => ({ value: String(u.id), label: userLabel(u) }))}
-        presalesManagerOptions={presalesManagers.map((u) => ({ value: String(u.id), label: userLabel(u) }))}
-        presalesExecOptions={visiblePresalesExecs.map((u) => ({ value: String(u.id), label: userLabel(u) }))}
-        selectedSalesAdminId={selectedSalesAdminId}
-        selectedSalesManagerId={selectedSalesManagerId}
-        selectedSalesExecId={selectedSalesExecId}
-        selectedPresalesManagerId={selectedPresalesManagerId}
-        selectedPresalesExecId={selectedPresalesExecId}
         assigneeOptions={assigneeOptions}
         milestoneStageOptions={milestoneStageOptions}
         milestoneStageCategoryOptions={milestoneStageCategoryOptions}
@@ -370,21 +262,6 @@ export default function LeadsDataSection({
         onLeadTypeChange={onLeadTypeChange}
         onSortChange={onSortChange}
         onAssigneeChange={onAssigneeChange}
-        onSalesAdminChange={(id) => {
-          setSelectedSalesAdminId(id);
-          setSelectedSalesManagerId("");
-          setSelectedSalesExecId("");
-        }}
-        onSalesManagerChange={(id) => {
-          setSelectedSalesManagerId(id);
-          setSelectedSalesExecId("");
-        }}
-        onSalesExecChange={setSelectedSalesExecId}
-        onPresalesManagerChange={(id) => {
-          setSelectedPresalesManagerId(id);
-          setSelectedPresalesExecId("");
-        }}
-        onPresalesExecChange={setSelectedPresalesExecId}
         onDateFromChange={onDateFromChange}
         onDateToChange={onDateToChange}
         onMilestoneStageChange={onMilestoneStageChange}

@@ -17,6 +17,7 @@ type HierarchyUser = {
 
 export type DashboardFilterState = {
   assignee: string;
+  assignees?: string[];
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
@@ -191,28 +192,57 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
     [presalesExecs, presalesManagerId]
   );
 
-  const effectiveAssignee = useMemo(
-    () =>
-      (
+  const adminTeamExecAssignees = useMemo(
+    () => {
+      if (!salesAdminId) return [];
+      const managerIds = new Set(visibleSalesManagers.map((u) => String(u.id)));
+      return salesExecs
+        .filter((u) => managerIds.has(String(u.managerId ?? "")))
+        .map((u) => userLabel(u))
+        .filter(Boolean);
+    },
+    [salesAdminId, salesExecs, visibleSalesManagers]
+  );
+
+  const effectiveFilters = useMemo(
+    () => {
+      const selectedSalesExecName = (
         visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.fullName ??
         visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.username ??
+        ""
+      ).trim();
+      if (selectedSalesExecName) return { assignee: selectedSalesExecName, assignees: [] as string[] };
+
+      const selectedPresalesExecName = (
         visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)?.fullName ??
         visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)?.username ??
-        visibleSalesManagers.find((u) => String(u.id) === salesManagerId)?.fullName ??
-        visibleSalesManagers.find((u) => String(u.id) === salesManagerId)?.username ??
-        presalesManagers.find((u) => String(u.id) === presalesManagerId)?.fullName ??
-        presalesManagers.find((u) => String(u.id) === presalesManagerId)?.username ??
         ""
-      ).trim(),
+      ).trim();
+      if (selectedPresalesExecName) return { assignee: selectedPresalesExecName, assignees: [] as string[] };
+
+      if (salesManagerId) {
+        const teamAssignees = [...new Set(visibleSalesExecs.map((u) => userLabel(u)).filter(Boolean))];
+        return { assignee: "", assignees: teamAssignees };
+      }
+      if (presalesManagerId) {
+        const teamAssignees = [...new Set(visiblePresalesExecs.map((u) => userLabel(u)).filter(Boolean))];
+        return { assignee: "", assignees: teamAssignees };
+      }
+      if (salesAdminId) {
+        const teamAssignees = [...new Set(adminTeamExecAssignees)];
+        return { assignee: "", assignees: teamAssignees };
+      }
+      return { assignee: "", assignees: [] as string[] };
+    },
     [
+      adminTeamExecAssignees,
       presalesExecId,
       presalesManagerId,
-      presalesManagers,
+      salesAdminId,
       salesExecId,
       salesManagerId,
       visiblePresalesExecs,
       visibleSalesExecs,
-      visibleSalesManagers,
     ]
   );
 
@@ -228,7 +258,8 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
 
   useEffect(() => {
     onFiltersChange?.({
-      assignee: effectiveAssignee,
+      assignee: effectiveFilters.assignee,
+      assignees: effectiveFilters.assignees,
       milestoneStage: stage.trim(),
       milestoneStageCategory: stageCategory.trim(),
       milestoneSubStage: substage.trim(),
@@ -238,7 +269,7 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
   }, [
     dateFrom,
     dateTo,
-    effectiveAssignee,
+    effectiveFilters,
     onFiltersChange,
     stage,
     stageCategory,
@@ -342,21 +373,21 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
                   </div>
                 </label>
                 <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Sales Exec</span>
-                  <div className="relative">
-                    <select value={salesExecId} onChange={(e) => setSalesExecId(e.target.value)} className={selectClass}>
-                      <option value="">All</option>
-                      {visibleSalesExecs.map((u) => <option key={u.id} value={String(u.id)}>{userLabel(u)}</option>)}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center"><SelectChevron /></div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
                   <span className={labelClass}>Sales Mgr</span>
                   <div className="relative">
                     <select value={salesManagerId} onChange={(e) => { setSalesManagerId(e.target.value); setSalesExecId(""); }} className={selectClass}>
                       <option value="">All</option>
                       {visibleSalesManagers.map((u) => <option key={u.id} value={String(u.id)}>{userLabel(u)}</option>)}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center"><SelectChevron /></div>
+                  </div>
+                </label>
+                <label className="col-span-1 min-w-0">
+                  <span className={labelClass}>Sales Exec</span>
+                  <div className="relative">
+                    <select value={salesExecId} onChange={(e) => setSalesExecId(e.target.value)} className={selectClass}>
+                      <option value="">All</option>
+                      {visibleSalesExecs.map((u) => <option key={u.id} value={String(u.id)}>{userLabel(u)}</option>)}
                     </select>
                     <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center"><SelectChevron /></div>
                   </div>

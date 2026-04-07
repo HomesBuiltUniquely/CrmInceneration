@@ -108,16 +108,6 @@ type LeadsToolbarProps = {
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
-  salesAdminOptions: Array<{ value: string; label: string }>;
-  salesManagerOptions: Array<{ value: string; label: string }>;
-  salesExecOptions: Array<{ value: string; label: string }>;
-  presalesManagerOptions: Array<{ value: string; label: string }>;
-  presalesExecOptions: Array<{ value: string; label: string }>;
-  selectedSalesAdminId: string;
-  selectedSalesManagerId: string;
-  selectedSalesExecId: string;
-  selectedPresalesManagerId: string;
-  selectedPresalesExecId: string;
   assigneeOptions: string[];
   milestoneStageOptions: string[];
   milestoneStageCategoryOptions: string[];
@@ -125,11 +115,6 @@ type LeadsToolbarProps = {
   onLeadTypeChange: (next: string) => void;
   onSortChange: (next: string) => void;
   onAssigneeChange: (next: string) => void;
-  onSalesAdminChange: (next: string) => void;
-  onSalesManagerChange: (next: string) => void;
-  onSalesExecChange: (next: string) => void;
-  onPresalesManagerChange: (next: string) => void;
-  onPresalesExecChange: (next: string) => void;
   onDateFromChange: (next: string) => void;
   onDateToChange: (next: string) => void;
   onMilestoneStageChange: (next: string) => void;
@@ -150,16 +135,6 @@ export default function LeadsToolbar({
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
-  salesAdminOptions,
-  salesManagerOptions,
-  salesExecOptions,
-  presalesManagerOptions,
-  presalesExecOptions,
-  selectedSalesAdminId,
-  selectedSalesManagerId,
-  selectedSalesExecId,
-  selectedPresalesManagerId,
-  selectedPresalesExecId,
   assigneeOptions,
   milestoneStageOptions,
   milestoneStageCategoryOptions,
@@ -167,11 +142,6 @@ export default function LeadsToolbar({
   onLeadTypeChange,
   onSortChange,
   onAssigneeChange,
-  onSalesAdminChange,
-  onSalesManagerChange,
-  onSalesExecChange,
-  onPresalesManagerChange,
-  onPresalesExecChange,
   onDateFromChange,
   onDateToChange,
   onMilestoneStageChange,
@@ -203,11 +173,6 @@ export default function LeadsToolbar({
     onMilestoneSubStageChange("");
     onDateFromChange("");
     onDateToChange("");
-    onSalesAdminChange("");
-    onSalesManagerChange("");
-    onSalesExecChange("");
-    onPresalesManagerChange("");
-    onPresalesExecChange("");
   };
 
   const resetSort = () => {
@@ -266,46 +231,6 @@ export default function LeadsToolbar({
               </button>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              <SelectField label="Sales Admin" value={selectedSalesAdminId} onChange={onSalesAdminChange}>
-                <option value="">All</option>
-                {salesAdminOptions.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField label="Sales Mgr" value={selectedSalesManagerId} onChange={onSalesManagerChange}>
-                <option value="">All</option>
-                {salesManagerOptions.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField label="Sales Exec" value={selectedSalesExecId} onChange={onSalesExecChange}>
-                <option value="">All</option>
-                {salesExecOptions.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField label="Presales Mgr" value={selectedPresalesManagerId} onChange={onPresalesManagerChange}>
-                <option value="">All</option>
-                {presalesManagerOptions.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField label="Presales Exec" value={selectedPresalesExecId} onChange={onPresalesExecChange}>
-                <option value="">All</option>
-                {presalesExecOptions.map((v) => (
-                  <option key={v.value} value={v.value}>
-                    {v.label}
-                  </option>
-                ))}
-              </SelectField>
               <SelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
                 <option value="all">All Types</option>
                 <option value="addlead">Add Lead</option>
