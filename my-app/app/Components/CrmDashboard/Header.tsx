@@ -4,9 +4,11 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import AnalyticsBar from "./AnalyticsBar";
-import LeadFilters, { type DashboardFilterState } from "./LeadFilters";
+import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
+import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
 import CrmPipeline from "./CrmPipeline";
 import InsightsStrip from "./InsightsStrip";
+
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 
@@ -34,7 +36,7 @@ export default function Header({ role = "sales_admin" }: Props) {
   }, []);
 
   const handleFiltersChange = useCallback((next: DashboardFilterState) => {
-    setDashboardFilters((prev) => {
+    setDashboardFilters((prev: DashboardFilterState) => {
       if (
         prev.assignee === next.assignee &&
         prev.milestoneStage === next.milestoneStage &&
@@ -104,8 +106,8 @@ export default function Header({ role = "sales_admin" }: Props) {
                     Design Module
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Embedded design workspace inside the dashboard, same like the
-                    old CRM tab flow.
+                    Embedded design workspace inside the dashboard, same like
+                    the old CRM tab flow.
                   </p>
                 </div>
                 <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
