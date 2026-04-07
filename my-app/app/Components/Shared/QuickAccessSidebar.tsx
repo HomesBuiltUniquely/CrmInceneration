@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 
@@ -478,12 +478,26 @@ export default function QuickAccessSidebar({
   onSelectionChange,
 }: QuickAccessSidebarProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const initialParentId = sections[0]?.id ?? "";
   const [openParentId, setOpenParentId] = useState(initialParentId);
   const [activeSubItemId, setActiveSubItemId] = useState(
     sections[0]?.items[0]?.id ?? "",
   );
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Set active item based on current pathname
+  useEffect(() => {
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (item.href && pathname.startsWith(item.href)) {
+          setActiveSubItemId(item.id);
+          setOpenParentId(section.id);
+          return;
+        }
+      }
+    }
+  }, [pathname, sections]);
 
   const openParent = useMemo(
     () =>
@@ -577,13 +591,13 @@ export default function QuickAccessSidebar({
             <Image
               src="/logo-final-02.png"
               alt={`${appName} logo`}
-              width={220}
-              height={220}
+              width={260}
+              height={260}
               className={cn(
                 "object-contain transition-transform duration-300",
                 isCollapsed
                   ? "h-[82px] w-[82px] scale-[1.7]"
-                  : "h-[220px] w-[220px] scale-[1.55]",
+                  : "h-[26Image0px] w-[260px] scale-[1.90]",
               )}
               priority
             />
@@ -606,7 +620,9 @@ export default function QuickAccessSidebar({
                 <div
                   className={cn(
                     "flex w-full items-center rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
-                    isCollapsed ? "justify-center px-0 py-3.5" : "gap-3 px-4 py-4",
+                    isCollapsed
+                      ? "justify-center px-0 py-3.5"
+                      : "gap-3 px-4 py-4",
                     isOpen
                       ? "border-blue-200 bg-blue-50"
                       : "border-slate-200 bg-white hover:border-slate-300",
@@ -639,10 +655,16 @@ export default function QuickAccessSidebar({
                         <button
                           type="button"
                           onClick={() => handleDropdownToggle(section)}
-                          aria-label={isOpen ? `Close ${section.label}` : `Open ${section.label}`}
+                          aria-label={
+                            isOpen
+                              ? `Close ${section.label}`
+                              : `Open ${section.label}`
+                          }
                           className={cn(
                             "flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-slate-500 shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition-all duration-200",
-                            isOpen ? "rotate-180 text-blue-500" : "text-slate-400",
+                            isOpen
+                              ? "rotate-180 text-blue-500"
+                              : "text-slate-400",
                           )}
                         >
                           <svg
