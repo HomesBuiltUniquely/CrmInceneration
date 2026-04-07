@@ -3,6 +3,8 @@ const BASE =
   "http://localhost:8081";
 
 export const CRM_TOKEN_STORAGE_KEY = "crm_token";
+export const CRM_ROLE_STORAGE_KEY = "crm_role";
+export const CRM_USER_NAME_STORAGE_KEY = "crm_user_name";
 
 export function getAuthApiBaseUrl(): string {
   return BASE.replace(/\/$/, "");
@@ -12,6 +14,61 @@ export type LoginResult = {
   token: string;
   user: Record<string, unknown>;
 };
+
+export function normalizeRole(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+}
+
+/** Extract role from common login payload shapes. */
+export function getRoleFromUser(user: Record<string, unknown>): string {
+  const direct =
+    user.role ??
+    user.userRole ??
+    user.authority ??
+    user.type;
+  if (typeof direct === "string" && direct.trim()) return direct;
+
+  const roles = user.roles;
+  if (Array.isArray(roles) && typeof roles[0] === "string") return roles[0];
+  return "";
+}
+
+/** Extract display name from common login payload shapes. */
+export function getNameFromUser(user: Record<string, unknown>): string {
+  const candidate =
+    user.name ??
+    user.username ??
+    user.fullName ??
+    user.displayName ??
+    user.firstName;
+  return typeof candidate === "string" ? candidate.trim() : "";
+}
+
+export function dashboardPathByRole(role: string): string {
+  const r = normalizeRole(role);
+  if (r === "SUPER_ADMIN") return "/super-admin";
+  if (r === "ADMIN" || r === "SALES_ADMIN") return "/admin";
+  if (r === "SALES_MANAGER") return "/sales-manager";
+  return "/";
+}
+
+export function hasDashboardByRole(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    r === "SUPER_ADMIN" ||
+    r === "ADMIN" ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "PRESALES_MANAGER"
+  );
+}
+
+/** First page after login by role. */
+export function landingPathByRole(role: string): string {
+  void role;
+  return "/Leads";
+}
 
 export async function login(
   username: string,

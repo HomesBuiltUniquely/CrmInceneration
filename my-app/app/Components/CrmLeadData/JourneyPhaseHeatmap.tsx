@@ -1,19 +1,66 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import type { CrmMilestoneCountsApiResponse } from "@/lib/crm-milestone-counts";
 
 type Phase = {
   phaseLabel: string;
   name: string;
   count: number;
-  stalePct: number;
+  sharePct: number;
   tone: "healthy" | "warning" | "critical";
   note: { icon: "clock" | "alert" | "money" | "check"; text: string };
 };
 
-type MilestoneCountResponse = {
-  counts?: Record<string, number>;
+export type JourneyPhaseHeatmapProps = {
+  /** Query string for `/Leads/crm-milestone-counts-filtered` (no leading `?`), e.g. `leadType=all&search=foo` */
+  milestoneFilterQuery?: string;
 };
+
+function normName(s: string) {
+  return s.trim().toLowerCase();
+}
+
+function toneByCount(count: number, max: number): Phase["tone"] {
+  if (max <= 0 || count <= 0) return "critical";
+  const ratio = count / max;
+  if (ratio >= 0.67) return "healthy";
+  if (ratio >= 0.34) return "warning";
+  return "critical";
+}
+
+function mapCountsToPhases(rows: CrmMilestoneCountsApiResponse["countsByMilestoneStage"], defaults: Phase[]): Phase[] {
+  const list = rows ?? [];
+  const total = list.reduce((sum, r) => sum + (r.count ?? 0), 0);
+  const max = list.reduce((m, r) => Math.max(m, r.count ?? 0), 0);
+  if (list.length === 0) {
+    return defaults.map((d) => ({
+      ...d,
+      count: 0,
+      sharePct: 0,
+      tone: "critical",
+      note: { icon: d.note.icon, text: "No leads in this stage." },
+    }));
+  }
+  return list.map((row, i) => {
+    const meta =
+      defaults.find((p) => normName(p.name) === normName(row.key)) ?? defaults[i] ?? defaults[0]!;
+    const count = row.count ?? 0;
+    return {
+      phaseLabel: `PHASE ${String(i + 1).padStart(2, "0")}`,
+      name: row.key,
+      count,
+      sharePct: total > 0 ? Math.round((count / total) * 100) : 0,
+      tone: toneByCount(count, max),
+      note: {
+        icon: meta.note.icon,
+        text:
+          count === 0 ? "No leads in this stage." : `${count} lead${count === 1 ? "" : "s"} in this stage.`,
+      },
+    };
+  });
+}
 
 function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
   if (kind === "clock")
@@ -110,15 +157,15 @@ function StatusLegend() {
     <div className="flex items-center gap-5 text-[10px] font-semibold tracking-wide text-slate-400">
       <div className="flex items-center gap-2">
         <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-        HEALTHY (&lt; 5% STALE)
+        Higher count
       </div>
       <div className="flex items-center gap-2">
         <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-        WARNING (5–15%)
+        Medium count
       </div>
       <div className="flex items-center gap-2">
         <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
-        CRITICAL (&gt; 15%)
+        Lower count
       </div>
     </div>
   );
@@ -137,13 +184,13 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
       : p.tone === "warning"
         ? "bg-amber-50"
         : "bg-rose-50";
-  const staleText =
+  const shareText =
     p.tone === "healthy"
       ? "text-emerald-600"
       : p.tone === "warning"
         ? "text-amber-600"
         : "text-rose-600";
-  const barWidth = maxCount > 0 ? Math.max(12, (p.count / maxCount) * 100) : 12;
+  const barWidth = maxCount > 0 ? (p.count / maxCount) * 100 : 0;
 
   return (
     <div
@@ -160,8 +207,8 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
           <div className="text-[20px] font-semibold text-slate-700">
             {p.count}
           </div>
-          <div className={`text-[10px] font-semibold ${staleText}`}>
-            {p.stalePct}% Stale
+          <div className={`text-[10px] font-semibold ${shareText}`}>
+            {p.sharePct}% of total
           </div>
         </div>
       </div>
@@ -182,51 +229,51 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
   );
 }
 
-export default function JourneyPhaseHeatmap() {
-  const defaultPhases: Phase[] = [
-    {
-      phaseLabel: "PHASE 01",
-      name: "Discovery",
-      count: 0,
-      stalePct: 3,
-      tone: "healthy",
-      note: { icon: "clock", text: "Avg. 3.2 Days in Stage" },
-    },
-    {
-      phaseLabel: "PHASE 02",
-      name: "Connection",
-      count: 0,
-      stalePct: 12,
-      tone: "warning",
-      note: { icon: "clock", text: "34 Leads past SLA" },
-    },
-    {
-      phaseLabel: "PHASE 03",
-      name: "Experience & Design",
-      count: 0,
-      stalePct: 18,
-      tone: "critical",
-      note: { icon: "alert", text: "Critical Path (48h)" },
-    },
-    {
-      phaseLabel: "PHASE 04",
-      name: "Decision",
-      count: 0,
-      stalePct: 7,
-      tone: "warning",
-      note: { icon: "money", text: "$2.4M Pipeline Value" },
-    },
-    {
-      phaseLabel: "PHASE 05",
-      name: "Closed",
-      count: 0,
-      stalePct: 1,
-      tone: "healthy",
-      note: { icon: "check", text: "86% Conversion" },
-    },
-  ];
+const DEFAULT_PHASES: Phase[] = [
+  {
+    phaseLabel: "PHASE 01",
+    name: "Discovery",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "Avg. 3.2 Days in Stage" },
+  },
+  {
+    phaseLabel: "PHASE 02",
+    name: "Connection",
+    count: 0,
+    sharePct: 0,
+    tone: "warning",
+    note: { icon: "clock", text: "34 Leads past SLA" },
+  },
+  {
+    phaseLabel: "PHASE 03",
+    name: "Experience & Design",
+    count: 0,
+    sharePct: 0,
+    tone: "critical",
+    note: { icon: "alert", text: "Critical Path (48h)" },
+  },
+  {
+    phaseLabel: "PHASE 04",
+    name: "Decision",
+    count: 0,
+    sharePct: 0,
+    tone: "warning",
+    note: { icon: "money", text: "$2.4M Pipeline Value" },
+  },
+  {
+    phaseLabel: "PHASE 05",
+    name: "Closed",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "check", text: "86% Conversion" },
+  },
+];
 
-  const [phases, setPhases] = useState<Phase[]>(defaultPhases);
+export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPhaseHeatmapProps = {}) {
+  const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
@@ -239,30 +286,30 @@ export default function JourneyPhaseHeatmap() {
         setLoading(true);
         setError("");
 
-        const response = await fetch("/api/milestone-count", {
+        const filtered = milestoneFilterQuery?.trim();
+        const path = filtered
+          ? `/api/crm/crm-milestone-counts-filtered?${filtered}`
+          : "/api/crm/crm-milestone-counts";
+
+        const response = await fetch(path, {
           cache: "no-store",
+          credentials: "include",
+          headers: getCrmAuthHeaders(),
         });
 
         if (!response.ok) {
-          throw new Error("Could not fetch milestone counts.");
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
         }
 
-        const data: MilestoneCountResponse = await response.json();
-        const counts = data.counts ?? {};
+        const data = (await response.json()) as CrmMilestoneCountsApiResponse;
 
         if (!cancelled) {
-          setPhases((currentPhases) =>
-            currentPhases.map((phase) => ({
-              ...phase,
-              count: counts[phase.name] ?? 0,
-            })),
-          );
+          setPhases(mapCountsToPhases(data.countsByMilestoneStage, DEFAULT_PHASES));
         }
       } catch (err) {
         if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Something went wrong.",
-          );
+          setError(err instanceof Error ? err.message : "Something went wrong.");
         }
       } finally {
         if (!cancelled) {
@@ -271,40 +318,35 @@ export default function JourneyPhaseHeatmap() {
       }
     }
 
-    loadMilestoneCounts();
+    void loadMilestoneCounts();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [milestoneFilterQuery]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-[16px] font-semibold text-slate-800">
               Journey Phase Heatmap
             </span>
           </div>
-          <div className="mt-1 text-[10px] font-semibold tracking-wide text-slate-400">
-            SLA HEALTH STATUS PER PHASE
-          </div>
         </div>
         <StatusLegend />
       </div>
 
       <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 text-[11px] font-medium text-slate-500">
-          {loading
-            ? "Loading phase counts from backend..."
-            : error
-              ? `Backend message: ${error}`
-              : "Phase counts loaded from backend API."}
-        </div>
+        {loading || error ? (
+          <div className="mb-3 text-[11px] font-medium text-slate-500">
+            {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
+          </div>
+        ) : null}
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-5">
           {phases.map((p) => (
-            <PhaseCard key={p.phaseLabel} p={p} maxCount={maxCount} />
+            <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
           ))}
         </div>
       </div>

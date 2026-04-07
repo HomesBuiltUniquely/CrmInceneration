@@ -1,5 +1,7 @@
 /** CRM `/v1/leads/filter` + merged list helpers (Project-ERP contract). */
 
+import { computeMilestoneProgress } from "@/lib/milestone-progress";
+
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
 export type CrmLeadType = (typeof CRM_LEAD_TYPES)[number];
@@ -95,15 +97,24 @@ export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): C
 }
 
 /** Map API entity to the existing Leads table row shape. */
-export function mapApiLeadToRow(lead: ApiLead, sourceLeadType: CrmLeadType): LeadRowModel {
+export function mapApiLeadToRow(
+  lead: ApiLead,
+  sourceLeadType: CrmLeadType,
+  orderedPipelineStages: string[] = []
+): LeadRowModel {
   const st = lead.stage;
   const statusLabel =
     st?.milestoneSubStage?.trim() ||
     st?.milestoneStage?.trim() ||
     st?.substage?.substage?.trim() ||
     undefined;
-  const journeyStage =
+
+  const ms = st?.milestoneStage?.trim();
+  const prog = computeMilestoneProgress(ms, orderedPipelineStages);
+  const fallbackJourney =
     (st?.milestoneStageCategory ?? st?.milestoneStage ?? "PIPELINE").trim() || "PIPELINE";
+  const journeyStage =
+    orderedPipelineStages.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
 
   return {
     id: String(lead.id ?? ""),
@@ -112,9 +123,9 @@ export function mapApiLeadToRow(lead: ApiLead, sourceLeadType: CrmLeadType): Lea
     company: companyFallback(lead),
     statusLabel,
     journey: {
-      stage: journeyStage.toUpperCase(),
-      progressLabel: "—",
-      progressPct: 0,
+      stage: journeyStage,
+      progressLabel: orderedPipelineStages.length > 0 ? prog.progressLabel : "—",
+      progressPct: orderedPipelineStages.length > 0 ? prog.pct : 0,
     },
     owner: { name: assigneeName(lead) },
     engagement: {

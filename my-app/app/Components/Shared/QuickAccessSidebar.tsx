@@ -3,6 +3,12 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  logout as apiLogout,
+} from "@/lib/auth/api";
 import { cn } from "@/lib/cn";
 
 export type QuickAccessSubItem = {
@@ -32,11 +38,28 @@ interface QuickAccessSidebarProps {
   appName: string;
   appTagline: string;
   sections: QuickAccessParentItem[];
-  profileName: string;
-  profileRole: string;
-  profileInitials: string;
+  profileName?: string;
+  profileRole?: string;
+  profileInitials?: string;
   logoutLabel?: string;
   onSelectionChange?: (selection: SelectionPayload) => void;
+}
+
+function normalizeRole(value: string): string {
+  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+}
+
+function roleDisplayName(role: string): string {
+  const r = normalizeRole(role);
+  if (r === "SUPER_ADMIN") return "Super Admin";
+  if (r === "ADMIN") return "Admin";
+  if (r === "SALES_ADMIN") return "Sales Admin";
+  if (r === "SALES_MANAGER") return "Sales Manager";
+  if (r === "SALES_EXECUTIVE") return "Sales Executive";
+  if (r === "PRESALES_MANAGER") return "Presales Manager";
+  if (r === "PRESALES_EXECUTIVE") return "Presales Executive";
+  if (r === "DESIGNER") return "Designer";
+  return "";
 }
 
 function SidebarIcon({
@@ -471,9 +494,9 @@ export default function QuickAccessSidebar({
   appName,
   appTagline,
   sections,
-  profileName,
-  profileRole,
-  profileInitials,
+  profileName = "User",
+  profileRole = "USER",
+  profileInitials = "U",
   logoutLabel = "Logout",
   onSelectionChange,
 }: QuickAccessSidebarProps) {
@@ -484,6 +507,33 @@ export default function QuickAccessSidebar({
     sections[0]?.items[0]?.id ?? "",
   );
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const [currentName, setCurrentName] = useState(profileName);
+  const [currentRole, setCurrentRole] = useState(profileRole);
+  const [currentInitials, setCurrentInitials] = useState(profileInitials);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedName = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY)?.trim();
+    const storedRole = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY)?.trim();
+
+    const roleName = roleDisplayName(storedRole || profileRole);
+    const useRoleAsName =
+      !storedName || normalizeRole(storedName) === "ADMIN" || normalizeRole(storedName) === "USER";
+    const nextName = useRoleAsName && roleName ? roleName : storedName || profileName;
+    const nextRole = storedRole || profileRole;
+    const nextInitials =
+      nextName
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase() ?? "")
+        .join("") || profileInitials;
+
+    setCurrentName(nextName);
+    setCurrentRole(nextRole);
+    setCurrentInitials(nextInitials);
+  }, [profileInitials, profileName, profileRole]);
 
   const openParent = useMemo(
     () =>
@@ -548,6 +598,22 @@ export default function QuickAccessSidebar({
       }
 
       router.push(item.href);
+    }
+  };
+
+  const handleLogoutClick = async () => {
+    setLogoutBusy(true);
+    try {
+      const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+      if (token) {
+        await apiLogout(token);
+      }
+    } finally {
+      window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      router.replace("/login");
+      setLogoutBusy(false);
     }
   };
 
@@ -729,10 +795,10 @@ export default function QuickAccessSidebar({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-[0.95rem] font-bold text-slate-800">
-                  {profileName}
+                  {currentName}
                 </div>
                 <div className="text-[0.6rem] uppercase tracking-[0.08em] text-slate-400">
-                  {profileRole}
+                  {currentRole}
                 </div>
               </div>
               <div className="h-3.5 w-3.5 rounded-full bg-emerald-500" />
@@ -740,18 +806,20 @@ export default function QuickAccessSidebar({
 
             <button
               type="button"
+              onClick={handleLogoutClick}
+              disabled={logoutBusy}
               className="w-full rounded-3xl bg-[#fb4343] px-5 py-3 text-[0.88rem] font-bold text-white transition-transform duration-200 hover:-translate-y-px"
             >
-              {logoutLabel}
+              {logoutBusy ? "Signing out..." : logoutLabel}
             </button>
           </>
         ) : (
           <div className="flex justify-center">
             <div
               className="flex h-10 w-10 items-center justify-center rounded-full bg-[#dbe8fb] text-[0.74rem] font-bold text-[#2d63e2]"
-              title={profileName}
+              title={currentName}
             >
-              {profileInitials}
+              {currentInitials}
             </div>
           </div>
         )}

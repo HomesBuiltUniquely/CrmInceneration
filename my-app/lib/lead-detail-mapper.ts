@@ -1,5 +1,6 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
+import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -97,6 +98,14 @@ function stageObj(detail: Record<string, unknown>): Record<string, unknown> | nu
   return null;
 }
 
+function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
+  const v = detail.additionalLeadSources;
+  if (v === undefined || v === null) return "";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return String(v);
+}
+
 export function extractStage(detail: Record<string, unknown>) {
   const st = stageObj(detail);
   const substage =
@@ -168,7 +177,9 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
     language: pickStr(detail, "language", "preferredLanguage") || "English",
-    leadSource: pickStr(detail, "leadSource", "source") || leadType,
+    leadSource: pickStr(detail, "leadSource", "source", "primaryLeadSource") || "",
+    additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
+    additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     meetingType: pickStr(detail, "meetingType", "meeting") || "",
     propertyNotes: pickStr(detail, "propertyNotes", "propertyDetails", "notes") || "",
     requirements,
@@ -227,6 +238,9 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.salesOwnerName = lead.assignee;
   next.ownerName = lead.assignee;
   next.leadSource = lead.leadSource;
+  if (lead.additionalLeadSources !== undefined) {
+    next.additionalLeadSources = lead.additionalLeadSources;
+  }
   next.propertyNotes = lead.propertyNotes;
   next.propertyDetails = lead.propertyNotes;
   next.followUpDate = lead.followUpDate;

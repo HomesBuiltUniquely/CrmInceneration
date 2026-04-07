@@ -1,10 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
-import LogoutButton from "../LogoutButton";
+import { useRouter } from "next/navigation";
+import { useCallback, useState } from "react";
 import AnalyticsBar from "./AnalyticsBar";
-import LeadFilters from "./LeadFilters";
+import LeadFilters, { type DashboardFilterState } from "./LeadFilters";
 import CrmPipeline from "./CrmPipeline";
 import InsightsStrip from "./InsightsStrip";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
@@ -15,9 +15,39 @@ type Props = {
 };
 
 export default function Header({ role = "sales_admin" }: Props) {
+  const router = useRouter();
   const [activeDashboardView, setActiveDashboardView] = useState<
     "overview" | "design-module"
   >("overview");
+  const [dashboardFilters, setDashboardFilters] = useState<DashboardFilterState>({
+    assignee: "",
+    milestoneStage: "",
+    milestoneStageCategory: "",
+    milestoneSubStage: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+
+  const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
+    const next = subItem.id === "design-module" ? "design-module" : "overview";
+    setActiveDashboardView((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const handleFiltersChange = useCallback((next: DashboardFilterState) => {
+    setDashboardFilters((prev) => {
+      if (
+        prev.assignee === next.assignee &&
+        prev.milestoneStage === next.milestoneStage &&
+        prev.milestoneStageCategory === next.milestoneStageCategory &&
+        prev.milestoneSubStage === next.milestoneSubStage &&
+        prev.dateFrom === next.dateFrom &&
+        prev.dateTo === next.dateTo
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden">
@@ -31,11 +61,7 @@ export default function Header({ role = "sales_admin" }: Props) {
             profileName="admin"
             profileRole="SUPER_ADMIN"
             profileInitials="AD"
-            onSelectionChange={({ subItem }) => {
-              setActiveDashboardView(
-                subItem.id === "design-module" ? "design-module" : "overview",
-              );
-            }}
+            onSelectionChange={handleSidebarSelection}
           />
         </div>
         <div className="bg-white xl:h-screen xl:overflow-y-auto">
@@ -51,9 +77,13 @@ export default function Header({ role = "sales_admin" }: Props) {
               </div>
               <h1 className="xl:font-bold xl:pl-3 text-black">
                 Lead Journey
-                <span className="xl:text-blue-400 xl:font-bold xl:pl-4">
-                  Simplified
-                </span>
+                <button
+                  type="button"
+                  onClick={() => router.push("/Leads")}
+                  className="ml-4 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-1 text-[12px] font-semibold text-blue-700 ring-1 ring-blue-100 transition-all duration-200 hover:-translate-y-px hover:from-blue-100 hover:to-indigo-100 hover:text-blue-800 hover:ring-blue-200"
+                >
+                  Lead Management
+                </button>
               </h1>
             </div>
             <div className="xl:flex xl:items-center">
@@ -89,9 +119,9 @@ export default function Header({ role = "sales_admin" }: Props) {
             </div>
           ) : (
             <div>
-              <LeadFilters role={role} />
+              <LeadFilters role={role} onFiltersChange={handleFiltersChange} />
               <AnalyticsBar />
-              <CrmPipeline />
+              <CrmPipeline filters={dashboardFilters} />
               <InsightsStrip />
             </div>
           )}

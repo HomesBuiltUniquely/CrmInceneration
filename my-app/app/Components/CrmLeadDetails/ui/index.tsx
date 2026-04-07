@@ -2,6 +2,7 @@
 
 import { type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
 
 /* ─────────────────────────────────────────────
    BUTTON
@@ -191,6 +192,30 @@ export function StatusPill({ status }: { status: string }) {
     <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse-dot" />
       {status}
+    </span>
+  );
+}
+
+/** Primary tag = `leadSource` from GET details; optional chips = parsed `additionalLeadSources`. */
+export function LeadSourceTag({ primary, extras }: { primary: string; extras?: string[] }) {
+  const mainRaw = primary.trim() || "—";
+  const main = formatLeadSourceLabel(mainRaw);
+  const filtered = (extras ?? []).filter(
+    (x) => x.trim() && x.trim().toLowerCase() !== mainRaw.toLowerCase()
+  );
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[12px] font-semibold text-sky-800">
+        {main}
+      </span>
+      {filtered.map((x) => (
+        <span
+          key={x}
+          className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800"
+        >
+          {formatLeadSourceLabel(x)}
+        </span>
+      ))}
     </span>
   );
 }

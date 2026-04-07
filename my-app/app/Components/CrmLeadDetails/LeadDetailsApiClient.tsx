@@ -44,6 +44,8 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   agentName: "",
   activities: [],
   leadType,
+  additionalLeadSources: "",
+  additionalLeadSourcesList: [],
 });
 
 export default function LeadDetailsApiClient({

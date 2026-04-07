@@ -42,6 +42,10 @@ export interface Lead {
   budget: string;
   language: string;
   leadSource: string;
+  /** Raw `additionalLeadSources` string from API (for PUT round-trip). */
+  additionalLeadSources?: string;
+  /** Parsed extra sources for chips (see `parseAdditionalLeadSources`). */
+  additionalLeadSourcesList?: string[];
   meetingType: string;
   propertyNotes: string;
   requirements: string[];

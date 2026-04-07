@@ -9,9 +9,14 @@ const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 export async function fetchCrmPipeline(nested = true): Promise<CrmPipelineResponse> {
   const q = nested ? "?nested=true" : "";
-  const res = await fetch(`${BASE}/Leads/crm-pipeline${q}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`CRM pipeline failed: HTTP ${res.status}`);
-  return res.json();
+  const urls = [`${BASE}/v1/Leads/crm-pipeline${q}`, `${BASE}/Leads/crm-pipeline${q}`];
+  let lastStatus = 0;
+  for (const url of urls) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (res.ok) return res.json();
+    lastStatus = res.status;
+  }
+  throw new Error(`CRM pipeline failed: HTTP ${lastStatus || 502}`);
 }
 
 export function normalizeStage(s: string) {

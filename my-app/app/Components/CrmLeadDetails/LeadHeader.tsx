@@ -1,6 +1,6 @@
 "use client";
 
-import { MonoTag, StatusPill } from "./ui";
+import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 
 export default function LeadHeader({
@@ -27,7 +27,7 @@ export default function LeadHeader({
         </h1>
         <div className="flex items-center gap-3 flex-wrap">
           <MonoTag>{lead.customerId}</MonoTag>
-          <StatusPill status={lead.status} />
+          <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
           <span className="flex items-center gap-1 text-[11px] text-slate-500">
             🕐 Created {lead.createdAt}
           </span>

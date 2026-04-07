@@ -3,9 +3,15 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { CRM_TOKEN_STORAGE_KEY, login } from "@/lib/auth/api";
-
-const DASHBOARD_PATH = "/";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  getNameFromUser,
+  getRoleFromUser,
+  landingPathByRole,
+  login,
+} from "@/lib/auth/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -20,7 +26,8 @@ export default function LoginPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
-      router.replace(DASHBOARD_PATH);
+      const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+      router.replace(landingPathByRole(role));
     }
   }, [router]);
 
@@ -29,9 +36,21 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const { token } = await login(username, password);
+      const { token, user } = await login(username, password);
       localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
-      router.replace(DASHBOARD_PATH);
+      const role = getRoleFromUser(user);
+      const name = getNameFromUser(user);
+      if (role) {
+        localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
+      } else {
+        localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      }
+      if (name) {
+        localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
+      } else {
+        localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      }
+      router.replace(landingPathByRole(role));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
