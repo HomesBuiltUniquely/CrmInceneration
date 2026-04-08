@@ -1,14 +1,15 @@
 "use client";
 import {
   useState,
+  useEffect,
   ReactNode,
   CSSProperties,
   ChangeEvent,
   MouseEvent,
 } from "react";
-
-// ─── tiny helpers ────────────────────────────────────────────────────────────
-const API = typeof window !== "undefined" ? window.location.origin : "";
+import { adminPanelApi } from "@/lib/admin-panel-api";
+import { leadLimitsApi } from "@/lib/lead-limits-api";
+import { pickNumber } from "@/lib/api-normalize";
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -20,11 +21,18 @@ const C = {
   danger: "#ef4444",
   success: "#22c55e",
   border: "#e2e8f0",
-  text: "#1e293b",
-  muted: "#64748b",
+  text: "#000000",
+  muted: "#000000",
   badgeBg: "#eff6ff",
   badgeText: "#1d4ed8",
 };
+
+/** `toBranch` values for POST /api/admin/branch-transfer — must match backend `User.branch`. */
+const BRANCH_TRANSFER_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: "HBR", label: "HBR" },
+  { value: "JP_NAGAR", label: "JP Nagar" },
+  { value: "SARJAPUR", label: "Sarjapur" },
+];
 
 // ─── reusable atoms ───────────────────────────────────────────────────────────
 interface CardProps {
@@ -158,14 +166,14 @@ const Btn = ({
       fontSize: 14,
       fontWeight: 600,
       cursor: disabled ? "not-allowed" : "pointer",
-      transition: "background .15s",
+      transition: "transform .08s ease, filter .08s ease, box-shadow .12s ease",
       ...style,
     }}
     onMouseEnter={(e: MouseEvent<HTMLButtonElement>) =>
-      !disabled && (e.currentTarget.style.filter = "brightness(0.92)")
+      !disabled && ((e.currentTarget.style.filter = "brightness(0.94)"), (e.currentTarget.style.transform = "translateY(-1px)"), (e.currentTarget.style.boxShadow = "0 6px 14px rgba(15,23,42,0.18)"))
     }
     onMouseLeave={(e: MouseEvent<HTMLButtonElement>) =>
-      (e.currentTarget.style.filter = "")
+      ((e.currentTarget.style.filter = ""), (e.currentTarget.style.transform = ""), (e.currentTarget.style.boxShadow = ""))
     }
   >
     {children}
@@ -244,7 +252,7 @@ const Toggle = ({ active, onChange }: ToggleProps) => (
       style={{
         fontSize: 12,
         fontWeight: 600,
-        color: active ? "#22c55e" : "#cbd5e1",
+        color: active ? "#22c55e" : "#000000",
       }}
     >
       {active ? "ACTIVE" : "INACTIVE"}
@@ -366,9 +374,17 @@ const Tab = ({ label, active, onClick }: TabProps) => (
       fontSize: 14,
       fontWeight: 600,
       cursor: "pointer",
-      transition: "all .15s",
+      transition: "transform .08s ease, filter .08s ease",
       background: active ? C.primary : "transparent",
       color: active ? "#fff" : C.muted,
+    }}
+    onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.filter = "brightness(0.96)";
+      e.currentTarget.style.transform = "translateY(-1px)";
+    }}
+    onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.filter = "";
+      e.currentTarget.style.transform = "";
     }}
   >
     {label}
@@ -393,7 +409,15 @@ const FilterBtn = ({ label, active, onClick }: FilterBtnProps) => (
       fontSize: 13,
       fontWeight: 500,
       cursor: "pointer",
-      transition: "all .15s",
+      transition: "transform .08s ease, filter .08s ease",
+    }}
+    onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.filter = "brightness(0.96)";
+      e.currentTarget.style.transform = "translateY(-1px)";
+    }}
+    onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
+      e.currentTarget.style.filter = "";
+      e.currentTarget.style.transform = "";
     }}
   >
     {label}
@@ -415,7 +439,7 @@ const TableHead = ({ cols }: TableHeadProps) => (
             padding: "10px 14px",
             fontSize: 12,
             fontWeight: 700,
-            color: C.muted,
+            color: C.text,
             textTransform: "uppercase",
             letterSpacing: 0.5,
             borderBottom: `1px solid ${C.border}`,
@@ -457,6 +481,28 @@ function AdminUserSection() {
     password: "",
     email: "",
   });
+  const [admins, setAdmins] = useState<Array<Record<string, unknown>>>([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "admins") return;
+    let cancelled = false;
+    setAdminsLoading(true);
+    void adminPanelApi
+      .listAdmins()
+      .then((rows) => {
+        if (!cancelled) setAdmins(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setAdmins([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAdminsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
 
   const ROLES = [
     "SALES_ADMIN",
@@ -511,19 +557,69 @@ function AdminUserSection() {
               cols={["ID", "Username", "Email", "Role", "Status", "Actions"]}
             />
             <tbody>
-              <tr>
-                <td
-                  colSpan={6}
-                  style={{
-                    textAlign: "center",
-                    padding: 32,
-                    color: C.muted,
-                    fontSize: 14,
-                  }}
-                >
-                  No admins found.
-                </td>
-              </tr>
+              {adminsLoading ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{
+                      textAlign: "center",
+                      padding: 32,
+                      color: C.muted,
+                      fontSize: 14,
+                    }}
+                  >
+                    Loading admins...
+                  </td>
+                </tr>
+              ) : admins.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{
+                      textAlign: "center",
+                      padding: 32,
+                      color: C.muted,
+                      fontSize: 14,
+                    }}
+                  >
+                    No admins found.
+                  </td>
+                </tr>
+              ) : (
+                admins.map((a, i) => (
+                  <tr
+                    key={String(a.id ?? i)}
+                    style={{
+                      background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                      color: C.text,
+                    }}
+                  >
+                    <td style={{ padding: "12px 14px", fontSize: 14, color: C.text }}>
+                      {String(a.id ?? "-")}
+                    </td>
+                    <td
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: 14,
+                        fontWeight: 600,
+                        color: C.text,
+                      }}
+                    >
+                      {String(a.username ?? a.fullName ?? "-")}
+                    </td>
+                    <td style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}>
+                      {String(a.email ?? "-")}
+                    </td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <Badge>{String(a.role ?? "-")}</Badge>
+                    </td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <StatusPill active={Boolean(a.active ?? true)} />
+                    </td>
+                    <td style={{ padding: "12px 14px", fontSize: 13, color: C.muted }}>—</td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -559,7 +655,24 @@ function AdminUserSection() {
                 setAdminForm({ ...adminForm, email: e.target.value })
               }
             />
-            <Btn style={{ alignSelf: "flex-start" }}>Create Admin</Btn>
+            <Btn
+              style={{ alignSelf: "flex-start" }}
+              onClick={() => {
+                void adminPanelApi
+                  .createAdmin({
+                    username: adminForm.username.trim(),
+                    password: adminForm.password,
+                    email: adminForm.email.trim(),
+                  })
+                  .then(() => {
+                    setAdminForm({ username: "", password: "", email: "" });
+                    setTab("admins");
+                  })
+                  .catch(() => {});
+              }}
+            >
+              Create Admin
+            </Btn>
           </div>
         </div>
       )}
@@ -670,9 +783,34 @@ function AdminUserSection() {
 function AssignSection() {
   const [exec, setExec] = useState<string>("");
   const [mgr, setMgr] = useState<string>("");
+  const [execs, setExecs] = useState<Array<Record<string, unknown>>>([]);
+  const [managers, setManagers] = useState<Array<Record<string, unknown>>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    void Promise.all([adminPanelApi.listSalesExecutives(), adminPanelApi.listManagers()])
+      .then(([se, sm]) => {
+        setExecs(se);
+        setManagers(sm);
+      })
+      .catch(() => {
+        setExecs([]);
+        setManagers([]);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
   return (
     <Card>
       <SectionTitle icon="🔗">Assign Sales Executive to Manager</SectionTitle>
+      <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 14 }}>
+        {loading ? "Loading users…" : "Updates the sales executive’s manager in the admin API."}
+      </p>
       <div
         style={{
           display: "grid",
@@ -696,6 +834,11 @@ function AssignSection() {
           </label>
           <Select value={exec} onChange={(e) => setExec(e.target.value)}>
             <option value="">Select Sales Executive</option>
+            {execs.map((u) => (
+              <option key={String(u.id)} value={String(u.id)}>
+                {(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`) as string}
+              </option>
+            ))}
           </Select>
         </div>
         <div>
@@ -712,9 +855,28 @@ function AssignSection() {
           </label>
           <Select value={mgr} onChange={(e) => setMgr(e.target.value)}>
             <option value="">Select Manager</option>
+            {managers.map((u) => (
+              <option key={String(u.id)} value={String(u.id)}>
+                {(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`) as string}
+              </option>
+            ))}
           </Select>
         </div>
-        <Btn>Assign</Btn>
+        <Btn
+          disabled={!exec || !mgr}
+          onClick={() => {
+            void adminPanelApi
+              .updateSalesExecutive(exec, { managerId: Number(mgr) })
+              .then(() => {
+                setExec("");
+                setMgr("");
+                load();
+              })
+              .catch(() => {});
+          }}
+        >
+          Assign
+        </Btn>
       </div>
     </Card>
   );
@@ -723,36 +885,44 @@ function AssignSection() {
 // ─── SECTION 3 : Branch Transfer ─────────────────────────────────────────────
 function BranchTransferSection() {
   const [user, setUser] = useState<string>("");
-  const [newBranch, setNewBranch] = useState<string>("");
+  const [branchPick, setBranchPick] = useState<string>("");
   const [reason, setReason] = useState<string>("");
   const [showHistory, setShowHistory] = useState<boolean>(false);
-  const BRANCHES = [
-    "HBR",
-    "SARJAPURA",
-    "JP_NAGAR",
-    "WHITEFIELD",
-    "KORAMANGALA",
-  ];
+  const [historyUserFilter, setHistoryUserFilter] = useState<string>("");
+  const [transferUsers, setTransferUsers] = useState<Array<Record<string, unknown>>>([]);
+  const [history, setHistory] = useState<Array<Record<string, unknown>>>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Mock history data
-  const history = [
-    {
-      id: 1,
-      user: "Shalin J",
-      from: "SARJAPURA",
-      to: "HBR",
-      date: "2024-01-15",
-      reason: "Performance-based move",
-    },
-    {
-      id: 2,
-      user: "Meghana",
-      from: "HBR",
-      to: "JP_NAGAR",
-      date: "2024-01-10",
-      reason: "Internal team reshuffle",
-    },
-  ];
+  const loadTransferUsers = () => {
+    setLoadingUsers(true);
+    void adminPanelApi
+      .branchTransferUsers()
+      .then(setTransferUsers)
+      .catch(() => setTransferUsers([]))
+      .finally(() => setLoadingUsers(false));
+  };
+
+  useEffect(() => {
+    loadTransferUsers();
+  }, []);
+
+  useEffect(() => {
+    if (!showHistory) return;
+    setLoadingHistory(true);
+    const uid =
+      historyUserFilter.trim() === "" ? undefined : historyUserFilter.trim();
+    void adminPanelApi
+      .branchTransferHistory(uid)
+      .then(setHistory)
+      .catch(() => setHistory([]))
+      .finally(() => setLoadingHistory(false));
+  }, [showHistory, historyUserFilter]);
+
+  const selectedUser = transferUsers.find((u) => String(u.id) === user);
+  const currentBranch = selectedUser
+    ? String(selectedUser.branch ?? selectedUser.currentBranch ?? selectedUser.fromBranch ?? "")
+    : "";
 
   return (
     <Card>
@@ -782,8 +952,9 @@ function BranchTransferSection() {
               marginBottom: 20,
             }}
           >
-            A clean, single flow to move a teammate between branches while
-            keeping all of their context intact.
+            {loadingUsers
+              ? "Loading eligible users…"
+              : "Move a teammate between offices. Backend accepts userId, toBranch, and optional reason only."}
           </p>
           <div
             style={{
@@ -806,6 +977,11 @@ function BranchTransferSection() {
               </label>
               <Select value={user} onChange={(e) => setUser(e.target.value)}>
                 <option value="">Select User</option>
+                {transferUsers.map((u) => (
+                  <option key={String(u.id)} value={String(u.id)}>
+                    {(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`) as string}
+                  </option>
+                ))}
               </Select>
             </div>
             <div>
@@ -822,7 +998,7 @@ function BranchTransferSection() {
               </label>
               <Input
                 placeholder="Auto-filled"
-                value=""
+                value={currentBranch}
                 onChange={() => {}}
                 style={{ background: "#f1f5f9", cursor: "not-allowed" }}
               />
@@ -837,15 +1013,17 @@ function BranchTransferSection() {
                   marginBottom: 8,
                 }}
               >
-                New Branch *
+                Target branch *
               </label>
               <Select
-                value={newBranch}
-                onChange={(e) => setNewBranch(e.target.value)}
+                value={branchPick}
+                onChange={(e) => setBranchPick(e.target.value)}
               >
-                <option value="">Select Branch</option>
-                {BRANCHES.map((b) => (
-                  <option key={b}>{b}</option>
+                <option value="">Select branch</option>
+                {BRANCH_TRANSFER_OPTIONS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label}
+                  </option>
                 ))}
               </Select>
             </div>
@@ -879,20 +1057,9 @@ function BranchTransferSection() {
                 outline: "none",
                 boxSizing: "border-box",
                 fontFamily: "inherit",
+                color: C.text,
               }}
             />
-          </div>
-          <div
-            style={{
-              marginTop: 16,
-              padding: "12px 14px",
-              background: "#f0f9ff",
-              borderRadius: 8,
-              fontSize: 13,
-              color: C.muted,
-            }}
-          >
-            Leads & appointments remain linked to this user after transfer.
           </div>
           <div
             style={{
@@ -905,6 +1072,21 @@ function BranchTransferSection() {
             <Btn
               color={C.primary}
               style={{ fontSize: 14, padding: "9px 24px" }}
+              disabled={!user || !branchPick}
+              onClick={() => {
+                void adminPanelApi
+                  .branchTransfer({
+                    userId: Number(user),
+                    toBranch: branchPick,
+                    reason: reason.trim() || undefined,
+                  })
+                  .then(() => {
+                    setReason("");
+                    setBranchPick("");
+                    loadTransferUsers();
+                  })
+                  .catch(() => {});
+              }}
             >
               ⇄ Transfer Branch
             </Btn>
@@ -921,60 +1103,105 @@ function BranchTransferSection() {
             }}
           >
             <SectionTitle icon="📋">Transfer History</SectionTitle>
-            <Btn
-              color="#64748b"
-              style={{ fontSize: 13, padding: "7px 16px" }}
-              onClick={() => setShowHistory(false)}
-            >
-              ← Back
-            </Btn>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <label style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>User filter</label>
+              <Select
+                value={historyUserFilter}
+                onChange={(e) => setHistoryUserFilter(e.target.value)}
+                style={{ minWidth: 200 }}
+              >
+                <option value="">All (Super Admin; may require role)</option>
+                {transferUsers.map((u) => (
+                  <option key={String(u.id)} value={String(u.id)}>
+                    {(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`) as string}
+                  </option>
+                ))}
+              </Select>
+              <Btn
+                color="#334155"
+                style={{ fontSize: 13, padding: "7px 16px" }}
+                onClick={() => setShowHistory(false)}
+              >
+                ← Back
+              </Btn>
+            </div>
           </div>
+          <p style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
+            Audit API: <code>GET /api/admin/branch-transfer-history?userId=</code> (typically Super Admin).
+          </p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <TableHead
-                cols={["User", "From Branch", "To Branch", "Date", "Reason"]}
+                cols={["User id", "From", "To", "When", "By", "Reason"]}
               />
               <tbody>
-                {history.map((h, i) => (
-                  <tr
-                    key={h.id}
-                    style={{
-                      background: i % 2 === 0 ? "#fff" : "#f8fafc",
-                    }}
-                  >
-                    <td
-                      style={{
-                        padding: "12px 14px",
-                        fontSize: 14,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {h.user}
-                    </td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                      <Badge color="#f0fdf4" text="#166534">
-                        {h.from}
-                      </Badge>
-                    </td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                      <Badge color="#fef3c7" text="#d97706">
-                        {h.to}
-                      </Badge>
-                    </td>
-                    <td
-                      style={{
-                        padding: "12px 14px",
-                        fontSize: 14,
-                        color: C.muted,
-                      }}
-                    >
-                      {h.date}
-                    </td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                      {h.reason}
+                {loadingHistory ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                      Loading history…
                     </td>
                   </tr>
-                ))}
+                ) : history.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                      No transfer history.
+                    </td>
+                  </tr>
+                ) : (
+                  history.map((h, i) => {
+                    const uid = String(h.userId ?? h.user ?? "-");
+                    const fromB = String(h.fromBranch ?? h.from ?? h.oldBranch ?? "-");
+                    const toB = String(h.toBranch ?? h.to ?? h.newBranch ?? "-");
+                    const dateStr = String(
+                      h.transferredAt ?? h.date ?? h.createdAt ?? h.timestamp ?? "-",
+                    );
+                    const reasonStr = String(h.reason ?? h.note ?? "");
+                    const by = String(
+                      h.performedByUsername ?? h.performedBy ?? h.adminUsername ?? "—",
+                    );
+                    return (
+                      <tr
+                        key={String(h.id ?? i)}
+                        style={{
+                          background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                        }}
+                      >
+                        <td
+                          style={{
+                            padding: "12px 14px",
+                            fontSize: 14,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {uid}
+                        </td>
+                        <td style={{ padding: "12px 14px", fontSize: 14 }}>
+                          <Badge color="#f0fdf4" text="#166534">
+                            {fromB}
+                          </Badge>
+                        </td>
+                        <td style={{ padding: "12px 14px", fontSize: 14 }}>
+                          <Badge color="#fef3c7" text="#d97706">
+                            {toB}
+                          </Badge>
+                        </td>
+                        <td
+                          style={{
+                            padding: "12px 14px",
+                            fontSize: 14,
+                            color: C.muted,
+                          }}
+                        >
+                          {dateStr}
+                        </td>
+                        <td style={{ padding: "12px 14px", fontSize: 12, color: C.muted }}>{by}</td>
+                        <td style={{ padding: "12px 14px", fontSize: 14 }}>
+                          {reasonStr}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1012,33 +1239,62 @@ interface User {
 
 function AllUsersSection() {
   const [roleFilter, setRoleFilter] = useState<string>("All");
-  const mockUsers: User[] = [
-    {
-      id: 5,
-      username: "SA",
-      email: "vishal@hubinterior.com",
-      name: "tdm",
-      phone: "1234567890",
-      role: "SALES_ADMIN",
-      branch: "HBR",
-      managerId: "N/A",
-      status: true,
-    },
-    {
-      id: 2,
-      username: "TDM",
-      email: "harsh@hubinterior.com",
-      name: "tdm",
-      phone: "1234567890",
-      role: "TERRITORY_DESIGN_MANAGER",
-      branch: "HBR",
-      managerId: "N/A",
-      status: true,
-    },
-  ];
+  const [users, setUsers] = useState<User[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      adminPanelApi.listAllUsers(),
+      adminPanelApi.branchTransferUsers().catch(() => [] as Array<Record<string, unknown>>),
+    ])
+      .then(([rows, transferList]) => {
+        if (cancelled) return;
+        const branchById = new Map<number, string>();
+        for (const bu of transferList) {
+          const bid = Number(bu.id);
+          const br = bu.branch;
+          if (typeof br === "string" && br.trim()) branchById.set(bid, br.trim());
+        }
+        const normalized = rows.map((u, idx) => {
+          const id = Number(u.id ?? idx + 1);
+          const direct = typeof u.branch === "string" ? u.branch.trim() : "";
+          const merged = direct || branchById.get(id) || "";
+          return {
+            id,
+            username: String(u.username ?? ""),
+            email: String(u.email ?? ""),
+            name: String(u.fullName ?? u.name ?? ""),
+            phone: String(u.phone ?? ""),
+            role: String(u.role ?? ""),
+            branch: merged || "—",
+            managerId: String(u.managerId ?? "N/A"),
+            status: Boolean(u.active ?? true),
+          };
+        });
+        setUsers(normalized);
+      })
+      .catch(() => {
+        if (!cancelled) setUsers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filteredUsers =
+    roleFilter === "All"
+      ? users
+      : users.filter(
+          (u) =>
+            u.role.replace(/_/g, " ").toLowerCase() === roleFilter.toLowerCase(),
+        );
   return (
     <Card>
       <SectionTitle icon="🏢">All Users Management</SectionTitle>
+      <p style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>
+        Branch may be omitted for some roles in <code>/all-users</code>; when the same user appears in branch
+        transfer eligibility, we show that branch here.
+      </p>
       {/* filters */}
       <div
         style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}
@@ -1068,48 +1324,56 @@ function AllUsersSection() {
             ]}
           />
           <tbody>
-            {mockUsers.map((u, i) => (
-              <tr
-                key={u.id}
-                style={{
-                  background: i % 2 === 0 ? "#fff" : "#f8fafc",
-                }}
-              >
-                <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.id}</td>
-                <td
-                  style={{
-                    padding: "12px 14px",
-                    fontSize: 14,
-                    fontWeight: 600,
-                  }}
-                >
-                  {u.username}
-                </td>
-                <td
-                  style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}
-                >
-                  {u.email}
-                </td>
-                <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.name}</td>
-                <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                  {u.phone}
-                </td>
-                <td style={{ padding: "12px 14px" }}>
-                  <Badge>{u.role}</Badge>
-                </td>
-                <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                  {u.branch}
-                </td>
-                <td
-                  style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}
-                >
-                  {u.managerId}
-                </td>
-                <td style={{ padding: "12px 14px" }}>
-                  <StatusPill active={u.status} />
+            {filteredUsers.length === 0 ? (
+              <tr>
+                <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No users loaded. Check login token and admin API access.
                 </td>
               </tr>
-            ))}
+            ) : (
+              filteredUsers.map((u, i) => (
+                <tr
+                  key={u.id}
+                  style={{
+                    background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                  }}
+                >
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.id}</td>
+                  <td
+                    style={{
+                      padding: "12px 14px",
+                      fontSize: 14,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {u.username}
+                  </td>
+                  <td
+                    style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}
+                  >
+                    {u.email}
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.name}</td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>
+                    {u.phone}
+                  </td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Badge>{u.role}</Badge>
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>
+                    {u.branch}
+                  </td>
+                  <td
+                    style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}
+                  >
+                    {u.managerId}
+                  </td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <StatusPill active={u.status} />
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -1129,60 +1393,49 @@ interface SalesExecutive {
 }
 
 function SalesExecSection() {
-  const [execs, setExecs] = useState<SalesExecutive[]>([
-    {
-      id: 17,
-      name: "Shalin J",
-      email: "shalin@hubinterior.com",
-      phone: "9986487141",
-      branch: "SARJAPURA",
-      manager: "Md_Razi",
-      status: true,
-    },
-    {
-      id: 18,
-      name: "Jayashree",
-      email: "jayashree@hubinterior.com",
-      phone: "9741157574",
-      branch: "SARJAPURA",
-      manager: "Md_Razi",
-      status: true,
-    },
-    {
-      id: 19,
-      name: "Yasin",
-      email: "yasin@hubinterior.com",
-      phone: "9740263074",
-      branch: "HBR",
-      manager: "Kulwanth",
-      status: true,
-    },
-    {
-      id: 23,
-      name: "Meghana",
-      email: "meghana@hubinterior.com",
-      phone: "9741169293",
-      branch: "HBR",
-      manager: "Kulwanth",
-      status: true,
-    },
-    {
-      id: 38,
-      name: "Priyanka",
-      email: "priyanka@hubinterior.com",
-      phone: "9741191415",
-      branch: "JP_NAGAR",
-      manager: "Udit_N",
-      status: true,
-    },
-  ]);
+  const [execs, setExecs] = useState<SalesExecutive[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const toggleStatus = (id: number) => {
-    setExecs(execs.map((e) => (e.id === id ? { ...e, status: !e.status } : e)));
+  const load = () => {
+    setLoading(true);
+    void adminPanelApi
+      .listSalesExecutives()
+      .then((rows) => {
+        setExecs(
+          rows.map((r) => ({
+            id: Number(r.id ?? 0),
+            name: String(r.fullName ?? r.name ?? r.username ?? ""),
+            email: String(r.email ?? ""),
+            phone: String(r.phone ?? ""),
+            branch: String(r.branch ?? ""),
+            manager: String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—"),
+            status: Boolean(r.active ?? true),
+          })),
+        );
+      })
+      .catch(() => setExecs([]))
+      .finally(() => setLoading(false));
   };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const toggleStatus = (id: number, next: boolean) => {
+    void adminPanelApi
+      .updateSalesExecutive(id, { active: next })
+      .then(() => load())
+      .catch(() => {});
+  };
+
   return (
     <Card>
       <SectionTitle icon="💼">Sales Executives Management</SectionTitle>
+      {!loading ? (
+        <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 12 }}>
+          {execs.length} sales executive(s).
+        </p>
+      ) : null}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <TableHead
@@ -1198,7 +1451,20 @@ function SalesExecSection() {
             ]}
           />
           <tbody>
-            {execs.map((e, i) => (
+            {loading ? (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  Loading…
+                </td>
+              </tr>
+            ) : execs.length === 0 ? (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No sales executives returned from the API.
+                </td>
+              </tr>
+            ) : (
+              execs.map((e, i) => (
               <tr
                 key={e.id}
                 style={{
@@ -1234,19 +1500,24 @@ function SalesExecSection() {
                 <td style={{ padding: "12px 14px" }}>
                   <Toggle
                     active={e.status}
-                    onChange={() => toggleStatus(e.id)}
+                    onChange={() => toggleStatus(e.id, !e.status)}
                   />
                 </td>
                 <td style={{ padding: "12px 14px" }}>
                   <Btn
                     color={C.danger}
                     style={{ padding: "5px 14px", fontSize: 13 }}
+                    onClick={() => {
+                      if (!window.confirm("Delete this sales executive?")) return;
+                      void adminPanelApi.deleteSalesExecutive(e.id).then(() => load()).catch(() => {});
+                    }}
                   >
                     Delete
                   </Btn>
                 </td>
               </tr>
-            ))}
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -1262,7 +1533,15 @@ const LIMIT_ROLES = [
   "Presales Manager",
 ];
 
+const LIMIT_ROLE_TO_API: Record<string, string> = {
+  "Sales Executive": "SALES_EXECUTIVE",
+  "Sales Manager": "SALES_MANAGER",
+  "Presales Executive": "PRESALES_EXECUTIVE",
+  "Presales Manager": "PRESALES_MANAGER",
+};
+
 interface UserLimit {
+  userId: number;
   name: string;
   role: string;
   branch: string;
@@ -1272,109 +1551,78 @@ interface UserLimit {
   pct: number;
 }
 
+function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
+  const userId = Number(u.userId ?? u.id ?? idx);
+  const limit = pickNumber(u, ["limit", "monthlyLimit", "leadLimit", "maxLeads"]) ?? 0;
+  const current = pickNumber(u, ["current", "currentCount", "used", "leadsCount", "activeLeads"]) ?? 0;
+  const remaining = pickNumber(u, ["remaining"]) ?? Math.max(0, limit - current);
+  const pct = limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0;
+  return {
+    userId,
+    name: String(u.fullName ?? u.name ?? u.username ?? `User ${userId}`),
+    role: String(u.role ?? ""),
+    branch: String(u.branch ?? ""),
+    current,
+    limit,
+    remaining,
+    pct,
+  };
+}
+
 function LeadLimitSection() {
   const [defaultLimit, setDefaultLimit] = useState<string>("50");
   const [limitTab, setLimitTab] = useState<"users" | "role">("users");
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [roleLimit, setRoleLimit] = useState<string>("");
-  const [selectedUsers, setSelectedUsers] = useState<number[] | "all">([]);
+  const [users, setUsers] = useState<UserLimit[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
   const [bulkLimit, setBulkLimit] = useState<string>("");
   const [showModal, setShowModal] = useState(false);
   const [currentEditingUser, setCurrentEditingUser] =
     useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
+  const [limitsLoading, setLimitsLoading] = useState(false);
 
-  const users: UserLimit[] = [
-    {
-      name: "Razi",
-      role: "SALES_MANAGER",
-      branch: "SARJAPURA",
-      current: 0,
-      limit: 0,
-      remaining: 0,
-      pct: 0,
-    },
-    {
-      name: "Kulwanth",
-      role: "SALES_MANAGER",
-      branch: "N/A",
-      current: 0,
-      limit: 0,
-      remaining: 0,
-      pct: 0,
-    },
-    {
-      name: "Udit",
-      role: "SALES_MANAGER",
-      branch: "JP_NAGAR",
-      current: 0,
-      limit: 0,
-      remaining: 0,
-      pct: 0,
-    },
-    {
-      name: "Shalin J",
-      role: "SALES_EXECUTIVE",
-      branch: "SARJAPURA",
-      current: 9,
-      limit: 75,
-      remaining: 66,
-      pct: 11.8,
-    },
-    {
-      name: "Meghana",
-      role: "SALES_EXECUTIVE",
-      branch: "HBR",
-      current: 12,
-      limit: 85,
-      remaining: 73,
-      pct: 14.1,
-    },
-    {
-      name: "Aman Nirmal",
-      role: "SALES_EXECUTIVE",
-      branch: "SARJAPURA",
-      current: 10,
-      limit: 50,
-      remaining: 40,
-      pct: 20,
-    },
-  ];
+  const loadLimits = () => {
+    setLimitsLoading(true);
+    void Promise.all([leadLimitsApi.listUsers(), leadLimitsApi.getDefault()])
+      .then(([rows, def]) => {
+        setUsers(rows.map((r, i) => mapLimitUser(r, i)));
+        const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
+        if (d !== undefined) setDefaultLimit(String(d));
+      })
+      .catch(() => {
+        setUsers([]);
+      })
+      .finally(() => setLimitsLoading(false));
+  };
+
+  useEffect(() => {
+    loadLimits();
+  }, []);
 
   const toggleRole = (r: string) =>
     setSelectedRoles((prev) =>
       prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r],
     );
 
-  const toggleUserSelect = (id: number) => {
-    if (selectedUsers === "all") {
-      setSelectedUsers([id]);
-    } else if (Array.isArray(selectedUsers)) {
-      setSelectedUsers(
-        selectedUsers.includes(id)
-          ? selectedUsers.filter((x) => x !== id)
-          : [...selectedUsers, id],
-      );
-    }
+  const toggleUserSelect = (userId: number) => {
+    setSelectedUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId],
+    );
   };
 
   const toggleSelectAll = () => {
-    if (selectedUsers === "all") {
-      setSelectedUsers([]);
-    } else if (
-      Array.isArray(selectedUsers) &&
-      selectedUsers.length === users.length
-    ) {
-      setSelectedUsers([]);
+    if (users.length > 0 && selectedUserIds.length === users.length) {
+      setSelectedUserIds([]);
     } else {
-      setSelectedUsers("all");
+      setSelectedUserIds(users.map((u) => u.userId));
     }
   };
 
-  const getSelectedCount = () => {
-    if (selectedUsers === "all") return users.length;
-    return Array.isArray(selectedUsers) ? selectedUsers.length : 0;
-  };
+  const getSelectedCount = () => selectedUserIds.length;
+
+  const allSelected = users.length > 0 && selectedUserIds.length === users.length;
 
   return (
     <Card>
@@ -1387,7 +1635,7 @@ function LeadLimitSection() {
         }}
       >
         <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
-        <Btn color="#0ea5e9" style={{ fontSize: 13, padding: "7px 16px" }}>
+        <Btn color="#0ea5e9" style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
           ↻ Refresh
         </Btn>
       </div>
@@ -1447,7 +1695,15 @@ function LeadLimitSection() {
               background: "#fff",
             }}
           />
-          <Btn color="#22c55e" style={{ fontSize: 13, padding: "8px 18px" }}>
+          <Btn
+            color="#22c55e"
+            style={{ fontSize: 13, padding: "8px 18px" }}
+            onClick={() => {
+              const n = Number(defaultLimit);
+              if (Number.isNaN(n)) return;
+              void leadLimitsApi.setDefault(n).then(() => loadLimits()).catch(() => {});
+            }}
+          >
             Update Default
           </Btn>
         </div>
@@ -1532,7 +1788,7 @@ function LeadLimitSection() {
                 <Btn
                   color={C.danger}
                   onClick={() => {
-                    setSelectedUsers([]);
+                    setSelectedUserIds([]);
                     setBulkLimit("");
                   }}
                   style={{ fontSize: 12, padding: "8px 14px" }}
@@ -1552,7 +1808,7 @@ function LeadLimitSection() {
             }}
           >
             <span style={{ fontSize: 13, color: C.muted }}>
-              {users.length} users
+              {limitsLoading ? "Loading…" : `${users.length} users`}
             </span>
             <label
               style={{
@@ -1567,11 +1823,7 @@ function LeadLimitSection() {
             >
               <input
                 type="checkbox"
-                checked={
-                  selectedUsers === "all" ||
-                  (Array.isArray(selectedUsers) &&
-                    selectedUsers.length === users.length)
-                }
+                checked={allSelected}
                 onChange={toggleSelectAll}
                 style={{
                   width: 16,
@@ -1599,11 +1851,7 @@ function LeadLimitSection() {
                   >
                     <input
                       type="checkbox"
-                      checked={
-                        selectedUsers === "all" ||
-                        (Array.isArray(selectedUsers) &&
-                          selectedUsers.length === users.length)
-                      }
+                      checked={allSelected}
                       onChange={toggleSelectAll}
                       style={{
                         width: 16,
@@ -1712,7 +1960,20 @@ function LeadLimitSection() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((u, i) => {
+                {limitsLoading ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                      Loading lead limits…
+                    </td>
+                  </tr>
+                ) : users.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                      No users returned from lead-limits API.
+                    </td>
+                  </tr>
+                ) : (
+                  users.map((u, i) => {
                   const barColor =
                     u.pct === 0
                       ? "#e2e8f0"
@@ -1723,7 +1984,7 @@ function LeadLimitSection() {
                           : "#ef4444";
                   return (
                     <tr
-                      key={i}
+                      key={u.userId}
                       style={{
                         background:
                           u.limit === 0
@@ -1736,12 +1997,8 @@ function LeadLimitSection() {
                       <td style={{ padding: "12px 14px", textAlign: "center" }}>
                         <input
                           type="checkbox"
-                          checked={
-                            selectedUsers === "all" ||
-                            (Array.isArray(selectedUsers) &&
-                              selectedUsers.includes(i))
-                          }
-                          onChange={() => toggleUserSelect(i)}
+                          checked={selectedUserIds.includes(u.userId)}
+                          onChange={() => toggleUserSelect(u.userId)}
                           style={{
                             width: 16,
                             height: 16,
@@ -1846,7 +2103,9 @@ function LeadLimitSection() {
                       </td>
                     </tr>
                   );
-                })}
+                })
+                )
+                }
               </tbody>
             </table>
           </div>
@@ -1928,6 +2187,20 @@ function LeadLimitSection() {
             <Btn
               color="#22c55e"
               style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                const lim = Number(roleLimit);
+                if (Number.isNaN(lim) || selectedRoles.length === 0) return;
+                const roles = selectedRoles
+                  .map((r) => LIMIT_ROLE_TO_API[r] ?? r.replace(/\s+/g, "_").toUpperCase())
+                  .filter(Boolean);
+                void leadLimitsApi
+                  .bulkRoles({ roles, limit: lim })
+                  .then(() => {
+                    setRoleLimit("");
+                    loadLimits();
+                  })
+                  .catch(() => {});
+              }}
             >
               🗓 Set Limit for Roles
             </Btn>
@@ -2015,50 +2288,13 @@ function LeadLimitSection() {
                   </p>
                 </div>
               </div>
-            ) : selectedUsers === "all" ? (
-              users.slice(0, 3).map((user, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: "#f8fafc",
-                    border: `1px solid ${C.border}`,
-                    borderLeft: `3px solid ${C.primary}`,
-                    borderRadius: 8,
-                    padding: 12,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
-                >
-                  <div style={{ fontSize: 20 }}>👤</div>
-                  <div style={{ flex: 1 }}>
-                    <p
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: C.text,
-                        margin: 0,
-                      }}
-                    >
-                      {user.name}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: 12,
-                        color: C.muted,
-                        margin: "4px 0 0 0",
-                      }}
-                    >
-                      {user.role} • {user.branch}
-                    </p>
-                  </div>
-                </div>
-              ))
-            ) : Array.isArray(selectedUsers) ? (
-              selectedUsers.map((i) =>
-                users[i] ? (
+            ) : (
+              selectedUserIds.slice(0, 3).map((userId) => {
+                const row = users.find((x) => x.userId === userId);
+                if (!row) return null;
+                return (
                   <div
-                    key={i}
+                    key={userId}
                     style={{
                       background: "#f8fafc",
                       border: `1px solid ${C.border}`,
@@ -2080,7 +2316,7 @@ function LeadLimitSection() {
                           margin: 0,
                         }}
                       >
-                        {users[i].name}
+                        {row.name}
                       </p>
                       <p
                         style={{
@@ -2089,30 +2325,28 @@ function LeadLimitSection() {
                           margin: "4px 0 0 0",
                         }}
                       >
-                        {users[i].role} • {users[i].branch}
+                        {row.role} • {row.branch}
                       </p>
                     </div>
                   </div>
-                ) : null,
-              )
-            ) : null}
+                );
+              })
+            )}
           </div>
 
-          {!currentEditingUser &&
-            selectedUsers === "all" &&
-            users.length > 3 && (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: C.muted,
-                  textAlign: "center",
-                  marginBottom: 16,
-                }}
-              >
-                ... and {users.length - 3} more user
-                {users.length - 3 !== 1 ? "s" : ""}
-              </p>
-            )}
+          {!currentEditingUser && selectedUserIds.length > 3 && (
+            <p
+              style={{
+                fontSize: 12,
+                color: C.muted,
+                textAlign: "center",
+                marginBottom: 16,
+              }}
+            >
+              ... and {selectedUserIds.length - 3} more user
+              {selectedUserIds.length - 3 !== 1 ? "s" : ""}
+            </p>
+          )}
 
           <label
             style={{
@@ -2168,7 +2402,7 @@ function LeadLimitSection() {
             }}
           >
             <Btn
-              color="#cbd5e1"
+              color="#475569"
               onClick={() => {
                 setShowModal(false);
                 setCurrentEditingUser(null);
@@ -2183,19 +2417,29 @@ function LeadLimitSection() {
             <Btn
               color="#22c55e"
               onClick={() => {
-                // Handle save
+                const lim = Number(currentEditingUser ? currentEditingLimit : bulkLimit);
+                if (Number.isNaN(lim)) return;
                 if (currentEditingUser) {
-                  alert(
-                    `Limit set to ${currentEditingLimit} for ${currentEditingUser.name}`,
-                  );
-                  setCurrentEditingUser(null);
-                  setCurrentEditingLimit("");
+                  void leadLimitsApi
+                    .setUserLimit(currentEditingUser.userId, lim)
+                    .then(() => {
+                      setCurrentEditingUser(null);
+                      setCurrentEditingLimit("");
+                      setShowModal(false);
+                      loadLimits();
+                    })
+                    .catch(() => {});
                 } else {
-                  alert(
-                    `Limit set to ${bulkLimit} for ${getSelectedCount()} user(s)`,
-                  );
+                  void leadLimitsApi
+                    .bulkUsers({ userIds: selectedUserIds, limit: lim })
+                    .then(() => {
+                      setShowModal(false);
+                      setBulkLimit("");
+                      setSelectedUserIds([]);
+                      loadLimits();
+                    })
+                    .catch(() => {});
                 }
-                setShowModal(false);
               }}
               style={{
                 fontSize: 13,

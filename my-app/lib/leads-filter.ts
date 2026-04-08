@@ -1,6 +1,7 @@
 /** CRM `/v1/leads/filter` + merged list helpers (Project-ERP contract). */
 
 import { computeMilestoneProgress } from "@/lib/milestone-progress";
+import { getLeadDisplayName } from "@/lib/lead-display";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
@@ -20,7 +21,9 @@ export type ApiLead = {
   /** Filter API often includes which source bucket this row came from */
   leadType?: string;
   name?: string;
+  fullName?: string;
   customerName?: string;
+  dynamicFields?: Record<string, unknown>;
   companyName?: string;
   email?: string;
   assignee?: string | { name?: string; fullName?: string };
@@ -61,12 +64,7 @@ function assigneeName(lead: ApiLead): string {
 }
 
 function leadDisplayName(lead: ApiLead): string {
-  return (
-    lead.name ??
-    lead.customerName ??
-    lead.email ??
-    (lead.id !== undefined ? `Lead ${lead.id}` : "—")
-  );
+  return getLeadDisplayName(lead as Record<string, unknown>);
 }
 
 function companyFallback(lead: ApiLead): string {

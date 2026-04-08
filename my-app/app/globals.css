@@ -2,12 +2,13 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #000000;
   /* CRM theme variables */
   --crm-bg: #fcfbf7;
   --crm-surface: #f4f1e8;
   --crm-border: #d9d4c9;
-  --crm-muted: #bdb9af;
+  /* Was too light on cream/white surfaces; keep readable body copy */
+  --crm-muted: #1a1a1a;
   --crm-icon-bg: #d9e7fb;
   --crm-icon-text: #3569b4;
   --crm-accent: #5e933f;
@@ -38,6 +39,20 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Strong default text: CRM screens use light cards; faint slate/gray utilities were hard to read */
+@layer utilities {
+  .text-slate-400,
+  .text-slate-500,
+  .text-slate-600,
+  .text-gray-500 {
+    color: #000000 !important;
+  }
+
+  .placeholder\:text-slate-400::placeholder {
+    color: #404040 !important;
+  }
 }
 
 .animate-fade-up {

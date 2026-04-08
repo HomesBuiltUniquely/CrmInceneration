@@ -41,7 +41,7 @@ export default function AdminPanelClient() {
                   <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-slate-900">
                     Admin Panel
                   </div>
-                  <div className="text-sm text-slate-500">
+                  <div className="text-sm text-black">
                     Configuration & controls — Super Admin view
                   </div>
                 </div>

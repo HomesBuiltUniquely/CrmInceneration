@@ -62,7 +62,6 @@ export default function CompleteTaskModal({
   const [status, setStatus] = useState("");
   const [path, setPath] = useState("");
   const [note, setNote] = useState("");
-  const [feedbackOptions, setFeedbackOptions] = useState<string[]>([]);
   const [feedbackMappings, setFeedbackMappings] = useState<SubStatusMapping[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState("");
@@ -124,28 +123,16 @@ export default function CompleteTaskModal({
         }
 
         if (!cancelled) {
-          const mappedSubStages = Array.from(new Set(mappings.map((m) => m.subStageName.trim()))).filter(
-            (v) => v.length > 0
-          );
-          const nextOptions =
-            mappedSubStages.length > 0
-              ? mappedSubStages
-              : [lead.status];
           setFeedbackMappings(mappings);
-          setFeedbackOptions(nextOptions);
-          const selectedFeedback = nextOptions.includes(feedback) ? feedback : nextOptions[0];
-          setFeedback(selectedFeedback);
-
-          const selectedMapping = mappings.find((item) => item.subStageName === selectedFeedback);
-          setStatus(selectedMapping?.stage ?? "");
-          setPath(selectedMapping?.stageCategory ?? "");
+          setFeedback("");
+          setStatus("");
+          setPath("");
         }
       } catch (error) {
         if (!cancelled) {
           setFeedbackError(error instanceof Error ? error.message : "Could not load feedback options");
           setFeedbackMappings([]);
-          setFeedbackOptions([lead.status]);
-          setFeedback(lead.status);
+          setFeedback("");
           setStatus("");
           setPath("");
         }
@@ -163,14 +150,46 @@ export default function CompleteTaskModal({
     };
   }, [lead.status, open]);
 
-  if (!open) {
-    return null;
-  }
-
   const feedbackEnabled = nextCallDate.trim().length > 0;
+  const statusEnabled = feedbackEnabled && !feedbackLoading;
+  const pathEnabled = statusEnabled && status.trim().length > 0;
+  const feedbackSelectEnabled = pathEnabled && path.trim().length > 0;
+  const statusOptions = useMemo(
+    () =>
+      Array.from(new Set(feedbackMappings.map((m) => m.stage.trim()))).filter(
+        (value) => value.length > 0
+      ),
+    [feedbackMappings]
+  );
+  const pathOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          feedbackMappings
+            .filter((m) => m.stage === status)
+            .map((m) => m.stageCategory.trim())
+        )
+      ).filter((value) => value.length > 0),
+    [feedbackMappings, status]
+  );
+  const feedbackOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          feedbackMappings
+            .filter((m) => m.stage === status && m.stageCategory === path)
+            .map((m) => m.subStageName.trim())
+        )
+      ).filter((value) => value.length > 0),
+    [feedbackMappings, path, status]
+  );
   const nextCallDateMissing = nextCallDate.trim().length === 0;
   const noteMissing = note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
+
+  if (!open) {
+    return null;
+  }
 
   const handleSave = async () => {
     setShowErrors(true);
@@ -334,21 +353,51 @@ export default function CompleteTaskModal({
             {/* Status */}
             <div>
               <FieldLabel>Status</FieldLabel>
-              <Input
+              <Select
                 value={status}
-                readOnly
-                className="h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]"
-              />
+                onChange={(e) => {
+                  const nextStatus = e.target.value;
+                  setStatus(nextStatus);
+                  setPath("");
+                  setFeedback("");
+                }}
+                disabled={!statusEnabled}
+                className={[
+                  "h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
+                  !statusEnabled ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <option value="">{statusEnabled ? "Select status" : "Select next call date first"}</option>
+                {statusOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
             </div>
 
             {/* Path */}
             <div>
               <FieldLabel>Path</FieldLabel>
-              <Input
+              <Select
                 value={path}
-                readOnly
-                className="h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]"
-              />
+                onChange={(e) => {
+                  setPath(e.target.value);
+                  setFeedback("");
+                }}
+                disabled={!pathEnabled}
+                className={[
+                  "h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
+                  !pathEnabled ? "opacity-60 cursor-not-allowed" : "",
+                ].join(" ")}
+              >
+                <option value="">{pathEnabled ? "Select path" : "Select status first"}</option>
+                {pathOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
             </div>
 
             {/* Feedback */}
@@ -357,22 +406,19 @@ export default function CompleteTaskModal({
               <Select
                 value={feedback}
                 onChange={(e) => {
-                  const nextFeedback = e.target.value;
-                  setFeedback(nextFeedback);
-                  const selectedMapping = feedbackMappings.find(
-                    (item) => item.subStageName === nextFeedback
-                  );
-                  setStatus(selectedMapping?.stage ?? "");
-                  setPath(selectedMapping?.stageCategory ?? "");
+                  setFeedback(e.target.value);
                 }}
-                disabled={!feedbackEnabled || feedbackLoading}
+                disabled={!feedbackSelectEnabled}
                 className={[
                   " h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
-                  !feedbackEnabled || feedbackLoading ? "opacity-60 cursor-not-allowed" : "",
+                  !feedbackSelectEnabled ? "opacity-60 cursor-not-allowed" : "",
                 ].join(" ")}
               >
+                <option value="">{feedbackSelectEnabled ? "Select feedback" : "Select path first"}</option>
                 {feedbackOptions.map((option) => (
-                  <option key={option}>{option}</option>
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
                 ))}
               </Select>
 

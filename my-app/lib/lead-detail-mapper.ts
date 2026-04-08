@@ -1,6 +1,13 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
 import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import {
+  getLeadDisplayEmail,
+  getLeadDisplayName,
+  getLeadDisplayPhone,
+  getLeadDisplayPincode,
+  getLeadDisplaySource,
+} from "@/lib/lead-display";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -99,7 +106,13 @@ function stageObj(detail: Record<string, unknown>): Record<string, unknown> | nu
 }
 
 function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
-  const v = detail.additionalLeadSources;
+  const v = detail.additionalLeadSources ?? (
+    detail.dynamicFields &&
+    typeof detail.dynamicFields === "object" &&
+    !Array.isArray(detail.dynamicFields)
+      ? (detail.dynamicFields as Record<string, unknown>).additionalLeadSources
+      : undefined
+  );
   if (v === undefined || v === null) return "";
   if (typeof v === "string") return v;
   if (Array.isArray(v)) return JSON.stringify(v);
@@ -131,20 +144,11 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     pickStr(detail, "status", "leadStatus") ||
     "—";
 
-  const name =
-    pickStr(detail, "name", "customerName", "fullName", "full_name", "customerFullName") || "—";
+  const name = getLeadDisplayName(detail);
   const customerId =
     pickStr(detail, "customerId", "crmId", "leadRef") ||
     (detail.id !== undefined && detail.id !== null ? `CRM-${detail.id}` : "—");
-  const phone = pickScalar(
-    detail,
-    "phone",
-    "phoneNumber",
-    "mobile",
-    "mobileNumber",
-    "contactNumber",
-    "primaryPhone"
-  );
+  const phone = getLeadDisplayPhone(detail);
   const createdRaw = pickStr(detail, "createdAt", "createdDate", "leadDate", "createdOn");
   const createdAt = createdRaw ? new Date(createdRaw).toLocaleString() : "—";
   const assignee = pickAssigneeDisplay(detail);
@@ -165,19 +169,19 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     createdAt,
     assignee: assignee || "—",
     designerName: pickDesignerDisplay(detail) || "—",
-    email:
-      pickStr(detail, "email", "emailId", "emailAddress", "mail", "primaryEmail", "contactEmail") ||
-      "",
+    email: getLeadDisplayEmail(detail),
     phone,
-    altPhone: pickStr(detail, "altPhone", "alternatePhone", "phone2", "secondaryPhone") || "",
-    pincode: pickScalar(detail, "pincode", "pinCode", "propertyPin", "zip", "postalCode", "zipCode") || "",
+    altPhone:
+      pickScalar(detail, "altPhoneNumber", "altPhone", "alternatePhone", "phone2", "secondaryPhone") ||
+      "",
+    pincode: getLeadDisplayPincode(detail),
     configuration: pickStr(detail, "configuration", "bhk", "propertyType", "unitType") || "",
     floorPlan: pickStr(detail, "floorPlan", "floorplan") || "",
     possessionDate: pickStr(detail, "possessionDate", "possession", "possessionTime") || "",
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
-    language: pickStr(detail, "language", "preferredLanguage") || "English",
-    leadSource: pickStr(detail, "leadSource", "source", "primaryLeadSource") || "",
+    language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
+    leadSource: getLeadDisplaySource({ ...detail, leadType }),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     meetingType: pickStr(detail, "meetingType", "meeting") || "",
@@ -211,7 +215,9 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.phone = lead.phone;
   next.phoneNumber = lead.phone;
   next.mobile = lead.phone;
+  next.altPhoneNumber = lead.altPhone;
   next.altPhone = lead.altPhone;
+  next.propertyPincode = lead.pincode;
   next.pincode = lead.pincode;
   next.pinCode = lead.pincode;
   next.propertyPin = lead.pincode;
@@ -238,6 +244,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.salesOwnerName = lead.assignee;
   next.ownerName = lead.assignee;
   next.leadSource = lead.leadSource;
+  next.LeadSource = lead.leadSource;
   if (lead.additionalLeadSources !== undefined) {
     next.additionalLeadSources = lead.additionalLeadSources;
   }

@@ -154,41 +154,77 @@ function LeadRow({ row }: { row: LeadRowModel }) {
 export function LeadsPagination({
   page,
   totalPages,
-  onPrev,
-  onNext,
+  onPageChange,
+  pageSize,
+  onPageSizeChange,
   disabled,
 }: {
   page: number;
   totalPages: number;
-  onPrev: () => void;
-  onNext: () => void;
+  onPageChange: (page: number) => void;
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
   disabled?: boolean;
 }) {
   const safeTotal = Math.max(1, totalPages);
-  const canPrev = page > 0 && !disabled;
-  const canNext = page < safeTotal - 1 && !disabled;
+  const maxVisible = 7;
+  const start = Math.max(0, Math.min(page - Math.floor(maxVisible / 2), Math.max(0, safeTotal - maxVisible)));
+  const end = Math.min(safeTotal, start + maxVisible);
+  const pages = Array.from({ length: end - start }, (_, i) => start + i);
 
   return (
     <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
-      <button
-        type="button"
-        disabled={!canPrev}
-        onClick={onPrev}
-        className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        &lt; Previous
-      </button>
-      <div className="text-[12px] font-semibold text-slate-500">
-        Page {page + 1} / {safeTotal}
+      <div className="flex items-center gap-1 text-[12px]">
+        <button
+          type="button"
+          disabled={disabled || page <= 0}
+          onClick={() => onPageChange(Math.max(0, page - 1))}
+          className="h-8 w-8 rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ‹
+        </button>
+        {pages.map((p) => {
+          const active = p === page;
+          return (
+            <button
+              key={p}
+              type="button"
+              disabled={disabled}
+              onClick={() => onPageChange(p)}
+              className={`h-8 min-w-8 rounded-full px-2 font-semibold ${
+                active
+                  ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200"
+                  : "text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              {p + 1}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          disabled={disabled || page >= safeTotal - 1}
+          onClick={() => onPageChange(Math.min(safeTotal - 1, page + 1))}
+          className="h-8 w-8 rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ›
+        </button>
       </div>
-      <button
-        type="button"
-        disabled={!canNext}
-        onClick={onNext}
-        className="rounded-xl bg-white px-4 py-2 text-[12px] font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        Next &gt;
-      </button>
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] font-semibold text-slate-400">Rows</label>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          disabled={disabled}
+          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700"
+        >
+          {[20, 30, 40, 50, 60, 70, 80, 90, 100].map((n) => (
+            <option key={n} value={n}>
+              {n} / page
+            </option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -198,8 +234,9 @@ type LeadsTableProps = {
   loading?: boolean;
   page?: number;
   totalPages?: number;
-  onPrevPage?: () => void;
-  onNextPage?: () => void;
+  onPageChange?: (page: number) => void;
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
 };
 
 export default function LeadsTable({
@@ -207,8 +244,9 @@ export default function LeadsTable({
   loading,
   page = 0,
   totalPages = 1,
-  onPrevPage,
-  onNextPage,
+  onPageChange,
+  pageSize = 20,
+  onPageSizeChange,
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
 
@@ -245,7 +283,7 @@ export default function LeadsTable({
     };
   });
 
-  const showPagination = onPrevPage && onNextPage;
+  const showPagination = onPageChange && onPageSizeChange;
 
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
@@ -273,9 +311,10 @@ export default function LeadsTable({
           <LeadsPagination
             page={page}
             totalPages={totalPages}
+            pageSize={pageSize}
             disabled={loading}
-            onPrev={onPrevPage}
-            onNext={onNextPage}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
           />
         ) : null}
       </div>

@@ -5,8 +5,9 @@ import Image from "next/image";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
+import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
+const IMPORT_BASE = `${process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081"}/v1/import`;
 
 type ImportStep = "upload" | "sheet" | "mapping" | "progress" | "results";
 type AlertTone = "error" | "success";
@@ -24,12 +25,74 @@ type ImportResult = {
   errors?: string[];
 };
 
+const BACKEND_STANDARD_FIELDS = [
+  "name",
+  "email",
+  "phone",
+  "propertyPincode",
+  "assignee",
+  "altPhoneNumber",
+  "attemptsMade",
+  "budget",
+  "customerId",
+  "designerName",
+  "followUpDate",
+  "languagePrefered",
+  "leadSource",
+  "propertyDetails",
+  "status",
+] as const;
+
+const AUTO_MAP_ALIASES: Record<string, string> = {
+  name: "name",
+  fullname: "name",
+  leadsource: "leadSource",
+  source: "leadSource",
+  email: "email",
+  phone: "phone",
+  mobilenumber: "phone",
+  alternatephone: "altPhoneNumber",
+  altphone: "altPhoneNumber",
+  pincode: "propertyPincode",
+  propertypincode: "propertyPincode",
+  assignee: "assignee",
+  budget: "budget",
+  customerid: "customerId",
+  designer: "designerName",
+  designername: "designerName",
+  followupdate: "followUpDate",
+  language: "languagePrefered",
+  languageprefered: "languagePrefered",
+  propertydetails: "propertyDetails",
+  attemptsmade: "attemptsMade",
+  status: "status",
+};
+
+function normalizeKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function canonicalBackendField(field: string) {
+  const normalized = normalizeKey(field);
+  return (BACKEND_STANDARD_FIELDS as readonly string[]).find(
+    (item) => normalizeKey(item) === normalized,
+  );
+}
+
 function getAuthToken() {
   if (typeof window === "undefined") {
     return null;
   }
 
-  return window.localStorage.getItem("authToken");
+  return window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+}
+
+function isValidExcelFile(file: File) {
+  return file.name.toLowerCase().endsWith(".xlsx");
+}
+
+function normalizeHeaderLabel(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function ImportSection({
@@ -151,6 +214,11 @@ export default function ImportLeadsClient() {
   }
 
   async function processSelectedFile(file: File) {
+    if (!isValidExcelFile(file)) {
+      showError("Only .xlsx files are allowed.");
+      return;
+    }
+
     setSelectedFile(file);
     setImportResult(null);
     setFieldMappings({});
@@ -161,8 +229,10 @@ export default function ImportLeadsClient() {
     formData.append("file", file);
 
     try {
-      const response = await fetch(`${API_BASE}/v1/import/excel/sheets`, {
+      const authToken = getAuthToken();
+      const response = await fetch(`${IMPORT_BASE}/excel/sheets`, {
         method: "POST",
+        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
         body: formData,
       });
 
@@ -207,9 +277,9 @@ export default function ImportLeadsClient() {
 
     try {
       const authToken = getAuthToken();
-      const response = await fetch(`${API_BASE}/v1/import/excel/headers`, {
+      const response = await fetch(`${IMPORT_BASE}/excel/headers`, {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
         body: formData,
       });
 
@@ -222,17 +292,23 @@ export default function ImportLeadsClient() {
       }
 
       const headers = Array.isArray(data?.headers) ? (data.headers as string[]) : [];
-      const fields = Array.isArray(data?.availableFields)
+      const fieldsFromApi = Array.isArray(data?.availableFields)
         ? (data.availableFields as string[])
         : [];
+      const fields = Array.from(
+        new Set([
+          ...fieldsFromApi.map((field) => canonicalBackendField(field) ?? field),
+          ...BACKEND_STANDARD_FIELDS,
+        ]),
+      );
 
       const autoMap: Record<string, string> = {};
       for (const header of headers) {
-        const normalized = header.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const standardMatch = fields.find(
-          (field) =>
-            field.toLowerCase().replace(/[^a-z0-9]/g, "") === normalized,
-        );
+        const normalized = normalizeKey(header);
+        const aliasField = AUTO_MAP_ALIASES[normalized];
+        const standardMatch =
+          aliasField ??
+          fields.find((field) => normalizeKey(field) === normalized);
         autoMap[header] =
           standardMatch ?? `custom_${header.replace(/[^a-zA-Z0-9]/g, "_")}`;
       }
@@ -263,7 +339,6 @@ export default function ImportLeadsClient() {
       showError("Please map at least one column before importing.");
       return;
     }
-
     clearAlert();
     setStep("progress");
     setProgressPercent(30);
@@ -272,7 +347,12 @@ export default function ImportLeadsClient() {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
-    formData.append("fieldMapping", JSON.stringify(fieldMappings));
+    const sanitizedMapping = Object.fromEntries(
+      Object.entries(fieldMappings).filter(
+        ([, target]) => !!target && target !== "notMapped",
+      ),
+    );
+    formData.append("fieldMapping", JSON.stringify(sanitizedMapping));
     formData.append("sheetIndex", String(selectedSheetIndex));
 
     try {
@@ -281,9 +361,9 @@ export default function ImportLeadsClient() {
       setProgressPercent(60);
       setProgressText("Processing leads...");
 
-      const response = await fetch(`${API_BASE}/v1/import/excel/import`, {
+      const response = await fetch(`${IMPORT_BASE}/excel/import`, {
         method: "POST",
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
         body: formData,
       });
 
@@ -329,6 +409,15 @@ export default function ImportLeadsClient() {
       if (value === "notMapped") {
         delete next[header];
       } else {
+        const duplicateHeader = Object.entries(next).find(
+          ([key, mapped]) => key !== header && mapped === value,
+        )?.[0];
+        if (duplicateHeader) {
+          showError(
+            `\`${value}\` is already mapped with "${duplicateHeader}". Duplicate backend mapping is not allowed.`,
+          );
+          return current;
+        }
         next[header] = value;
       }
       return next;
@@ -418,14 +507,14 @@ export default function ImportLeadsClient() {
                 {step === "upload" ? (
                   <div className="space-y-4">
                     <p className="text-[0.95rem] text-slate-600">
-                      Upload an Excel file (`.xlsx` or `.xls`) containing lead data.
+                      Upload an Excel file (`.xlsx`) containing lead data.
                       The first row should contain column headers.
                     </p>
 
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".xlsx,.xls"
+                      accept=".xlsx"
                       className="hidden"
                       onChange={(event) => {
                         const file = event.target.files?.[0];
@@ -468,7 +557,7 @@ export default function ImportLeadsClient() {
                         Click to upload or drag and drop
                       </div>
                       <div className="mt-1.5 text-[0.88rem] text-slate-500">
-                        Excel file (.xlsx, .xls)
+                        Excel file (.xlsx only)
                       </div>
                     </label>
 
@@ -478,16 +567,6 @@ export default function ImportLeadsClient() {
                       </div>
                     ) : null}
 
-                    <div className="flex items-center gap-3">
-                      <Button
-                        type="button"
-                        variant="primary"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isBusy}
-                      >
-                        {isBusy ? "Processing..." : "Choose Excel File"}
-                      </Button>
-                    </div>
                   </div>
                 ) : null}
 

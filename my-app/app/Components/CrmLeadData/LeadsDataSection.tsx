@@ -142,7 +142,7 @@ export default function LeadsDataSection({
   onMilestoneSubStageChange,
 }: Props) {
   const [page, setPage] = useState(0);
-  const [size] = useState(10);
+  const [size, setSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SpringPage<ApiLead> | null>(null);
@@ -161,6 +161,10 @@ export default function LeadsDataSection({
   useEffect(() => {
     setPage(0);
   }, [assignee, dateFrom, dateTo, leadType, milestoneStage, milestoneStageCategory, milestoneSubStage, sort, debouncedSearch]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [size]);
 
   useEffect(() => {
     let cancelled = false;
@@ -287,8 +291,9 @@ export default function LeadsDataSection({
         loading={loading}
         page={page}
         totalPages={totalPages}
-        onPrevPage={() => setPage((p) => Math.max(0, p - 1))}
-        onNextPage={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+        pageSize={size}
+        onPageChange={(next) => setPage(Math.max(0, Math.min(totalPages - 1, next)))}
+        onPageSizeChange={(nextSize) => setSize(nextSize)}
       />
     </>
   );
