@@ -10,7 +10,7 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       { id: "crm-my-leads", label: "My Leads", description: "View and manage pipeline", icon: "chart", href: "/Leads" },
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
-      { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar" },
+      { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar", href: "/hub-calendar" },
     ],
   },
   {
