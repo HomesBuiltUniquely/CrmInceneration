@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
@@ -50,45 +50,30 @@ function OwnerAvatar() {
   return <div className="h-7 w-7 rounded-full bg-slate-200 ring-2 ring-white" />;
 }
 
-function BoltIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M13 2 3 14h7l-1 8 12-14h-7l-1-6Z"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-function AlertButton({
-  onClick,
-}: {
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500 text-white shadow-sm hover:bg-rose-600"
-    >
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 9v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        <path d="M12 17h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-      </svg>
-    </button>
-  );
-}
+type LeadRowActionProps = {
+  row: LeadRowModel;
+  selected: boolean;
+  onToggleSelected: (checked: boolean) => void;
+  onDelete?: (row: LeadRowModel) => void;
+  onAssign?: (row: LeadRowModel) => void;
+};
 
-function LeadRow({ row }: { row: LeadRowModel }) {
+function LeadRowAction({
+  row,
+  selected,
+  onToggleSelected,
+  onDelete,
+  onAssign,
+}: LeadRowActionProps) {
   const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
-
   return (
     <div
       onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
-      className="grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4 transition-colors hover:bg-slate-50"
+      className={`group grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4 transition-all hover:bg-blue-50/40 ${
+        selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
+      }`}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
@@ -98,15 +83,24 @@ function LeadRow({ row }: { row: LeadRowModel }) {
         }
       }}
     >
+      <div className="col-span-1 flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={selected}
+          onClick={(event) => event.stopPropagation()}
+          onChange={(event) => onToggleSelected(event.target.checked)}
+          className="h-4 w-4 cursor-pointer accent-blue-600"
+        />
+      </div>
       <div className="col-span-3 flex items-center gap-3">
-        <div className="h-9 w-9 rounded-full bg-slate-200" />
+        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 shadow-inner" />
         <div className="leading-tight">
           <div className="text-[12px] font-semibold text-slate-800">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-slate-400">{row.company}</div>
         </div>
       </div>
 
-      <div className="col-span-3">
+      <div className="col-span-2">
         {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "green" }} /> : null}
       </div>
 
@@ -124,28 +118,32 @@ function LeadRow({ row }: { row: LeadRowModel }) {
         <div className="text-[12px] font-semibold text-slate-700">{row.owner.name}</div>
       </div>
 
-      <div className="col-span-2">
+      <div className="col-span-1">
         <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-rose-600" : "text-slate-500"}`}>
           {row.engagement.time}
         </div>
         <div className="mt-1 text-[11px] font-semibold text-slate-700">{row.engagement.action}</div>
       </div>
 
-      <div className="col-span-0 flex justify-end">
-        {row.actionIcon === "alert" ? (
-          <AlertButton
-            onClick={(event) => {
-              event?.stopPropagation?.();
-            }}
-          />
-        ) : (
-          <button
-            onClick={(event) => event.stopPropagation()}
-            className="rounded-xl p-2 hover:bg-slate-50"
-          >
-            <BoltIcon />
-          </button>
-        )}
+      <div className="col-span-1 flex justify-end gap-2">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onAssign?.(row);
+          }}
+          className="rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
+        >
+          Assign
+        </button>
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete?.(row);
+          }}
+          className="rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
+        >
+          Delete
+        </button>
       </div>
     </div>
   );
@@ -237,6 +235,10 @@ type LeadsTableProps = {
   onPageChange?: (page: number) => void;
   pageSize?: number;
   onPageSizeChange?: (size: number) => void;
+  selectedRowIds?: string[];
+  onSelectedRowIdsChange?: (ids: string[]) => void;
+  onDeleteRow?: (row: LeadRowModel) => void;
+  onAssignRow?: (row: LeadRowModel) => void;
 };
 
 export default function LeadsTable({
@@ -247,6 +249,10 @@ export default function LeadsTable({
   onPageChange,
   pageSize = 20,
   onPageSizeChange,
+  selectedRowIds = [],
+  onSelectedRowIdsChange,
+  onDeleteRow,
+  onAssignRow,
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
 
@@ -284,17 +290,38 @@ export default function LeadsTable({
   });
 
   const showPagination = onPageChange && onPageSizeChange;
+  const allSelected = rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
+  const someSelected = selectedRowIds.length > 0 && !allSelected;
+  const selectAllRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!selectAllRef.current) return;
+    selectAllRef.current.indeterminate = someSelected;
+  }, [someSelected]);
 
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-12 gap-3 bg-slate-50 px-6 py-4 text-[10px] font-bold tracking-wide text-slate-400">
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+        <div className="grid grid-cols-12 gap-3 bg-gradient-to-r from-slate-50 to-blue-50/60 px-6 py-4 text-[10px] font-bold tracking-wide text-slate-500">
+          <div className="col-span-1">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={allSelected}
+              onChange={(event) =>
+                onSelectedRowIdsChange?.(
+                  event.target.checked ? rows.map((row) => row.id) : []
+                )
+              }
+              className="h-4 w-4 cursor-pointer accent-blue-600"
+            />
+          </div>
           <div className="col-span-3">LEAD NAME</div>
-          <div className="col-span-3">STATUS</div>
+          <div className="col-span-2">STATUS</div>
           <div className="col-span-2">JOURNEY TRACK</div>
           <div className="col-span-2">OWNER</div>
-          <div className="col-span-2">ENGAGEMENT</div>
-          <div className="col-span-0 text-right">ACTIONS</div>
+          <div className="col-span-1">ENGAGEMENT</div>
+          <div className="col-span-1 text-right">ACTIONS</div>
         </div>
         {loading ? (
           <div className="border-t border-slate-100 px-6 py-10 text-center text-[12px] text-slate-500">
@@ -305,7 +332,23 @@ export default function LeadsTable({
             No leads found.
           </div>
         ) : (
-          rows.map((r) => <LeadRow key={r.id} row={r} />)
+          rows.map((r) => (
+            <LeadRowAction
+              key={r.id}
+              row={r}
+              selected={selectedRowIds.includes(r.id)}
+              onToggleSelected={(checked) => {
+                if (!onSelectedRowIdsChange) return;
+                if (checked) {
+                  onSelectedRowIdsChange([...new Set([...selectedRowIds, r.id])]);
+                  return;
+                }
+                onSelectedRowIdsChange(selectedRowIds.filter((id) => id !== r.id));
+              }}
+              onDelete={onDeleteRow}
+              onAssign={onAssignRow}
+            />
+          ))
         )}
         {showPagination ? (
           <LeadsPagination

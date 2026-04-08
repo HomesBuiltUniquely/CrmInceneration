@@ -705,10 +705,10 @@ export default function QuickAccessSidebar({
                   {!isCollapsed ? (
                     <>
                       <div className="min-w-0 flex-1">
-                        <div className="text-[1.15rem] font-extrabold tracking-[-0.04em] text-slate-800">
+                        <div className="text-[18px] font-bold tracking-[-0.02em] text-[#2c3e50]">
                           {section.label}
                         </div>
-                        <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-[#88a2cb]">
+                        <div className="mt-0.5 text-[12px] font-semibold uppercase tracking-[0.16em] text-[#7f8c8d]">
                           {section.subtitle}
                         </div>
                       </div>
@@ -782,13 +782,13 @@ export default function QuickAccessSidebar({
                           <div className="min-w-0 flex-1">
                             <div
                               className={cn(
-                                "text-[1rem] font-semibold",
-                                isActive ? "text-blue-600" : "text-slate-700",
+                                "text-[14px] font-semibold",
+                                isActive ? "text-[#2a80d7]" : "text-[#2c3e50]",
                               )}
                             >
                               {item.label}
                             </div>
-                            <div className="mt-0.5 text-[0.78rem] text-slate-400">
+                            <div className="mt-0.5 text-[12px] font-medium text-[#7f8c8d]">
                               {item.description}
                             </div>
                           </div>
@@ -816,10 +816,10 @@ export default function QuickAccessSidebar({
                 {profileInitials}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[0.95rem] font-bold text-slate-800">
+                <div className="text-[14px] font-bold text-[#2c3e50]">
                   {currentName}
                 </div>
-                <div className="text-[0.6rem] uppercase tracking-[0.08em] text-slate-400">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#7f8c8d]">
                   {currentRole}
                 </div>
               </div>
@@ -838,7 +838,7 @@ export default function QuickAccessSidebar({
         ) : (
           <div className="flex justify-center">
             <div
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-[#dbe8fb] text-[0.74rem] font-bold text-[#2d63e2]"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-[#dbe8fb] text-[12px] font-bold text-[#2d63e2]"
               title={currentName}
             >
               {currentInitials}

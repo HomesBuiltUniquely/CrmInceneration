@@ -46,3 +46,24 @@ export async function PUT(
     headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
   });
 }
+
+export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ leadType: string; id: string }> }
+) {
+  const { leadType, id } = await ctx.params;
+  if (!isCrmLeadType(leadType)) {
+    return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
+  }
+  const url = `${BASE}${detailsUrl(leadType, id)}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: upstreamAuthHeaders(req),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  return new NextResponse(text, {
+    status: res.status,
+    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+  });
+}

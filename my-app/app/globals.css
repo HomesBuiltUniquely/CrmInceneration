@@ -1,21 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #000000;
-  /* CRM theme variables */
-  --crm-bg: #fcfbf7;
-  --crm-surface: #f4f1e8;
-  --crm-border: #d9d4c9;
-  /* Was too light on cream/white surfaces; keep readable body copy */
-  --crm-muted: #1a1a1a;
+  --background: #f8f9fa;
+  --foreground: #333333;
+
+  /* Old CRM parity tokens */
+  --bg-page: #f8f9fa;
+  --bg-card: #ffffff;
+  --bg-soft: #f7f9fc;
+
+  --text-primary: #2c3e50;
+  --text-secondary: #7f8c8d;
+  --text-muted: #6b7280;
+  --text-body: #333333;
+
+  --brand-primary: #2a80d7;
+  --brand-primary-hover: #256fc0;
+  --brand-accent: #1d7ed8;
+
+  --success: #27ae60;
+  --success-soft-bg: #d4edda;
+  --success-soft-text: #155724;
+
+  --warning: #f57c00;
+  --warning-soft-bg: #fff3e0;
+
+  --danger: #e74c3c;
+  --danger-hover: #c0392b;
+  --danger-strong: #ef2d2d;
+
+  --border-default: #d1d5db;
+  --border-soft: #dfe3e8;
+
+  /* Backward-compatible aliases used by existing screens */
+  --crm-bg: var(--bg-page);
+  --crm-surface: var(--bg-soft);
+  --crm-border: var(--border-soft);
+  --crm-muted: var(--text-secondary);
   --crm-icon-bg: #d9e7fb;
   --crm-icon-text: #3569b4;
-  --crm-accent: #5e933f;
-  --crm-accent-bg: #e5efd8;
-  --crm-accent-text: #2d6b2e;
-  --crm-accent-hover: #ddeac9;
-  --crm-warning-bg: #f8efd8;
+  --crm-accent: var(--success);
+  --crm-accent-bg: var(--success-soft-bg);
+  --crm-accent-text: var(--success-soft-text);
+  --crm-accent-hover: #c8e8d2;
+  --crm-warning-bg: var(--warning-soft-bg);
   --crm-warning-border: #a67d2c;
   --crm-warning-text: #7b5a16;
   --crm-required: #9e3d34;
@@ -24,7 +52,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
@@ -38,7 +66,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 /* Strong default text: CRM screens use light cards; faint slate/gray utilities were hard to read */
@@ -52,6 +80,97 @@ body {
 
   .placeholder\:text-slate-400::placeholder {
     color: #404040 !important;
+  }
+
+  .text-crm-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .text-crm-section {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .text-crm-card-heading {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .text-crm-table-heading {
+    font-size: 12px;
+    font-weight: 600;
+    color: #54606f;
+  }
+
+  .text-crm-body {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-body);
+  }
+
+  .text-crm-meta {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .chip-success {
+    background: var(--success-soft-bg);
+    color: var(--success-soft-text);
+    border: 1px solid #b7e4c7;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  .chip-warning {
+    background: var(--warning-soft-bg);
+    color: var(--warning);
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  .chip-danger {
+    background: #f8d7da;
+    color: #721c24;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  .btn-primary {
+    background: var(--brand-primary);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .btn-primary:hover {
+    background: var(--brand-primary-hover);
+  }
+
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .btn-danger:hover {
+    background: var(--danger-hover);
+  }
+
+  .btn-secondary {
+    background: #fff;
+    color: var(--text-muted);
+    border: 1px solid var(--border-default);
+    font-weight: 500;
   }
 }
 

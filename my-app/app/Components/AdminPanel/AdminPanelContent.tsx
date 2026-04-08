@@ -2515,7 +2515,8 @@ export default function AdminPanelContent() {
       style={{
         background: C.bg,
         minHeight: "100vh",
-        fontFamily: "'Segoe UI', system-ui, sans-serif",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontSize: 14,
         padding: "28px 32px",
       }}
     >
