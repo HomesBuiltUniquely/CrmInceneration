@@ -58,6 +58,8 @@ function roleDisplayName(role: string): string {
   if (r === "SALES_EXECUTIVE") return "Sales Executive";
   if (r === "PRESALES_MANAGER") return "Presales Manager";
   if (r === "PRESALES_EXECUTIVE") return "Presales Executive";
+  if (r === "TERRITORY_DESIGN_MANAGER") return "Territory Design Manager";
+  if (r === "DESIGN_MANAGER") return "Design Manager";
   if (r === "DESIGNER") return "Designer";
   return "";
 }
@@ -504,14 +506,56 @@ export default function QuickAccessSidebar({
   const pathname = usePathname();
   const initialParentId = sections[0]?.id ?? "";
   const [openParentId, setOpenParentId] = useState(initialParentId);
-  const [activeSubItemId, setActiveSubItemId] = useState(
-    sections[0]?.items[0]?.id ?? "",
-  );
+  const [activeSubItemId, setActiveSubItemId] = useState("");
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [currentName, setCurrentName] = useState(profileName);
   const [currentRole, setCurrentRole] = useState(profileRole);
   const [currentInitials, setCurrentInitials] = useState(profileInitials);
+
+  const filteredSections = useMemo(() => {
+    const role = normalizeRole(currentRole || profileRole);
+    const isSalesAdmin = role === "SALES_ADMIN";
+    const isSalesManager = role === "SALES_MANAGER";
+    const isPresalesManager = role === "PRESALES_MANAGER";
+    const isSalesExecutive = role === "SALES_EXECUTIVE";
+    const isPresalesExecutive = role === "PRESALES_EXECUTIVE";
+    const isTerritoryDesignManager = role === "TERRITORY_DESIGN_MANAGER";
+    const isDesignManager = role === "DESIGN_MANAGER";
+    const isDesigner = role === "DESIGNER";
+    const isDesignRole = isTerritoryDesignManager || isDesignManager || isDesigner;
+
+    return sections
+      .filter((section) => {
+        if (isDesignRole) {
+          return section.id === "design";
+        }
+        if (
+          isSalesAdmin ||
+          isSalesManager ||
+          isPresalesManager ||
+          isSalesExecutive ||
+          isPresalesExecutive
+        ) {
+          return section.id === "crm";
+        }
+        return true;
+      })
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => {
+          if (item.id === "design-create-user") return isTerritoryDesignManager || isDesignManager;
+          if (item.id === "crm-sales-managers") return isSalesAdmin || isSalesManager;
+          if (item.id === "crm-presales-executives") return isPresalesManager;
+          if ((isSalesExecutive || isPresalesExecutive) && item.id === "crm-import-leads") return false;
+          if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
+          if (isSalesExecutive && item.id === "crm-presales-executives") return false;
+          if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
+          return true;
+        }),
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [currentRole, profileRole, sections]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -538,55 +582,59 @@ export default function QuickAccessSidebar({
 
   // Set active item based on current pathname
   useEffect(() => {
-    for (const section of sections) {
+    for (const section of filteredSections) {
       for (const item of section.items) {
         if (item.href && pathname.startsWith(item.href)) {
-          setActiveSubItemId(item.id);
+          if (section.id === "design" || section.id === "admin") {
+            setActiveSubItemId("");
+          } else {
+            setActiveSubItemId(item.id);
+          }
           setOpenParentId(section.id);
           return;
         }
       }
     }
-  }, [pathname, sections]);
+  }, [filteredSections, pathname]);
 
   const openParent = useMemo(
     () =>
-      sections.find((section) => section.id === openParentId) ?? sections[0],
-    [openParentId, sections],
+      filteredSections.find((section) => section.id === openParentId) ?? filteredSections[0],
+    [filteredSections, openParentId],
   );
 
   useEffect(() => {
-    if (!sections.length || !openParent) {
+    if (!filteredSections.length) return;
+    const hasOpenParent =
+      openParentId === "" || filteredSections.some((s) => s.id === openParentId);
+    if (!hasOpenParent) setOpenParentId(filteredSections[0].id);
+    const hasActiveSub = filteredSections.some((s) =>
+      s.items.some((i) => i.id === activeSubItemId),
+    );
+    if (activeSubItemId && !hasActiveSub) setActiveSubItemId("");
+  }, [activeSubItemId, filteredSections, openParentId]);
+
+  useEffect(() => {
+    if (!filteredSections.length || !openParent) {
       return;
     }
     const nextParent = openParent;
-    const subItem =
-      nextParent.items.find((item) => item.id === activeSubItemId) ??
-      nextParent.items[0];
+    const subItem = nextParent.items.find((item) => item.id === activeSubItemId);
 
     if (subItem) {
       onSelectionChange?.({ parent: nextParent, subItem });
     }
-  }, [activeSubItemId, onSelectionChange, openParent, sections]);
+  }, [activeSubItemId, filteredSections, onSelectionChange, openParent]);
 
   const handleParentClick = (section: QuickAccessParentItem) => {
     if (isCollapsed) {
       setIsCollapsed(false);
-      setOpenParentId(section.id);
-      if (section.items[0]) {
-        setActiveSubItemId(section.items[0].id);
-      }
-      return;
     }
-
+    // Clicking anywhere on the parent tab toggles subtabs.
     if (openParentId === section.id) {
-      setIsCollapsed(true);
-      return;
-    }
-
-    setOpenParentId(section.id);
-    if (section.items[0]) {
-      setActiveSubItemId(section.items[0].id);
+      setOpenParentId("");
+    } else {
+      setOpenParentId(section.id);
     }
   };
 
@@ -611,6 +659,9 @@ export default function QuickAccessSidebar({
         return;
       }
 
+      if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {
+        return;
+      }
       router.push(item.href);
     }
   };
@@ -678,12 +729,21 @@ export default function QuickAccessSidebar({
         )}
       >
         <div className="space-y-3.5">
-          {sections.map((section) => {
+          {filteredSections.map((section) => {
             const isOpen = section.id === openParentId;
 
             return (
               <div key={section.id} className="space-y-3">
                 <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => handleParentClick(section)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleParentClick(section);
+                    }
+                  }}
                   className={cn(
                     "flex w-full items-center rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
                     isCollapsed
@@ -696,9 +756,19 @@ export default function QuickAccessSidebar({
                 >
                   <button
                     type="button"
-                    onClick={() => handleParentClick(section)}
                     title={section.label}
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#dbe8fb] text-[#2d63e2] transition-transform duration-200 hover:scale-[1.03]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsCollapsed((prev) => {
+                        const next = !prev;
+                        if (prev) {
+                          // When expanding from collapsed, also open this section.
+                          setOpenParentId(section.id);
+                        }
+                        return next;
+                      });
+                    }}
                   >
                     <SidebarIcon name={section.icon} className="h-5 w-5" />
                   </button>
@@ -720,7 +790,10 @@ export default function QuickAccessSidebar({
                         ) : null}
                         <button
                           type="button"
-                          onClick={() => handleDropdownToggle(section)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDropdownToggle(section);
+                          }}
                           aria-label={
                             isOpen
                               ? `Close ${section.label}`

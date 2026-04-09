@@ -5,6 +5,7 @@ import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { asCrmLeadType, mapApiLeadToRow } from "@/lib/leads-filter";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 
@@ -31,6 +32,14 @@ type Props = {
 type SubStatusResp = {
   mappings?: Array<{ stage: string; stageCategory: string; subStageName: string }>;
 };
+type HierarchyUser = {
+  id: number;
+  fullName?: string;
+  username?: string;
+  managerId?: number | null;
+  role?: string;
+  active?: boolean;
+};
 
 async function fetchMergedPage(
   page: number,
@@ -46,11 +55,12 @@ async function fetchMergedPage(
   milestoneSubStage: string
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
+  const normalizedLeadType = leadType.trim().toLowerCase();
   qs.set("mergeAll", "1");
   qs.set("page", String(page));
   qs.set("size", String(size));
   qs.set("sort", sort);
-  qs.set("leadType", leadType);
+  qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
   if (search.trim()) qs.set("search", search.trim());
   if (assignee.trim()) qs.set("assignee", assignee.trim());
   if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
@@ -58,6 +68,7 @@ async function fetchMergedPage(
   if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
   if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
   if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
+  if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
 
   const res = await fetch(
     `/api/crm/leads?${qs.toString()}`,
@@ -152,11 +163,28 @@ export default function LeadsDataSection({
   const [milestoneStageOptions, setMilestoneStageOptions] = useState<string[]>([]);
   const [milestoneStageCategoryOptions, setMilestoneStageCategoryOptions] = useState<string[]>([]);
   const [milestoneSubStageOptions, setMilestoneSubStageOptions] = useState<string[]>([]);
+  const [leadTypeCounts, setLeadTypeCounts] = useState<Record<string, number>>({});
+  const [viewerRole, setViewerRole] = useState("");
+  const [salesAdminFilter, setSalesAdminFilter] = useState("");
+  const [salesManagerFilter, setSalesManagerFilter] = useState("");
+  const [salesExecFilter, setSalesExecFilter] = useState("");
+  const [presalesManagerFilter, setPresalesManagerFilter] = useState("");
+  const [presalesExecFilter, setPresalesExecFilter] = useState("");
+  const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
+  const [salesManagers, setSalesManagers] = useState<HierarchyUser[]>([]);
+  const [salesExecs, setSalesExecs] = useState<HierarchyUser[]>([]);
+  const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
+  const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
     return () => window.clearTimeout(t);
   }, [search]);
+
+  useEffect(() => {
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    setViewerRole(normalizeRole(role));
+  }, []);
 
   useEffect(() => {
     setPage(0);
@@ -184,6 +212,52 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     let cancelled = false;
+    const auth = getCrmAuthHeaders();
+    void Promise.all([
+      fetch("/api/admin/users-by-role?role=SALES_ADMIN", { cache: "no-store", headers: auth, credentials: "include" }),
+      fetch("/api/admin/users-by-role?role=SALES_MANAGER", { cache: "no-store", headers: auth, credentials: "include" }),
+      fetch("/api/admin/users-by-role?role=SALES_EXECUTIVE", { cache: "no-store", headers: auth, credentials: "include" }),
+      fetch("/api/admin/users-by-role?role=PRESALES_MANAGER", { cache: "no-store", headers: auth, credentials: "include" }),
+      fetch("/api/admin/users-by-role?role=PRESALES_EXECUTIVE", { cache: "no-store", headers: auth, credentials: "include" }),
+    ])
+      .then(async ([sa, sm, se, pm, pe]) => {
+        const parse = async (r: Response): Promise<HierarchyUser[]> => {
+          if (!r.ok) return [];
+          const j = (await r.json().catch(() => [])) as unknown;
+          return Array.isArray(j) ? (j as HierarchyUser[]) : [];
+        };
+        const [saJ, smJ, seJ, pmJ, peJ] = await Promise.all([parse(sa), parse(sm), parse(se), parse(pm), parse(pe)]);
+        if (cancelled) return;
+        setSalesAdmins(saJ.filter((u) => u.active !== false));
+        setSalesManagers(smJ.filter((u) => u.active !== false));
+        setSalesExecs(seJ.filter((u) => u.active !== false));
+        setPresalesManagers(pmJ.filter((u) => u.active !== false));
+        setPresalesExecs(peJ.filter((u) => u.active !== false));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSalesAdmins([]);
+        setSalesManagers([]);
+        setSalesExecs([]);
+        setPresalesManagers([]);
+        setPresalesExecs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
+  const effectiveAssignee =
+    salesExecFilter ||
+    presalesExecFilter ||
+    salesManagerFilter ||
+    presalesManagerFilter ||
+    salesAdminFilter ||
+    assignee;
+
+  useEffect(() => {
+    let cancelled = false;
     void (async () => {
       try {
         const o = await fetchFilterOptions();
@@ -205,6 +279,53 @@ export default function LeadsDataSection({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const typeKeys = ["all", "formlead", "glead", "mlead", "addlead", "websitelead", "verified"] as const;
+        const results = await Promise.all(
+          typeKeys.map(async (t) => {
+            const page = await fetchMergedPage(
+              0,
+              1,
+              t,
+              "updatedAt,desc",
+              debouncedSearch,
+              assignee,
+              dateFrom,
+              dateTo,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+            );
+            return [t, page.totalElements ?? 0] as const;
+          }),
+        );
+        if (cancelled) return;
+        setLeadTypeCounts(Object.fromEntries(results));
+      } catch {
+        if (!cancelled) setLeadTypeCounts({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assignee,
+    dateFrom,
+    dateTo,
+    debouncedSearch,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    presalesExecFilter,
+    presalesManagerFilter,
+    salesAdminFilter,
+    salesExecFilter,
+    salesManagerFilter,
+  ]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -215,7 +336,7 @@ export default function LeadsDataSection({
         leadType,
         sort,
         debouncedSearch,
-        assignee,
+        effectiveAssignee,
         dateFrom,
         dateTo,
         milestoneStage,
@@ -229,7 +350,19 @@ export default function LeadsDataSection({
     } finally {
       setLoading(false);
     }
-  }, [assignee, dateFrom, dateTo, debouncedSearch, leadType, milestoneStage, milestoneStageCategory, milestoneSubStage, page, size, sort]);
+  }, [
+    dateFrom,
+    dateTo,
+    debouncedSearch,
+    effectiveAssignee,
+    leadType,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    page,
+    size,
+    sort,
+  ]);
 
   useEffect(() => {
     void load();
@@ -251,6 +384,8 @@ export default function LeadsDataSection({
         rangeEnd={end}
         totalCount={total}
         loading={loading}
+        leadTypeCounts={leadTypeCounts}
+        viewerRole={viewerRole}
         leadType={leadType}
         sort={sort}
         assignee={assignee}
@@ -259,6 +394,16 @@ export default function LeadsDataSection({
         milestoneStage={milestoneStage}
         milestoneStageCategory={milestoneStageCategory}
         milestoneSubStage={milestoneSubStage}
+        salesAdminFilter={salesAdminFilter}
+        salesManagerFilter={salesManagerFilter}
+        salesExecFilter={salesExecFilter}
+        presalesManagerFilter={presalesManagerFilter}
+        presalesExecFilter={presalesExecFilter}
+        salesAdminOptions={salesAdmins.map((u) => userName(u)).filter(Boolean)}
+        salesManagerOptions={salesManagers.map((u) => userName(u)).filter(Boolean)}
+        salesExecOptions={salesExecs.map((u) => userName(u)).filter(Boolean)}
+        presalesManagerOptions={presalesManagers.map((u) => userName(u)).filter(Boolean)}
+        presalesExecOptions={presalesExecs.map((u) => userName(u)).filter(Boolean)}
         assigneeOptions={assigneeOptions}
         milestoneStageOptions={milestoneStageOptions}
         milestoneStageCategoryOptions={milestoneStageCategoryOptions}
@@ -271,6 +416,21 @@ export default function LeadsDataSection({
         onMilestoneStageChange={onMilestoneStageChange}
         onMilestoneStageCategoryChange={onMilestoneStageCategoryChange}
         onMilestoneSubStageChange={onMilestoneSubStageChange}
+        onSalesAdminFilterChange={(next) => {
+          setSalesAdminFilter(next);
+          setSalesManagerFilter("");
+          setSalesExecFilter("");
+        }}
+        onSalesManagerFilterChange={(next) => {
+          setSalesManagerFilter(next);
+          setSalesExecFilter("");
+        }}
+        onSalesExecFilterChange={setSalesExecFilter}
+        onPresalesManagerFilterChange={(next) => {
+          setPresalesManagerFilter(next);
+          setPresalesExecFilter("");
+        }}
+        onPresalesExecFilterChange={setPresalesExecFilter}
       />
       {error ? (
         <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-rose-600">

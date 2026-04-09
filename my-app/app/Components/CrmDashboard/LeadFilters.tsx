@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CRM_TOKEN_STORAGE_KEY, getAuthApiBaseUrl } from "@/lib/auth/api";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
+  getAuthApiBaseUrl,
+  normalizeRole,
+} from "@/lib/auth/api";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
@@ -82,6 +87,8 @@ function formatDate(d: Date) {
 
 export default function LeadFilters({ role = "sales_admin", onFiltersChange }: Props) {
   const isManager = role === "sales_manager";
+  const [viewerRole, setViewerRole] = useState("");
+  const isSalesAdmin = viewerRole === "SALES_ADMIN" || (viewerRole === "" && role === "sales_admin");
   const [quickRange, setQuickRange] = useState<(typeof QUICK_RANGES)[number]["id"]>("7d");
 
   const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
@@ -104,6 +111,12 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
   const [substage, setSubstage] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedRole = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    setViewerRole(normalizeRole(storedRole));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -362,16 +375,18 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
               </>
             ) : (
               <>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Sales Admin</span>
-                  <div className="relative">
-                    <select value={salesAdminId} onChange={(e) => { setSalesAdminId(e.target.value); setSalesManagerId(""); setSalesExecId(""); }} className={selectClass}>
-                      <option value="">All</option>
-                      {salesAdmins.map((u) => <option key={u.id} value={String(u.id)}>{userLabel(u)}</option>)}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center"><SelectChevron /></div>
-                  </div>
-                </label>
+                {!isSalesAdmin ? (
+                  <label className="col-span-1 min-w-0">
+                    <span className={labelClass}>Sales Admin</span>
+                    <div className="relative">
+                      <select value={salesAdminId} onChange={(e) => { setSalesAdminId(e.target.value); setSalesManagerId(""); setSalesExecId(""); }} className={selectClass}>
+                        <option value="">All</option>
+                        {salesAdmins.map((u) => <option key={u.id} value={String(u.id)}>{userLabel(u)}</option>)}
+                      </select>
+                      <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center"><SelectChevron /></div>
+                    </div>
+                  </label>
+                ) : null}
                 <label className="col-span-1 min-w-0">
                   <span className={labelClass}>Sales Mgr</span>
                   <div className="relative">
@@ -439,4 +454,3 @@ export default function LeadFilters({ role = "sales_admin", onFiltersChange }: P
     </main>
   );
 }
-

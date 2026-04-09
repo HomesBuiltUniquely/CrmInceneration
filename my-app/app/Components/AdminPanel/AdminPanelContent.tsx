@@ -10,6 +10,11 @@ import {
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import { leadLimitsApi } from "@/lib/lead-limits-api";
 import { pickNumber } from "@/lib/api-normalize";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  normalizeRole,
+} from "@/lib/auth/api";
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -464,12 +469,17 @@ interface UserForm {
   username: string;
   password: string;
   email: string;
+  fullName: string;
+  phone: string;
+  branch: string;
+  parentId: string;
 }
 
 function AdminUserSection() {
   const [tab, setTab] = useState<"admins" | "createAdmin" | "createUser">(
     "admins",
   );
+  const [viewerRole, setViewerRole] = useState("");
   const [adminForm, setAdminForm] = useState<AdminForm>({
     username: "",
     password: "",
@@ -480,12 +490,36 @@ function AdminUserSection() {
     username: "",
     password: "",
     email: "",
+    fullName: "",
+    phone: "",
+    branch: "",
+    parentId: "",
   });
   const [admins, setAdmins] = useState<Array<Record<string, unknown>>>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
+  const [salesManagers, setSalesManagers] = useState<Array<Record<string, unknown>>>([]);
+  const [presalesManagers, setPresalesManagers] = useState<Array<Record<string, unknown>>>([]);
+  const [salesAdmins, setSalesAdmins] = useState<Array<Record<string, unknown>>>([]);
+  const [territoryDesignManagers, setTerritoryDesignManagers] = useState<Array<Record<string, unknown>>>([]);
+  const [designManagers, setDesignManagers] = useState<Array<Record<string, unknown>>>([]);
+
+  useEffect(() => {
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    setViewerRole(normalizeRole(role));
+  }, []);
+
+  const canManageAdmins = viewerRole === "SUPER_ADMIN";
+  const isSalesAdmin = viewerRole === "SALES_ADMIN";
+
+  useEffect(() => {
+    if (!canManageAdmins && tab !== "createUser") {
+      setTab("createUser");
+    }
+  }, [canManageAdmins, tab]);
 
   useEffect(() => {
     if (tab !== "admins") return;
+    if (!canManageAdmins) return;
     let cancelled = false;
     setAdminsLoading(true);
     void adminPanelApi
@@ -502,19 +536,63 @@ function AdminUserSection() {
     return () => {
       cancelled = true;
     };
-  }, [tab]);
+  }, [canManageAdmins, tab]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>),
+    ]).then(([sm, pm, all]) => {
+      if (cancelled) return;
+      setSalesManagers(sm.filter((u) => String(u.active ?? true) !== "false"));
+      setPresalesManagers(
+        pm.filter(
+          (u) =>
+            String(u.active ?? true) !== "false" &&
+            String(u.role ?? "").toUpperCase() === "PRESALES_MANAGER",
+        ),
+      );
+      const activeUsers = all.filter((u) => String(u.active ?? true) !== "false");
+      setSalesAdmins(activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "SALES_ADMIN"));
+      setTerritoryDesignManagers(
+        activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "TERRITORY_DESIGN_MANAGER"),
+      );
+      setDesignManagers(activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "DESIGN_MANAGER"));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const ROLES = [
-    "SALES_ADMIN",
-    "SALES_MANAGER",
-    "SALES_EXECUTIVE",
-    "PRESALES_MANAGER",
-    "PRESALES_EXECUTIVE",
-    "TERRITORY_DESIGN_MANAGER",
-    "DESIGN_MANAGER",
-    "DESIGNER",
-    "MANAGER",
+    {
+      label: "Sales Hierarchy",
+      options: ["SALES_ADMIN", "SALES_MANAGER", "SALES_EXECUTIVE"],
+    },
+    {
+      label: "Presales Hierarchy",
+      options: ["PRESALES_MANAGER", "PRESALES_EXECUTIVE"],
+    },
+    {
+      label: "Designer Hierarchy",
+      options: ["TERRITORY_DESIGN_MANAGER", "DESIGN_MANAGER", "DESIGNER"],
+    },
   ];
+  const allowedRoleGroups = isSalesAdmin ? ROLES.slice(0, 2) : ROLES;
+  const parentConfig: Record<string, { label: string; options: Array<Record<string, unknown>> }> = {
+    SALES_MANAGER: { label: "Sales Admin *", options: salesAdmins },
+    SALES_EXECUTIVE: { label: "Sales Manager *", options: salesManagers },
+    PRESALES_MANAGER: { label: "Sales Admin *", options: salesAdmins },
+    PRESALES_EXECUTIVE: { label: "Presales Manager *", options: presalesManagers },
+    DESIGN_MANAGER: { label: "Territory Design Manager *", options: territoryDesignManagers },
+    DESIGNER: { label: "Design Manager *", options: designManagers },
+  };
+  const parentRequirement = parentConfig[userForm.role];
+  const needsParent = Boolean(parentRequirement);
+  const parentOptions = parentRequirement?.options ?? [];
+  const parentLabel = parentRequirement?.label ?? "Parent *";
 
   return (
     <Card>
@@ -532,16 +610,20 @@ function AdminUserSection() {
           marginBottom: 24,
         }}
       >
-        <Tab
-          label="Admins List"
-          active={tab === "admins"}
-          onClick={() => setTab("admins")}
-        />
-        <Tab
-          label="Create Admin"
-          active={tab === "createAdmin"}
-          onClick={() => setTab("createAdmin")}
-        />
+        {canManageAdmins ? (
+          <>
+            <Tab
+              label="Admins List"
+              active={tab === "admins"}
+              onClick={() => setTab("admins")}
+            />
+            <Tab
+              label="Create Admin"
+              active={tab === "createAdmin"}
+              onClick={() => setTab("createAdmin")}
+            />
+          </>
+        ) : null}
         <Tab
           label="Create User"
           active={tab === "createUser"}
@@ -550,7 +632,7 @@ function AdminUserSection() {
       </div>
 
       {/* ── Admins List ── */}
-      {tab === "admins" && (
+      {canManageAdmins && tab === "admins" && (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <TableHead
@@ -626,7 +708,7 @@ function AdminUserSection() {
       )}
 
       {/* ── Create Admin ── */}
-      {tab === "createAdmin" && (
+      {canManageAdmins && tab === "createAdmin" && (
         <div style={{ maxWidth: 500 }}>
           <p style={{ fontSize: 13, color: C.muted, marginBottom: 18 }}>
             Super Admin only — creates a new admin account.
@@ -679,100 +761,123 @@ function AdminUserSection() {
 
       {/* ── Create User ── */}
       {tab === "createUser" && (
-        <div style={{ maxWidth: 600 }}>
+        <div>
           <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}
           >
             <div>
-              <label
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: C.text,
-                  display: "block",
-                  marginBottom: 6,
-                }}
-              >
-                Role *
-              </label>
-              <Select
-                value={userForm.role}
-                onChange={(e) =>
-                  setUserForm({ ...userForm, role: e.target.value })
-                }
-              >
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Role *</label>
+              <Select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
                 <option value="">Select Role</option>
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r.replace(/_/g, " ")}
-                  </option>
+                {allowedRoleGroups.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options
+                      .filter((r) => !(isSalesAdmin && r === "SALES_ADMIN"))
+                      .map((r) => (
+                        <option key={r} value={r}>
+                          {r.replace(/_/g, " ")}
+                        </option>
+                      ))}
+                  </optgroup>
                 ))}
               </Select>
             </div>
             <div>
-              <label
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: C.text,
-                  display: "block",
-                  marginBottom: 6,
-                }}
-              >
-                Username *
-              </label>
-              <Input
-                placeholder="Username"
-                value={userForm.username}
-                onChange={(e) =>
-                  setUserForm({ ...userForm, username: e.target.value })
-                }
-              />
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Username *</label>
+              <Input placeholder="Username" value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value })} />
             </div>
             <div>
-              <label
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: C.text,
-                  display: "block",
-                  marginBottom: 6,
-                }}
-              >
-                Password *
-              </label>
-              <Input
-                placeholder="Password"
-                type="password"
-                value={userForm.password}
-                onChange={(e) =>
-                  setUserForm({ ...userForm, password: e.target.value })
-                }
-              />
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Password *</label>
+              <Input placeholder="Password" type="password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} />
             </div>
             <div>
-              <label
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: C.text,
-                  display: "block",
-                  marginBottom: 6,
-                }}
-              >
-                Email *
-              </label>
-              <Input
-                placeholder="Email"
-                type="email"
-                value={userForm.email}
-                onChange={(e) =>
-                  setUserForm({ ...userForm, email: e.target.value })
-                }
-              />
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Email *</label>
+              <Input placeholder="Email" type="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} />
             </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Name *</label>
+              <Input placeholder="Full Name" value={userForm.fullName} onChange={(e) => setUserForm({ ...userForm, fullName: e.target.value })} />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Phone</label>
+              <Input placeholder="Phone" value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })} />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Branch *</label>
+              <Select value={userForm.branch} onChange={(e) => setUserForm({ ...userForm, branch: e.target.value })}>
+                <option value="">Select Branch</option>
+                {BRANCH_TRANSFER_OPTIONS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {needsParent ? (
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>{parentLabel}</label>
+                <Select value={userForm.parentId} onChange={(e) => setUserForm({ ...userForm, parentId: e.target.value })}>
+                  <option value="">Select Parent</option>
+                  {parentOptions.map((u) => (
+                    <option key={String(u.id)} value={String(u.id)}>
+                      {(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`) as string}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
           </div>
-          <Btn style={{ marginTop: 18 }}>Create User</Btn>
+          <Btn
+            style={{ marginTop: 18, alignSelf: "flex-start" }}
+            disabled={
+              !userForm.role ||
+              !userForm.username.trim() ||
+              !userForm.password.trim() ||
+              !userForm.email.trim() ||
+              !userForm.fullName.trim() ||
+              !userForm.branch.trim() ||
+              (needsParent && !userForm.parentId)
+            }
+            onClick={() => {
+              const payload: Record<string, unknown> = {
+                username: userForm.username.trim(),
+                password: userForm.password,
+                email: userForm.email.trim(),
+                fullName: userForm.fullName.trim(),
+                name: userForm.fullName.trim(),
+                phone: userForm.phone.trim() || undefined,
+                branch: userForm.branch,
+                role: userForm.role,
+              };
+              const parentId = Number(userForm.parentId);
+              if (needsParent && Number.isFinite(parentId)) payload.managerId = parentId;
+
+              let req: Promise<Record<string, unknown>>;
+              if (userForm.role === "SALES_MANAGER") {
+                req = adminPanelApi.createManager(payload);
+              } else if (userForm.role === "SALES_EXECUTIVE") {
+                req = adminPanelApi.createSalesExecutive(payload);
+              } else {
+                req = adminPanelApi.createPreSales(payload);
+              }
+              void req
+                .then(() => {
+                  setUserForm({
+                    role: "",
+                    username: "",
+                    password: "",
+                    email: "",
+                    fullName: "",
+                    phone: "",
+                    branch: "",
+                    parentId: "",
+                  });
+                })
+                .catch(() => {});
+            }}
+          >
+            Create User
+          </Btn>
         </div>
       )}
     </Card>
@@ -1395,14 +1500,78 @@ interface SalesExecutive {
 function SalesExecSection() {
   const [execs, setExecs] = useState<SalesExecutive[]>([]);
   const [loading, setLoading] = useState(false);
+  const [viewerRole, setViewerRole] = useState("");
+  const [viewerName, setViewerName] = useState("");
+  const [allUsers, setAllUsers] = useState<Array<Record<string, unknown>>>([]);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    role: "SALES_EXECUTIVE",
+    fullName: "",
+    email: "",
+    phone: "",
+    branch: "",
+    username: "",
+    password: "",
+    parentId: "",
+  });
+
+  useEffect(() => {
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    const name = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
+    setViewerRole(normalizeRole(role));
+    setViewerName(name.trim());
+  }, []);
+
+  useEffect(() => {
+    if (viewerRole === "PRESALES_MANAGER") {
+      setCreateForm((prev) => ({ ...prev, role: "PRESALES_EXECUTIVE" }));
+    } else if (viewerRole === "TERRITORY_DESIGN_MANAGER") {
+      setCreateForm((prev) => ({ ...prev, role: "DESIGN_MANAGER" }));
+    } else if (viewerRole === "DESIGN_MANAGER") {
+      setCreateForm((prev) => ({ ...prev, role: "DESIGNER" }));
+    } else if (viewerRole === "SALES_MANAGER") {
+      setCreateForm((prev) => ({ ...prev, role: "SALES_EXECUTIVE" }));
+    }
+  }, [viewerRole]);
+
+  const isSalesManagerViewer = viewerRole === "SALES_MANAGER";
+  const isPresalesManagerViewer = viewerRole === "PRESALES_MANAGER";
+  const isTerritoryDesignManagerViewer = viewerRole === "TERRITORY_DESIGN_MANAGER";
+  const isDesignManagerViewer = viewerRole === "DESIGN_MANAGER";
+  const isManagerViewer =
+    isSalesManagerViewer ||
+    isPresalesManagerViewer ||
+    isTerritoryDesignManagerViewer ||
+    isDesignManagerViewer;
+  const managerTitle = isPresalesManagerViewer
+    ? "Presales Executives"
+    : isTerritoryDesignManagerViewer
+      ? "Design Managers"
+      : isDesignManagerViewer
+        ? "Designers"
+        : "Sales Executives";
+  const parentLabel = isPresalesManagerViewer
+    ? "Presales Manager *"
+    : isTerritoryDesignManagerViewer
+      ? createForm.role === "DESIGN_MANAGER"
+        ? "Territory Design Manager *"
+        : "Design Manager *"
+      : isDesignManagerViewer
+        ? "Design Manager *"
+        : "Sales Manager *";
 
   const load = () => {
     setLoading(true);
-    void adminPanelApi
-      .listSalesExecutives()
-      .then((rows) => {
-        setExecs(
-          rows.map((r) => ({
+    const listReq = isPresalesManagerViewer
+      ? adminPanelApi.listPreSales()
+      : isTerritoryDesignManagerViewer
+        ? adminPanelApi.listDesignManagers()
+        : isDesignManagerViewer
+          ? adminPanelApi.listDesigners()
+          : adminPanelApi.listSalesExecutives();
+    void Promise.all([listReq, adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>)])
+      .then(([rows, users]) => {
+        const mapped = rows.map((r) => ({
             id: Number(r.id ?? 0),
             name: String(r.fullName ?? r.name ?? r.username ?? ""),
             email: String(r.email ?? ""),
@@ -1410,8 +1579,12 @@ function SalesExecSection() {
             branch: String(r.branch ?? ""),
             manager: String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—"),
             status: Boolean(r.active ?? true),
-          })),
-        );
+          }));
+        const filtered = isManagerViewer && viewerName
+          ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
+          : mapped;
+        setExecs(filtered);
+        setAllUsers(users);
       })
       .catch(() => setExecs([]))
       .finally(() => setLoading(false));
@@ -1419,21 +1592,235 @@ function SalesExecSection() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [
+    isDesignManagerViewer,
+    isManagerViewer,
+    isPresalesManagerViewer,
+    isTerritoryDesignManagerViewer,
+    viewerName,
+  ]);
 
   const toggleStatus = (id: number, next: boolean) => {
-    void adminPanelApi
-      .updateSalesExecutive(id, { active: next })
+    const req = isPresalesManagerViewer
+      ? adminPanelApi.updatePreSales(id, { active: next })
+      : isTerritoryDesignManagerViewer
+        ? adminPanelApi.updateDesignManager(id, { active: next })
+        : isDesignManagerViewer
+          ? adminPanelApi.updateDesigner(id, { active: next })
+      : adminPanelApi.updateSalesExecutive(id, { active: next });
+    void req
       .then(() => load())
       .catch(() => {});
   };
 
   return (
     <Card>
-      <SectionTitle icon="💼">Sales Executives Management</SectionTitle>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <SectionTitle icon="💼">
+          {managerTitle} Management
+        </SectionTitle>
+        <Btn
+          color="#22c55e"
+          style={{ fontSize: 13, padding: "8px 16px" }}
+          onClick={() => setShowCreate((v) => !v)}
+        >
+          + Create {managerTitle.slice(0, -1)}
+        </Btn>
+      </div>
+      {showCreate ? (
+        <div style={{ marginBottom: 18, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
+          <h3 style={{ margin: "0 0 8px 0", fontSize: 20, fontWeight: 700 }}>
+            Create {managerTitle.slice(0, -1)}
+          </h3>
+          <p style={{ margin: "0 0 12px 0", fontSize: 12, color: C.muted }}>
+            Fill the details below to add a new executive.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Role *
+              </label>
+              <Select
+                value={createForm.role}
+                onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
+              >
+                {isTerritoryDesignManagerViewer ? (
+                  <>
+                    <option value="DESIGN_MANAGER">Design Manager</option>
+                    <option value="DESIGNER">Designer</option>
+                  </>
+                ) : isDesignManagerViewer ? (
+                  <option value="DESIGNER">Designer</option>
+                ) : (
+                  <option value={isPresalesManagerViewer ? "PRESALES_EXECUTIVE" : "SALES_EXECUTIVE"}>
+                    {isPresalesManagerViewer ? "Presales Executive" : "Sales Executive"}
+                  </option>
+                )}
+              </Select>
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Name *
+              </label>
+              <Input
+                placeholder="Full Name"
+                value={createForm.fullName}
+                onChange={(e) => setCreateForm({ ...createForm, fullName: e.target.value })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Email *
+              </label>
+              <Input
+                placeholder="Email"
+                type="email"
+                value={createForm.email}
+                onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Phone *
+              </label>
+              <Input
+                placeholder="Phone"
+                value={createForm.phone}
+                onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Branch *
+              </label>
+              <Select
+                value={createForm.branch}
+                onChange={(e) => setCreateForm({ ...createForm, branch: e.target.value })}
+              >
+                <option value="">Select Branch</option>
+                {BRANCH_TRANSFER_OPTIONS.map((b) => (
+                  <option key={b.value} value={b.value}>
+                    {b.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                {parentLabel}
+              </label>
+              <Select
+                value={createForm.parentId}
+                onChange={(e) => setCreateForm({ ...createForm, parentId: e.target.value })}
+              >
+                <option value="">Select Parent</option>
+                {allUsers
+                  .filter((u) => {
+                    const role = String(u.role ?? "").toUpperCase();
+                    if (isPresalesManagerViewer) return role === "PRESALES_MANAGER";
+                    if (isTerritoryDesignManagerViewer) {
+                      return createForm.role === "DESIGN_MANAGER"
+                        ? role === "TERRITORY_DESIGN_MANAGER"
+                        : role === "DESIGN_MANAGER";
+                    }
+                    if (isDesignManagerViewer) return role === "DESIGN_MANAGER";
+                    return role === "SALES_MANAGER";
+                  })
+                  .map((u) => (
+                    <option key={String(u.id)} value={String(u.id)}>
+                      {String(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`)}
+                    </option>
+                  ))}
+              </Select>
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Username *
+              </label>
+              <Input
+                placeholder="Username"
+                value={createForm.username}
+                onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                Password *
+              </label>
+              <Input
+                placeholder="Password"
+                type="password"
+                value={createForm.password}
+                onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+              />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <Btn
+              color="#22c55e"
+              disabled={
+                !createForm.fullName.trim() ||
+                !createForm.email.trim() ||
+                !createForm.phone.trim() ||
+                !createForm.branch.trim() ||
+                !createForm.username.trim() ||
+                !createForm.password.trim() ||
+                !createForm.parentId
+              }
+              onClick={() => {
+                const payload = {
+                  role: createForm.role,
+                  fullName: createForm.fullName.trim(),
+                  name: createForm.fullName.trim(),
+                  email: createForm.email.trim(),
+                  phone: createForm.phone.trim(),
+                  branch: createForm.branch,
+                  username: createForm.username.trim(),
+                  password: createForm.password,
+                  managerId: Number(createForm.parentId),
+                };
+                const req = isPresalesManagerViewer
+                  ? adminPanelApi.createPreSales(payload)
+                  : createForm.role === "DESIGN_MANAGER"
+                    ? adminPanelApi.createDesignManager(payload)
+                    : createForm.role === "DESIGNER"
+                      ? adminPanelApi.createDesigner(payload)
+                  : adminPanelApi.createSalesExecutive(payload);
+                void req
+                  .then(() => {
+                    setCreateForm({
+                      role: isTerritoryDesignManagerViewer
+                        ? "DESIGN_MANAGER"
+                        : isDesignManagerViewer
+                          ? "DESIGNER"
+                          : isPresalesManagerViewer
+                            ? "PRESALES_EXECUTIVE"
+                            : "SALES_EXECUTIVE",
+                      fullName: "",
+                      email: "",
+                      phone: "",
+                      branch: "",
+                      username: "",
+                      password: "",
+                      parentId: "",
+                    });
+                    setShowCreate(false);
+                    load();
+                  })
+                  .catch(() => {});
+              }}
+            >
+              Save {managerTitle.slice(0, -1)}
+            </Btn>
+            <Btn color="#64748b" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Btn>
+          </div>
+        </div>
+      ) : null}
       {!loading ? (
         <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 12 }}>
-          {execs.length} sales executive(s).
+          {execs.length} {managerTitle.toLowerCase()}.
         </p>
       ) : null}
       <div style={{ overflowX: "auto" }}>
@@ -1445,7 +1832,13 @@ function SalesExecSection() {
               "Email",
               "Phone",
               "Branch",
-              "Sales Manager",
+              isPresalesManagerViewer
+                ? "Presales Manager"
+                : isTerritoryDesignManagerViewer
+                  ? "TDM"
+                  : isDesignManagerViewer
+                    ? "Design Manager"
+                    : "Sales Manager",
               "Status",
               "Actions",
             ]}
@@ -1508,8 +1901,15 @@ function SalesExecSection() {
                     color={C.danger}
                     style={{ padding: "5px 14px", fontSize: 13 }}
                     onClick={() => {
-                      if (!window.confirm("Delete this sales executive?")) return;
-                      void adminPanelApi.deleteSalesExecutive(e.id).then(() => load()).catch(() => {});
+                      if (!window.confirm("Delete this executive?")) return;
+                      const req = isPresalesManagerViewer
+                        ? adminPanelApi.deletePreSales(e.id)
+                        : isTerritoryDesignManagerViewer
+                          ? adminPanelApi.deleteDesignManager(e.id)
+                          : isDesignManagerViewer
+                            ? adminPanelApi.deleteDesigner(e.id)
+                        : adminPanelApi.deleteSalesExecutive(e.id);
+                      void req.then(() => load()).catch(() => {});
                     }}
                   >
                     Delete
@@ -2503,6 +2903,31 @@ const SECTIONS: Section[] = [
 
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
 export default function AdminPanelContent() {
+  const [viewerRole, setViewerRole] = useState("");
+
+  useEffect(() => {
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    setViewerRole(normalizeRole(role));
+  }, []);
+
+  const isSalesManager = viewerRole === "SALES_MANAGER";
+  const isPresalesManager = viewerRole === "PRESALES_MANAGER";
+  const isTerritoryDesignManager = viewerRole === "TERRITORY_DESIGN_MANAGER";
+  const isDesignManager = viewerRole === "DESIGN_MANAGER";
+  const baseSections = isSalesManager || isPresalesManager || isTerritoryDesignManager || isDesignManager
+    ? SECTIONS.filter((section) => section.id === "salesExec")
+    : SECTIONS;
+  const sections = baseSections.map((section) => {
+    if (section.id !== "salesExec") return section;
+    if (isTerritoryDesignManager) {
+      return { ...section, label: "Design Team", desc: "Create and manage design users" };
+    }
+    if (isDesignManager) {
+      return { ...section, label: "Designers", desc: "Create and manage designers" };
+    }
+    return section;
+  });
+
   const scrollTo = (id: string) => {
     document.getElementById(id)?.scrollIntoView({
       behavior: "smooth",
@@ -2528,7 +2953,7 @@ export default function AdminPanelContent() {
           marginBottom: 28,
         }}
       >
-        {SECTIONS.map((s) => (
+        {sections.map((s) => (
           <button
             key={s.id}
             onClick={() => scrollTo(s.id)}
@@ -2565,24 +2990,35 @@ export default function AdminPanelContent() {
 
       {/* Sections */}
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-        <div id="adminUser">
-          <AdminUserSection />
-        </div>
-        <div id="assign">
-          <AssignSection />
-        </div>
-        <div id="branch">
-          <BranchTransferSection />
-        </div>
-        <div id="allUsers">
-          <AllUsersSection />
-        </div>
-        <div id="salesExec">
-          <SalesExecSection />
-        </div>
-        <div id="leadLimit">
-          <LeadLimitSection />
-        </div>
+        {!isSalesManager &&
+        !isPresalesManager &&
+        !isTerritoryDesignManager &&
+        !isDesignManager ? (
+          <>
+            <div id="adminUser">
+              <AdminUserSection />
+            </div>
+            <div id="assign">
+              <AssignSection />
+            </div>
+            <div id="branch">
+              <BranchTransferSection />
+            </div>
+            <div id="allUsers">
+              <AllUsersSection />
+            </div>
+            <div id="salesExec">
+              <SalesExecSection />
+            </div>
+            <div id="leadLimit">
+              <LeadLimitSection />
+            </div>
+          </>
+        ) : (
+          <div id="salesExec">
+            <SalesExecSection />
+          </div>
+        )}
       </div>
     </div>
   );

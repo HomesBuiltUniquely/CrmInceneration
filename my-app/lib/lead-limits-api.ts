@@ -15,7 +15,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & AnyJson;
   if (!res.ok) {
-    const msg = typeof (data as AnyJson).message === "string" ? (data as AnyJson).message : `HTTP ${res.status}`;
+    const message = (data as AnyJson).message;
+    const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return data;

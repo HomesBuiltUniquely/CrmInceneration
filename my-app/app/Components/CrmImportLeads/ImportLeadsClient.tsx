@@ -1,11 +1,11 @@
 "use client";
 
-import { useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import Image from "next/image";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
-import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
+import { CRM_ROLE_STORAGE_KEY, CRM_TOKEN_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 const IMPORT_BASE = `${process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081"}/v1/import`;
 
@@ -164,6 +164,12 @@ function MappingSelect({
 }
 
 export default function ImportLeadsClient() {
+  const [role, setRole] = useState("SUPER_ADMIN");
+  useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    setRole(normalizeRole(stored) || "SUPER_ADMIN");
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [step, setStep] = useState<ImportStep>("upload");
@@ -439,8 +445,8 @@ export default function ImportLeadsClient() {
             appName="Hows"
             appTagline="by HUB"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={role.replace(/_/g, " ")}
+            profileRole={role}
             profileInitials="AD"
           />
         </div>
