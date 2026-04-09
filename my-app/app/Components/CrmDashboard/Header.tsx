@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import AnalyticsBar from "./AnalyticsBar";
 import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
 import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
@@ -11,6 +11,7 @@ import InsightsStrip from "./InsightsStrip";
 
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 type Props = {
   role?: "sales_admin" | "sales_manager" | "super_admin";
@@ -18,6 +19,7 @@ type Props = {
 
 export default function Header({ role = "sales_admin" }: Props) {
   const router = useRouter();
+  const [currentRole, setCurrentRole] = useState("SUPER_ADMIN");
   const [activeDashboardView, setActiveDashboardView] = useState<
     "overview" | "design-module"
   >("overview");
@@ -30,6 +32,11 @@ export default function Header({ role = "sales_admin" }: Props) {
     dateFrom: "",
     dateTo: "",
   });
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? role;
+    setCurrentRole(normalizeRole(stored));
+  }, [role]);
 
   const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
     const next = subItem.id === "design-module" ? "design-module" : "overview";
@@ -62,8 +69,8 @@ export default function Header({ role = "sales_admin" }: Props) {
             appName="Hows"
             appTagline="by HUB"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={currentRole.replace(/_/g, " ")}
+            profileRole={currentRole}
             profileInitials="AD"
             onSelectionChange={handleSidebarSelection}
           />
@@ -94,10 +101,6 @@ export default function Header({ role = "sales_admin" }: Props) {
               <div className="xl:mr-4 xl:w-25 xl:h-7.5 xl:bg-gray-200 xl:text-gray-500 xl:font-bold xl:rounded-lg xl:pl-4.5 xl:pt-1">
                 Q3 FY24
               </div>
-              <h1 className="xl:font-bold xl:pr-4 xl:text-black">
-                Global Sales
-              </h1>
-              <div className="w-10 h-10 xl:rounded-full bg-gray-200"></div>
             </div>
           </div>
           {activeDashboardView === "design-module" ? (

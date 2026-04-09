@@ -100,6 +100,8 @@ type LeadsToolbarProps = {
   rangeStart?: number;
   rangeEnd?: number;
   loading?: boolean;
+  leadTypeCounts?: Record<string, number>;
+  viewerRole?: string;
   leadType: string;
   sort: string;
   assignee: string;
@@ -108,6 +110,16 @@ type LeadsToolbarProps = {
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
+  salesAdminFilter: string;
+  salesManagerFilter: string;
+  salesExecFilter: string;
+  presalesManagerFilter: string;
+  presalesExecFilter: string;
+  salesAdminOptions: string[];
+  salesManagerOptions: string[];
+  salesExecOptions: string[];
+  presalesManagerOptions: string[];
+  presalesExecOptions: string[];
   assigneeOptions: string[];
   milestoneStageOptions: string[];
   milestoneStageCategoryOptions: string[];
@@ -120,6 +132,11 @@ type LeadsToolbarProps = {
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
+  onSalesAdminFilterChange: (next: string) => void;
+  onSalesManagerFilterChange: (next: string) => void;
+  onSalesExecFilterChange: (next: string) => void;
+  onPresalesManagerFilterChange: (next: string) => void;
+  onPresalesExecFilterChange: (next: string) => void;
 };
 
 export default function LeadsToolbar({
@@ -127,6 +144,8 @@ export default function LeadsToolbar({
   rangeStart,
   rangeEnd,
   loading,
+  leadTypeCounts = {},
+  viewerRole = "",
   leadType,
   sort,
   assignee,
@@ -135,6 +154,16 @@ export default function LeadsToolbar({
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
+  salesAdminFilter,
+  salesManagerFilter,
+  salesExecFilter,
+  presalesManagerFilter,
+  presalesExecFilter,
+  salesAdminOptions,
+  salesManagerOptions,
+  salesExecOptions,
+  presalesManagerOptions,
+  presalesExecOptions,
   assigneeOptions,
   milestoneStageOptions,
   milestoneStageCategoryOptions,
@@ -147,11 +176,32 @@ export default function LeadsToolbar({
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
+  onSalesAdminFilterChange,
+  onSalesManagerFilterChange,
+  onSalesExecFilterChange,
+  onPresalesManagerFilterChange,
+  onPresalesExecFilterChange,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
   const [openFilter, setOpenFilter] = useState(false);
   const [openSort, setOpenSort] = useState(false);
+  const [openLeadTypes, setOpenLeadTypes] = useState(false);
+  const role = viewerRole.toUpperCase();
+  const isSalesManager = role === "SALES_MANAGER";
+  const isSalesExecutive = role === "SALES_EXECUTIVE";
+  const isPresalesManager = role === "PRESALES_MANAGER";
+  const isPresalesExecutive = role === "PRESALES_EXECUTIVE";
+  const isPresalesFlow = isPresalesManager || isPresalesExecutive;
+  const commonLeadTypeOptions = [
+    { value: "all", label: "All Types" },
+    { value: "addlead", label: "Add Lead" },
+    { value: "formlead", label: "Form Lead" },
+    { value: "glead", label: "Google Leads" },
+    { value: "mlead", label: "Meta Leads" },
+    { value: "websitelead", label: "Website Lead" },
+    ...(isSalesExecutive ? [{ value: "verified", label: "Verified Leads" }] : []),
+  ];
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
@@ -160,10 +210,28 @@ export default function LeadsToolbar({
     if (milestoneStage) c += 1;
     if (milestoneStageCategory) c += 1;
     if (milestoneSubStage) c += 1;
+    if (salesAdminFilter) c += 1;
+    if (salesManagerFilter) c += 1;
+    if (salesExecFilter) c += 1;
+    if (presalesManagerFilter) c += 1;
+    if (presalesExecFilter) c += 1;
     if (dateFrom) c += 1;
     if (dateTo) c += 1;
     return c;
-  }, [assignee, dateFrom, dateTo, leadType, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+  }, [
+    assignee,
+    dateFrom,
+    dateTo,
+    leadType,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    presalesExecFilter,
+    presalesManagerFilter,
+    salesAdminFilter,
+    salesExecFilter,
+    salesManagerFilter,
+  ]);
 
   const resetFilter = () => {
     onLeadTypeChange("all");
@@ -171,6 +239,11 @@ export default function LeadsToolbar({
     onMilestoneStageChange("");
     onMilestoneStageCategoryChange("");
     onMilestoneSubStageChange("");
+    onSalesAdminFilterChange("");
+    onSalesManagerFilterChange("");
+    onSalesExecFilterChange("");
+    onPresalesManagerFilterChange("");
+    onPresalesExecFilterChange("");
     onDateFromChange("");
     onDateToChange("");
   };
@@ -212,8 +285,82 @@ export default function LeadsToolbar({
               <span>Sort</span>
             </button>
           </div>
-          <Pill label="Total Leads" value={countLabel} active />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOpenLeadTypes((v) => !v)}
+              className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-semibold transition-colors ${
+                openLeadTypes
+                  ? "border-blue-200 bg-blue-50 text-blue-700"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              <span className="text-[13px]">#</span>
+              <span>Lead Types</span>
+            </button>
+            <Pill label="Total Leads" value={countLabel} active />
+          </div>
         </div>
+
+        {openLeadTypes ? (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="text-[13px] font-semibold text-slate-700">Lead Types</div>
+              <button
+                type="button"
+                onClick={() => setOpenLeadTypes(false)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+              {(isSalesExecutive
+                ? [
+                    ["My Assigned Leads", leadTypeCounts.all ?? 0],
+                    ["Leads for Month", leadTypeCounts.all ?? 0],
+                    ["Followup Date", leadTypeCounts.followup ?? 0],
+                    ["Overdue Leads", leadTypeCounts.overdue ?? 0],
+                    ["Google Leads", leadTypeCounts.glead ?? 0],
+                    ["Meta Leads", leadTypeCounts.mlead ?? 0],
+                    ["Verified Leads", leadTypeCounts.verified ?? 0],
+                  ]
+                : isSalesManager
+                  ? [
+                      ["My Assigned Leads", leadTypeCounts.all ?? 0],
+                      ["Team Leads", leadTypeCounts.team ?? 0],
+                      ["Follow Ups Today", leadTypeCounts.followups ?? 0],
+                      ["External Leads", leadTypeCounts.formlead ?? 0],
+                      ["Google Ads", leadTypeCounts.glead ?? 0],
+                      ["Meta Ads", leadTypeCounts.mlead ?? 0],
+                      ["Add Leads", leadTypeCounts.addlead ?? 0],
+                      ["Website Leads", leadTypeCounts.websitelead ?? 0],
+                    ]
+                  : isPresalesFlow
+                    ? [
+                        ["My Assigned Leads", leadTypeCounts.all ?? 0],
+                        ["External Leads", leadTypeCounts.formlead ?? 0],
+                        ["Google Leads", leadTypeCounts.glead ?? 0],
+                        ["Meta Leads", leadTypeCounts.mlead ?? 0],
+                        ["Add Leads", leadTypeCounts.addlead ?? 0],
+                        ["Website Leads", leadTypeCounts.websitelead ?? 0],
+                      ]
+                  : [
+                      ["My Assigned Leads", leadTypeCounts.all ?? 0],
+                      ["External Leads", leadTypeCounts.formlead ?? 0],
+                      ["Google Ads", leadTypeCounts.glead ?? 0],
+                      ["Meta Ads", leadTypeCounts.mlead ?? 0],
+                      ["Add Leads", leadTypeCounts.addlead ?? 0],
+                      ["Website Leads", leadTypeCounts.websitelead ?? 0],
+                    ]).map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-center">
+                  <div className="text-2xl font-extrabold text-blue-600">{String(value)}</div>
+                  <div className="mt-1 text-[12px] font-semibold text-slate-600">{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {openFilter ? (
           <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
@@ -231,22 +378,79 @@ export default function LeadsToolbar({
               </button>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {(viewerRole === "ADMIN" || viewerRole === "SUPER_ADMIN") && (
+                <SelectField label="Sales Admin" value={salesAdminFilter} onChange={onSalesAdminFilterChange}>
+                  <option value="">All</option>
+                  {salesAdminOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </SelectField>
+              )}
+              {!isSalesExecutive && !isPresalesFlow ? (
+                <SelectField label="Sales Exec" value={salesExecFilter} onChange={onSalesExecFilterChange}>
+                  <option value="">All</option>
+                  {salesExecOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </SelectField>
+              ) : null}
+              {!isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
+                <>
+                  <SelectField label="Sales Mgr" value={salesManagerFilter} onChange={onSalesManagerFilterChange}>
+                    <option value="">All</option>
+                    {salesManagerOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Mgr"
+                    value={presalesManagerFilter}
+                    onChange={onPresalesManagerFilterChange}
+                  >
+                    <option value="">All</option>
+                    {presalesManagerOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Exec"
+                    value={presalesExecFilter}
+                    onChange={onPresalesExecFilterChange}
+                  >
+                    <option value="">All</option>
+                    {presalesExecOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                </>
+              ) : null}
               <SelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
-                <option value="all">All Types</option>
-                <option value="addlead">Add Lead</option>
-                <option value="formlead">Form Lead</option>
-                <option value="glead">G Lead</option>
-                <option value="mlead">M Lead</option>
-                <option value="websitelead">Website Lead</option>
-              </SelectField>
-              <SelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
-                <option value="">All</option>
-                {assigneeOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
+                {commonLeadTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </SelectField>
+              {!isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
+                <SelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
+                  <option value="">All</option>
+                  {assigneeOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </SelectField>
+              ) : null}
               <SelectField label="Stage" value={milestoneStage} onChange={onMilestoneStageChange}>
                 <option value="">All</option>
                 {milestoneStageOptions.map((v) => (

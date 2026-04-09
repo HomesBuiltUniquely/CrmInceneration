@@ -10,9 +10,9 @@ function buildUrl(req: NextRequest, path: string[]) {
 }
 
 async function proxy(req: NextRequest, path: string[], method: string) {
-  const headers = upstreamAuthHeaders(req);
+  const headers = new Headers(upstreamAuthHeaders(req));
   const contentType = req.headers.get("content-type");
-  if (contentType) headers["Content-Type"] = contentType;
+  if (contentType) headers.set("Content-Type", contentType);
 
   const body =
     method === "GET" || method === "DELETE"

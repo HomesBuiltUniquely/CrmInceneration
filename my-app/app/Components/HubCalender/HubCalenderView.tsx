@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 const MONTHS = [
   "January",
@@ -37,6 +38,11 @@ function getFirstDayOfMonth(year: number, month: number) {
 }
 
 export default function HubCalendarPage(): React.ReactElement {
+  const [role, setRole] = React.useState("SUPER_ADMIN");
+  React.useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    setRole(normalizeRole(stored) || "SUPER_ADMIN");
+  }, []);
   const today = useMemo(() => new Date(), []);
   const [miniMonth, setMiniMonth] = useState<number>(today.getMonth());
   const [miniYear, setMiniYear] = useState<number>(today.getFullYear());
@@ -156,8 +162,8 @@ export default function HubCalendarPage(): React.ReactElement {
             appName="Hows"
             appTagline="by HUB"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={role.replace(/_/g, " ")}
+            profileRole={role}
             profileInitials="AD"
           />
         </div>

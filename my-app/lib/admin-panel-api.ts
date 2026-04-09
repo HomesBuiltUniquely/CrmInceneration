@@ -15,10 +15,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & AnyJson;
   if (!res.ok) {
-    const msg =
-      typeof (data as AnyJson).message === "string"
-        ? (data as AnyJson).message
-        : `HTTP ${res.status}`;
+    const message = (data as AnyJson).message;
+    const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return data;
@@ -41,6 +39,8 @@ export const adminPanelApi = {
   listManagers: () => list("managers"),
   listSalesExecutives: () => list("sales-executives"),
   listPreSales: () => list("pre-sales"),
+  listDesignManagers: () => list("design-managers"),
+  listDesigners: () => list("designers"),
   listAdmins: () => list("admins"),
   listAllUsers: () => list("all-users"),
   branchTransferUsers: () => list("branch-transfer-users"),
@@ -62,6 +62,18 @@ export const adminPanelApi = {
   updatePreSales: (id: number | string, payload: AnyJson) =>
     call<AnyJson>(`pre-sales/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deletePreSales: (id: number | string) => call<AnyJson>(`pre-sales/${id}`, { method: "DELETE" }),
+  createDesignManager: (payload: AnyJson) =>
+    call<AnyJson>("create-design-manager", { method: "POST", body: JSON.stringify(payload) }),
+  createDesigner: (payload: AnyJson) =>
+    call<AnyJson>("create-designer", { method: "POST", body: JSON.stringify(payload) }),
+  updateDesignManager: (id: number | string, payload: AnyJson) =>
+    call<AnyJson>(`design-managers/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  updateDesigner: (id: number | string, payload: AnyJson) =>
+    call<AnyJson>(`designers/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteDesignManager: (id: number | string) =>
+    call<AnyJson>(`design-managers/${id}`, { method: "DELETE" }),
+  deleteDesigner: (id: number | string) =>
+    call<AnyJson>(`designers/${id}`, { method: "DELETE" }),
   deleteManager: (id: number | string) => call<AnyJson>(`delete-manager/${id}`, { method: "DELETE" }),
   deleteAdmin: (id: number | string) => call<AnyJson>(`delete-admin/${id}`, { method: "DELETE" }),
 };

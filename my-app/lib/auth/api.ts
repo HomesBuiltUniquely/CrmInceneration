@@ -55,18 +55,22 @@ export function dashboardPathByRole(role: string): string {
 
 export function hasDashboardByRole(role: string): boolean {
   const r = normalizeRole(role);
-  return (
-    r === "SUPER_ADMIN" ||
-    r === "ADMIN" ||
-    r === "SALES_ADMIN" ||
-    r === "SALES_MANAGER" ||
-    r === "PRESALES_MANAGER"
-  );
+  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
 }
 
 /** First page after login by role. */
 export function landingPathByRole(role: string): string {
-  void role;
+  const r = normalizeRole(role);
+  if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") {
+    return dashboardPathByRole(r);
+  }
+  if (
+    r === "TERRITORY_DESIGN_MANAGER" ||
+    r === "DESIGN_MANAGER" ||
+    r === "DESIGNER"
+  ) {
+    return "/design-dashboard";
+  }
   return "/Leads";
 }
 

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import type { Lead } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
@@ -203,6 +204,11 @@ function CreateLeadFieldLabel({
 }
 
 export default function CreateLeadClient() {
+  const [role, setRole] = useState("SUPER_ADMIN");
+  useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    setRole(normalizeRole(stored) || "SUPER_ADMIN");
+  }, []);
   const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -362,8 +368,8 @@ export default function CreateLeadClient() {
             appName="Hows"
             appTagline="by HUB"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={role.replace(/_/g, " ")}
+            profileRole={role}
             profileInitials="AD"
           />
         </div>

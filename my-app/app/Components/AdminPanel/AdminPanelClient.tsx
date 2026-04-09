@@ -1,11 +1,28 @@
 "use client";
 
 import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import AdminPanelContent from "./AdminPanelContent";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 export default function AdminPanelClient() {
+  const [role, setRole] = useState("SUPER_ADMIN");
+  useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    setRole(normalizeRole(stored) || "SUPER_ADMIN");
+  }, []);
+  const roleLabel = useMemo(
+    () =>
+      role
+        .toLowerCase()
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" "),
+    [role],
+  );
+
   return (
     <div
       className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden"
@@ -21,8 +38,8 @@ export default function AdminPanelClient() {
             appName="Hows"
             appTagline="by HUB"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={roleLabel}
+            profileRole={role}
             profileInitials="AD"
           />
         </div>
@@ -39,10 +56,10 @@ export default function AdminPanelClient() {
                 />
                 <div>
                   <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-slate-900">
-                    Admin Panel
+                    {roleLabel} Panel
                   </div>
                   <div className="text-sm text-black">
-                    Configuration & controls — Super Admin view
+                    Configuration & controls - {roleLabel} view
                   </div>
                 </div>
               </div>

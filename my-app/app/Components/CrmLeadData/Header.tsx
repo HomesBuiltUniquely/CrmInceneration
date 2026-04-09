@@ -1,13 +1,15 @@
  "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 export default function Header() {
+  const [currentRole, setCurrentRole] = useState("SUPER_ADMIN");
   const [search, setSearch] = useState("");
   const [leadType, setLeadType] = useState("all");
   const [sort, setSort] = useState("updatedAt,desc");
@@ -17,6 +19,11 @@ export default function Header() {
   const [milestoneStage, setMilestoneStage] = useState("");
   const [milestoneStageCategory, setMilestoneStageCategory] = useState("");
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    setCurrentRole(normalizeRole(stored));
+  }, []);
 
   const milestoneFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
@@ -39,8 +46,8 @@ export default function Header() {
             appName="Lead"
             appTagline="workspace"
             sections={dashboardSidebarSections}
-            profileName="admin"
-            profileRole="SUPER_ADMIN"
+            profileName={currentRole.replace(/_/g, " ")}
+            profileRole={currentRole}
             profileInitials="AD"
           />
         </div>

@@ -11,6 +11,8 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
       { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar", href: "/hub-calendar" },
+      { id: "crm-sales-managers", label: "Sales Managers", description: "View managers list", icon: "id-card", href: "/admin-panel" },
+      { id: "crm-presales-executives", label: "Presales Executives", description: "View presales executives", icon: "users", href: "/admin-panel" },
     ],
   },
   {
@@ -21,6 +23,7 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     items: [
       { id: "design-appointment", label: "Appointment", description: "Manage designer availability", icon: "calendar" },
       { id: "design-module", label: "Design Module", description: "Your design project", icon: "palette" },
+      { id: "design-create-user", label: "Create Design User", description: "Add new designer/manager", icon: "plus", href: "/admin-panel" },
     ],
   },
   {
