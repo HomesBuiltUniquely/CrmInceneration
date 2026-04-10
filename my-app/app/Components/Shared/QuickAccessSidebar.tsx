@@ -10,6 +10,7 @@ import {
   logout as apiLogout,
 } from "@/lib/auth/api";
 import { cn } from "@/lib/cn";
+import ThemeToggle from "./ThemeToggle";
 
 export type QuickAccessSubItem = {
   id: string;
@@ -508,6 +509,7 @@ export default function QuickAccessSidebar({
   const [openParentId, setOpenParentId] = useState(initialParentId);
   const [activeSubItemId, setActiveSubItemId] = useState("");
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [currentName, setCurrentName] = useState(profileName);
   const [currentRole, setCurrentRole] = useState(profileRole);
@@ -615,6 +617,10 @@ export default function QuickAccessSidebar({
   }, [activeSubItemId, filteredSections, openParentId]);
 
   useEffect(() => {
+    setIsMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
     if (!filteredSections.length || !openParent) {
       return;
     }
@@ -629,6 +635,9 @@ export default function QuickAccessSidebar({
   const handleParentClick = (section: QuickAccessParentItem) => {
     if (isCollapsed) {
       setIsCollapsed(false);
+    }
+    if (!isMobileOpen && typeof window !== "undefined" && window.innerWidth < 1280) {
+      setIsMobileOpen(true);
     }
     // Clicking anywhere on the parent tab toggles subtabs.
     if (openParentId === section.id) {
@@ -683,242 +692,305 @@ export default function QuickAccessSidebar({
   };
 
   return (
-    <aside
-      className={cn(
-        "flex h-screen flex-col overflow-hidden border-r border-slate-200 bg-white transition-[width] duration-300 ease-out",
-        isCollapsed ? "w-[72px]" : "w-[320px]",
-      )}
-    >
-      <div
-        className={cn(
-          "border-b border-slate-200 transition-all duration-300",
-          isCollapsed ? "px-1 py-2" : "px-2 py-2",
-        )}
+    <>
+      <button
+        type="button"
+        onClick={() => setIsMobileOpen(true)}
+        className="fixed bottom-5 left-5 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--crm-border-strong)] bg-[var(--crm-surface-elevated)] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-md)] backdrop-blur xl:hidden"
+        aria-label="Open navigation"
       >
-        <div className="flex items-center justify-center">
-          <button
-            type="button"
-            onClick={() => setIsCollapsed((prev) => !prev)}
-            className={cn(
-              "flex items-center justify-center overflow-hidden rounded-2xl transition-all duration-300",
-              isCollapsed ? "h-[46px] w-[46px]" : "h-[112px] w-[112px]",
-            )}
-            aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            <Image
-              src="/logo-final-02.png"
-              alt={`${appName} logo`}
-              width={260}
-              height={260}
-              className={cn(
-                "object-contain transition-transform duration-300",
-                isCollapsed
-                  ? "h-[82px] w-[82px] scale-[1.7]"
-                  : "h-[26Image0px] w-[260px] scale-[1.90]",
-              )}
-              priority
-            />
-          </button>
-        </div>
-      </div>
+        <svg viewBox="0 0 24 24" fill="none" className="h-6 w-6" aria-hidden="true">
+          <path d="M4 7H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M4 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M4 17H14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      </button>
 
       <div
         className={cn(
-          "flex-1 overflow-y-auto bg-[#f7f9fc] py-5 transition-all duration-300",
-          isCollapsed ? "px-1.5" : "px-3.5",
+          "fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-sm transition-opacity xl:hidden",
+          isMobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
         )}
-      >
-        <div className="space-y-3.5">
-          {filteredSections.map((section) => {
-            const isOpen = section.id === openParentId;
+        onClick={() => setIsMobileOpen(false)}
+        aria-hidden="true"
+      />
 
-            return (
-              <div key={section.id} className="space-y-3">
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleParentClick(section)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleParentClick(section);
-                    }
-                  }}
-                  className={cn(
-                    "flex w-full items-center rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
-                    isCollapsed
-                      ? "justify-center px-0 py-3.5"
-                      : "gap-3 px-4 py-4",
-                    isOpen
-                      ? "border-blue-200 bg-blue-50"
-                      : "border-slate-200 bg-white hover:border-slate-300",
-                  )}
-                >
-                  <button
-                    type="button"
-                    title={section.label}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#dbe8fb] text-[#2d63e2] transition-transform duration-200 hover:scale-[1.03]"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsCollapsed((prev) => {
-                        const next = !prev;
-                        if (prev) {
-                          // When expanding from collapsed, also open this section.
-                          setOpenParentId(section.id);
-                        }
-                        return next;
-                      });
-                    }}
-                  >
-                    <SidebarIcon name={section.icon} className="h-5 w-5" />
-                  </button>
-                  {!isCollapsed ? (
-                    <>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[1.15rem] font-extrabold tracking-[-0.04em] text-slate-800">
-                          {section.label}
-                        </div>
-                        <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-[#88a2cb]">
-                          {section.subtitle}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {section.badge ? (
-                          <span className="rounded-full bg-red-100 px-3 py-1 text-[0.72rem] font-bold text-red-500">
-                            {section.badge}
-                          </span>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDropdownToggle(section);
-                          }}
-                          aria-label={
-                            isOpen
-                              ? `Close ${section.label}`
-                              : `Open ${section.label}`
-                          }
-                          className={cn(
-                            "flex h-8 w-8 items-center justify-center rounded-full bg-white/80 text-slate-500 shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition-all duration-200",
-                            isOpen
-                              ? "rotate-180 text-blue-500"
-                              : "text-slate-400",
-                          )}
-                        >
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            className="h-4 w-4"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            <path
-                              d="M5 7.5L10 12.5L15 7.5"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-
-                {!isCollapsed && isOpen && section.items.length > 0 ? (
-                  <div className="space-y-2.5 px-2">
-                    {section.items.map((item) => {
-                      const isActive = item.id === activeSubItemId;
-
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleSubItemClick(item)}
-                          className={cn(
-                            "relative flex w-full items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition-all duration-200",
-                            isActive
-                              ? "border-blue-200 bg-white shadow-[0_10px_24px_rgba(37,99,235,0.08)]"
-                              : "border-slate-200 bg-white/80 opacity-70 hover:opacity-100",
-                          )}
-                        >
-                          {isActive ? (
-                            <span
-                              aria-hidden="true"
-                              className="pointer-events-none absolute right-[2px] top-1/2 h-[64%] w-[4px] -translate-y-1/2 rounded-full bg-[#2d63e2]"
-                            />
-                          ) : null}
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-slate-100 text-slate-600">
-                            <SidebarIcon name={item.icon} className="h-5 w-5" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div
-                              className={cn(
-                                "text-[1rem] font-semibold",
-                                isActive ? "text-blue-600" : "text-slate-700",
-                              )}
-                            >
-                              {item.label}
-                            </div>
-                            <div className="mt-0.5 text-[0.78rem] text-slate-400">
-                              {item.description}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div
+      <aside
         className={cn(
-          "border-t border-slate-200 transition-all duration-300",
-          isCollapsed ? "px-1 py-3" : "px-5 py-5",
+          "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden border-r border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-lg)] transition-all duration-300 ease-out xl:static xl:z-auto xl:translate-x-0",
+          isCollapsed ? "xl:w-[72px]" : "xl:w-[320px]",
+          isMobileOpen ? "translate-x-0 w-[min(88vw,360px)]" : "-translate-x-full w-[min(88vw,360px)]",
         )}
       >
-        {!isCollapsed ? (
-          <>
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#dbe8fb] text-[0.8rem] font-bold text-[#2d63e2]">
-                {profileInitials}
+        <div
+          className={cn(
+            "border-b border-[var(--crm-border)] transition-all duration-300",
+            isCollapsed ? "px-1 py-2" : "px-2 py-1.5",
+          )}
+        >
+          <div className="mb-4 flex items-center justify-between xl:hidden">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--crm-text-muted)]">
+                {appBadge}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[0.95rem] font-bold text-slate-800">
-                  {currentName}
-                </div>
-                <div className="text-[0.6rem] uppercase tracking-[0.08em] text-slate-400">
-                  {currentRole}
-                </div>
+              <div className="mt-1 text-lg font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
+                Navigation
               </div>
-              <div className="h-3.5 w-3.5 rounded-full bg-emerald-500" />
             </div>
-
             <button
               type="button"
-              onClick={handleLogoutClick}
-              disabled={logoutBusy}
-              className="w-full rounded-3xl bg-[#fb4343] px-5 py-3 text-[0.88rem] font-bold text-white transition-transform duration-200 hover:-translate-y-px"
+              onClick={() => setIsMobileOpen(false)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--crm-border-strong)] bg-[var(--crm-surface-elevated)] text-[var(--crm-text-secondary)]"
+              aria-label="Close navigation"
             >
-              {logoutBusy ? "Signing out..." : logoutLabel}
+              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+                <path d="M6 6L18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                <path d="M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
             </button>
-          </>
-        ) : (
-          <div className="flex justify-center">
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-[#dbe8fb] text-[0.74rem] font-bold text-[#2d63e2]"
-              title={currentName}
-            >
-              {currentInitials}
-            </div>
           </div>
-        )}
-      </div>
-    </aside>
+
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setIsCollapsed((prev) => !prev)}
+              title={`${appName} ${appTagline}`.trim()}
+              className={cn(
+                "flex items-center justify-center overflow-hidden rounded-2xl transition-all duration-300",
+                isCollapsed ? "h-[44px] w-[44px]" : "h-[112px] w-[112px]",
+              )}
+              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              <Image
+                src="/logo-final-02.png"
+                alt={`${appName} logo`}
+                width={260}
+                height={260}
+                className={cn(
+                  "object-contain transition-transform duration-300",
+                  isCollapsed
+                    ? "h-[78px] w-[78px] scale-[1.5]"
+                    : "h-[220px] w-[220px] scale-[1.58]",
+                )}
+                priority
+              />
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={cn(
+            "flex-1 overflow-y-auto bg-[var(--crm-app-bg)] py-5 transition-all duration-300",
+            isCollapsed ? "px-1.5" : "px-3 pt-3",
+          )}
+        >
+          <div className="space-y-2.5">
+            {filteredSections.map((section) => {
+              const isOpen = section.id === openParentId;
+
+              return (
+                <div key={section.id} className="space-y-3">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleParentClick(section)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleParentClick(section);
+                      }
+                    }}
+                    className={cn(
+                      "flex w-full items-center rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
+                      isCollapsed ? "justify-center px-0 py-3.5" : "gap-3 px-4 py-4",
+                      isOpen
+                        ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]"
+                        : "border-[var(--crm-border)] bg-[var(--crm-surface)] hover:border-[var(--crm-border-strong)]",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      title={section.label}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] transition-transform duration-200 hover:scale-[1.03]"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsCollapsed((prev) => {
+                          const next = !prev;
+                          if (prev) {
+                            setOpenParentId(section.id);
+                          }
+                          return next;
+                        });
+                      }}
+                    >
+                      <SidebarIcon name={section.icon} className="h-5 w-5" />
+                    </button>
+                    {!isCollapsed ? (
+                      <>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[1.15rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
+                            {section.label}
+                          </div>
+                          <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-[var(--crm-text-muted)]">
+                            {section.subtitle}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {section.badge ? (
+                            <span className="rounded-full bg-[var(--crm-danger-bg)] px-3 py-1 text-[0.72rem] font-bold text-[var(--crm-danger)]">
+                              {section.badge}
+                            </span>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDropdownToggle(section);
+                            }}
+                            aria-label={isOpen ? `Close ${section.label}` : `Open ${section.label}`}
+                            className={cn(
+                              "flex h-8 w-8 items-center justify-center rounded-full bg-[var(--crm-surface-elevated)] text-[var(--crm-text-muted)] shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition-all duration-200",
+                              isOpen ? "rotate-180 text-[var(--crm-accent)]" : "",
+                            )}
+                          >
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              className="h-4 w-4"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path
+                                d="M5 7.5L10 12.5L15 7.5"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+
+                  {!isCollapsed && isOpen && section.items.length > 0 ? (
+                    <div className="space-y-2.5 px-2">
+                      {section.items.map((item) => {
+                        const isActive = item.id === activeSubItemId;
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => handleSubItemClick(item)}
+                            className={cn(
+                              "relative flex w-full items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition-all duration-200",
+                              isActive
+                                ? "border-[var(--crm-accent-ring)] bg-[var(--crm-surface-elevated)] shadow-[0_10px_24px_rgba(37,99,235,0.08)]"
+                                : "border-[var(--crm-border)] bg-[var(--crm-surface)] opacity-85 hover:border-[var(--crm-border-strong)] hover:opacity-100",
+                            )}
+                          >
+                            {isActive ? (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute right-[2px] top-1/2 h-[64%] w-[4px] -translate-y-1/2 rounded-full bg-[var(--crm-accent)]"
+                              />
+                            ) : null}
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]">
+                              <SidebarIcon name={item.icon} className="h-5 w-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div
+                                className={cn(
+                                  "text-[1rem] font-semibold",
+                                  isActive ? "text-[var(--crm-accent)]" : "text-[var(--crm-text-secondary)]",
+                                )}
+                              >
+                                {item.label}
+                              </div>
+                              <div className="mt-0.5 text-[0.78rem] text-[var(--crm-text-muted)]">
+                                {item.description}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div
+          className={cn(
+            "border-t border-[var(--crm-border)] transition-all duration-300",
+            isCollapsed ? "px-1 py-3" : "px-3.5 py-3",
+          )}
+        >
+          {!isCollapsed ? (
+            <>
+              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-2.5 shadow-[var(--crm-shadow-sm)]">
+                <div className="flex items-center gap-2.5 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-2.5 py-2">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--crm-accent-soft)] text-[0.76rem] font-bold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]">
+                    {currentInitials}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[0.9rem] font-bold leading-tight text-[var(--crm-text-primary)]">
+                      {currentName}
+                    </div>
+                    <div className="truncate text-[0.58rem] uppercase tracking-[0.08em] text-[var(--crm-text-muted)]">
+                      {currentRole}
+                    </div>
+                  </div>
+                  <div className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--crm-success)]" />
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <ThemeToggle className="h-10 w-full justify-center rounded-xl border-[var(--crm-border)] px-0 py-0" compact />
+                  <button
+                    type="button"
+                    onClick={handleLogoutClick}
+                    disabled={logoutBusy}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--crm-danger)] px-3 text-[0.82rem] font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-transform duration-200 hover:-translate-y-px hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                      <path d="M14 7V5.5C14 4.67 13.33 4 12.5 4H7.5C6.67 4 6 4.67 6 5.5V18.5C6 19.33 6.67 20 7.5 20H12.5C13.33 20 14 19.33 14 18.5V17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      <path d="M10 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      <path d="M17 8.5L20.5 12L17 15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    {logoutBusy ? "Signing..." : "Logout"}
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              <ThemeToggle compact />
+              <div
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--crm-border-strong)] bg-[var(--crm-accent-soft)] text-[0.74rem] font-bold text-[var(--crm-accent)] shadow-[var(--crm-shadow-sm)]"
+                title={currentName}
+              >
+                {currentInitials}
+              </div>
+              <button
+                type="button"
+                onClick={handleLogoutClick}
+                disabled={logoutBusy}
+                title={logoutBusy ? "Signing out..." : logoutLabel}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--crm-danger)] text-white shadow-[var(--crm-shadow-sm)] transition-transform duration-200 hover:-translate-y-px hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <svg viewBox="0 0 24 24" fill="none" className="h-4.5 w-4.5" aria-hidden="true">
+                  <path d="M14 7V5.5C14 4.67 13.33 4 12.5 4H7.5C6.67 4 6 4.67 6 5.5V18.5C6 19.33 6.67 20 7.5 20H12.5C13.33 20 14 19.33 14 18.5V17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="M10 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  <path d="M17 8.5L20.5 12L17 15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+      </aside>
+    </>
   );
 }

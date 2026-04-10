@@ -433,15 +433,15 @@ export default function LeadsDataSection({
         onPresalesExecFilterChange={setPresalesExecFilter}
       />
       {error ? (
-        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-rose-600">
+        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-danger-text)]">
           {error}
           {process.env.NODE_ENV === "development" ? (
-            <span className="mt-1 block text-slate-500">
-              Set <code className="rounded bg-slate-100 px-1">CRM_DEV_BEARER_TOKEN</code> in{" "}
-              <code className="rounded bg-slate-100 px-1">.env.local</code> or store a token in{" "}
-              <code className="rounded bg-slate-100 px-1">localStorage</code> as{" "}
-              <code className="rounded bg-slate-100 px-1">crm_token</code> (login) or{" "}
-              <code className="rounded bg-slate-100 px-1">access_token</code>.
+            <span className="mt-1 block text-[var(--crm-text-muted)]">
+              Set <code className="rounded bg-[var(--crm-surface-subtle)] px-1">CRM_DEV_BEARER_TOKEN</code> in{" "}
+              <code className="rounded bg-[var(--crm-surface-subtle)] px-1">.env.local</code> or store a token in{" "}
+              <code className="rounded bg-[var(--crm-surface-subtle)] px-1">localStorage</code> as{" "}
+              <code className="rounded bg-[var(--crm-surface-subtle)] px-1">crm_token</code> (login) or{" "}
+              <code className="rounded bg-[var(--crm-surface-subtle)] px-1">access_token</code>.
             </span>
           ) : null}
         </div>

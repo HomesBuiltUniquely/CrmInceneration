@@ -10,6 +10,7 @@ import {
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import { leadLimitsApi } from "@/lib/lead-limits-api";
 import { pickNumber } from "@/lib/api-normalize";
+import { cn } from "@/lib/cn";
 import {
   CRM_ROLE_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
@@ -18,18 +19,38 @@ import {
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
-  bg: "#f0f4f8",
-  card: "#ffffff",
-  primary: "#2563eb",
-  primaryHover: "#1d4ed8",
-  accent: "#0ea5e9",
-  danger: "#ef4444",
-  success: "#22c55e",
-  border: "#e2e8f0",
-  text: "#000000",
-  muted: "#000000",
-  badgeBg: "#eff6ff",
-  badgeText: "#1d4ed8",
+  bg: "var(--crm-app-bg)",
+  card: "var(--crm-surface)",
+  surface: "var(--crm-surface-subtle)",
+  elevated: "var(--crm-surface-elevated)",
+  primary: "var(--crm-accent)",
+  primaryHover: "var(--crm-accent-strong)",
+  accent: "var(--crm-accent)",
+  danger: "var(--crm-danger)",
+  dangerBg: "var(--crm-danger-bg)",
+  dangerText: "var(--crm-danger-text)",
+  success: "var(--crm-success)",
+  successBg: "var(--crm-success-bg)",
+  successText: "var(--crm-success-text)",
+  warningBg: "var(--crm-warning-bg)",
+  warningText: "var(--crm-warning-text)",
+  info: "var(--crm-info)",
+  infoBg: "var(--crm-info-bg)",
+  infoText: "var(--crm-info-text)",
+  neutral: "var(--crm-neutral)",
+  neutralBg: "var(--crm-neutral-bg)",
+  neutralText: "var(--crm-neutral-text)",
+  border: "var(--crm-border)",
+  borderStrong: "var(--crm-border-strong)",
+  text: "var(--crm-text-primary)",
+  muted: "var(--crm-text-muted)",
+  badgeBg: "var(--crm-accent-soft)",
+  badgeText: "var(--crm-accent)",
+  inputBg: "var(--crm-input-bg)",
+  overlay: "var(--crm-overlay)",
+  tabGrad: "var(--crm-tab-grad)",
+  white: "#fff",
+  disabled: "var(--crm-border-strong)",
 };
 
 /** `toBranch` values for POST /api/admin/branch-transfer — must match backend `User.branch`. */
@@ -43,15 +64,16 @@ const BRANCH_TRANSFER_OPTIONS: readonly { value: string; label: string }[] = [
 interface CardProps {
   children: ReactNode;
   style?: CSSProperties;
+  className?: string;
 }
 
-const Card = ({ children, style = {} }: CardProps) => (
+const Card = ({ children, style = {}, className }: CardProps) => (
   <div
+    className={cn(
+      "rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-7 shadow-[var(--crm-shadow-sm)]",
+      className,
+    )}
     style={{
-      background: C.card,
-      borderRadius: 14,
-      boxShadow: "0 1px 4px rgba(0,0,0,.07)",
-      padding: 28,
       ...style,
     }}
   >
@@ -62,22 +84,19 @@ const Card = ({ children, style = {} }: CardProps) => (
 const SectionTitle = ({
   icon,
   children,
+  className,
 }: {
   icon: ReactNode;
   children: ReactNode;
+  className?: string;
 }) => (
   <h2
-    style={{
-      fontSize: 18,
-      fontWeight: 700,
-      color: C.text,
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      marginBottom: 20,
-    }}
+    className={cn(
+      "mb-5 flex items-center gap-2 text-lg font-bold text-[var(--crm-text-primary)]",
+      className,
+    )}
   >
-    <span style={{ fontSize: 20 }}>{icon}</span> {children}
+    <span className="text-xl">{icon}</span> {children}
   </h2>
 );
 
@@ -87,6 +106,7 @@ interface InputProps {
   value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   style?: CSSProperties;
+  className?: string;
 }
 
 const Input = ({
@@ -95,22 +115,19 @@ const Input = ({
   value,
   onChange,
   style = {},
+  className,
 }: InputProps) => (
   <input
     type={type}
     placeholder={placeholder}
     value={value}
     onChange={onChange}
+    className={cn(
+      "w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 text-sm text-[var(--crm-text-primary)] outline-none transition-colors focus:border-[var(--crm-accent)]",
+      className,
+    )}
     style={{
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 8,
-      border: `1px solid ${C.border}`,
-      fontSize: 14,
-      color: C.text,
-      outline: "none",
       boxSizing: "border-box",
-      background: "#f8fafc",
       ...style,
     }}
   />
@@ -121,21 +138,24 @@ interface SelectProps {
   onChange: (e: ChangeEvent<HTMLSelectElement>) => void;
   children: ReactNode;
   style?: CSSProperties;
+  className?: string;
 }
 
-const Select = ({ value, onChange, children, style = {} }: SelectProps) => (
+const Select = ({
+  value,
+  onChange,
+  children,
+  style = {},
+  className,
+}: SelectProps) => (
   <select
     value={value}
     onChange={onChange}
+    className={cn(
+      "w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 text-sm text-[var(--crm-text-primary)] outline-none transition-colors focus:border-[var(--crm-accent)]",
+      className,
+    )}
     style={{
-      width: "100%",
-      padding: "10px 14px",
-      borderRadius: 8,
-      border: `1px solid ${C.border}`,
-      fontSize: 14,
-      color: C.text,
-      background: "#f8fafc",
-      outline: "none",
       boxSizing: "border-box",
       ...style,
     }}
@@ -150,6 +170,8 @@ interface BtnProps {
   color?: string;
   style?: CSSProperties;
   disabled?: boolean;
+  className?: string;
+  type?: "button" | "submit" | "reset";
 }
 
 const Btn = ({
@@ -158,28 +180,22 @@ const Btn = ({
   color = C.primary,
   style = {},
   disabled = false,
+  className,
+  type = "button",
 }: BtnProps) => (
   <button
+    type={type}
     onClick={onClick}
     disabled={disabled}
+    className={cn(
+      "rounded-lg px-[22px] py-2.5 text-sm font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-all duration-150 hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-60",
+      className,
+    )}
     style={{
-      background: disabled ? "#cbd5e1" : color,
-      color: "#fff",
+      backgroundColor: disabled ? C.disabled : color,
       border: "none",
-      borderRadius: 8,
-      padding: "10px 22px",
-      fontSize: 14,
-      fontWeight: 600,
-      cursor: disabled ? "not-allowed" : "pointer",
-      transition: "transform .08s ease, filter .08s ease, box-shadow .12s ease",
       ...style,
     }}
-    onMouseEnter={(e: MouseEvent<HTMLButtonElement>) =>
-      !disabled && ((e.currentTarget.style.filter = "brightness(0.94)"), (e.currentTarget.style.transform = "translateY(-1px)"), (e.currentTarget.style.boxShadow = "0 6px 14px rgba(15,23,42,0.18)"))
-    }
-    onMouseLeave={(e: MouseEvent<HTMLButtonElement>) =>
-      ((e.currentTarget.style.filter = ""), (e.currentTarget.style.transform = ""), (e.currentTarget.style.boxShadow = ""))
-    }
   >
     {children}
   </button>
@@ -189,21 +205,23 @@ interface BadgeProps {
   children: ReactNode;
   color?: string;
   text?: string;
+  className?: string;
 }
 
 const Badge = ({
   children,
   color = C.badgeBg,
   text = C.badgeText,
+  className,
 }: BadgeProps) => (
   <span
+    className={cn(
+      "inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold",
+      className,
+    )}
     style={{
       background: color,
       color: text,
-      borderRadius: 20,
-      padding: "2px 10px",
-      fontSize: 12,
-      fontWeight: 600,
     }}
   >
     {children}
@@ -218,48 +236,25 @@ interface ToggleProps {
 const Toggle = ({ active, onChange }: ToggleProps) => (
   <div
     onClick={() => onChange(!active)}
-    style={{
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      cursor: "pointer",
-    }}
+    className="flex cursor-pointer items-center gap-2"
   >
     <button
+      type="button"
+      aria-pressed={active}
+      className="relative flex h-7 w-[50px] items-center rounded-full p-0"
       style={{
-        width: 50,
-        height: 28,
-        borderRadius: 14,
         border: "none",
-        background: active ? "#22c55e" : "#cbd5e1",
-        cursor: "pointer",
-        transition: "background .2s",
-        position: "relative",
-        padding: 0,
-        display: "flex",
-        alignItems: "center",
+        background: active ? C.success : C.disabled,
       }}
     >
       <div
+        className="absolute h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,.1)] transition-all"
         style={{
-          width: 24,
-          height: 24,
-          borderRadius: "50%",
-          background: "#fff",
-          position: "absolute",
           left: active ? 2 : 24,
-          transition: "left .2s",
-          boxShadow: "0 2px 4px rgba(0,0,0,.1)",
         }}
       />
     </button>
-    <span
-      style={{
-        fontSize: 12,
-        fontWeight: 600,
-        color: active ? "#22c55e" : "#000000",
-      }}
-    >
+    <span className="text-xs font-semibold" style={{ color: active ? C.success : C.text }}>
       {active ? "ACTIVE" : "INACTIVE"}
     </span>
   </div>
@@ -271,13 +266,10 @@ interface StatusPillProps {
 
 const StatusPill = ({ active }: StatusPillProps) => (
   <span
+    className="inline-flex rounded-full px-3 py-[3px] text-xs font-semibold"
     style={{
-      background: active ? "#dcfce7" : "#fee2e2",
-      color: active ? "#166534" : "#991b1b",
-      borderRadius: 20,
-      padding: "3px 12px",
-      fontSize: 12,
-      fontWeight: 600,
+      background: active ? C.successBg : C.dangerBg,
+      color: active ? C.successText : C.dangerText,
     }}
   >
     {active ? "ACTIVE" : "INACTIVE"}
@@ -295,69 +287,40 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
   if (!isOpen) return null;
   return (
     <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
       style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: "rgba(0,0,0,.5)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
+        background: C.overlay,
       }}
       onClick={onClose}
     >
       <div
+        className="w-[90%] max-w-[600px] overflow-auto rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-lg)]"
         style={{
-          background: "#fff",
-          borderRadius: 12,
-          boxShadow: "0 10px 40px rgba(0,0,0,.2)",
-          maxWidth: 600,
-          width: "90%",
           maxHeight: "90vh",
-          overflow: "auto",
         }}
         onClick={(e: MouseEvent) => e.stopPropagation()}
       >
         <div
+          className="flex items-center justify-between rounded-t-xl px-6 py-5 text-white"
           style={{
-            background: "linear-gradient(135deg,#6366f1,#2563eb)",
-            color: "#fff",
-            padding: "20px 24px",
-            borderRadius: "12px 12px 0 0",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            background: C.tabGrad,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 22 }}>📋</span>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>
+          <div className="flex items-center gap-2.5">
+            <span className="text-[22px]">📋</span>
+            <h2 className="m-0 text-lg font-bold">
               {title}
             </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            style={{
-              background: "rgba(255,255,255,.2)",
-              border: "none",
-              color: "#fff",
-              borderRadius: "50%",
-              width: 32,
-              height: 32,
-              fontSize: 18,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-lg text-white"
           >
             ✕
           </button>
         </div>
-        <div style={{ padding: "24px" }}>{children}</div>
+        <div className="p-6">{children}</div>
       </div>
     </div>
   );
@@ -371,26 +334,14 @@ interface TabProps {
 
 const Tab = ({ label, active, onClick }: TabProps) => (
   <button
+    type="button"
     onClick={onClick}
-    style={{
-      padding: "9px 20px",
-      border: "none",
-      borderRadius: 8,
-      fontSize: 14,
-      fontWeight: 600,
-      cursor: "pointer",
-      transition: "transform .08s ease, filter .08s ease",
-      background: active ? C.primary : "transparent",
-      color: active ? "#fff" : C.muted,
-    }}
-    onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
-      e.currentTarget.style.filter = "brightness(0.96)";
-      e.currentTarget.style.transform = "translateY(-1px)";
-    }}
-    onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
-      e.currentTarget.style.filter = "";
-      e.currentTarget.style.transform = "";
-    }}
+    className={cn(
+      "rounded-lg px-5 py-[9px] text-sm font-semibold transition-all duration-150 hover:-translate-y-px",
+      active
+        ? "bg-[var(--crm-accent)] text-white"
+        : "bg-transparent text-[var(--crm-text-muted)]",
+    )}
   >
     {label}
   </button>
@@ -404,26 +355,14 @@ interface FilterBtnProps {
 
 const FilterBtn = ({ label, active, onClick }: FilterBtnProps) => (
   <button
+    type="button"
     onClick={onClick}
-    style={{
-      padding: "6px 16px",
-      borderRadius: 20,
-      border: `1px solid ${active ? C.primary : C.border}`,
-      background: active ? C.primary : "#fff",
-      color: active ? "#fff" : C.muted,
-      fontSize: 13,
-      fontWeight: 500,
-      cursor: "pointer",
-      transition: "transform .08s ease, filter .08s ease",
-    }}
-    onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
-      e.currentTarget.style.filter = "brightness(0.96)";
-      e.currentTarget.style.transform = "translateY(-1px)";
-    }}
-    onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
-      e.currentTarget.style.filter = "";
-      e.currentTarget.style.transform = "";
-    }}
+    className={cn(
+      "rounded-full border px-4 py-1.5 text-[13px] font-medium transition-all duration-150 hover:-translate-y-px",
+      active
+        ? "border-[var(--crm-accent)] bg-[var(--crm-accent)] text-white"
+        : "border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-muted)]",
+    )}
   >
     {label}
   </button>
@@ -435,19 +374,12 @@ interface TableHeadProps {
 
 const TableHead = ({ cols }: TableHeadProps) => (
   <thead>
-    <tr style={{ background: "#f8fafc" }}>
+    <tr className="bg-[var(--crm-surface-subtle)]">
       {cols.map((c) => (
         <th
           key={c}
+          className="border-b border-[var(--crm-border)] px-[14px] py-2.5 text-left text-xs font-bold uppercase tracking-[0.5px] text-[var(--crm-text-primary)]"
           style={{
-            textAlign: "left",
-            padding: "10px 14px",
-            fontSize: 12,
-            fontWeight: 700,
-            color: C.text,
-            textTransform: "uppercase",
-            letterSpacing: 0.5,
-            borderBottom: `1px solid ${C.border}`,
           }}
         >
           {c}
@@ -479,7 +411,11 @@ function AdminUserSection() {
   const [tab, setTab] = useState<"admins" | "createAdmin" | "createUser">(
     "admins",
   );
-  const [viewerRole, setViewerRole] = useState("");
+  const [viewerRole] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    return normalizeRole(role);
+  });
   const [adminForm, setAdminForm] = useState<AdminForm>({
     username: "",
     password: "",
@@ -502,11 +438,6 @@ function AdminUserSection() {
   const [salesAdmins, setSalesAdmins] = useState<Array<Record<string, unknown>>>([]);
   const [territoryDesignManagers, setTerritoryDesignManagers] = useState<Array<Record<string, unknown>>>([]);
   const [designManagers, setDesignManagers] = useState<Array<Record<string, unknown>>>([]);
-
-  useEffect(() => {
-    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    setViewerRole(normalizeRole(role));
-  }, []);
 
   const canManageAdmins = viewerRole === "SUPER_ADMIN";
   const isSalesAdmin = viewerRole === "SALES_ADMIN";
@@ -539,11 +470,15 @@ function AdminUserSection() {
   }, [canManageAdmins, tab]);
 
   useEffect(() => {
+    if (!viewerRole) return;
     let cancelled = false;
+    const allUsersReq = canManageAdmins
+      ? adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>)
+      : Promise.resolve([] as Array<Record<string, unknown>>);
     void Promise.all([
       adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>),
       adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>),
+      allUsersReq,
     ]).then(([sm, pm, all]) => {
       if (cancelled) return;
       setSalesManagers(sm.filter((u) => String(u.active ?? true) !== "false"));
@@ -564,7 +499,7 @@ function AdminUserSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canManageAdmins, viewerRole]);
 
   const ROLES = [
     {
@@ -603,7 +538,7 @@ function AdminUserSection() {
         style={{
           display: "flex",
           gap: 6,
-          background: "#f1f5f9",
+          background: C.surface,
           borderRadius: 10,
           padding: 5,
           width: "fit-content",
@@ -672,7 +607,7 @@ function AdminUserSection() {
                   <tr
                     key={String(a.id ?? i)}
                     style={{
-                      background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                      background: i % 2 === 0 ? C.card : C.surface,
                       color: C.text,
                     }}
                   >
@@ -1042,7 +977,7 @@ function BranchTransferSection() {
           >
             <SectionTitle icon="🔄">Branch Transfer</SectionTitle>
             <Btn
-              color="#0ea5e9"
+              color={C.info}
               style={{ fontSize: 13, padding: "7px 16px" }}
               onClick={() => setShowHistory(true)}
             >
@@ -1105,7 +1040,7 @@ function BranchTransferSection() {
                 placeholder="Auto-filled"
                 value={currentBranch}
                 onChange={() => {}}
-                style={{ background: "#f1f5f9", cursor: "not-allowed" }}
+                style={{ background: C.surface, color: C.muted, cursor: "not-allowed" }}
               />
             </div>
             <div>
@@ -1223,7 +1158,7 @@ function BranchTransferSection() {
                 ))}
               </Select>
               <Btn
-                color="#334155"
+                color={C.neutral}
                 style={{ fontSize: 13, padding: "7px 16px" }}
                 onClick={() => setShowHistory(false)}
               >
@@ -1268,7 +1203,7 @@ function BranchTransferSection() {
                       <tr
                         key={String(h.id ?? i)}
                         style={{
-                          background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                          background: i % 2 === 0 ? C.card : C.surface,
                         }}
                       >
                         <td
@@ -1281,12 +1216,12 @@ function BranchTransferSection() {
                           {uid}
                         </td>
                         <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                          <Badge color="#f0fdf4" text="#166534">
+                          <Badge color={C.successBg} text={C.successText}>
                             {fromB}
                           </Badge>
                         </td>
                         <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                          <Badge color="#fef3c7" text="#d97706">
+                          <Badge color={C.warningBg} text={C.warningText}>
                             {toB}
                           </Badge>
                         </td>
@@ -1343,10 +1278,16 @@ interface User {
 }
 
 function AllUsersSection() {
+  const [viewerRole] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    return normalizeRole(role);
+  });
   const [roleFilter, setRoleFilter] = useState<string>("All");
   const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
+    if (viewerRole !== "SUPER_ADMIN") return;
     let cancelled = false;
     void Promise.all([
       adminPanelApi.listAllUsers(),
@@ -1384,7 +1325,7 @@ function AllUsersSection() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [viewerRole]);
 
   const filteredUsers =
     roleFilter === "All"
@@ -1396,6 +1337,13 @@ function AllUsersSection() {
   return (
     <Card>
       <SectionTitle icon="🏢">All Users Management</SectionTitle>
+      {viewerRole !== "SUPER_ADMIN" ? (
+        <p style={{ fontSize: 12, color: C.muted, marginBottom: 0 }}>
+          All users listing is available only for Super Admin.
+        </p>
+      ) : null}
+      {viewerRole === "SUPER_ADMIN" ? (
+        <>
       <p style={{ fontSize: 12, color: C.muted, marginBottom: 16 }}>
         Branch may be omitted for some roles in <code>/all-users</code>; when the same user appears in branch
         transfer eligibility, we show that branch here.
@@ -1440,7 +1388,7 @@ function AllUsersSection() {
                 <tr
                   key={u.id}
                   style={{
-                    background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                    background: i % 2 === 0 ? C.card : C.surface,
                   }}
                 >
                   <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.id}</td>
@@ -1482,6 +1430,8 @@ function AllUsersSection() {
           </tbody>
         </table>
       </div>
+        </>
+      ) : null}
     </Card>
   );
 }
@@ -1500,8 +1450,16 @@ interface SalesExecutive {
 function SalesExecSection() {
   const [execs, setExecs] = useState<SalesExecutive[]>([]);
   const [loading, setLoading] = useState(false);
-  const [viewerRole, setViewerRole] = useState("");
-  const [viewerName, setViewerName] = useState("");
+  const [viewerRole] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    return normalizeRole(role);
+  });
+  const [viewerName] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const name = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
+    return name.trim();
+  });
   const [allUsers, setAllUsers] = useState<Array<Record<string, unknown>>>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -1514,13 +1472,6 @@ function SalesExecSection() {
     password: "",
     parentId: "",
   });
-
-  useEffect(() => {
-    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    const name = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
-    setViewerRole(normalizeRole(role));
-    setViewerName(name.trim());
-  }, []);
 
   useEffect(() => {
     if (viewerRole === "PRESALES_MANAGER") {
@@ -1569,7 +1520,18 @@ function SalesExecSection() {
         : isDesignManagerViewer
           ? adminPanelApi.listDesigners()
           : adminPanelApi.listSalesExecutives();
-    void Promise.all([listReq, adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>)])
+    const parentReq = !showCreate
+      ? Promise.resolve([] as Array<Record<string, unknown>>)
+      : isSalesManagerViewer
+        ? adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>)
+        : isPresalesManagerViewer
+          ? adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>)
+          : isTerritoryDesignManagerViewer
+            ? Promise.resolve([] as Array<Record<string, unknown>>)
+          : isDesignManagerViewer
+            ? adminPanelApi.listDesignManagers().catch(() => [] as Array<Record<string, unknown>>)
+            : adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>);
+    void Promise.all([listReq, parentReq])
       .then(([rows, users]) => {
         const mapped = rows.map((r) => ({
             id: Number(r.id ?? 0),
@@ -1591,12 +1553,15 @@ function SalesExecSection() {
   };
 
   useEffect(() => {
+    if (!viewerRole) return;
     load();
   }, [
     isDesignManagerViewer,
     isManagerViewer,
     isPresalesManagerViewer,
     isTerritoryDesignManagerViewer,
+    showCreate,
+    viewerRole,
     viewerName,
   ]);
 
@@ -1620,7 +1585,7 @@ function SalesExecSection() {
           {managerTitle} Management
         </SectionTitle>
         <Btn
-          color="#22c55e"
+          color={C.success}
           style={{ fontSize: 13, padding: "8px 16px" }}
           onClick={() => setShowCreate((v) => !v)}
         >
@@ -1757,7 +1722,7 @@ function SalesExecSection() {
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
             <Btn
-              color="#22c55e"
+              color={C.success}
               disabled={
                 !createForm.fullName.trim() ||
                 !createForm.email.trim() ||
@@ -1812,7 +1777,7 @@ function SalesExecSection() {
             >
               Save {managerTitle.slice(0, -1)}
             </Btn>
-            <Btn color="#64748b" onClick={() => setShowCreate(false)}>
+            <Btn color={C.neutral} onClick={() => setShowCreate(false)}>
               Cancel
             </Btn>
           </div>
@@ -1861,7 +1826,7 @@ function SalesExecSection() {
               <tr
                 key={e.id}
                 style={{
-                  background: i % 2 === 0 ? "#fff" : "#f8fafc",
+                  background: i % 2 === 0 ? C.card : C.surface,
                 }}
               >
                 <td style={{ padding: "12px 14px", fontSize: 14 }}>{e.id}</td>
@@ -1883,7 +1848,7 @@ function SalesExecSection() {
                   {e.phone}
                 </td>
                 <td style={{ padding: "12px 14px" }}>
-                  <Badge color="#f0fdf4" text="#166534">
+                  <Badge color={C.successBg} text={C.successText}>
                     {e.branch}
                   </Badge>
                 </td>
@@ -1970,6 +1935,11 @@ function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
 }
 
 function LeadLimitSection() {
+  const [viewerRole] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    return normalizeRole(role);
+  });
   const [defaultLimit, setDefaultLimit] = useState<string>("50");
   const [limitTab, setLimitTab] = useState<"users" | "role">("users");
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
@@ -1998,8 +1968,9 @@ function LeadLimitSection() {
   };
 
   useEffect(() => {
+    if (viewerRole !== "SUPER_ADMIN") return;
     loadLimits();
-  }, []);
+  }, [viewerRole]);
 
   const toggleRole = (r: string) =>
     setSelectedRoles((prev) =>
@@ -2026,6 +1997,15 @@ function LeadLimitSection() {
 
   return (
     <Card>
+      {viewerRole !== "SUPER_ADMIN" ? (
+        <>
+          <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
+          <p style={{ fontSize: 13, color: C.muted, marginBottom: 0 }}>
+            Lead limit management is available only for Super Admin.
+          </p>
+        </>
+      ) : (
+        <>
       <div
         style={{
           display: "flex",
@@ -2035,7 +2015,7 @@ function LeadLimitSection() {
         }}
       >
         <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
-        <Btn color="#0ea5e9" style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
+        <Btn color={C.accent} style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
           ↻ Refresh
         </Btn>
       </div>
@@ -2043,7 +2023,7 @@ function LeadLimitSection() {
       {/* Default limit banner */}
       <div
         style={{
-          background: "linear-gradient(135deg,#6366f1,#2563eb)",
+          background: C.tabGrad,
           borderRadius: 16,
           padding: "20px 24px",
           marginBottom: 24,
@@ -2055,12 +2035,12 @@ function LeadLimitSection() {
         }}
       >
         <div>
-          <p style={{ color: "#c7d2fe", fontSize: 13, margin: 0 }}>
+          <p style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, margin: 0 }}>
             Default monthly limit for new users
           </p>
           <p
             style={{
-              color: "#fff",
+              color: C.white,
               fontSize: 13,
               marginTop: 6,
               fontWeight: 600,
@@ -2092,11 +2072,12 @@ function LeadLimitSection() {
               fontWeight: 700,
               textAlign: "center",
               outline: "none",
-              background: "#fff",
+              background: C.card,
+              color: C.text,
             }}
           />
           <Btn
-            color="#22c55e"
+            color={C.success}
             style={{ fontSize: 13, padding: "8px 18px" }}
             onClick={() => {
               const n = Number(defaultLimit);
@@ -2114,7 +2095,7 @@ function LeadLimitSection() {
         style={{
           display: "flex",
           gap: 6,
-          background: "#f1f5f9",
+          background: C.surface,
           borderRadius: 10,
           padding: 5,
           width: "fit-content",
@@ -2139,8 +2120,8 @@ function LeadLimitSection() {
           {getSelectedCount() > 0 && (
             <div
               style={{
-                background: "#fef3c7",
-                border: "1.5px solid #f59e0b",
+                background: C.warningBg ?? "var(--crm-warning-bg)",
+                border: "1.5px solid var(--crm-warning-text)",
                 borderRadius: 12,
                 padding: "16px 18px",
                 marginBottom: 16,
@@ -2151,7 +2132,7 @@ function LeadLimitSection() {
                 flexWrap: "wrap",
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 600, color: "#92400e" }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: "var(--crm-warning-text)" }}>
                 📋 {getSelectedCount()} user
                 {getSelectedCount() !== 1 ? "s" : ""} selected
               </span>
@@ -2171,15 +2152,16 @@ function LeadLimitSection() {
                   style={{
                     padding: "8px 12px",
                     borderRadius: 8,
-                    border: `1px solid #f59e0b`,
+                    border: `1px solid var(--crm-warning-text)`,
                     fontSize: 13,
                     outline: "none",
-                    background: "#fff",
+                    background: C.card,
+                    color: C.text,
                     minWidth: 140,
                   }}
                 />
                 <Btn
-                  color="#f59e0b"
+                  color="var(--crm-warning-text)"
                   onClick={() => setShowModal(true)}
                   style={{ fontSize: 12, padding: "8px 14px" }}
                 >
@@ -2376,22 +2358,23 @@ function LeadLimitSection() {
                   users.map((u, i) => {
                   const barColor =
                     u.pct === 0
-                      ? "#e2e8f0"
+                      ? C.borderStrong
                       : u.pct < 50
-                        ? "#22c55e"
+                        ? C.success
                         : u.pct < 80
-                          ? "#f59e0b"
-                          : "#ef4444";
+                          ? "var(--crm-warning-text)"
+                          : C.danger;
                   return (
                     <tr
                       key={u.userId}
                       style={{
                         background:
                           u.limit === 0
-                            ? "#fff7f7"
+                            ? C.dangerBg
                             : i % 2 === 0
-                              ? "#fff"
-                              : "#f8fafc",
+                              ? C.card
+                              : C.surface,
+                        color: C.text,
                       }}
                     >
                       <td style={{ padding: "12px 14px", textAlign: "center" }}>
@@ -2426,7 +2409,7 @@ function LeadLimitSection() {
                         style={{
                           padding: "12px 14px",
                           fontSize: 14,
-                          color: u.current === 0 ? "#ef4444" : C.text,
+                          color: u.current === 0 ? C.danger : C.text,
                           fontWeight: 600,
                         }}
                       >
@@ -2445,7 +2428,7 @@ function LeadLimitSection() {
                         style={{
                           padding: "12px 14px",
                           fontSize: 14,
-                          color: u.remaining === 0 ? "#ef4444" : "#22c55e",
+                          color: u.remaining === 0 ? C.danger : C.success,
                           fontWeight: 600,
                         }}
                       >
@@ -2463,7 +2446,7 @@ function LeadLimitSection() {
                             style={{
                               flex: 1,
                               height: 6,
-                              background: "#e2e8f0",
+                              background: C.borderStrong,
                               borderRadius: 3,
                             }}
                           >
@@ -2585,7 +2568,7 @@ function LeadLimitSection() {
               style={{ marginBottom: 14 }}
             />
             <Btn
-              color="#22c55e"
+              color={C.success}
               style={{ width: "100%", justifyContent: "center" }}
               onClick={() => {
                 const lim = Number(roleLimit);
@@ -2655,7 +2638,7 @@ function LeadLimitSection() {
             {currentEditingUser ? (
               <div
                 style={{
-                  background: "#f8fafc",
+                  background: C.surface,
                   border: `1px solid ${C.border}`,
                   borderLeft: `3px solid ${C.primary}`,
                   borderRadius: 8,
@@ -2696,7 +2679,7 @@ function LeadLimitSection() {
                   <div
                     key={userId}
                     style={{
-                      background: "#f8fafc",
+                      background: C.surface,
                       border: `1px solid ${C.border}`,
                       borderLeft: `3px solid ${C.primary}`,
                       borderRadius: 8,
@@ -2778,7 +2761,7 @@ function LeadLimitSection() {
               fontWeight: 600,
               outline: "none",
               boxSizing: "border-box",
-              background: "#f8fafc",
+              background: C.surface,
             }}
           />
           <p
@@ -2802,7 +2785,7 @@ function LeadLimitSection() {
             }}
           >
             <Btn
-              color="#475569"
+              color={C.text}
               onClick={() => {
                 setShowModal(false);
                 setCurrentEditingUser(null);
@@ -2815,7 +2798,7 @@ function LeadLimitSection() {
               Cancel
             </Btn>
             <Btn
-              color="#22c55e"
+              color={C.success}
               onClick={() => {
                 const lim = Number(currentEditingUser ? currentEditingLimit : bulkLimit);
                 if (Number.isNaN(lim)) return;
@@ -2850,6 +2833,8 @@ function LeadLimitSection() {
           </div>
         </div>
       </Modal>
+        </>
+      )}
     </Card>
   );
 }
@@ -2903,20 +2888,22 @@ const SECTIONS: Section[] = [
 
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
 export default function AdminPanelContent() {
-  const [viewerRole, setViewerRole] = useState("");
-
-  useEffect(() => {
+  const [viewerRole] = useState(() => {
+    if (typeof window === "undefined") return "";
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    setViewerRole(normalizeRole(role));
-  }, []);
+    return normalizeRole(role);
+  });
 
   const isSalesManager = viewerRole === "SALES_MANAGER";
   const isPresalesManager = viewerRole === "PRESALES_MANAGER";
   const isTerritoryDesignManager = viewerRole === "TERRITORY_DESIGN_MANAGER";
   const isDesignManager = viewerRole === "DESIGN_MANAGER";
+  const isSuperAdmin = viewerRole === "SUPER_ADMIN";
   const baseSections = isSalesManager || isPresalesManager || isTerritoryDesignManager || isDesignManager
     ? SECTIONS.filter((section) => section.id === "salesExec")
-    : SECTIONS;
+    : SECTIONS.filter((section) =>
+        isSuperAdmin ? true : section.id !== "allUsers" && section.id !== "leadLimit",
+      );
   const sections = baseSections.map((section) => {
     if (section.id !== "salesExec") return section;
     if (isTerritoryDesignManager) {
@@ -2937,59 +2924,25 @@ export default function AdminPanelContent() {
 
   return (
     <div
-      style={{
-        background: C.bg,
-        minHeight: "100vh",
-        fontFamily: "'Segoe UI', system-ui, sans-serif",
-        padding: "28px 32px",
-      }}
+      className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-7 md:px-8"
+      style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}
     >
       {/* Quick nav cards - Modern compact design */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 10,
-          marginBottom: 28,
-        }}
-      >
+      <div className="mb-7 flex flex-wrap gap-2.5">
         {sections.map((s) => (
           <button
             key={s.id}
             onClick={() => scrollTo(s.id)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: C.card,
-              border: `1px solid ${C.border}`,
-              borderRadius: 20,
-              padding: "10px 16px",
-              cursor: "pointer",
-              transition: "all .15s",
-              fontSize: 13,
-              fontWeight: 500,
-              color: C.text,
-            }}
-            onMouseEnter={(e: MouseEvent<HTMLButtonElement>) => {
-              e.currentTarget.style.background = C.primary;
-              e.currentTarget.style.color = "#fff";
-              e.currentTarget.style.border = `1px solid ${C.primary}`;
-            }}
-            onMouseLeave={(e: MouseEvent<HTMLButtonElement>) => {
-              e.currentTarget.style.background = C.card;
-              e.currentTarget.style.color = C.text;
-              e.currentTarget.style.border = `1px solid ${C.border}`;
-            }}
+            className="flex items-center gap-2 rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-2.5 text-[13px] font-medium text-[var(--crm-text-primary)] transition-all duration-150 hover:-translate-y-px hover:border-[var(--crm-accent)] hover:bg-[var(--crm-accent)] hover:text-white"
           >
-            <span style={{ fontSize: 14 }}>{s.icon}</span>
+            <span className="text-sm">{s.icon}</span>
             <span>{s.label}</span>
           </button>
         ))}
       </div>
 
       {/* Sections */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <div className="flex flex-col gap-6">
         {!isSalesManager &&
         !isPresalesManager &&
         !isTerritoryDesignManager &&
@@ -3004,15 +2957,19 @@ export default function AdminPanelContent() {
             <div id="branch">
               <BranchTransferSection />
             </div>
-            <div id="allUsers">
-              <AllUsersSection />
-            </div>
+            {isSuperAdmin ? (
+              <div id="allUsers">
+                <AllUsersSection />
+              </div>
+            ) : null}
             <div id="salesExec">
               <SalesExecSection />
             </div>
-            <div id="leadLimit">
-              <LeadLimitSection />
-            </div>
+            {isSuperAdmin ? (
+              <div id="leadLimit">
+                <LeadLimitSection />
+              </div>
+            ) : null}
           </>
         ) : (
           <div id="salesExec">

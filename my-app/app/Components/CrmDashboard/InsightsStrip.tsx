@@ -32,11 +32,11 @@ function AvatarStack({ countLabel = "+12" }: { countLabel?: string }) {
   return (
     <div className="flex items-center justify-end gap-2">
       <div className="flex -space-x-2">
-        <div className="h-6 w-6 rounded-full border-2 border-white bg-slate-200" />
-        <div className="h-6 w-6 rounded-full border-2 border-white bg-slate-300" />
-        <div className="h-6 w-6 rounded-full border-2 border-white bg-slate-400" />
+        <div className="h-6 w-6 rounded-full border-2 border-[var(--crm-surface)] bg-[var(--crm-border)]" />
+        <div className="h-6 w-6 rounded-full border-2 border-[var(--crm-surface)] bg-[var(--crm-border-strong)]" />
+        <div className="h-6 w-6 rounded-full border-2 border-[var(--crm-surface)] bg-[var(--crm-neutral)]" />
       </div>
-      <div className="text-[11px] font-semibold text-slate-500">
+      <div className="text-[11px] font-semibold text-[var(--crm-text-muted)]">
         {countLabel}
       </div>
     </div>
@@ -45,29 +45,29 @@ function AvatarStack({ countLabel = "+12" }: { countLabel?: string }) {
 
 export default function InsightsStrip() {
   const dwell: DwellRow[] = [
-    { label: "0-24h", valuePct: 78, colorClass: "bg-emerald-500" },
-    { label: "24-72h", valuePct: 34, colorClass: "bg-amber-500" },
-    { label: "72h+", valuePct: 12, colorClass: "bg-rose-500" },
+    { label: "0-24h", valuePct: 78, colorClass: "bg-[var(--crm-success)]" },
+    { label: "24-72h", valuePct: 34, colorClass: "bg-[var(--crm-warning-text)]" },
+    { label: "72h+", valuePct: 12, colorClass: "bg-[var(--crm-danger)]" },
   ];
 
   return (
     <section className="xl:ml-6 xl:mt-5 xl:w-263.75">
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3 xl:h-50">
         {/* Stage dwell distribution */}
-        <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
-          <div className="text-[11px] font-semibold tracking-wide text-slate-400">
+        <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
+          <div className="text-[11px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
             STAGE DWELL DISTRIBUTION
           </div>
           <div className="mt-4 space-y-3">
             {dwell.map((row) => (
               <div key={row.label} className="flex items-center gap-4">
-                <div className="h-2.5 flex-1 rounded-full bg-slate-100">
+                <div className="h-2.5 flex-1 rounded-full bg-[var(--crm-border)]">
                   <div
                     className={`h-2.5 rounded-full ${row.colorClass}`}
                     style={{ width: `${row.valuePct}%` }}
                   />
                 </div>
-                <div className="w-12 text-right text-[11px] font-semibold text-slate-600">
+                <div className="w-12 text-right text-[11px] font-semibold text-[var(--crm-text-secondary)]">
                   {row.label}
                 </div>
               </div>
@@ -76,34 +76,34 @@ export default function InsightsStrip() {
         </div>
 
         {/* Top leakage factors */}
-        <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
-          <div className="text-[11px] font-semibold tracking-wide text-slate-400">
+        <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
+          <div className="text-[11px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
             TOP LEAKAGE FACTORS
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
+            <span className="rounded-full bg-[var(--crm-surface-subtle)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">
               Unresponsive (42%)
             </span>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
+            <span className="rounded-full bg-[var(--crm-surface-subtle)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">
               Budget (22%)
             </span>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600">
+            <span className="rounded-full bg-[var(--crm-surface-subtle)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">
               No Authority (15%)
             </span>
           </div>
         </div>
 
         {/* AI smart action */}
-        <div className="rounded-2xl border border-slate-200 bg-blue-50 px-6 py-5 shadow-sm">
+        <div className="rounded-2xl border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
           <div className="flex items-start gap-4">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1D7AFC] shadow-sm">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--crm-accent)] shadow-[var(--crm-shadow-sm)]">
               <SparklesIcon />
             </div>
             <div>
-              <div className="text-[11px] font-bold tracking-wide text-[#1D7AFC]">
+              <div className="text-[11px] font-bold tracking-wide text-[var(--crm-accent)]">
                 AI SMART ACTION
               </div>
-              <div className="mt-1 text-[12px] font-medium leading-5 text-slate-600">
+              <div className="mt-1 text-[12px] font-medium leading-5 text-[var(--crm-text-secondary)]">
                 Increase &quot;Attempting&quot; touches by 20% to improve
                 conversion by 4.5%.
               </div>
@@ -116,14 +116,14 @@ export default function InsightsStrip() {
       <div className="mt-5 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <LegendDot className="bg-emerald-500" />
-            <span className="text-[11px] font-medium text-slate-500">
+            <LegendDot className="bg-[var(--crm-success)]" />
+            <span className="text-[11px] font-medium text-[var(--crm-text-muted)]">
               High Conversion Velocity
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <LegendDot className="bg-amber-500" />
-            <span className="text-[11px] font-medium text-slate-500">
+            <LegendDot className="bg-[var(--crm-warning-text)]" />
+            <span className="text-[11px] font-medium text-[var(--crm-text-muted)]">
               SLA Pending
             </span>
           </div>

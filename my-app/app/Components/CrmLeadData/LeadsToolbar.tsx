@@ -14,14 +14,14 @@ function Pill({
       type="button"
       className={`flex items-center gap-2 rounded-full px-4 py-2 text-[12px] font-semibold ${
         active
-          ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
-          : "text-slate-600 hover:bg-slate-50"
+          ? "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]"
+          : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
       }`}
     >
       <span>{label}</span>
       {value !== undefined ? (
         <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${active ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-500"}`}
+          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${active ? "bg-[var(--crm-accent)] text-white" : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]"}`}
         >
           {value}
         </span>
@@ -32,7 +32,7 @@ function Pill({
 
 function FilterIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-600" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--crm-text-secondary)]" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
     </svg>
   );
@@ -40,7 +40,7 @@ function FilterIcon() {
 
 function SortIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-600" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--crm-text-secondary)]" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M7 5v14m0 0-3-3m3 3 3-3M17 19V5m0 0-3 3m3-3 3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -50,7 +50,7 @@ function Chevron() {
   return (
     <svg
       viewBox="0 0 20 20"
-      className="h-4 w-4 text-slate-500"
+      className="h-4 w-4 text-[var(--crm-text-muted)]"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -77,13 +77,13 @@ function SelectField({
   children: ReactNode;
 }) {
   return (
-    <label className="group flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 transition-colors hover:border-slate-300">
-      <span className="whitespace-nowrap text-[12px] font-semibold text-slate-600">{label}</span>
+    <label className="group flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
+      <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</span>
       <div className="relative min-w-0 flex-1">
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-transparent pr-6 text-[12px] font-semibold text-slate-800 focus:outline-none"
+          className="w-full appearance-none bg-transparent pr-6 text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
         >
           {children}
         </select>
@@ -254,7 +254,7 @@ export default function LeadsToolbar({
 
   return (
     <section className="mx-auto mt-4 max-w-[1200px] px-6">
-      <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]">
+      <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3 shadow-[var(--crm-shadow-sm)]">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -262,13 +262,13 @@ export default function LeadsToolbar({
               onClick={() => setOpenFilter((v) => !v)}
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-semibold transition-colors ${
                 openFilter || activeFilterCount > 0
-                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]"
+                  : "border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               }`}
             >
               <FilterIcon />
               <span>Filter</span>
-              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-600 ring-1 ring-slate-200">
+              <span className="rounded-full bg-[var(--crm-surface)] px-2 py-0.5 text-[10px] font-bold text-[var(--crm-text-secondary)] ring-1 ring-[var(--crm-border)]">
                 {activeFilterCount}
               </span>
             </button>
@@ -277,8 +277,8 @@ export default function LeadsToolbar({
               onClick={() => setOpenSort((v) => !v)}
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-semibold transition-colors ${
                 openSort
-                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]"
+                  : "border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               }`}
             >
               <SortIcon />
@@ -291,8 +291,8 @@ export default function LeadsToolbar({
               onClick={() => setOpenLeadTypes((v) => !v)}
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-semibold transition-colors ${
                 openLeadTypes
-                  ? "border-blue-200 bg-blue-50 text-blue-700"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]"
+                  : "border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               }`}
             >
               <span className="text-[13px]">#</span>
@@ -303,13 +303,13 @@ export default function LeadsToolbar({
         </div>
 
         {openLeadTypes ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-[13px] font-semibold text-slate-700">Lead Types</div>
+              <div className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Lead Types</div>
               <button
                 type="button"
                 onClick={() => setOpenLeadTypes(false)}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               >
                 Close
               </button>
@@ -353,9 +353,9 @@ export default function LeadsToolbar({
                       ["Add Leads", leadTypeCounts.addlead ?? 0],
                       ["Website Leads", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-4 text-center">
-                  <div className="text-2xl font-extrabold text-blue-600">{String(value)}</div>
-                  <div className="mt-1 text-[12px] font-semibold text-slate-600">{label}</div>
+                <div key={label} className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-4 text-center">
+                  <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
+                  <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</div>
                 </div>
               ))}
             </div>
@@ -363,16 +363,16 @@ export default function LeadsToolbar({
         ) : null}
 
         {openFilter ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-[12px] font-semibold text-slate-700">
+              <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--crm-text-primary)]">
                 <FilterIcon />
                 <span>Filter</span>
               </div>
               <button
                 type="button"
                 onClick={resetFilter}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               >
                 Reset
               </button>
@@ -479,22 +479,22 @@ export default function LeadsToolbar({
                   </option>
                 ))}
               </SelectField>
-              <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 transition-colors hover:border-slate-300">
-                <span className="whitespace-nowrap text-[12px] font-semibold text-slate-600">From</span>
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
+                <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">From</span>
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => onDateFromChange(e.target.value)}
-                  className="w-full bg-transparent text-[12px] font-semibold text-slate-800 focus:outline-none"
+                  className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
                 />
               </label>
-              <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 transition-colors hover:border-slate-300">
-                <span className="whitespace-nowrap text-[12px] font-semibold text-slate-600">To</span>
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
+                <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">To</span>
                 <input
                   type="date"
                   value={dateTo}
                   onChange={(e) => onDateToChange(e.target.value)}
-                  className="w-full bg-transparent text-[12px] font-semibold text-slate-800 focus:outline-none"
+                  className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
                 />
               </label>
             </div>
@@ -502,16 +502,16 @@ export default function LeadsToolbar({
         ) : null}
 
         {openSort ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-[12px] font-semibold text-slate-700">
+              <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--crm-text-primary)]">
                 <SortIcon />
                 <span>Sort</span>
               </div>
               <button
                 type="button"
                 onClick={resetSort}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               >
                 Reset
               </button>

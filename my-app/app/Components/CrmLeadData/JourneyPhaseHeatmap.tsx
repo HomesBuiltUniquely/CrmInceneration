@@ -67,7 +67,7 @@ function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
     return (
       <svg
         viewBox="0 0 24 24"
-        className="h-3.5 w-3.5 text-slate-500"
+        className="h-3.5 w-3.5 text-[var(--crm-text-muted)]"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -89,7 +89,7 @@ function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
     return (
       <svg
         viewBox="0 0 24 24"
-        className="h-3.5 w-3.5 text-rose-600"
+        className="h-3.5 w-3.5 text-[var(--crm-danger-text)]"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -116,7 +116,7 @@ function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
     return (
       <svg
         viewBox="0 0 24 24"
-        className="h-3.5 w-3.5 text-slate-500"
+        className="h-3.5 w-3.5 text-[var(--crm-text-muted)]"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -137,7 +137,7 @@ function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="h-3.5 w-3.5 text-emerald-600"
+      className="h-3.5 w-3.5 text-[var(--crm-success-text)]"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -154,17 +154,17 @@ function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
 
 function StatusLegend() {
   return (
-    <div className="flex items-center gap-5 text-[10px] font-semibold tracking-wide text-slate-400">
+    <div className="flex items-center gap-5 text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
       <div className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        <span className="inline-block h-2 w-2 rounded-full bg-[var(--crm-success)]" />
         Higher count
       </div>
       <div className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+        <span className="inline-block h-2 w-2 rounded-full bg-[var(--crm-warning-text)]" />
         Medium count
       </div>
       <div className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 rounded-full bg-rose-500" />
+        <span className="inline-block h-2 w-2 rounded-full bg-[var(--crm-danger)]" />
         Lower count
       </div>
     </div>
@@ -174,37 +174,37 @@ function StatusLegend() {
 function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
   const bar =
     p.tone === "healthy"
-      ? "bg-emerald-500"
+      ? "bg-[var(--crm-success)]"
       : p.tone === "warning"
-        ? "bg-amber-400"
-        : "bg-rose-500";
+        ? "bg-[var(--crm-warning-text)]"
+        : "bg-[var(--crm-danger)]";
   const bg =
     p.tone === "healthy"
-      ? "bg-emerald-50"
+      ? "bg-[var(--crm-success-bg)]"
       : p.tone === "warning"
-        ? "bg-amber-50"
-        : "bg-rose-50";
+        ? "bg-[var(--crm-warning-bg)]"
+        : "bg-[var(--crm-danger-bg)]";
   const shareText =
     p.tone === "healthy"
-      ? "text-emerald-600"
+      ? "text-[var(--crm-success-text)]"
       : p.tone === "warning"
-        ? "text-amber-600"
-        : "text-rose-600";
+        ? "text-[var(--crm-warning-text)]"
+        : "text-[var(--crm-danger-text)]";
   const barWidth = maxCount > 0 ? (p.count / maxCount) * 100 : 0;
 
   return (
     <div
-      className={`relative rounded-2xl border border-slate-200 ${bg} px-5 py-4`}
+      className={`relative rounded-2xl border border-[var(--crm-border)] ${bg} px-5 py-4`}
     >
-      <div className="text-[10px] font-semibold tracking-wide text-slate-400">
+      <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
         {p.phaseLabel}
       </div>
       <div className="mt-2 flex items-start justify-between">
-        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-slate-900">
+        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
           {p.name}
         </div>
         <div className="text-right">
-          <div className="text-[20px] font-semibold text-slate-700">
+          <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">
             {p.count}
           </div>
           <div className={`text-[10px] font-semibold ${shareText}`}>
@@ -212,13 +212,13 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
           </div>
         </div>
       </div>
-      <div className="mt-3 h-1.5 w-full rounded-full bg-white/60">
+      <div className="mt-3 h-1.5 w-full rounded-full bg-[var(--crm-surface)]/70">
         <div
           className={`h-1.5 rounded-full ${bar}`}
           style={{ width: `${Math.min(100, barWidth)}%` }}
         />
       </div>
-      <div className="mt-3 flex items-center gap-2 text-[10px] font-semibold text-slate-500">
+      <div className="mt-3 flex items-center gap-2 text-[10px] font-semibold text-[var(--crm-text-muted)]">
         <Icon kind={p.note.icon} />
         <span>{p.note.text}</span>
       </div>
@@ -330,7 +330,7 @@ export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPha
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-[16px] font-semibold text-slate-800">
+            <span className="text-[16px] font-semibold text-[var(--crm-text-primary)]">
               Journey Phase Heatmap
             </span>
           </div>
@@ -338,9 +338,9 @@ export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPha
         <StatusLegend />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mt-4 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-4 shadow-[var(--crm-shadow-sm)]">
         {loading || error ? (
-          <div className="mb-3 text-[11px] font-medium text-slate-500">
+          <div className="mb-3 text-[11px] font-medium text-[var(--crm-text-muted)]">
             {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
           </div>
         ) : null}

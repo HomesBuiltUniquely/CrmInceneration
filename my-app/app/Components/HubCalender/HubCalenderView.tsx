@@ -149,14 +149,14 @@ export default function HubCalendarPage(): React.ReactElement {
 
   return (
     <div
-      className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden"
+      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
       style={{
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div className="hidden xl:block">
+        <div>
           <QuickAccessSidebar
             appBadge="HO WS"
             appName="Hows"
@@ -168,15 +168,15 @@ export default function HubCalendarPage(): React.ReactElement {
           />
         </div>
 
-        <div className="bg-[#f7f9fc] xl:h-screen xl:overflow-y-auto">
-          <div className="bg-white border-b border-gray-200 flex items-center gap-3 px-6 py-3">
-            <div className="w-9 h-9 rounded-md overflow-hidden flex flex-col items-center justify-center bg-red-600 text-white flex-shrink-0">
-              <span className="text-[7px] font-bold uppercase tracking-wide bg-red-700 w-full text-center leading-tight py-px">
+        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+          <div className="flex items-center gap-3 border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-6 py-3">
+            <div className="w-9 h-9 rounded-md overflow-hidden flex flex-col items-center justify-center bg-[var(--crm-danger)] text-white flex-shrink-0">
+              <span className="text-[7px] font-bold uppercase tracking-wide bg-[var(--crm-danger-text)] w-full text-center leading-tight py-px">
                 July
               </span>
               <span className="text-base font-bold leading-tight">17</span>
             </div>
-            <h1 className="text-lg font-semibold text-gray-900">
+            <h1 className="text-lg font-semibold text-[var(--crm-text-primary)]">
               HUB Calendar
             </h1>
           </div>
@@ -184,24 +184,24 @@ export default function HubCalendarPage(): React.ReactElement {
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1400px]">
               {/* ── Subtitle ── */}
-              <p className="text-sm text-gray-500 mb-5 max-w-xl leading-relaxed">
+              <p className="mb-5 max-w-xl text-sm leading-relaxed text-[var(--crm-text-muted)]">
                 Connect your account once, then view your calendar events
                 directly inside CRM with the same weekly calendar layout used in
                 the design module.
               </p>
 
               {/* ── Main card ── */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+              <div className="mb-6 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5">
                 {/* Card header */}
                 <div className="flex items-start gap-3 mb-5">
-                  <div className="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center text-xl font-semibold text-blue-600 flex-shrink-0">
+                  <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-[var(--crm-accent-soft)] text-xl font-semibold text-[var(--crm-accent)]">
                     {today.getDate()}
                   </div>
                   <div>
-                    <h2 className="text-xl font-semibold text-gray-900">
+                    <h2 className="text-xl font-semibold text-[var(--crm-text-primary)]">
                       Calendar
                     </h2>
-                    <p className="text-sm text-gray-400 mt-0.5">
+                    <p className="mt-0.5 text-sm text-[var(--crm-text-muted)]">
                       Your events plus all team events
                     </p>
                   </div>
@@ -211,14 +211,14 @@ export default function HubCalendarPage(): React.ReactElement {
                 <div className="grid grid-cols-1 lg:grid-cols-[minmax(220px,240px)_minmax(420px,1fr)_minmax(200px,320px)] gap-6 items-start">
                   {/* Left: connect + status */}
                   <div className="flex flex-col gap-3">
-                    <button className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-full py-3 px-6 shadow-md transition-colors">
+                    <button className="w-full rounded-full bg-[var(--crm-accent)] px-6 py-3 text-sm font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-colors hover:brightness-110">
                       Connect HUB Calendar
                     </button>
-                    <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                      <span className="inline-block bg-gray-200 text-gray-600 text-xs font-semibold px-2.5 py-0.5 rounded mb-2">
+                    <div className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3">
+                      <span className="mb-2 inline-block rounded bg-[var(--crm-neutral-bg)] px-2.5 py-0.5 text-xs font-semibold text-[var(--crm-neutral-text)]">
                         Not Connected
                       </span>
-                      <p className="text-xs text-gray-500 leading-relaxed">
+                      <p className="text-xs leading-relaxed text-[var(--crm-text-muted)]">
                         No account connected. Connect once to load your calendar
                         events inside CRM.
                       </p>
@@ -227,21 +227,21 @@ export default function HubCalendarPage(): React.ReactElement {
 
                   {/* Center: mini calendar - will grow to fill available space */}
                   <div className="flex justify-center">
-                    <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm w-full max-w-[380px]">
+                    <div className="w-full max-w-[380px] rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-6 shadow-[var(--crm-shadow-sm)]">
                       <div className="flex items-center justify-between mb-3 px-1">
                         <button
                           onClick={prevMiniMonth}
-                          className="text-gray-400 hover:text-gray-700 text-lg px-2 transition-colors"
+                          className="px-2 text-lg text-[var(--crm-text-muted)] transition-colors hover:text-[var(--crm-text-primary)]"
                           aria-label="Previous month"
                         >
                           ‹
                         </button>
-                        <span className="text-sm font-semibold text-gray-800">
+                        <span className="text-sm font-semibold text-[var(--crm-text-primary)]">
                           {MONTHS[miniMonth]} {miniYear}
                         </span>
                         <button
                           onClick={nextMiniMonth}
-                          className="text-gray-400 hover:text-gray-700 text-lg px-2 transition-colors"
+                          className="px-2 text-lg text-[var(--crm-text-muted)] transition-colors hover:text-[var(--crm-text-primary)]"
                           aria-label="Next month"
                         >
                           ›
@@ -252,7 +252,7 @@ export default function HubCalendarPage(): React.ReactElement {
                         {MINI_DAY_LABELS.map((d, i) => (
                           <div
                             key={i}
-                            className="text-[11px] text-gray-400 font-medium py-1"
+                            className="py-1 text-[11px] font-medium text-[var(--crm-text-muted)]"
                           >
                             {d}
                           </div>
@@ -274,10 +274,10 @@ export default function HubCalendarPage(): React.ReactElement {
                               className={[
                                 base,
                                 isTodayCell
-                                  ? "bg-blue-600 text-white font-semibold w-8 h-8 shadow-md"
+                                  ? "h-8 w-8 bg-[var(--crm-accent)] font-semibold text-white shadow-[var(--crm-shadow-sm)]"
                                   : cell.type !== "curr"
-                                    ? "text-gray-300 w-7 h-7"
-                                    : "text-gray-700 hover:bg-blue-50 w-7 h-7",
+                                    ? "h-7 w-7 text-[var(--crm-border-strong)]"
+                                    : "h-7 w-7 text-[var(--crm-text-secondary)] hover:bg-[var(--crm-accent-soft)]",
                               ].join(" ")}
                               aria-current={isTodayCell ? "date" : undefined}
                             >
@@ -290,11 +290,11 @@ export default function HubCalendarPage(): React.ReactElement {
                   </div>
 
                   {/* Right: visible events - smaller */}
-                  <div className="w-full max-w-[320px] border border-gray-200 rounded-xl p-4 bg-white">
-                    <h3 className="text-sm font-semibold text-gray-800 mb-2">
+                  <div className="w-full max-w-[320px] rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-4">
+                    <h3 className="mb-2 text-sm font-semibold text-[var(--crm-text-primary)]">
                       Visible events this week
                     </h3>
-                    <p className="text-xs text-gray-400">
+                    <p className="text-xs text-[var(--crm-text-muted)]">
                       No events scheduled for this week yet.
                     </p>
                   </div>
@@ -302,26 +302,26 @@ export default function HubCalendarPage(): React.ReactElement {
               </div>
 
               {/* Weekly calendar separated into its own card */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+              <div className="mb-6 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5">
                 <div
-                  className="grid border-b border-gray-200"
+                  className="grid border-b border-[var(--crm-border)]"
                   style={{ gridTemplateColumns: "70px repeat(7, 1fr)" }}
                 >
-                  <div className="py-2 pr-2 text-right text-xs text-gray-400 flex items-end justify-end pb-2">
+                  <div className="flex items-end justify-end py-2 pb-2 pr-2 text-right text-xs text-[var(--crm-text-muted)]">
                     GMT+05:30
                   </div>
                   {weekDays.map((d, i) => (
                     <div
                       key={i}
-                      className="border-l border-gray-200 py-2 text-center"
+                      className="border-l border-[var(--crm-border)] py-2 text-center"
                     >
                       <div
-                        className={`text-[10px] font-semibold tracking-wider uppercase ${isToday(d) ? "text-blue-600" : "text-gray-400"}`}
+                        className={`text-[10px] font-semibold tracking-wider uppercase ${isToday(d) ? "text-[var(--crm-accent)]" : "text-[var(--crm-text-muted)]"}`}
                       >
                         {DAY_NAMES[i]}
                       </div>
                       <div
-                        className={`text-xl font-normal w-8 h-8 flex items-center justify-center rounded-full mx-auto mt-1 ${isToday(d) ? "bg-blue-600 text-white" : "text-gray-900"}`}
+                        className={`mx-auto mt-1 flex h-8 w-8 items-center justify-center rounded-full text-xl font-normal ${isToday(d) ? "bg-[var(--crm-accent)] text-white" : "text-[var(--crm-text-primary)]"}`}
                       >
                         {d.getDate()}
                       </div>
@@ -351,7 +351,7 @@ export default function HubCalendarPage(): React.ReactElement {
                           left: 0,
                           right: 0,
                           height: 2,
-                          background: "#ef4444",
+                          background: "var(--crm-danger)",
                           boxShadow: "0 0 6px rgba(239,68,68,0.6)",
                         }}
                       />
@@ -364,7 +364,7 @@ export default function HubCalendarPage(): React.ReactElement {
                           width: 12,
                           height: 12,
                           borderRadius: 9999,
-                          background: "#ef4444",
+                          background: "var(--crm-danger)",
                           boxShadow: "0 0 8px rgba(239,68,68,0.6)",
                         }}
                       />
@@ -380,13 +380,13 @@ export default function HubCalendarPage(): React.ReactElement {
                         minHeight: 44,
                       }}
                     >
-                      <div className="text-right pr-3 pt-1 text-xs text-gray-400">
+                      <div className="pt-1 pr-3 text-right text-xs text-[var(--crm-text-muted)]">
                         {hour}
                       </div>
                       {Array.from({ length: 7 }).map((_, di) => (
                         <div
                           key={di}
-                          className="border-l border-t border-gray-100"
+                          className="border-l border-t border-[var(--crm-border)]"
                         />
                       ))}
                     </div>

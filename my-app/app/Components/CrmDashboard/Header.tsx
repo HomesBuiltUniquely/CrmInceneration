@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import AnalyticsBar from "./AnalyticsBar";
 import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
 import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
@@ -19,7 +19,11 @@ type Props = {
 
 export default function Header({ role = "sales_admin" }: Props) {
   const router = useRouter();
-  const [currentRole, setCurrentRole] = useState("SUPER_ADMIN");
+  const [currentRole] = useState(() => {
+    if (typeof window === "undefined") return normalizeRole(role);
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? role;
+    return normalizeRole(stored);
+  });
   const [activeDashboardView, setActiveDashboardView] = useState<
     "overview" | "design-module"
   >("overview");
@@ -32,11 +36,6 @@ export default function Header({ role = "sales_admin" }: Props) {
     dateFrom: "",
     dateTo: "",
   });
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? role;
-    setCurrentRole(normalizeRole(stored));
-  }, [role]);
 
   const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
     const next = subItem.id === "design-module" ? "design-module" : "overview";
@@ -61,9 +60,9 @@ export default function Header({ role = "sales_admin" }: Props) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div className="hidden xl:block">
+        <div>
           <QuickAccessSidebar
             appBadge="HO WS"
             appName="Hows"
@@ -75,8 +74,8 @@ export default function Header({ role = "sales_admin" }: Props) {
             onSelectionChange={handleSidebarSelection}
           />
         </div>
-        <div className="bg-white xl:h-screen xl:overflow-y-auto">
-          <div className="xl:flex xl:h-16 xl:w-full xl:justify-between xl:px-4 xl:shadow-md">
+        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] xl:flex xl:h-16 xl:w-full xl:justify-between xl:px-4 xl:shadow-[var(--crm-shadow-sm)]">
             <div className="xl:flex xl:items-center xl:pt-2">
               <div>
                 <Image
@@ -86,40 +85,40 @@ export default function Header({ role = "sales_admin" }: Props) {
                   height={50}
                 />
               </div>
-              <h1 className="xl:font-bold xl:pl-3 text-black">
+              <h1 className="xl:pl-3 xl:font-bold text-[var(--crm-text-primary)]">
                 Lead Journey
                 <button
                   type="button"
                   onClick={() => router.push("/Leads")}
-                  className="ml-4 rounded-full bg-gradient-to-r from-blue-50 to-indigo-50 px-3 py-1 text-[12px] font-semibold text-blue-700 ring-1 ring-blue-100 transition-all duration-200 hover:-translate-y-px hover:from-blue-100 hover:to-indigo-100 hover:text-blue-800 hover:ring-blue-200"
+                  className="ml-4 rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
                 >
                   Lead Management
                 </button>
               </h1>
             </div>
             <div className="xl:flex xl:items-center">
-              <div className="xl:mr-4 xl:w-25 xl:h-7.5 xl:bg-gray-200 xl:text-gray-500 xl:font-bold xl:rounded-lg xl:pl-4.5 xl:pt-1">
+              <div className="xl:mr-4 xl:h-7.5 xl:w-25 xl:rounded-lg xl:bg-[var(--crm-surface-subtle)] xl:pl-4.5 xl:pt-1 xl:font-bold xl:text-[var(--crm-text-muted)]">
                 Q3 FY24
               </div>
             </div>
           </div>
           {activeDashboardView === "design-module" ? (
-            <div className="bg-[#f7f9fc] p-4 md:p-6">
+            <div className="bg-[var(--crm-app-bg)] p-4 md:p-6">
               <div className="mx-auto space-y-4">
-                <div className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
-                  <h2 className="text-[1.6rem] font-bold tracking-[-0.04em] text-slate-900">
+                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
+                  <h2 className="text-[1.6rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
                     Design Module
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">
+                  <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
                     Embedded design workspace inside the dashboard, same like
                     the old CRM tab flow.
                   </p>
                 </div>
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_34px_rgba(15,23,42,0.08)]">
+                <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-md)]">
                   <iframe
                     src="https://design.hubinterior.com"
                     title="Design Module"
-                    className="h-[calc(100vh-150px)] w-full border-0 bg-slate-50"
+                    className="h-[calc(100vh-150px)] w-full border-0 bg-[var(--crm-surface-subtle)]"
                   />
                 </div>
               </div>

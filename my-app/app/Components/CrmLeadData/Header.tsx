@@ -1,6 +1,6 @@
- "use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
@@ -9,7 +9,11 @@ import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
 export default function Header() {
-  const [currentRole, setCurrentRole] = useState("SUPER_ADMIN");
+  const [currentRole] = useState(() => {
+    if (typeof window === "undefined") return "SUPER_ADMIN";
+    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    return normalizeRole(stored);
+  });
   const [search, setSearch] = useState("");
   const [leadType, setLeadType] = useState("all");
   const [sort, setSort] = useState("updatedAt,desc");
@@ -19,11 +23,6 @@ export default function Header() {
   const [milestoneStage, setMilestoneStage] = useState("");
   const [milestoneStageCategory, setMilestoneStageCategory] = useState("");
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
-    setCurrentRole(normalizeRole(stored));
-  }, []);
 
   const milestoneFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
@@ -38,9 +37,9 @@ export default function Header() {
   }, [assignee, dateFrom, dateTo, leadType, milestoneStage, milestoneStageCategory, milestoneSubStage]);
 
   return (
-    <div className="min-h-screen bg-slate-50 xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="xl:grid xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div className="hidden xl:block">
+        <div>
           <QuickAccessSidebar
             appBadge="LD"
             appName="Lead"

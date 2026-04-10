@@ -1,24 +1,49 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #000000;
-  /* CRM theme variables */
-  --crm-bg: #fcfbf7;
-  --crm-surface: #f4f1e8;
-  --crm-border: #d9d4c9;
-  /* Was too light on cream/white surfaces; keep readable body copy */
-  --crm-muted: #1a1a1a;
-  --crm-icon-bg: #d9e7fb;
-  --crm-icon-text: #3569b4;
-  --crm-accent: #5e933f;
-  --crm-accent-bg: #e5efd8;
-  --crm-accent-text: #2d6b2e;
-  --crm-accent-hover: #ddeac9;
-  --crm-warning-bg: #f8efd8;
-  --crm-warning-border: #a67d2c;
-  --crm-warning-text: #7b5a16;
-  --crm-required: #9e3d34;
+  --background: #f3f7fb;
+  --foreground: #0f172a;
+  --crm-app-bg: #f3f7fb;
+  --crm-surface: #ffffff;
+  --crm-surface-subtle: #f8fafc;
+  --crm-surface-elevated: rgba(255, 255, 255, 0.92);
+  --crm-surface-tint: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.98));
+  --crm-border: #dbe5f0;
+  --crm-border-strong: #c5d3e3;
+  --crm-text-primary: #0f172a;
+  --crm-text-secondary: #334155;
+  --crm-text-muted: #64748b;
+  --crm-accent: #2563eb;
+  --crm-accent-strong: #1d4ed8;
+  --crm-accent-soft: rgba(37, 99, 235, 0.1);
+  --crm-accent-ring: rgba(59, 130, 246, 0.2);
+  --crm-sidebar-bg: linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
+  --crm-sidebar-surface: rgba(255, 255, 255, 0.88);
+  --crm-sidebar-pill: rgba(37, 99, 235, 0.08);
+  --crm-sidebar-active: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+  --crm-sidebar-active-text: #ffffff;
+  --crm-success: #16a34a;
+  --crm-success-bg: rgba(22, 163, 74, 0.12);
+  --crm-success-text: #166534;
+  --crm-danger: #ef4444;
+  --crm-danger-bg: rgba(239, 68, 68, 0.12);
+  --crm-danger-text: #991b1b;
+  --crm-warning-bg: rgba(217, 119, 6, 0.12);
+  --crm-warning-border: rgba(217, 119, 6, 0.24);
+  --crm-warning-text: #b45309;
+  --crm-info: #0284c7;
+  --crm-info-bg: rgba(2, 132, 199, 0.12);
+  --crm-info-text: #075985;
+  --crm-neutral: #475569;
+  --crm-neutral-bg: rgba(71, 85, 105, 0.12);
+  --crm-neutral-text: #334155;
+  --crm-input-bg: #f8fafc;
+  --crm-overlay: rgba(15, 23, 42, 0.5);
+  --crm-tab-grad: linear-gradient(135deg, #6366f1, #2563eb);
+  --crm-required: #dc2626;
+  --crm-shadow-sm: 0 10px 30px rgba(15, 23, 42, 0.06);
+  --crm-shadow-md: 0 18px 48px rgba(15, 23, 42, 0.12);
+  --crm-shadow-lg: 0 24px 60px rgba(15, 23, 42, 0.18);
 }
 
 @theme inline {
@@ -28,31 +53,59 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.dark {
+  --background: #081120;
+  --foreground: #e5eef8;
+  --crm-app-bg: #081120;
+  --crm-surface: #0f172a;
+  --crm-surface-subtle: #111c31;
+  --crm-surface-elevated: rgba(15, 23, 42, 0.9);
+  --crm-surface-tint: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(17, 28, 49, 0.96));
+  --crm-border: #23324a;
+  --crm-border-strong: #334155;
+  --crm-text-primary: #e5eef8;
+  --crm-text-secondary: #c6d2e1;
+  --crm-text-muted: #8fa2bc;
+  --crm-accent: #60a5fa;
+  --crm-accent-strong: #3b82f6;
+  --crm-accent-soft: rgba(96, 165, 250, 0.14);
+  --crm-accent-ring: rgba(96, 165, 250, 0.26);
+  --crm-sidebar-bg: linear-gradient(180deg, #091220 0%, #0c1628 100%);
+  --crm-sidebar-surface: rgba(15, 23, 42, 0.82);
+  --crm-sidebar-pill: rgba(148, 163, 184, 0.1);
+  --crm-sidebar-active: linear-gradient(135deg, #1d4ed8 0%, #60a5fa 100%);
+  --crm-sidebar-active-text: #eff6ff;
+  --crm-success: #34d399;
+  --crm-success-bg: rgba(52, 211, 153, 0.14);
+  --crm-success-text: #6ee7b7;
+  --crm-danger: #f87171;
+  --crm-danger-bg: rgba(248, 113, 113, 0.14);
+  --crm-danger-text: #fca5a5;
+  --crm-warning-bg: rgba(251, 191, 36, 0.14);
+  --crm-warning-border: rgba(251, 191, 36, 0.24);
+  --crm-warning-text: #fbbf24;
+  --crm-info: #38bdf8;
+  --crm-info-bg: rgba(56, 189, 248, 0.16);
+  --crm-info-text: #7dd3fc;
+  --crm-neutral: #94a3b8;
+  --crm-neutral-bg: rgba(148, 163, 184, 0.16);
+  --crm-neutral-text: #cbd5e1;
+  --crm-input-bg: #111827;
+  --crm-overlay: rgba(2, 6, 23, 0.7);
+  --crm-tab-grad: linear-gradient(135deg, #1d4ed8, #60a5fa);
+  --crm-required: #f87171;
+  --crm-shadow-sm: 0 14px 32px rgba(2, 6, 23, 0.32);
+  --crm-shadow-md: 0 22px 54px rgba(2, 6, 23, 0.44);
+  --crm-shadow-lg: 0 28px 70px rgba(2, 6, 23, 0.56);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
-}
-
-/* Strong default text: CRM screens use light cards; faint slate/gray utilities were hard to read */
-@layer utilities {
-  .text-slate-400,
-  .text-slate-500,
-  .text-slate-600,
-  .text-gray-500 {
-    color: #000000 !important;
-  }
-
-  .placeholder\:text-slate-400::placeholder {
-    color: #404040 !important;
-  }
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
 }
 
 .animate-fade-up {
