@@ -18,7 +18,7 @@ interface TabsProps {
 
 export default function Tabs({ active, onChange }: TabsProps) {
   return (
-    <div className="mb-6 flex gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_14px_30px_rgba(15,23,42,0.06)] animate-fade-up delay-2">
+    <div className="mb-6 flex gap-1 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-1.5 shadow-[0_14px_30px_rgba(15,23,42,0.06)] animate-fade-up delay-2">
       {TABS.map((tab) => (
         <button
           key={tab.id}
@@ -26,8 +26,8 @@ export default function Tabs({ active, onChange }: TabsProps) {
           className={cn(
             "flex-1 flex items-center justify-center gap-2 text-[12.5px] font-semibold px-3 py-2.5 rounded-lg transition-all duration-200 cursor-pointer",
             active === tab.id
-              ? "border border-blue-200 bg-blue-50 text-blue-700 shadow-sm"
-              : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+              ? "border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] shadow-sm"
+              : "text-[var(--crm-text-muted)] hover:bg-[var(--crm-surface-subtle)] hover:text-[var(--crm-text-primary)]"
           )}
         >
           <span className="text-sm">{tab.icon}</span>

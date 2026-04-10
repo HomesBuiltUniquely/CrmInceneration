@@ -11,24 +11,24 @@ export default function LeadHeader({
   onCompleteTask: () => void;
 }) {
   return (
-    <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-slate-200 bg-white px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
+    <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
       {/* Left accent bar */}
       <div className="absolute bottom-0 left-0 top-0 w-1 rounded-l-[24px] bg-gradient-to-b from-[#38bdf8] to-[#2dd4bf]" />
 
       {/* Avatar */}
-      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full border border-blue-200 bg-blue-50 text-2xl font-bold text-blue-600">
+      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-2xl font-bold text-[var(--crm-accent)]">
         {lead.name.charAt(0)}
       </div>
 
       {/* Meta */}
       <div className="flex-1 min-w-0">
-        <h1 className="mb-1.5 text-[22px] font-bold tracking-[-0.4px] text-slate-900">
+        <h1 className="mb-1.5 text-[22px] font-bold tracking-[-0.4px] text-[var(--crm-text-primary)]">
           {lead.name}
         </h1>
         <div className="flex items-center gap-3 flex-wrap">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
-          <span className="flex items-center gap-1 text-[11px] text-slate-500">
+          <span className="flex items-center gap-1 text-[11px] text-[var(--crm-text-muted)]">
             🕐 Created {lead.createdAt}
           </span>
         </div>
@@ -37,7 +37,7 @@ export default function LeadHeader({
       {/* Right: Assignee + CTA */}
       <div className="flex items-center gap-3 flex-wrap">
         {/* Assignee badge */}
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] font-semibold text-slate-800">
+        <div className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[13px] font-semibold text-[var(--crm-text-primary)]">
           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-violet-400 text-[10px] font-bold text-white">
             {lead.assignee
               .split(/\s+/)
