@@ -13,7 +13,7 @@ export default function FooterActions({
   const router = useRouter();
 
   return (
-    <div className="mt-7 flex items-center gap-3 border-t border-slate-200 pt-6 animate-fade-up">
+    <div className="mt-7 flex items-center gap-3 border-t border-[var(--crm-border)] pt-6 animate-fade-up">
       <Button
         variant="primary"
         icon="💾"

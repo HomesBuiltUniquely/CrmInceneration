@@ -9,7 +9,8 @@ import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
+const API_BASE =
+  process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 const LEAD_SOURCES = [
   "Website",
@@ -116,11 +117,11 @@ function CreateLeadSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white px-6 py-7 shadow-[0_10px_30px_rgba(15,23,42,0.06)] md:px-7">
-      <h2 className="text-[2rem] font-bold tracking-[-0.04em] text-slate-800">
+    <section className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-7 shadow-[var(--crm-shadow-sm)] md:px-7">
+      <h2 className="text-[2rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
         {title}
       </h2>
-      <div className="mt-4 h-px bg-[#3794ff]" />
+      <div className="mt-4 h-px bg-[var(--crm-accent)]" />
       <div className="mt-5">{children}</div>
     </section>
   );
@@ -136,7 +137,7 @@ function FormGroup({
   return (
     <div
       className={[
-        "rounded-2xl border-2 border-[#5b7fff] bg-slate-50/40 px-7 py-8",
+        "rounded-2xl border-2 border-[var(--crm-accent-ring)] bg-[var(--crm-surface-subtle)]/80 px-7 py-8",
         className,
       ]
         .filter(Boolean)
@@ -158,7 +159,7 @@ function SelectField(
     <div className="relative">
       <Select
         className={[
-          "h-10 rounded-md border-slate-300 bg-white pr-11",
+          "h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)] pr-11 text-[var(--crm-text-primary)]",
           "bg-none",
           className,
         ]
@@ -168,7 +169,7 @@ function SelectField(
       >
         {children}
       </Select>
-      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-500">
+      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-[var(--crm-text-muted)]">
         <svg
           aria-hidden="true"
           viewBox="0 0 20 20"
@@ -196,9 +197,11 @@ function CreateLeadFieldLabel({
   required?: boolean;
 }) {
   return (
-    <label className="mb-2 block text-[1.08rem] font-semibold tracking-[-0.01em] text-slate-700">
+    <label className="mb-2 block text-[1.08rem] font-semibold tracking-[-0.01em] text-[var(--crm-text-secondary)]">
       {children}
-      {required ? <span className="ml-1 text-amber-500">*</span> : null}
+      {required ? (
+        <span className="ml-1 text-[var(--crm-required)]">*</span>
+      ) : null}
     </label>
   );
 }
@@ -206,7 +209,8 @@ function CreateLeadFieldLabel({
 export default function CreateLeadClient() {
   const [role, setRole] = useState("SUPER_ADMIN");
   useEffect(() => {
-    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    const stored =
+      window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
     setRole(normalizeRole(stored) || "SUPER_ADMIN");
   }, []);
   const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
@@ -355,14 +359,14 @@ export default function CreateLeadClient() {
 
   return (
     <div
-      className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden"
+      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
       style={{
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div className="hidden xl:block">
+        <div>
           <QuickAccessSidebar
             appBadge="HO WS"
             appName="Hows"
@@ -374,8 +378,8 @@ export default function CreateLeadClient() {
           />
         </div>
 
-        <div className="bg-[#f7f9fc] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-slate-200 bg-white shadow-sm">
+        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
             <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-3">
                 <Image
@@ -385,11 +389,12 @@ export default function CreateLeadClient() {
                   height={46}
                 />
                 <div>
-                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-slate-900">
+                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
                     Create Lead
                   </div>
-                  <div className="text-sm text-slate-500">
-                    New frontend form integrated with the original CRM create API
+                  <div className="text-sm text-[var(--crm-text-muted)]">
+                    New frontend form integrated with the original CRM create
+                    API
                   </div>
                 </div>
               </div>
@@ -398,31 +403,35 @@ export default function CreateLeadClient() {
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1460px] space-y-6">
-              <div className="overflow-hidden rounded-[2px] bg-gradient-to-r from-[#6278ea] via-[#6b6fe0] to-[#7c44b6] shadow-[0_14px_34px_rgba(92,100,220,0.22)]">
-                <div className="flex min-h-[96px] items-center gap-4 px-8 py-5">
+              <div className="overflow-hidden rounded-[2px] bg-[var(--crm-tab-grad)] shadow-[var(--crm-shadow-md)]">
+                <div className="flex min-h-[96px] items-center gap-4 px-8 py-5 border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)">
                   <span className="text-[2.2rem] leading-none">📋</span>
-                  <h1 className="text-[2.1rem] font-bold tracking-[-0.04em] text-white">
+                  <h1 className="text-[2.1rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
                     Lead Details
                   </h1>
-                  <span className="inline-flex items-center rounded-full bg-[#fff1c9] px-5 py-2 text-sm font-bold text-[#ff8d00]">
+                  <span className="inline-flex items-center rounded-full bg-[var(--crm-warning-bg)] px-5 py-2 text-sm font-bold text-[var(--crm-warning-text)]">
                     Add Lead
                   </span>
                 </div>
               </div>
 
               {error ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+                <div className="rounded-2xl border border-[var(--crm-danger)] bg-[var(--crm-danger-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-danger-text)]">
                   {error}
                 </div>
               ) : null}
 
               {success ? (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+                <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-success-text)]">
                   <div>{success}</div>
                   {createdLeadInfo?.id || createdLeadInfo?.customerId ? (
-                    <div className="mt-1 text-xs text-emerald-800">
-                      {createdLeadInfo?.id ? `Lead ID: ${createdLeadInfo.id}` : ""}
-                      {createdLeadInfo?.id && createdLeadInfo?.customerId ? " | " : ""}
+                    <div className="mt-1 text-xs text-[var(--crm-success-text)]">
+                      {createdLeadInfo?.id
+                        ? `Lead ID: ${createdLeadInfo.id}`
+                        : ""}
+                      {createdLeadInfo?.id && createdLeadInfo?.customerId
+                        ? " | "
+                        : ""}
                       {createdLeadInfo?.customerId
                         ? `Customer ID: ${createdLeadInfo.customerId}`
                         : ""}
@@ -437,11 +446,15 @@ export default function CreateLeadClient() {
                     <FormGroup>
                       <div className="grid gap-5 xl:grid-cols-4">
                         <div>
-                          <CreateLeadFieldLabel required>Name</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required>
+                            Name
+                          </CreateLeadFieldLabel>
                           <Input
                             value={form.name}
-                            onChange={(e) => updateField("name", e.target.value)}
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            onChange={(e) =>
+                              updateField("name", e.target.value)
+                            }
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <div>
@@ -449,28 +462,34 @@ export default function CreateLeadClient() {
                           <Input
                             type="email"
                             value={form.email}
-                            onChange={(e) => updateField("email", e.target.value)}
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            onChange={(e) =>
+                              updateField("email", e.target.value)
+                            }
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>Property Pincode</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Property Pincode
+                          </CreateLeadFieldLabel>
                           <Input
                             value={form.propertyPincode}
                             onChange={(e) =>
                               updateField("propertyPincode", e.target.value)
                             }
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel required>Phone</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required>
+                            Phone
+                          </CreateLeadFieldLabel>
                           <Input
                             value={form.phoneNumber}
                             onChange={(e) =>
                               updateField("phoneNumber", e.target.value)
                             }
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                       </div>
@@ -479,13 +498,15 @@ export default function CreateLeadClient() {
                     <FormGroup>
                       <div className="grid gap-5 xl:grid-cols-5">
                         <div>
-                          <CreateLeadFieldLabel>Alternate Phone</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Alternate Phone
+                          </CreateLeadFieldLabel>
                           <Input
                             value={form.altPhoneNumber}
                             onChange={(e) =>
                               updateField("altPhoneNumber", e.target.value)
                             }
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <div>
@@ -511,15 +532,21 @@ export default function CreateLeadClient() {
                           <CreateLeadFieldLabel>Budget</CreateLeadFieldLabel>
                           <Input
                             value={form.budget}
-                            onChange={(e) => updateField("budget", e.target.value)}
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            onChange={(e) =>
+                              updateField("budget", e.target.value)
+                            }
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>Lead Source</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Lead Source
+                          </CreateLeadFieldLabel>
                           <SelectField
                             value={form.leadSource}
-                            onChange={(e) => updateField("leadSource", e.target.value)}
+                            onChange={(e) =>
+                              updateField("leadSource", e.target.value)
+                            }
                           >
                             <option value="">Select Source</option>
                             {LEAD_SOURCES.map((source) => (
@@ -530,7 +557,9 @@ export default function CreateLeadClient() {
                           </SelectField>
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>Language Preferred</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Language Preferred
+                          </CreateLeadFieldLabel>
                           <SelectField
                             value={form.languagePrefered}
                             onChange={(e) =>
@@ -546,13 +575,15 @@ export default function CreateLeadClient() {
                           </SelectField>
                         </div>
                         <div className="xl:col-span-5">
-                          <CreateLeadFieldLabel>Property Details</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Property Details
+                          </CreateLeadFieldLabel>
                           <Textarea
                             value={form.propertyDetails}
                             onChange={(e) =>
                               updateField("propertyDetails", e.target.value)
                             }
-                            className="min-h-[100px] rounded-md border-slate-300 bg-white"
+                            className="min-h-[100px] rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                       </div>
@@ -561,20 +592,22 @@ export default function CreateLeadClient() {
                     <FormGroup>
                       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
                         <div>
-                          <CreateLeadFieldLabel>Designer Name</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel>
+                            Designer Name
+                          </CreateLeadFieldLabel>
                           <Input
                             value={form.designerName}
                             onChange={(e) =>
                               updateField("designerName", e.target.value)
                             }
-                            className="h-10 rounded-md border-slate-300 bg-white"
+                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
                         <Button
                           type="button"
                           variant="outline"
                           onClick={() => setCompleteTaskOpen(true)}
-                          className="h-12 rounded-xl border border-[#8e49b6] bg-gradient-to-r from-[#b56ad9] to-[#9149c8] px-7 text-[0.98rem] font-bold tracking-[0.01em] text-white shadow-[0_12px_24px_rgba(145,73,200,0.28)] hover:-translate-y-px hover:from-[#a95ed0] hover:to-[#853dbc]"
+                          className="h-12 rounded-xl border border-[var(--crm-accent-ring)] bg-[var(--crm-tab-grad)] px-7 text-[0.98rem] font-bold tracking-[0.01em] text-white shadow-[var(--crm-shadow-sm)] hover:-translate-y-px"
                         >
                           <span className="text-base">📝</span>
                           COMPLETE TASK
@@ -591,7 +624,7 @@ export default function CreateLeadClient() {
                       value={form.notes}
                       onChange={(e) => updateField("notes", e.target.value)}
                       placeholder="Add any initial notes about this lead (optional)..."
-                      className="min-h-[96px] rounded-md border-slate-300 bg-white font-mono"
+                      className="min-h-[96px] rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)] font-mono"
                     />
                   </div>
                 </CreateLeadSection>
@@ -599,22 +632,30 @@ export default function CreateLeadClient() {
                 <CreateLeadSection title="Important Dates">
                   <div className="space-y-4">
                     <div>
-                      <CreateLeadFieldLabel>Follow-up Date & Time</CreateLeadFieldLabel>
+                      <CreateLeadFieldLabel>
+                        Follow-up Date & Time
+                      </CreateLeadFieldLabel>
                       <Input
                         type="datetime-local"
                         value={form.followUpDate}
-                        onChange={(e) => updateField("followUpDate", e.target.value)}
-                        className="h-11 rounded-md border-slate-300 bg-white"
+                        onChange={(e) =>
+                          updateField("followUpDate", e.target.value)
+                        }
+                        className="h-11 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                       />
                     </div>
                     {isLost ? (
                       <div>
-                        <CreateLeadFieldLabel required>Lost Reason</CreateLeadFieldLabel>
+                        <CreateLeadFieldLabel required>
+                          Lost Reason
+                        </CreateLeadFieldLabel>
                         <Textarea
                           value={form.reason}
-                          onChange={(e) => updateField("reason", e.target.value)}
+                          onChange={(e) =>
+                            updateField("reason", e.target.value)
+                          }
                           placeholder="Enter reason for LOST"
-                          className="min-h-[90px] rounded-md border-slate-300 bg-white"
+                          className="min-h-[90px] rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                         />
                       </div>
                     ) : null}
@@ -635,7 +676,7 @@ export default function CreateLeadClient() {
                     type="button"
                     variant="ghost"
                     onClick={() => window.print()}
-                    className="min-w-[156px] justify-center rounded-xl border border-slate-700 bg-gradient-to-r from-slate-600 to-slate-700 px-8 py-3 text-[1.02rem] font-bold tracking-[0.01em] text-white shadow-[0_12px_24px_rgba(51,65,85,0.24)] hover:-translate-y-px hover:from-slate-700 hover:to-slate-800"
+                    className="min-w-[156px] justify-center rounded-xl border border-[var(--crm-border-strong)] bg-[var(--crm-neutral)] px-8 py-3 text-[1.02rem] font-bold tracking-[0.01em] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-sm)] hover:-translate-y-px hover:brightness-110"
                   >
                     <span className="text-base">🖨</span>
                     Print

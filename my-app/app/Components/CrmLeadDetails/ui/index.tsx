@@ -19,12 +19,12 @@ const variantClasses: Record<ButtonVariant, string> = {
   primary:
     "bg-gradient-to-br from-[var(--primary-start,#60a5fa)] to-[var(--primary-end,#2563eb)] text-white shadow-[0_12px_24px_rgba(37,99,235,0.28)] hover:-translate-y-px",
   ghost:
-    "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 hover:border-slate-300",
+    "border border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)] hover:text-[var(--crm-text-primary)] hover:border-[var(--crm-border-strong)]",
   success:
-    "bg-gradient-to-br from-[var(--crm-success-start,#34d399)] to-[var(--crm-success-end,#10b981)] text-[var(--crm-success-text,#06281d)] font-semibold shadow-[0_12px_24px_rgba(16,185,129,0.24)] hover:-translate-y-px",
-  danger: "border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100",
+    "bg-gradient-to-br from-[var(--crm-success)] to-[var(--crm-success-text)] text-white font-semibold shadow-[var(--crm-shadow-sm)] hover:-translate-y-px",
+  danger: "border border-[var(--crm-danger)] bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)] hover:brightness-110",
   outline:
-    "border border-violet-200 bg-violet-50 text-violet-600 hover:bg-violet-100",
+    "border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] hover:brightness-110",
 };
 
 export function Button({
@@ -62,7 +62,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_18px_36px_rgba(15,23,42,0.06)] transition-all duration-200 hover:border-slate-300",
+        "rounded-[24px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-6 shadow-[var(--crm-shadow-sm)] transition-all duration-200 hover:border-[var(--crm-border-strong)]",
         className,
       )}
     >
@@ -77,10 +77,10 @@ export function Card({
 type IconColor = "blue" | "green" | "orange" | "purple";
 
 const iconColorMap: Record<IconColor, string> = {
-  blue: "bg-blue-100 text-blue-600",
-  green: "bg-emerald-100 text-emerald-600",
-  orange: "bg-amber-100 text-amber-600",
-  purple: "bg-violet-100 text-violet-600",
+  blue: "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]",
+  green: "bg-[var(--crm-success-bg)] text-[var(--crm-success-text)]",
+  orange: "bg-[var(--crm-warning-bg)] text-[var(--crm-warning-text)]",
+  purple: "bg-[var(--crm-info-bg)] text-[var(--crm-info-text)]",
 };
 
 export function CardTitle({
@@ -104,7 +104,7 @@ export function CardTitle({
       >
         {icon}
       </span>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.8px] text-slate-500">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.8px] text-[var(--crm-text-muted)]">
         {children}
       </span>
       {action && <div className="ml-auto">{action}</div>}
@@ -123,9 +123,9 @@ export function FieldLabel({
   required?: boolean;
 }) {
   return (
-    <label className="mb-[6px] block text-[11px] font-medium tracking-[0.3px] text-slate-500">
+    <label className="mb-[6px] block text-[11px] font-medium tracking-[0.3px] text-[var(--crm-text-muted)]">
       {children}
-      {required && <span className="ml-1 text-amber-300">*</span>}
+      {required && <span className="ml-1 text-[var(--crm-required)]">*</span>}
     </label>
   );
 }
@@ -138,10 +138,10 @@ export function Input({ missing, className, ...props }: InputProps) {
   return (
     <input
       className={cn(
-        "w-full rounded-xl border bg-slate-50 text-[13.5px] font-medium text-slate-900",
-        "px-3.5 py-2.5 outline-none transition-all duration-200 placeholder:font-normal placeholder:text-slate-400",
-        "focus:border-blue-400 focus:bg-white focus:shadow-[0_0_0_3px_rgba(96,165,250,0.12)]",
-        missing ? "border-red-500 bg-red-100" : "border-slate-200",
+        "w-full rounded-xl border border-[var(--crm-border)] bg-[var(--crm-input-bg)] text-[13.5px] font-medium text-[var(--crm-text-primary)]",
+        "px-3.5 py-2.5 outline-none transition-all duration-200 placeholder:font-normal placeholder:text-[var(--crm-text-muted)]",
+        "focus:border-[var(--crm-accent)] focus:shadow-[0_0_0_3px_var(--crm-accent-ring)]",
+        missing ? "border-[var(--crm-danger)] bg-[var(--crm-danger-bg)]" : "",
         className,
       )}
       {...props}
@@ -156,8 +156,8 @@ export function Textarea({
   return (
     <textarea
       className={cn(
-        "min-h-[90px] w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-[13.5px] font-medium leading-relaxed text-slate-900 outline-none",
-        "placeholder:font-normal placeholder:text-slate-400 transition-all duration-200 focus:border-blue-400 focus:bg-white focus:shadow-[0_0_0_3px_rgba(96,165,250,0.12)]",
+        "min-h-[90px] w-full resize-y rounded-xl border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 text-[13.5px] font-medium leading-relaxed text-[var(--crm-text-primary)] outline-none",
+        "placeholder:font-normal placeholder:text-[var(--crm-text-muted)] transition-all duration-200 focus:border-[var(--crm-accent)] focus:shadow-[0_0_0_3px_var(--crm-accent-ring)]",
         className,
       )}
       {...props}
@@ -173,8 +173,8 @@ export function Select({
   return (
     <select
       className={cn(
-        "w-full cursor-pointer appearance-none rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 pr-9 text-[13.5px] font-medium text-slate-900 outline-none transition-all duration-200 focus:border-blue-400 focus:bg-white",
-        "bg-[image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")] bg-no-repeat bg-[right_12px_center]",
+        "w-full cursor-pointer appearance-none rounded-xl border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 pr-9 text-[13.5px] font-medium text-[var(--crm-text-primary)] outline-none transition-all duration-200 focus:border-[var(--crm-accent)]",
+        "bg-[image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")] bg-no-repeat bg-[right_12px_center]",
         className,
       )}
       {...props}
@@ -189,8 +189,8 @@ export function Select({
 ───────────────────────────────────────────── */
 export function StatusPill({ status }: { status: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[12px] font-semibold text-emerald-700">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse-dot" />
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-success-text)]">
+      <span className="h-1.5 w-1.5 rounded-full bg-[var(--crm-success)] animate-pulse-dot" />
       {status}
     </span>
   );
@@ -205,13 +205,13 @@ export function LeadSourceTag({ primary, extras }: { primary: string; extras?: s
   );
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[12px] font-semibold text-sky-800">
+      <span className="inline-flex items-center rounded-full border border-[var(--crm-info)] bg-[var(--crm-info-bg)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-info-text)]">
         {main}
       </span>
       {filtered.map((x) => (
         <span
           key={x}
-          className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800"
+          className="inline-flex rounded-full border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--crm-accent)]"
         >
           {formatLeadSourceLabel(x)}
         </span>
@@ -225,7 +225,7 @@ export function LeadSourceTag({ primary, extras }: { primary: string; extras?: s
 ───────────────────────────────────────────── */
 export function MonoTag({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500">
+    <span className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-2 py-1 font-mono text-[11px] text-[var(--crm-text-muted)]">
       {children}
     </span>
   );
@@ -236,7 +236,7 @@ export function MonoTag({ children }: { children: ReactNode }) {
 ───────────────────────────────────────────── */
 export function Chip({ children }: { children: ReactNode }) {
   return (
-    <span className="mr-1.5 mb-1.5 inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11.5px] font-medium text-slate-600">
+    <span className="mr-1.5 mb-1.5 inline-flex items-center rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-1 text-[11.5px] font-medium text-[var(--crm-text-secondary)]">
       {children}
     </span>
   );
@@ -256,10 +256,10 @@ export function SectionHeader({
 }) {
   return (
     <div className="flex items-center gap-3 mb-4">
-      <span className="flex items-center gap-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.8px] text-slate-500">
+      <span className="flex items-center gap-2 whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.8px] text-[var(--crm-text-muted)]">
         {icon} {title}
       </span>
-      <div className="h-px flex-1 bg-slate-200" />
+      <div className="h-px flex-1 bg-[var(--crm-border)]" />
       {action && <div>{action}</div>}
     </div>
   );

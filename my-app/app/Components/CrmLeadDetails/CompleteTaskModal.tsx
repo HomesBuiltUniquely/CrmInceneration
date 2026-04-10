@@ -223,10 +223,10 @@ export default function CompleteTaskModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-[560px] max-h-[85vh] overflow-y-auto rounded-[18px] border border-[#d9d4c9] bg-[#fcfbf7] shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
-        <div className="flex items-start justify-between gap-4 border-b border-[#d8d3c8] px-4 py-4 md:px-4">
+      <div className="w-full max-w-[560px] max-h-[85vh] overflow-y-auto rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--crm-border)] px-4 py-4 md:px-4">
           <div className="flex min-w-0 items-start gap-2">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] bg-[#d9e7fb] text-[#3569b4] shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]">
               <svg
                 viewBox="0 0 24 24"
                 className="h-4 w-4 fill-none"
@@ -241,10 +241,10 @@ export default function CompleteTaskModal({
               </svg>
             </div>
             <div className="min-w-0">
-              <h2 className="text-[12px] font-semibold tracking-[-0.02em] text-slate-900 md:text-[18px]">
+              <h2 className="text-[12px] font-semibold tracking-[-0.02em] text-[var(--crm-text-primary)] md:text-[18px]">
                 Add note
               </h2>
-              <p className="mt-0.5 text-[12px] text-slate-600 md:text-[12px]">
+              <p className="mt-0.5 text-[12px] text-[var(--crm-text-muted)] md:text-[12px]">
                 {lead.customerId} <span className="px-1 text-slate-400">·</span>{" "}
                 Lead note
               </p>
@@ -254,7 +254,7 @@ export default function CompleteTaskModal({
           <button
             onClick={onClose}
             aria-label="Close modal"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[15px] border border-[#d8d3c8] bg-[#f5f2ea] text-slate-500 transition hover:bg-white hover:text-slate-700"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[15px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)] transition hover:border-[var(--crm-border-strong)] hover:text-[var(--crm-text-primary)]"
           >
             <svg
               viewBox="0 0 24 24"
@@ -270,13 +270,13 @@ export default function CompleteTaskModal({
         </div>
 
         <div className="space-y-4 px-4 py-4 md:px-6 md:py-5">
-          <div className="rounded-[18px] border border-[#d6d1c6] bg-[#f4f1e8] p-3.5 md:p-4">
+          <div className="rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 md:p-4">
             <FieldLabel>PHONE NUMBER</FieldLabel>
             <div className="mt-2 flex gap-2.5">
               <Input
                 value={lead.phone}
                 readOnly
-                className="h-[48px] rounded-[14px] border-[#bfbdb4] bg-white px-4 text-[15px] font-medium tracking-[0.02em] text-slate-900"
+                className="h-[48px] rounded-[14px] border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-4 text-[15px] font-medium tracking-[0.02em] text-[var(--crm-text-primary)]"
               />
               <a
                 href={`tel:${lead.phone}`}
@@ -296,7 +296,7 @@ export default function CompleteTaskModal({
                 Call
               </a>
             </div>
-            <div className="mt-3 rounded-[14px] border border-[#a67d2c] bg-[#f8efd8] px-3.5 py-2.5 text-[12px] text-[#7b5a16]">
+            <div className="mt-3 rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3.5 py-2.5 text-[12px] text-[var(--crm-text-muted)]">
               <div className="flex items-start gap-2.5">
                 <svg
                   viewBox="0 0 24 24"
@@ -323,7 +323,7 @@ export default function CompleteTaskModal({
             <div>
               <div className=" flex items-center gap-2">
                 <FieldLabel required>Next call date</FieldLabel>
-                <span className="text-[12px] text-[#9e3d34]">required</span>
+                <span className="text-[12px] text-[var(--crm-danger)]">required</span>
               </div>
 
               <Input
@@ -337,10 +337,10 @@ export default function CompleteTaskModal({
                   input.showPicker?.();
                 }}
                 missing={showErrors && nextCallDateMissing}
-                className="h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]"
+                className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
               />
 
-              <p className="mt-1 text-[12px] text-slate-500">
+              <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                 Click the field to open calendar and time picker.
               </p>
               {showErrors && nextCallDateMissing && (
@@ -363,7 +363,7 @@ export default function CompleteTaskModal({
                 }}
                 disabled={!statusEnabled}
                 className={[
-                  "h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
+                  "h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]",
                   !statusEnabled ? "opacity-60 cursor-not-allowed" : "",
                 ].join(" ")}
               >
@@ -387,7 +387,7 @@ export default function CompleteTaskModal({
                 }}
                 disabled={!pathEnabled}
                 className={[
-                  "h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
+                  "h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]",
                   !pathEnabled ? "opacity-60 cursor-not-allowed" : "",
                 ].join(" ")}
               >
@@ -410,7 +410,7 @@ export default function CompleteTaskModal({
                 }}
                 disabled={!feedbackSelectEnabled}
                 className={[
-                  " h-[42px] rounded-[12px] bg-[#f4f1e8] text-[14px]",
+                  "h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]",
                   !feedbackSelectEnabled ? "opacity-60 cursor-not-allowed" : "",
                 ].join(" ")}
               >
@@ -423,7 +423,7 @@ export default function CompleteTaskModal({
               </Select>
 
               {feedbackLoading && (
-                <p className="mt-1 text-[12px] text-slate-500">
+                <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                   Loading feedback options...
                 </p>
               )}
@@ -452,7 +452,7 @@ export default function CompleteTaskModal({
                 onChange={(e) => setNote(e.target.value)}
                 placeholder="Enter your note here..."
                 className={[
-                  "mt-2 w-full min-h-[110px] rounded-[14px] bg-[#f4f1e8]",
+                  "mt-2 w-full min-h-[110px] rounded-[14px] bg-[var(--crm-input-bg)]",
                   showErrors && noteMissing ? "border-red-500 bg-red-100" : "",
                 ].join(" ")}
               />
@@ -466,14 +466,14 @@ export default function CompleteTaskModal({
         </div>
 
         {apiError ? (
-          <p className="border-t border-[#d8d3c8] bg-rose-50 px-4 py-2 text-[12px] text-rose-700 md:px-5">{apiError}</p>
+          <p className="border-t border-[var(--crm-border)] bg-[var(--crm-danger-bg)] px-4 py-2 text-[12px] text-[var(--crm-danger-text)] md:px-5">{apiError}</p>
         ) : null}
-        <div className="flex flex-col-reverse items-stretch justify-end gap-2 border-t border-[#d8d3c8] bg-[#f4f1e8] px-4 py-3 md:flex-row md:px-5">
+        <div className="flex flex-col-reverse items-stretch justify-end gap-2 border-t border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 md:flex-row md:px-5">
           <Button
             variant="ghost"
             onClick={onClose}
             disabled={apiBusy}
-            className="h-[40px] rounded-[12px] border-[#c4c0b7] bg-white px-5 text-[13px] font-medium text-slate-700 hover:bg-[#faf8f2]"
+            className="h-[40px] rounded-[12px] border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 text-[13px] font-medium text-[var(--crm-text-primary)] hover:border-[var(--crm-border-strong)]"
           >
             Cancel
           </Button>
@@ -481,7 +481,7 @@ export default function CompleteTaskModal({
             variant="primary"
             onClick={() => void handleSave()}
             disabled={apiBusy}
-            className="h-[40px] rounded-[12px] border border-[#5a8fe8] bg-[#dce8fc] px-5 text-[13px] font-medium text-[#346ac0] shadow-none hover:translate-y-0 hover:bg-[#cdddfb]"
+            className="h-[40px] rounded-[12px] border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-5 text-[13px] font-medium text-[var(--crm-accent)] shadow-none hover:translate-y-0"
             icon={
               <svg
                 viewBox="0 0 24 24"

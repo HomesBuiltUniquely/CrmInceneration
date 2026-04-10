@@ -13,22 +13,22 @@ type Chip = { label: string; tone: ChipTone };
 function ChipPill({ chip }: { chip: Chip }) {
   const cls =
     chip.tone === "blue"
-      ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
+      ? "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]"
       : chip.tone === "green"
-        ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+        ? "bg-[var(--crm-success-bg)] text-[var(--crm-success-text)] ring-1 ring-[var(--crm-success)]"
         : chip.tone === "amber"
-          ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+          ? "bg-[var(--crm-warning-bg)] text-[var(--crm-warning-text)] ring-1 ring-[var(--crm-warning-border)]"
           : chip.tone === "rose"
-            ? "bg-rose-50 text-rose-700 ring-1 ring-rose-200"
-            : "bg-slate-100 text-slate-600";
+            ? "bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)] ring-1 ring-[var(--crm-danger)]"
+            : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]";
 
   return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${cls}`}>{chip.label}</span>;
 }
 
 function ProgressBar({ pct, tone }: { pct: number; tone: "normal" | "critical" }) {
-  const bar = tone === "critical" ? "bg-rose-500" : "bg-blue-600";
+  const bar = tone === "critical" ? "bg-[var(--crm-danger)]" : "bg-[var(--crm-accent)]";
   return (
-    <div className="h-1.5 w-28 rounded-full bg-slate-200">
+    <div className="h-1.5 w-28 rounded-full bg-[var(--crm-border)]">
       <div className={`h-1.5 rounded-full ${bar}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
@@ -37,8 +37,8 @@ function ProgressBar({ pct, tone }: { pct: number; tone: "normal" | "critical" }
 function StatusInline({ status }: { status: NonNullable<LeadRowModel["journey"]["status"]> }) {
   const cls =
     status.tone === "critical"
-      ? "text-rose-600"
-      : "text-amber-700";
+      ? "text-[var(--crm-danger-text)]"
+      : "text-[var(--crm-warning-text)]";
   return (
     <div className={`mt-1 text-[10px] font-semibold ${cls}`}>
       {status.label}
@@ -47,9 +47,8 @@ function StatusInline({ status }: { status: NonNullable<LeadRowModel["journey"][
 }
 
 function OwnerAvatar() {
-  return <div className="h-7 w-7 rounded-full bg-slate-200 ring-2 ring-white" />;
+  return <div className="h-7 w-7 rounded-full bg-[var(--crm-border)] ring-2 ring-[var(--crm-surface)]" />;
 }
-
 
 type LeadRowActionProps = {
   row: LeadRowModel;
@@ -58,6 +57,37 @@ type LeadRowActionProps = {
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
 };
+
+function BoltIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 text-[var(--crm-text-muted)]" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M13 2 3 14h7l-1 8 12-14h-7l-1-6Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function AlertButton({
+  onClick,
+}: {
+  onClick?: React.MouseEventHandler<HTMLButtonElement>;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--crm-danger)] text-white shadow-[var(--crm-shadow-sm)] hover:brightness-110"
+    >
+      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 9v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M12 17h.01" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
 
 function LeadRowAction({
   row,
@@ -71,7 +101,7 @@ function LeadRowAction({
   return (
     <div
       onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
-      className={`group grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-slate-100 px-6 py-4 transition-all hover:bg-blue-50/40 ${
+      className={`grid grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle) ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
       role="button"
@@ -93,10 +123,10 @@ function LeadRowAction({
         />
       </div>
       <div className="col-span-3 flex items-center gap-3">
-        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 shadow-inner" />
+        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[var(--crm-border)] to-slate-300 shadow-inner" />
         <div className="leading-tight">
-          <div className="text-[12px] font-semibold text-slate-800">{row.name}</div>
-          <div className="mt-1 text-[11px] font-medium text-slate-400">{row.company}</div>
+          <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
+          <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
         </div>
       </div>
 
@@ -105,24 +135,24 @@ function LeadRowAction({
       </div>
 
       <div className="col-span-2">
-        <div className="text-[10px] font-bold tracking-wide text-slate-400">{row.journey.stage}</div>
+        <div className="text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">{row.journey.stage}</div>
         <div className="mt-2 flex items-center gap-3">
           <ProgressBar pct={row.journey.progressPct} tone={critical ? "critical" : "normal"} />
-          <div className="text-[10px] font-semibold text-slate-400">{row.journey.progressLabel}</div>
+          <div className="text-[10px] font-semibold text-[var(--crm-text-muted)]">{row.journey.progressLabel}</div>
         </div>
         {row.journey.status ? <StatusInline status={row.journey.status} /> : null}
       </div>
 
       <div className="col-span-2 flex items-center gap-2">
         <OwnerAvatar />
-        <div className="text-[12px] font-semibold text-slate-700">{row.owner.name}</div>
+        <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 
       <div className="col-span-1">
-        <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-rose-600" : "text-slate-500"}`}>
+        <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
           {row.engagement.time}
         </div>
-        <div className="mt-1 text-[11px] font-semibold text-slate-700">{row.engagement.action}</div>
+        <div className="mt-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">{row.engagement.action}</div>
       </div>
 
       <div className="col-span-1 flex justify-end gap-2">
@@ -171,13 +201,13 @@ export function LeadsPagination({
   const pages = Array.from({ length: end - start }, (_, i) => start + i);
 
   return (
-    <div className="flex items-center justify-between border-t border-slate-100 px-6 py-4">
+    <div className="flex items-center justify-between border-t border-[var(--crm-border)] px-6 py-4">
       <div className="flex items-center gap-1 text-[12px]">
         <button
           type="button"
           disabled={disabled || page <= 0}
           onClick={() => onPageChange(Math.max(0, page - 1))}
-          className="h-8 w-8 rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-8 w-8 rounded-full text-[var(--crm-text-muted)] hover:bg-[var(--crm-surface-subtle)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           ‹
         </button>
@@ -191,8 +221,8 @@ export function LeadsPagination({
               onClick={() => onPageChange(p)}
               className={`h-8 min-w-8 rounded-full px-2 font-semibold ${
                 active
-                  ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200"
-                  : "text-slate-600 hover:bg-slate-100"
+                  ? "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]"
+                  : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
               }`}
             >
               {p + 1}
@@ -203,18 +233,18 @@ export function LeadsPagination({
           type="button"
           disabled={disabled || page >= safeTotal - 1}
           onClick={() => onPageChange(Math.min(safeTotal - 1, page + 1))}
-          className="h-8 w-8 rounded-full text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-8 w-8 rounded-full text-[var(--crm-text-muted)] hover:bg-[var(--crm-surface-subtle)] disabled:cursor-not-allowed disabled:opacity-40"
         >
           ›
         </button>
       </div>
       <div className="flex items-center gap-2">
-        <label className="text-[11px] font-semibold text-slate-400">Rows</label>
+        <label className="text-[11px] font-semibold text-[var(--crm-text-muted)]">Rows</label>
         <select
           value={pageSize}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
           disabled={disabled}
-          className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12px] font-semibold text-slate-700"
+          className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--crm-text-secondary)]"
         >
           {[20, 30, 40, 50, 60, 70, 80, 90, 100].map((n) => (
             <option key={n} value={n}>
@@ -301,8 +331,8 @@ export default function LeadsTable({
 
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
-        <div className="grid grid-cols-12 gap-3 bg-gradient-to-r from-slate-50 to-blue-50/60 px-6 py-4 text-[10px] font-bold tracking-wide text-slate-500">
+      <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
+        <div className="grid grid-cols-12 gap-3 bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">
           <div className="col-span-1">
             <input
               ref={selectAllRef}
@@ -324,11 +354,11 @@ export default function LeadsTable({
           <div className="col-span-1 text-right">ACTIONS</div>
         </div>
         {loading ? (
-          <div className="border-t border-slate-100 px-6 py-10 text-center text-[12px] text-slate-500">
+          <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
             Loading leads…
           </div>
         ) : rows.length === 0 ? (
-          <div className="border-t border-slate-100 px-6 py-10 text-center text-[12px] text-slate-500">
+          <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
             No leads found.
           </div>
         ) : (

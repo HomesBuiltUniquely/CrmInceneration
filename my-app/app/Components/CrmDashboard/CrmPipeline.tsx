@@ -249,7 +249,7 @@ export default function CrmPipeline({ filters }: Props) {
 
   if (error) {
     return (
-      <div className="xl:ml-6 xl:mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+      <div className="xl:ml-6 xl:mt-4 rounded-xl border border-[var(--crm-danger)] bg-[var(--crm-danger-bg)] px-4 py-3 text-sm text-[var(--crm-danger-text)]">
         {error}
       </div>
     );
@@ -257,7 +257,7 @@ export default function CrmPipeline({ filters }: Props) {
 
   if (!data) {
     return (
-      <div className="xl:ml-6 xl:mt-4 text-sm text-slate-500" aria-live="polite">
+      <div className="xl:ml-6 xl:mt-4 text-sm text-[var(--crm-text-muted)]" aria-live="polite">
         Loading pipeline…
       </div>
     );
@@ -265,15 +265,15 @@ export default function CrmPipeline({ filters }: Props) {
 
   if (stages.length === 0) {
     return (
-      <div className="xl:ml-6 xl:mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-        No pipeline stages returned. Check <code className="rounded bg-white px-1">/Leads/crm-pipeline?nested=true</code>.
+      <div className="xl:ml-6 xl:mt-4 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
+        No pipeline stages returned. Check <code className="rounded bg-[var(--crm-surface)] px-1">/Leads/crm-pipeline?nested=true</code>.
       </div>
     );
   }
 
   if (!selectedStage || !pathData) {
     return (
-      <div className="xl:ml-6 xl:mt-4 text-sm text-slate-500" aria-live="polite">
+      <div className="xl:ml-6 xl:mt-4 text-sm text-[var(--crm-text-muted)]" aria-live="polite">
         Loading pipeline…
       </div>
     );

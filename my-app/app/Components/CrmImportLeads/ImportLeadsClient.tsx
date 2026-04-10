@@ -1,11 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import Image from "next/image";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
-import { CRM_ROLE_STORAGE_KEY, CRM_TOKEN_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
+  normalizeRole,
+} from "@/lib/auth/api";
 
 const IMPORT_BASE = `${process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081"}/v1/import`;
 
@@ -103,29 +113,25 @@ function ImportSection({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-[0_10px_30px_rgba(15,23,42,0.06)] md:px-6">
-      <h2 className="text-[1.55rem] font-bold tracking-[-0.04em] text-slate-800">
+    <section className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 py-5 shadow-[var(--crm-shadow-sm)] md:px-6">
+      <h2 className="text-[1.55rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
         {title}
       </h2>
-      <div className="mt-3 h-px bg-[#3794ff]" />
+      <div className="mt-3 h-px bg-[var(--crm-accent)]" />
       <div className="mt-4">{children}</div>
     </section>
   );
 }
 
-function InfoPill({
-  label,
-  value,
-}: {
-  label: string;
-  value: ReactNode;
-}) {
+function InfoPill({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
-      <div className="text-[0.78rem] font-semibold uppercase tracking-[0.08em] text-slate-500">
+    <div className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-2.5">
+      <div className="text-[0.78rem] font-semibold uppercase tracking-[0.08em] text-[var(--crm-text-muted)]">
         {label}
       </div>
-      <div className="mt-1 text-[0.92rem] font-semibold text-slate-800">{value}</div>
+      <div className="mt-1 text-[0.92rem] font-semibold text-[var(--crm-text-primary)]">
+        {value}
+      </div>
     </div>
   );
 }
@@ -144,12 +150,17 @@ function MappingSelect({
       <Select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 rounded-xl border-slate-300 bg-white pr-11 bg-none text-[13.5px]"
+        className="h-10 rounded-xl border-[var(--crm-border)] bg-[var(--crm-surface)] pr-11 bg-none text-[13.5px] text-[var(--crm-text-primary)]"
       >
         {children}
       </Select>
-      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-500">
-        <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+      <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-[var(--crm-text-muted)]">
+        <svg
+          viewBox="0 0 20 20"
+          fill="none"
+          className="h-4 w-4"
+          aria-hidden="true"
+        >
           <path
             d="M5 7.5L10 12.5L15 7.5"
             stroke="currentColor"
@@ -166,7 +177,8 @@ function MappingSelect({
 export default function ImportLeadsClient() {
   const [role, setRole] = useState("SUPER_ADMIN");
   useEffect(() => {
-    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
+    const stored =
+      window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
     setRole(normalizeRole(stored) || "SUPER_ADMIN");
   }, []);
 
@@ -180,13 +192,18 @@ export default function ImportLeadsClient() {
   const [rowCount, setRowCount] = useState(0);
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [availableFields, setAvailableFields] = useState<string[]>([]);
-  const [fieldMappings, setFieldMappings] = useState<Record<string, string>>({});
-  const [progressPercent, setProgressPercent] = useState(0);
-  const [progressText, setProgressText] = useState("Uploading and processing...");
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  const [alert, setAlert] = useState<{ tone: AlertTone; message: string } | null>(
-    null,
+  const [fieldMappings, setFieldMappings] = useState<Record<string, string>>(
+    {},
   );
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [progressText, setProgressText] = useState(
+    "Uploading and processing...",
+  );
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [alert, setAlert] = useState<{
+    tone: AlertTone;
+    message: string;
+  } | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
@@ -238,7 +255,13 @@ export default function ImportLeadsClient() {
       const authToken = getAuthToken();
       const response = await fetch(`${IMPORT_BASE}/excel/sheets`, {
         method: "POST",
-        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
+        headers: authToken
+          ? {
+              Authorization: authToken.startsWith("Bearer ")
+                ? authToken
+                : `Bearer ${authToken}`,
+            }
+          : {},
         body: formData,
       });
 
@@ -246,11 +269,15 @@ export default function ImportLeadsClient() {
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string" ? data.error : "Failed to process file",
+          typeof data?.error === "string"
+            ? data.error
+            : "Failed to process file",
         );
       }
 
-      const sheets = Array.isArray(data?.sheets) ? (data.sheets as SheetInfo[]) : [];
+      const sheets = Array.isArray(data?.sheets)
+        ? (data.sheets as SheetInfo[])
+        : [];
       setExcelSheets(sheets);
 
       if (sheets.length === 0) {
@@ -263,7 +290,9 @@ export default function ImportLeadsClient() {
         setStep("sheet");
       }
     } catch (error) {
-      showError(error instanceof Error ? error.message : "Error processing file.");
+      showError(
+        error instanceof Error ? error.message : "Error processing file.",
+      );
     } finally {
       setIsBusy(false);
     }
@@ -285,7 +314,13 @@ export default function ImportLeadsClient() {
       const authToken = getAuthToken();
       const response = await fetch(`${IMPORT_BASE}/excel/headers`, {
         method: "POST",
-        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
+        headers: authToken
+          ? {
+              Authorization: authToken.startsWith("Bearer ")
+                ? authToken
+                : `Bearer ${authToken}`,
+            }
+          : {},
         body: formData,
       });
 
@@ -293,17 +328,23 @@ export default function ImportLeadsClient() {
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string" ? data.error : "Failed to read sheet headers",
+          typeof data?.error === "string"
+            ? data.error
+            : "Failed to read sheet headers",
         );
       }
 
-      const headers = Array.isArray(data?.headers) ? (data.headers as string[]) : [];
+      const headers = Array.isArray(data?.headers)
+        ? (data.headers as string[])
+        : [];
       const fieldsFromApi = Array.isArray(data?.availableFields)
         ? (data.availableFields as string[])
         : [];
       const fields = Array.from(
         new Set([
-          ...fieldsFromApi.map((field) => canonicalBackendField(field) ?? field),
+          ...fieldsFromApi.map(
+            (field) => canonicalBackendField(field) ?? field,
+          ),
           ...BACKEND_STANDARD_FIELDS,
         ]),
       );
@@ -321,7 +362,9 @@ export default function ImportLeadsClient() {
 
       setSelectedSheetIndex(sheetIndex);
       setSelectedSheetName(
-        typeof data?.sheetName === "string" ? data.sheetName : knownSheetName ?? "",
+        typeof data?.sheetName === "string"
+          ? data.sheetName
+          : (knownSheetName ?? ""),
       );
       setRowCount(typeof data?.rowCount === "number" ? data.rowCount : 0);
       setExcelHeaders(headers);
@@ -329,7 +372,9 @@ export default function ImportLeadsClient() {
       setFieldMappings(autoMap);
       setStep("mapping");
     } catch (error) {
-      showError(error instanceof Error ? error.message : "Error loading sheet.");
+      showError(
+        error instanceof Error ? error.message : "Error loading sheet.",
+      );
     } finally {
       setIsBusy(false);
     }
@@ -369,7 +414,13 @@ export default function ImportLeadsClient() {
 
       const response = await fetch(`${IMPORT_BASE}/excel/import`, {
         method: "POST",
-        headers: authToken ? { Authorization: authToken.startsWith("Bearer ") ? authToken : `Bearer ${authToken}` } : {},
+        headers: authToken
+          ? {
+              Authorization: authToken.startsWith("Bearer ")
+                ? authToken
+                : `Bearer ${authToken}`,
+            }
+          : {},
         body: formData,
       });
 
@@ -393,7 +444,9 @@ export default function ImportLeadsClient() {
       setAlert({ tone: "success", message: "Import completed successfully." });
       setStep("results");
     } catch (error) {
-      showError(error instanceof Error ? error.message : "Error importing leads.");
+      showError(
+        error instanceof Error ? error.message : "Error importing leads.",
+      );
       setStep("mapping");
     } finally {
       setIsBusy(false);
@@ -432,14 +485,14 @@ export default function ImportLeadsClient() {
 
   return (
     <div
-      className="min-h-screen bg-[#f7f9fc] xl:h-screen xl:overflow-hidden"
+      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
       style={{
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div className="hidden xl:block">
+        <div>
           <QuickAccessSidebar
             appBadge="HO WS"
             appName="Hows"
@@ -451,8 +504,8 @@ export default function ImportLeadsClient() {
           />
         </div>
 
-        <div className="bg-[#f7f9fc] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-slate-200 bg-white shadow-sm">
+        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
             <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-3">
                 <Image
@@ -462,11 +515,12 @@ export default function ImportLeadsClient() {
                   height={46}
                 />
                 <div>
-                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-slate-900">
+                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
                     Import Leads
                   </div>
-                  <div className="text-sm text-slate-500">
-                    Upload Excel files and map columns to the original CRM import API
+                  <div className="text-sm text-[var(--crm-text-muted)]">
+                    Upload Excel files and map columns to the original CRM
+                    import API
                   </div>
                 </div>
               </div>
@@ -475,10 +529,10 @@ export default function ImportLeadsClient() {
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1120px] space-y-5">
-              <div className="overflow-hidden rounded-xl bg-gradient-to-r from-[#6278ea] via-[#6b6fe0] to-[#7c44b6] shadow-[0_12px_28px_rgba(92,100,220,0.2)]">
-                <div className="flex min-h-[74px] items-center gap-3 px-6 py-4">
+              <div className="overflow-hidden rounded-xl bg-[var(--crm-tab-grad)] shadow-[var(--crm-shadow-md)]">
+                <div className="flex min-h-[74px] items-center gap-3 px-6 py-4 shadow-[var(--crm-shadow-sm)] border-[var(--crm-border)] bg-[var(--crm-surface)]">
                   <span className="text-[1.7rem] leading-none">📊</span>
-                  <h1 className="text-[1.7rem] font-bold tracking-[-0.04em] text-white">
+                  <h1 className="text-[1.7rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
                     Import Leads from Excel
                   </h1>
                 </div>
@@ -489,8 +543,8 @@ export default function ImportLeadsClient() {
                   className={[
                     "rounded-2xl border px-4 py-3 text-sm font-medium",
                     alert.tone === "error"
-                      ? "border-rose-200 bg-rose-50 text-rose-700"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                      ? "border-[var(--crm-danger)] bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)]"
+                      : "border-[var(--crm-success)] bg-[var(--crm-success-bg)] text-[var(--crm-success-text)]",
                   ].join(" ")}
                 >
                   {alert.message}
@@ -512,9 +566,9 @@ export default function ImportLeadsClient() {
               >
                 {step === "upload" ? (
                   <div className="space-y-4">
-                    <p className="text-[0.95rem] text-slate-600">
-                      Upload an Excel file (`.xlsx`) containing lead data.
-                      The first row should contain column headers.
+                    <p className="text-[0.95rem] text-[var(--crm-text-secondary)]">
+                      Upload an Excel file (`.xlsx`) containing lead data. The
+                      first row should contain column headers.
                     </p>
 
                     <input
@@ -534,8 +588,8 @@ export default function ImportLeadsClient() {
                       className={[
                         "flex min-h-[190px] cursor-pointer flex-col items-center justify-center rounded-[24px] border-2 border-dashed px-6 py-8 text-center transition-all",
                         dragActive
-                          ? "border-emerald-400 bg-emerald-50"
-                          : "border-slate-300 bg-slate-50 hover:border-blue-400 hover:bg-blue-50/40",
+                          ? "border-[var(--crm-success)] bg-[var(--crm-success-bg)]"
+                          : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] hover:border-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)]",
                       ].join(" ")}
                       onDragOver={(event) => {
                         event.preventDefault();
@@ -547,7 +601,7 @@ export default function ImportLeadsClient() {
                     >
                       <svg
                         viewBox="0 0 24 24"
-                        className="h-12 w-12 text-emerald-500"
+                        className="h-12 w-12 text-[var(--crm-success)]"
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="1.8"
@@ -559,33 +613,38 @@ export default function ImportLeadsClient() {
                         <path d="m17 8-5-5-5 5" />
                         <path d="M12 3v12" />
                       </svg>
-                      <div className="mt-4 text-[1rem] font-bold text-slate-800">
+                      <div className="mt-4 text-[1rem] font-bold text-[var(--crm-text-primary)]">
                         Click to upload or drag and drop
                       </div>
-                      <div className="mt-1.5 text-[0.88rem] text-slate-500">
+                      <div className="mt-1.5 text-[0.88rem] text-[var(--crm-text-muted)]">
                         Excel file (.xlsx only)
                       </div>
                     </label>
 
                     {selectedFile ? (
-                      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
+                      <div className="rounded-xl border border-[var(--crm-info)] bg-[var(--crm-info-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-info-text)]">
                         Selected file: {selectedFile.name}
                       </div>
                     ) : null}
-
                   </div>
                 ) : null}
 
                 {step === "sheet" ? (
                   <div className="space-y-5">
-                    <p className="text-[0.95rem] text-slate-600">
-                      Your Excel file contains multiple sheets. Select which sheet
-                      you want to import data from.
+                    <p className="text-[0.95rem] text-[var(--crm-text-secondary)]">
+                      Your Excel file contains multiple sheets. Select which
+                      sheet you want to import data from.
                     </p>
 
                     <div className="grid gap-4 md:grid-cols-2">
-                      <InfoPill label="File" value={selectedFile?.name ?? "Not selected"} />
-                      <InfoPill label="Total Sheets" value={excelSheets.length} />
+                      <InfoPill
+                        label="File"
+                        value={selectedFile?.name ?? "Not selected"}
+                      />
+                      <InfoPill
+                        label="Total Sheets"
+                        value={excelSheets.length}
+                      />
                     </div>
 
                     <div className="grid gap-3">
@@ -603,18 +662,20 @@ export default function ImportLeadsClient() {
                                 )
                               : undefined
                           }
-                          className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-blue-400 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="flex items-center justify-between rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-3 text-left shadow-[var(--crm-shadow-sm)] transition hover:border-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <div>
-                            <div className="text-[1rem] font-bold text-slate-800">
+                            <div className="text-[1rem] font-bold text-[var(--crm-text-primary)]">
                               {sheet.name}
                             </div>
-                            <div className="mt-0.5 text-[0.88rem] text-slate-500">
+                            <div className="mt-0.5 text-[0.88rem] text-[var(--crm-text-muted)]">
                               {sheet.rowCount} rows • Sheet {sheet.index + 1} of{" "}
                               {excelSheets.length}
                             </div>
                           </div>
-                          <span className="text-[1.5rem] text-blue-500">→</span>
+                          <span className="text-[1.5rem] text-[var(--crm-accent)]">
+                            →
+                          </span>
                         </button>
                       ))}
                     </div>
@@ -627,30 +688,34 @@ export default function ImportLeadsClient() {
 
                 {step === "mapping" ? (
                   <div className="space-y-5">
-                    <p className="text-[0.95rem] text-slate-600">
-                      Map your Excel columns to backend lead fields. Standard fields
-                      go to database columns, and unmatched columns can stay as
-                      dynamic fields.
+                    <p className="text-[0.95rem] text-[var(--crm-text-secondary)]">
+                      Map your Excel columns to backend lead fields. Standard
+                      fields go to database columns, and unmatched columns can
+                      stay as dynamic fields.
                     </p>
 
                     <div className="grid gap-4 md:grid-cols-3">
-                      <InfoPill label="File" value={selectedFile?.name ?? "Not selected"} />
+                      <InfoPill
+                        label="File"
+                        value={selectedFile?.name ?? "Not selected"}
+                      />
                       <InfoPill label="Sheet" value={selectedSheetName} />
                       <InfoPill label="Rows" value={`${rowCount} leads`} />
                     </div>
 
                     <div className="space-y-2.5">
                       {excelHeaders.map((header) => {
-                        const currentMapping = fieldMappings[header] ?? "notMapped";
+                        const currentMapping =
+                          fieldMappings[header] ?? "notMapped";
                         return (
                           <div
                             key={header}
-                            className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 lg:grid-cols-[minmax(220px,1fr)_32px_minmax(260px,1.1fr)] lg:items-center"
+                            className="grid gap-3 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 lg:grid-cols-[minmax(220px,1fr)_32px_minmax(260px,1.1fr)] lg:items-center"
                           >
-                            <div className="text-[0.94rem] font-semibold text-slate-800">
+                            <div className="text-[0.94rem] font-semibold text-[var(--crm-text-primary)]">
                               📄 {header}
                             </div>
-                            <div className="hidden text-center text-xl text-slate-400 lg:block">
+                            <div className="hidden text-center text-xl text-[var(--crm-text-muted)] lg:block">
                               →
                             </div>
                             <MappingSelect
@@ -666,7 +731,9 @@ export default function ImportLeadsClient() {
                                 ))}
                               </optgroup>
                               <optgroup label="Custom Field">
-                                <option value={`custom_${header.replace(/[^a-zA-Z0-9]/g, "_")}`}>
+                                <option
+                                  value={`custom_${header.replace(/[^a-zA-Z0-9]/g, "_")}`}
+                                >
                                   {header} (Dynamic)
                                 </option>
                               </optgroup>
@@ -704,13 +771,13 @@ export default function ImportLeadsClient() {
 
                 {step === "progress" ? (
                   <div className="space-y-4">
-                    <div className="h-3 overflow-hidden rounded-full bg-slate-200">
+                    <div className="h-3 overflow-hidden rounded-full bg-[var(--crm-border)]">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500 transition-all duration-300"
+                        className="h-full rounded-full bg-[var(--crm-tab-grad)] transition-all duration-300"
                         style={{ width: `${progressPercent}%` }}
                       />
                     </div>
-                    <p className="text-center text-[0.95rem] font-medium text-slate-600">
+                    <p className="text-center text-[0.95rem] font-medium text-[var(--crm-text-secondary)]">
                       {progressText}
                     </p>
                   </div>
@@ -719,42 +786,42 @@ export default function ImportLeadsClient() {
                 {step === "results" && importResult ? (
                   <div className="space-y-5">
                     <div className="grid gap-4 md:grid-cols-3">
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-                        <div className="text-[1.7rem] font-bold text-emerald-700">
+                      <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-4">
+                        <div className="text-[1.7rem] font-bold text-[var(--crm-success-text)]">
                           {importResult.imported}
                         </div>
-                        <div className="mt-1 text-sm font-semibold text-emerald-800">
+                        <div className="mt-1 text-sm font-semibold text-[var(--crm-success-text)]">
                           Successfully Imported
                         </div>
                       </div>
-                      <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
-                        <div className="text-[1.7rem] font-bold text-rose-700">
+                      <div className="rounded-2xl border border-[var(--crm-danger)] bg-[var(--crm-danger-bg)] px-4 py-4">
+                        <div className="text-[1.7rem] font-bold text-[var(--crm-danger-text)]">
                           {importResult.failed}
                         </div>
-                        <div className="mt-1 text-sm font-semibold text-rose-800">
+                        <div className="mt-1 text-sm font-semibold text-[var(--crm-danger-text)]">
                           Failed
                         </div>
                       </div>
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                        <div className="text-[1.7rem] font-bold text-amber-700">
+                      <div className="rounded-2xl border border-[var(--crm-warning-border)] bg-[var(--crm-warning-bg)] px-4 py-4">
+                        <div className="text-[1.7rem] font-bold text-[var(--crm-warning-text)]">
                           {importResult.skipped}
                         </div>
-                        <div className="mt-1 text-sm font-semibold text-amber-800">
+                        <div className="mt-1 text-sm font-semibold text-[var(--crm-warning-text)]">
                           Skipped (Empty Rows)
                         </div>
                       </div>
                     </div>
 
                     {importResult.errors && importResult.errors.length > 0 ? (
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                        <h3 className="text-[1.1rem] font-bold text-amber-900">
+                      <div className="rounded-2xl border border-[var(--crm-warning-border)] bg-[var(--crm-warning-bg)] px-4 py-4">
+                        <h3 className="text-[1.1rem] font-bold text-[var(--crm-warning-text)]">
                           Import Errors
                         </h3>
                         <div className="mt-4 space-y-2">
                           {importResult.errors.map((item, index) => (
                             <div
                               key={`${item}-${index}`}
-                              className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-amber-800"
+                              className="rounded-lg border border-[var(--crm-warning-border)] bg-[var(--crm-surface)] px-3 py-2 text-sm text-[var(--crm-warning-text)]"
                             >
                               {item}
                             </div>
@@ -763,7 +830,11 @@ export default function ImportLeadsClient() {
                       </div>
                     ) : null}
 
-                    <Button type="button" variant="primary" onClick={resetImport}>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={resetImport}
+                    >
                       Import Another File
                     </Button>
                   </div>

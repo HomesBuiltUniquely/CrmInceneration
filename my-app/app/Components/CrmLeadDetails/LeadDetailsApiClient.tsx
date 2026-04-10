@@ -172,15 +172,18 @@ export default function LeadDetailsApiClient({
 
   if (!validLeadType) {
     return (
-      <main className="min-h-screen bg-white p-8">
-        <p className="text-rose-600">Unknown lead source. Use /Leads/formlead/123 (or glead, mlead, addlead, websitelead).</p>
+      <main className="min-h-screen bg-[var(--crm-app-bg)] p-8">
+        <p className="text-rose-600">
+          Unknown lead source. Use /Leads/formlead/123 (or glead, mlead, addlead,
+          websitelead).
+        </p>
       </main>
     );
   }
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-white px-4 py-12 text-center text-slate-600">
+      <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-12 text-center text-[var(--crm-text-muted)]">
         Loading lead…
       </main>
     );
@@ -188,14 +191,14 @@ export default function LeadDetailsApiClient({
 
   if (error) {
     return (
-      <main className="min-h-screen bg-white px-4 py-8">
+      <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-8">
         <p className="text-rose-600">{error}</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-white px-4 py-6 md:px-6 lg:px-8">
+    <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-6 md:px-6 lg:px-8">
       <div className="mx-auto max-w-[1440px]">
         <TopBar />
         <LeadHeader lead={lead} onCompleteTask={() => setCompleteTaskOpen(true)} />

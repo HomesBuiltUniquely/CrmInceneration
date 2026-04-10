@@ -48,7 +48,7 @@ function ActivityCard({ item, isLast, delay }: { item: ActivityItem; isLast: boo
         >
           {cfg.icon}
         </div>
-        {!isLast && <div className="mt-1.5 w-px flex-1 bg-slate-200" />}
+        {!isLast && <div className="mt-1.5 w-px flex-1 bg-[var(--crm-border)]" />}
       </div>
 
       {/* Content */}
@@ -58,32 +58,32 @@ function ActivityCard({ item, isLast, delay }: { item: ActivityItem; isLast: boo
           <span className={cn("text-[11px] font-bold tracking-[0.8px] uppercase", cfg.labelClass)}>
             {cfg.label}
           </span>
-          <span className="font-mono text-[11px] text-slate-400">{item.timestamp}</span>
+          <span className="font-mono text-[11px] text-[var(--crm-text-muted)]">{item.timestamp}</span>
         </div>
 
         {/* Description */}
-        <p className="mb-1.5 text-[13.5px] leading-relaxed text-slate-900">
+        <p className="mb-1.5 text-[13.5px] leading-relaxed text-[var(--crm-text-primary)]">
           {item.description}
         </p>
 
         {/* Note box */}
         {item.note && (
-          <div className="mt-2 rounded-lg border border-slate-200 border-l-[3px] border-l-amber-400 bg-amber-50/40 p-3 font-mono text-[12px] leading-relaxed text-slate-600">
+          <div className="mt-2 rounded-lg border border-[var(--crm-border)] border-l-[3px] border-l-amber-400 bg-[var(--crm-surface-subtle)] p-3 font-mono text-[12px] leading-relaxed text-[var(--crm-text-muted)]">
             {item.note}
           </div>
         )}
 
         {/* Change diff */}
         {item.change && (
-          <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[12px]">
+          <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 font-mono text-[12px]">
             <span className="text-rose-500 line-through opacity-70">{item.change.old}</span>
-            <span className="text-slate-400">→</span>
+            <span className="text-[var(--crm-text-muted)]">→</span>
             <span className="text-emerald-600">{item.change.new}</span>
           </div>
         )}
 
         {/* By */}
-        <p className="mt-2 flex items-center gap-1 text-[11px] text-slate-400">
+        <p className="mt-2 flex items-center gap-1 text-[11px] text-[var(--crm-text-muted)]">
           <span>👤</span> By: {item.by}
         </p>
       </div>
@@ -96,7 +96,7 @@ export default function ActivityTimeline({ activities }: { activities: ActivityI
   return (
     <div className="animate-fade-up delay-3">
       <Card className="!pt-5 !pb-5">
-        <div className="mb-5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.8px] text-slate-500">
+        <div className="mb-5 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.8px] text-[var(--crm-text-muted)]">
           <span>📟</span> Activity History
           <span className="ml-2 rounded-full border border-blue-400/30 bg-blue-500/10 px-2 py-0.5 font-mono text-[10px] text-blue-300">
             {activities.length} events
