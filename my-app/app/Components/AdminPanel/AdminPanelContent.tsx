@@ -1940,6 +1940,10 @@ function LeadLimitSection() {
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     return normalizeRole(role);
   });
+  const canManageLeadLimits =
+    viewerRole === "SUPER_ADMIN" ||
+    viewerRole === "ADMIN" ||
+    viewerRole === "SALES_ADMIN";
   const [defaultLimit, setDefaultLimit] = useState<string>("50");
   const [limitTab, setLimitTab] = useState<"users" | "role">("users");
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
@@ -1968,9 +1972,9 @@ function LeadLimitSection() {
   };
 
   useEffect(() => {
-    if (viewerRole !== "SUPER_ADMIN") return;
+    if (!canManageLeadLimits) return;
     loadLimits();
-  }, [viewerRole]);
+  }, [canManageLeadLimits]);
 
   const toggleRole = (r: string) =>
     setSelectedRoles((prev) =>
@@ -1997,11 +2001,11 @@ function LeadLimitSection() {
 
   return (
     <Card>
-      {viewerRole !== "SUPER_ADMIN" ? (
+      {!canManageLeadLimits ? (
         <>
           <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
           <p style={{ fontSize: 13, color: C.muted, marginBottom: 0 }}>
-            Lead limit management is available only for Super Admin.
+            Lead limit management is available only for Admin, Sales Admin, and Super Admin.
           </p>
         </>
       ) : (
@@ -2894,16 +2898,21 @@ export default function AdminPanelContent() {
     return normalizeRole(role);
   });
 
+  const isAdmin = viewerRole === "ADMIN";
+  const isSalesAdmin = viewerRole === "SALES_ADMIN";
   const isSalesManager = viewerRole === "SALES_MANAGER";
   const isPresalesManager = viewerRole === "PRESALES_MANAGER";
   const isTerritoryDesignManager = viewerRole === "TERRITORY_DESIGN_MANAGER";
   const isDesignManager = viewerRole === "DESIGN_MANAGER";
   const isSuperAdmin = viewerRole === "SUPER_ADMIN";
+  const canSeeLeadLimit = isSuperAdmin || isAdmin || isSalesAdmin;
   const baseSections = isSalesManager || isPresalesManager || isTerritoryDesignManager || isDesignManager
     ? SECTIONS.filter((section) => section.id === "salesExec")
-    : SECTIONS.filter((section) =>
-        isSuperAdmin ? true : section.id !== "allUsers" && section.id !== "leadLimit",
-      );
+    : SECTIONS.filter((section) => {
+        if (section.id === "allUsers") return isSuperAdmin;
+        if (section.id === "leadLimit") return canSeeLeadLimit;
+        return true;
+      });
   const sections = baseSections.map((section) => {
     if (section.id !== "salesExec") return section;
     if (isTerritoryDesignManager) {
@@ -2965,7 +2974,7 @@ export default function AdminPanelContent() {
             <div id="salesExec">
               <SalesExecSection />
             </div>
-            {isSuperAdmin ? (
+            {canSeeLeadLimit ? (
               <div id="leadLimit">
                 <LeadLimitSection />
               </div>
