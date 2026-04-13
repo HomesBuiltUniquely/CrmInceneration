@@ -58,3 +58,44 @@ export async function postManualActivity(
   if (!res.ok) throw new Error(text);
   return text;
 }
+
+/** `POST .../verify/{id}` — body shape depends on Hub (e.g. sales executive id). */
+export async function postVerifyLead(
+  leadType: CrmLeadType,
+  id: string,
+  body: Record<string, unknown> = {}
+): Promise<unknown> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/verify`, {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `Verify failed (${res.status})`);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
+}
+
+/** `POST /v1/quote/send` — multipart fields: quoteLink, toEmail, subject, body, leadId, leadType. */
+export async function postQuoteSend(formData: FormData): Promise<unknown> {
+  const headers = getCrmAuthHeaders();
+  const res = await fetch(`/api/crm/quote/send`, {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: formData,
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `Quote send failed (${res.status})`);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
+}

@@ -31,6 +31,8 @@ export interface Lead {
   createdAt: string;
   assignee: string;
   designerName: string;
+  /** Designer contact for notifications (design preference email — QA + meeting copy). */
+  designerEmail?: string;
   email: string;
   phone: string;
   altPhone: string;
@@ -58,6 +60,10 @@ export interface Lead {
   leadType?: CrmLeadType;
   /** Pipeline + legacy stage for GET/PUT */
   stageBlock?: LeadStageBlock;
+  /** Backend field `resone` — required when substage is LOST (legacy spelling). */
+  lostReason?: string;
+  /** Quote / proposal link for `POST /v1/quote/send`. */
+  quoteLink?: string;
 }
 
 export const LANGUAGE_OPTIONS = [

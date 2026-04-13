@@ -8,6 +8,7 @@ import {
   getLeadDisplayPincode,
   getLeadDisplaySource,
 } from "@/lib/lead-display";
+import { applyLostReasonToDetailPayload, readLostReasonFromDetail } from "@/lib/lead-lost-fields";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -169,6 +170,15 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     createdAt,
     assignee: assignee || "—",
     designerName: pickDesignerDisplay(detail) || "—",
+    designerEmail:
+      pickStr(detail, "designerEmail", "designEmail", "interiorDesignerEmail", "designPreferenceEmail") ||
+      (() => {
+        const d = detail.designer ?? detail.interiorDesigner;
+        if (d && typeof d === "object" && !Array.isArray(d)) {
+          return pickStr(d as Record<string, unknown>, "email", "mail", "emailAddress");
+        }
+        return "";
+      })(),
     email: getLeadDisplayEmail(detail),
     phone,
     altPhone:
@@ -181,6 +191,8 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
     language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
+    lostReason: readLostReasonFromDetail(detail) || "",
+    quoteLink: pickStr(detail, "quoteLink", "quoteURL", "proposalLink") || "",
     leadSource: getLeadDisplaySource({ ...detail, leadType }),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
@@ -224,12 +236,21 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.zip = lead.pincode;
   next.budget = lead.budget;
   next.designerName = lead.designerName;
+  if (lead.designerEmail !== undefined) {
+    const de = lead.designerEmail.trim();
+    next.designerEmail = de;
+    next.designEmail = de;
+    next.designPreferenceEmail = de;
+  }
   const prevDesigner = base.designer;
   if (typeof prevDesigner === "object" && prevDesigner !== null) {
     next.designer = {
       ...(prevDesigner as Record<string, unknown>),
       name: lead.designerName,
       fullName: lead.designerName,
+      ...(lead.designerEmail?.trim()
+        ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
+        : {}),
     };
   }
 
@@ -260,6 +281,12 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
   next.language = lead.language;
+  next.languagePrefered = lead.language;
+  next.languagePreferred = lead.language;
+  if (lead.quoteLink !== undefined) {
+    next.quoteLink = lead.quoteLink;
+  }
+  applyLostReasonToDetailPayload(next, lead.lostReason);
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
@@ -275,6 +302,46 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
     substage: sb?.substage ?? prevStage.substage ?? { substage: "Fresh Leads" },
   };
 
+  return next;
+}
+
+/**
+ * Legacy `saveSecondBoxFields()` — PUT same URL but only “additional” fields (no identity/stage merge).
+ * Preserves `stage`, name, phone, email, assignee, designer from `base`.
+ */
+export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Lead): Record<string, unknown> {
+  const next = { ...base };
+  next.budget = lead.budget;
+  next.leadSource = lead.leadSource;
+  next.LeadSource = lead.leadSource;
+  if (lead.additionalLeadSources !== undefined) {
+    next.additionalLeadSources = lead.additionalLeadSources;
+  }
+  next.propertyNotes = lead.propertyNotes;
+  next.propertyDetails = lead.propertyNotes;
+  next.followUpDate = lead.followUpDate;
+  next.meetingDate = lead.meetingDate;
+  next.meetingVenue = lead.meetingVenue;
+  next.meetingType = lead.meetingType;
+  next.agentName = lead.agentName;
+  next.language = lead.language;
+  next.languagePrefered = lead.language;
+  next.languagePreferred = lead.language;
+  if (lead.quoteLink !== undefined) {
+    next.quoteLink = lead.quoteLink;
+  }
+  if (lead.requirements?.length) {
+    next.requirements = lead.requirements;
+  }
+  next.configuration = lead.configuration;
+  next.floorPlan = lead.floorPlan;
+  next.possessionDate = lead.possessionDate;
+  next.propertyLocation = lead.propertyLocation;
+  next.propertyPincode = lead.pincode;
+  next.pincode = lead.pincode;
+  next.pinCode = lead.pincode;
+  next.propertyPin = lead.pincode;
+  next.zip = lead.pincode;
   return next;
 }
 

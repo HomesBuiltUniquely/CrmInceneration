@@ -21,7 +21,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     subtitle: "Quick Access",
     icon: "palette",
     items: [
-      { id: "design-appointment", label: "Appointment", description: "Manage designer availability", icon: "calendar" },
+      {
+        id: "design-appointment",
+        label: "Appointment",
+        description: "Manage designer availability",
+        icon: "calendar",
+        href: "/appointment",
+      },
       { id: "design-module", label: "Design Module", description: "Your design project", icon: "palette" },
       { id: "design-create-user", label: "Create Design User", description: "Add new designer/manager", icon: "plus", href: "/admin-panel" },
     ],

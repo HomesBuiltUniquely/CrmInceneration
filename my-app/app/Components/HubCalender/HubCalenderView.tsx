@@ -4,6 +4,12 @@ import React, { useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import {
+  disconnectGoogleCalendar,
+  fetchGoogleCalendarConnectUrl,
+  fetchGoogleCalendarStatus,
+  fetchGoogleMyEvents,
+} from "@/lib/google-calendar-client";
 
 const MONTHS = [
   "January",
@@ -29,6 +35,13 @@ const HOURS: string[] = Array.from({ length: 24 }, (_, i) => {
 });
 
 type Cell = { day: number; type: "prev" | "curr" | "next" };
+type CalendarEvent = {
+  id?: string;
+  summary?: string;
+  start?: string;
+  end?: string;
+  htmlLink?: string;
+};
 
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate();
@@ -47,6 +60,11 @@ export default function HubCalendarPage(): React.ReactElement {
   const [miniMonth, setMiniMonth] = useState<number>(today.getMonth());
   const [miniYear, setMiniYear] = useState<number>(today.getFullYear());
   const [weekOffset, setWeekOffset] = useState<number>(0);
+  const [gConnected, setGConnected] = useState(false);
+  const [gEmail, setGEmail] = useState("");
+  const [gBusy, setGBusy] = useState(false);
+  const [gErr, setGErr] = useState("");
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
 
   // Mini calendar cells
   const { cells, daysInMonth } = useMemo(() => {
@@ -102,6 +120,15 @@ export default function HubCalendarPage(): React.ReactElement {
       ? `${MONTHS[sm]} ${weekDays[0].getFullYear()}`
       : `${MONTHS[sm]} / ${MONTHS[em]} ${weekDays[0].getFullYear()}`;
 
+  const weekIsoRange = useMemo(() => {
+    const min = new Date(weekStart);
+    min.setHours(0, 0, 0, 0);
+    const max = new Date(weekStart);
+    max.setDate(max.getDate() + 7);
+    max.setHours(0, 0, 0, 0);
+    return { timeMin: min.toISOString(), timeMax: max.toISOString() };
+  }, [weekStart]);
+
   const isToday = (d: Date): boolean =>
     d.getDate() === today.getDate() &&
     d.getMonth() === today.getMonth() &&
@@ -146,6 +173,66 @@ export default function HubCalendarPage(): React.ReactElement {
       window.removeEventListener("resize", updateLine);
     };
   }, [weekDays]);
+
+  const refreshGoogleStatus = React.useCallback(async () => {
+    try {
+      setGErr("");
+      const s = await fetchGoogleCalendarStatus();
+      setGConnected(Boolean(s.connected));
+      setGEmail(typeof s.googleEmail === "string" ? s.googleEmail : "");
+    } catch (e) {
+      setGConnected(false);
+      setGEmail("");
+      setGErr(e instanceof Error ? e.message : "Google status failed");
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refreshGoogleStatus();
+  }, [refreshGoogleStatus]);
+
+  React.useEffect(() => {
+    if (!gConnected) {
+      setEvents([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchGoogleMyEvents(weekIsoRange.timeMin, weekIsoRange.timeMax)
+      .then((rows) => {
+        if (!cancelled) setEvents(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) setGErr(e instanceof Error ? e.message : "Could not load events");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gConnected, weekIsoRange.timeMax, weekIsoRange.timeMin]);
+
+  const handleConnect = React.useCallback(async () => {
+    setGBusy(true);
+    try {
+      const u = await fetchGoogleCalendarConnectUrl();
+      window.location.href = u;
+    } catch (e) {
+      setGErr(e instanceof Error ? e.message : "Connect failed");
+      setGBusy(false);
+    }
+  }, []);
+
+  const handleDisconnect = React.useCallback(async () => {
+    setGBusy(true);
+    try {
+      await disconnectGoogleCalendar();
+      setGConnected(false);
+      setGEmail("");
+      setEvents([]);
+    } catch (e) {
+      setGErr(e instanceof Error ? e.message : "Disconnect failed");
+    } finally {
+      setGBusy(false);
+    }
+  }, []);
 
   return (
     <div
@@ -211,17 +298,39 @@ export default function HubCalendarPage(): React.ReactElement {
                 <div className="grid grid-cols-1 lg:grid-cols-[minmax(220px,240px)_minmax(420px,1fr)_minmax(200px,320px)] gap-6 items-start">
                   {/* Left: connect + status */}
                   <div className="flex flex-col gap-3">
-                    <button className="w-full rounded-full bg-[var(--crm-accent)] px-6 py-3 text-sm font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-colors hover:brightness-110">
-                      Connect HUB Calendar
-                    </button>
+                    {!gConnected ? (
+                      <button
+                        onClick={() => void handleConnect()}
+                        disabled={gBusy}
+                        className="w-full rounded-full bg-[var(--crm-accent)] px-6 py-3 text-sm font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-colors hover:brightness-110 disabled:opacity-60"
+                      >
+                        {gBusy ? "Connecting..." : "Connect HUB Calendar"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void handleDisconnect()}
+                        disabled={gBusy}
+                        className="w-full rounded-full border border-rose-300 bg-rose-50 px-6 py-3 text-sm font-semibold text-rose-700 shadow-[var(--crm-shadow-sm)] transition-colors hover:bg-rose-100 disabled:opacity-60"
+                      >
+                        {gBusy ? "Disconnecting..." : "Disconnect Google Calendar"}
+                      </button>
+                    )}
                     <div className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3">
-                      <span className="mb-2 inline-block rounded bg-[var(--crm-neutral-bg)] px-2.5 py-0.5 text-xs font-semibold text-[var(--crm-neutral-text)]">
-                        Not Connected
+                      <span
+                        className={`mb-2 inline-block rounded px-2.5 py-0.5 text-xs font-semibold ${
+                          gConnected
+                            ? "bg-emerald-100 text-emerald-800"
+                            : "bg-[var(--crm-neutral-bg)] text-[var(--crm-neutral-text)]"
+                        }`}
+                      >
+                        {gConnected ? "Connected" : "Not Connected"}
                       </span>
                       <p className="text-xs leading-relaxed text-[var(--crm-text-muted)]">
-                        No account connected. Connect once to load your calendar
-                        events inside CRM.
+                        {gConnected
+                          ? `Connected account: ${gEmail || "Google user"}`
+                          : "No account connected. Connect once to load your calendar events inside CRM."}
                       </p>
+                      {gErr ? <p className="mt-2 text-xs text-rose-600">{gErr}</p> : null}
                     </div>
                   </div>
 
@@ -294,9 +403,34 @@ export default function HubCalendarPage(): React.ReactElement {
                     <h3 className="mb-2 text-sm font-semibold text-[var(--crm-text-primary)]">
                       Visible events this week
                     </h3>
-                    <p className="text-xs text-[var(--crm-text-muted)]">
-                      No events scheduled for this week yet.
-                    </p>
+                    {!gConnected ? (
+                      <p className="text-xs text-[var(--crm-text-muted)]">
+                        Connect Google Calendar to load events.
+                      </p>
+                    ) : events.length === 0 ? (
+                      <p className="text-xs text-[var(--crm-text-muted)]">
+                        No events scheduled for this week yet.
+                      </p>
+                    ) : (
+                      <div className="max-h-[260px] space-y-2 overflow-auto pr-1">
+                        {events.slice(0, 20).map((ev, i) => (
+                          <a
+                            key={ev.id ?? `ev-${i}`}
+                            href={ev.htmlLink || "#"}
+                            target={ev.htmlLink ? "_blank" : undefined}
+                            rel={ev.htmlLink ? "noopener noreferrer" : undefined}
+                            className="block rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 hover:border-[var(--crm-border-strong)]"
+                          >
+                            <p className="text-[12px] font-semibold text-[var(--crm-text-primary)]">
+                              {ev.summary || "(No title)"}
+                            </p>
+                            <p className="text-[11px] text-[var(--crm-text-muted)]">
+                              {ev.start ? new Date(ev.start).toLocaleString() : "Time not set"}
+                            </p>
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

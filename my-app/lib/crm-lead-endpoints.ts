@@ -24,3 +24,7 @@ export function activitiesUrl(leadType: CrmLeadType, id: string | number): strin
 export function activityUrl(leadType: CrmLeadType, id: string | number): string {
   return `${LEAD_TYPE_TO_BASE[leadType]}/activity/${id}`;
 }
+
+export function verifyUrl(leadType: CrmLeadType, id: string | number): string {
+  return `${LEAD_TYPE_TO_BASE[leadType]}/verify/${id}`;
+}

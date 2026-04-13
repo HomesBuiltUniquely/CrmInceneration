@@ -6,9 +6,12 @@ import type { Lead } from "@/lib/data";
 export default function LeadHeader({
   lead,
   onCompleteTask,
+  salesClosureHref,
 }: {
   lead: Lead;
   onCompleteTask: () => void;
+  /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
+  salesClosureHref?: string | null;
 }) {
   return (
     <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
@@ -47,6 +50,18 @@ export default function LeadHeader({
           </div>
           {lead.assignee}
         </div>
+
+        {salesClosureHref ? (
+          <a
+            href={salesClosureHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-2.5 text-[13px] font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+          >
+            <span aria-hidden>🔗</span>
+            Sales closure
+          </a>
+        ) : null}
 
         {/* Complete Task */}
         <button
