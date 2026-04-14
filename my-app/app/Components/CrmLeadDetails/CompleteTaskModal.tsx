@@ -350,6 +350,8 @@ export default function CompleteTaskModal({
       !appointmentDate.trim() ||
       !selectedSlotId.trim());
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
+  const designerEmailMissingForMeeting =
+    scheduleMode && !isValidEmail(lead.designerEmail || "");
 
   if (!open) {
     return null;

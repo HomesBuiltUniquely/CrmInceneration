@@ -14,6 +14,7 @@ import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
+  mergeSecondBoxIntoDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
