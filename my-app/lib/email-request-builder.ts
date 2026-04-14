@@ -3,6 +3,7 @@ import { shouldSendEmail } from "@/lib/email-substage-mapper";
 
 /**
  * Email request payload structure
+ * This matches the backend EmailRequest model
  */
 export interface EmailRequestPayload {
   subStage: string;
@@ -26,27 +27,40 @@ export function buildEmailRequest(
   lead: Lead,
   substage: string
 ): EmailRequestPayload | null {
+  const originalSubstage = substage;
+  const trimmedSubstage = substage.trim();
+  
+  console.log("[buildEmailRequest] ========================================");
+  console.log("[buildEmailRequest] Original substage:", originalSubstage);
+  console.log("[buildEmailRequest] Trimmed substage:", trimmedSubstage);
+  console.log("[buildEmailRequest] Lead name:", lead.name);
+  console.log("[buildEmailRequest] Lead email:", lead.email);
+  
   // Check if this substage should trigger an email
-  if (!shouldSendEmail(substage)) {
+  const shouldSend = shouldSendEmail(trimmedSubstage);
+  console.log("[buildEmailRequest] Should send email?", shouldSend);
+  
+  if (!shouldSend) {
+    console.log("[buildEmailRequest] ❌ Substage not in email map");
     return null;
   }
 
   // Don't send if no email
   if (!lead.email?.trim()) {
+    console.log("[buildEmailRequest] ❌ Lead has no email");
     return null;
   }
 
   const payload: EmailRequestPayload = {
-    subStage: substage,
+    subStage: trimmedSubstage,
     clientName: lead.name?.trim() || "Valued Customer",
     clientEmail: lead.email.trim(),
   };
 
   // Add optional fields based on substage
-  switch (substage) {
+  switch (trimmedSubstage) {
     case "Meeting Scheduled":
     case "Meeting Rescheduled":
-      // Add meeting details if available
       if (lead.meetingDate) {
         payload.meetingDate = lead.meetingDate;
       }
@@ -56,7 +70,6 @@ export function buildEmailRequest(
       if (lead.meetingType) {
         payload.meetingType = lead.meetingType === "Physical" ? "physical" : "online";
       }
-      // Try to extract time from followUpDate if it's a datetime
       if (lead.followUpDate?.includes("T")) {
         const date = new Date(lead.followUpDate);
         const time = date.toLocaleTimeString("en-IN", {
@@ -68,14 +81,8 @@ export function buildEmailRequest(
       }
       break;
 
-    case "Quote Sent":
-      // You might want to fetch this from your backend or add it to Lead model
-      // For now, we'll leave it empty and it can be added in CompleteTaskModal
-      break;
-
-    case "Project Postponed":
+    case "Project Postponed Indefinitely":
     case "No Response After Discussion":
-      // Add reconnect date from followUpDate
       if (lead.followUpDate) {
         const dateObj = new Date(lead.followUpDate);
         payload.reconnectDate = dateObj.toLocaleDateString("en-IN", {
@@ -86,55 +93,68 @@ export function buildEmailRequest(
       }
       break;
 
-    case "Customer Cancelled":
-      // You might want to add feedback form link here
-      // Can be extended in the future
-      break;
-
-    case "Meeting Cancelled":
-      // Could add cancellation reason if extended in CompleteTaskModal
-      break;
-
-    // Other substages don't require additional data
     default:
       break;
   }
 
+  console.log("[buildEmailRequest] ✅ Payload built:", payload);
+  console.log("[buildEmailRequest] ========================================");
   return payload;
 }
 
 /**
- * Send email via the /api/send-email endpoint
+ * Send email via the backend API endpoint
+ * Calls: POST http://localhost:8080/api/email/send
  */
 export async function sendEmailNotification(
   payload: EmailRequestPayload
 ): Promise<{ success: boolean; message: string }> {
+  console.log("[sendEmailNotification] ========================================");
+  console.log("[sendEmailNotification] Sending email request...");
+  console.log("[sendEmailNotification] Payload:", JSON.stringify(payload, null, 2));
+  
   try {
-    const response = await fetch("/api/send-email", {
+    const backendUrl = process.env.NEXT_PUBLIC_CRM_API_BASE || "http://localhost:8080";
+    const endpoint = `${backendUrl}/api/email/send`;
+    
+    console.log("[sendEmailNotification] Backend URL:", backendUrl);
+    console.log("[sendEmailNotification] Endpoint:", endpoint);
+    
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
+    console.log("[sendEmailNotification] Response status:", response.status, response.statusText);
+    
     const data = (await response.json()) as {
       success?: boolean;
       error?: string;
       message?: string;
     };
 
+    console.log("[sendEmailNotification] Response data:", data);
+    
     if (!response.ok) {
+      const errorMsg = data.error || "Failed to send email";
+      console.error("[sendEmailNotification] ❌ Error:", errorMsg);
+      console.log("[sendEmailNotification] ========================================");
       return {
         success: false,
-        message: data.error || "Failed to send email",
+        message: errorMsg,
       };
     }
 
+    console.log("[sendEmailNotification] ✅ Success!");
+    console.log("[sendEmailNotification] ========================================");
     return {
       success: true,
       message: data.message || "Email sent successfully",
     };
   } catch (error) {
-    console.error("[sendEmailNotification] Error:", error);
+    console.error("[sendEmailNotification] ❌ Fetch error:", error);
+    console.log("[sendEmailNotification] ========================================");
     return {
       success: false,
       message: error instanceof Error ? error.message : "Failed to send email",

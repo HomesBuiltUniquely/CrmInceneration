@@ -1,123 +1,126 @@
 /**
- * Maps substages to email metadata (subject, template, required fields)
+ * Maps substages to email metadata
+ * These match the backend SubStageConstants exactly
  */
 
 export type EmailSubstage = 
   | "Meeting Scheduled"
   | "Meeting Rescheduled"
-  | "Meeting Cancelled"
+  | "Meeting Cancelled/Paused"
   | "No Response After Discussion"
-  | "Consultation Completed"
+  | "Consultation Completed (1st Meeting Done)"
   | "Quote Sent"
-  | "Dropped After Proposal"
-  | "Budget Mismatch"
-  | "Project Postponed"
-  | "Customer Cancelled"
-  | "Booking Done";
+  | "Customer Dropped After Proposal"
+  | "Budget Mismatch (Major)"
+  | "Project Postponed Indefinitely"
+  | "Customer Cancelled Plan"
+  | "Booking Done (Booking)";
 
 export interface EmailMetadata {
   substage: EmailSubstage;
   subject: string;
-  templateFile: string;
-  requiredFields: string[];
+  requiresEmail: boolean;
   optionalFields: string[];
 }
 
 /**
  * All supported substages with their email configuration
+ * These map to backend SubStageConstants and email endpoint
+ * Backend handles template loading and sending at: POST /api/email/send
  */
 export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
   "Meeting Scheduled": {
     substage: "Meeting Scheduled",
     subject: "Your Meeting is Confirmed!",
-    templateFile: "meeting-scheduled.html",
-    requiredFields: ["clientName", "clientEmail", "meetingDate", "meetingTime", "meetingLocation"],
-    optionalFields: ["meetingType"],
+    requiresEmail: true,
+    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType"],
   },
   "Meeting Rescheduled": {
     substage: "Meeting Rescheduled",
     subject: "Your Meeting has been Rescheduled",
-    templateFile: "meeting-rescheduled.html",
-    requiredFields: ["clientName", "clientEmail", "meetingDate", "meetingTime", "meetingLocation"],
-    optionalFields: ["meetingType"],
+    requiresEmail: true,
+    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType"],
   },
-  "Meeting Cancelled": {
-    substage: "Meeting Cancelled",
-    subject: "Your Meeting has been Cancelled",
-    templateFile: "meeting-cancelled.html",
-    requiredFields: ["clientName", "clientEmail"],
+  "Meeting Cancelled/Paused": {
+    substage: "Meeting Cancelled/Paused",
+    subject: "Your Meeting has been Cancelled/Paused",
+    requiresEmail: true,
     optionalFields: ["cancellationReason"],
   },
   "No Response After Discussion": {
     substage: "No Response After Discussion",
     subject: "We Tried Reaching You Today",
-    templateFile: "no-response-after-discussion.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: ["reconnectDate"],
   },
-  "Consultation Completed": {
-    substage: "Consultation Completed",
+  "Consultation Completed (1st Meeting Done)": {
+    substage: "Consultation Completed (1st Meeting Done)",
     subject: "Meeting Done – Your Quote is Coming Soon!",
-    templateFile: "consultation-completed.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: [],
   },
   "Quote Sent": {
     substage: "Quote Sent",
     subject: "Your Interior Design Quote is Ready",
-    templateFile: "quote-sent.html",
-    requiredFields: ["clientName", "clientEmail", "quotedAmount"],
-    optionalFields: [],
+    requiresEmail: true,
+    optionalFields: ["quotedAmount"],
   },
-  "Dropped After Proposal": {
-    substage: "Dropped After Proposal",
+  "Customer Dropped After Proposal": {
+    substage: "Customer Dropped After Proposal",
     subject: "We Hope to Work With You in the Future",
-    templateFile: "dropped-after-proposal.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: [],
   },
-  "Budget Mismatch": {
-    substage: "Budget Mismatch",
+  "Budget Mismatch (Major)": {
+    substage: "Budget Mismatch (Major)",
     subject: "Let Us Offer You Our Best Price",
-    templateFile: "budget-mismatch.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: [],
   },
-  "Project Postponed": {
-    substage: "Project Postponed",
+  "Project Postponed Indefinitely": {
+    substage: "Project Postponed Indefinitely",
     subject: "We Will Reconnect With You as Discussed",
-    templateFile: "project-postponed.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: ["reconnectDate"],
   },
-  "Customer Cancelled": {
-    substage: "Customer Cancelled",
+  "Customer Cancelled Plan": {
+    substage: "Customer Cancelled Plan",
     subject: "Sorry to See You Go – We'd Love Your Feedback",
-    templateFile: "customer-cancelled.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: ["feedbackFormLink"],
   },
-  "Booking Done": {
-    substage: "Booking Done",
+  "Booking Done (Booking)": {
+    substage: "Booking Done (Booking)",
     subject: "Congratulations! Your Booking is Confirmed",
-    templateFile: "booking-done.html",
-    requiredFields: ["clientName", "clientEmail"],
+    requiresEmail: true,
     optionalFields: [],
   },
 };
 
 /**
  * Get email metadata for a given substage
+ * Trims the substage string for safety
  */
 export function getEmailMetadata(substage: string): EmailMetadata | null {
-  return SUBSTAGE_EMAIL_MAP[substage as EmailSubstage] ?? null;
+  const trimmed = substage.trim();
+  console.log('[getEmailMetadata] Looking for substage:', trimmed);
+  const result = SUBSTAGE_EMAIL_MAP[trimmed as EmailSubstage] ?? null;
+  console.log('[getEmailMetadata] Found metadata:', result ? 'yes' : 'no');
+  return result;
 }
 
 /**
  * Check if a substage should trigger an email
+ * Trims the substage string for safety
  */
 export function shouldSendEmail(substage: string): boolean {
-  return substage in SUBSTAGE_EMAIL_MAP;
+  const trimmed = substage.trim();
+  const result = trimmed in SUBSTAGE_EMAIL_MAP;
+  console.log('[shouldSendEmail] Checking substage "' + trimmed + '":', result);
+  if (!result) {
+    console.log('[shouldSendEmail] Available substages:', Object.keys(SUBSTAGE_EMAIL_MAP));
+  }
+  return result;
 }
 
 /**
@@ -127,15 +130,21 @@ export function validateEmailFields(
   substage: string,
   data: Record<string, unknown>
 ): { valid: boolean; missingFields: string[] } {
-  const metadata = getEmailMetadata(substage);
+  const trimmed = substage.trim();
+  const metadata = getEmailMetadata(trimmed);
   if (!metadata) {
+    console.log('[validateEmailFields] No metadata found for:', trimmed);
     return { valid: false, missingFields: ["substage"] };
   }
 
-  const missingFields = metadata.requiredFields.filter(
+  // Check that clientName and clientEmail are always present
+  const requiredFields = ["clientName", "clientEmail"];
+  const missingFields = requiredFields.filter(
     (field) => !data[field] || (typeof data[field] === "string" && !data[field].trim())
   );
 
+  console.log('[validateEmailFields] Missing fields:', missingFields);
+  
   return {
     valid: missingFields.length === 0,
     missingFields,

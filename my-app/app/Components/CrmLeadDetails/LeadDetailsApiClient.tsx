@@ -596,17 +596,34 @@ export default function LeadDetailsApiClient({
       await refreshActivities();
 
       // Trigger email notification for this substage
+      console.log(
+        "[email] Attempting to send email for substage:",
+        args.feedback,
+      );
+      console.log("[email] Lead email:", leadForSave.email);
+      console.log("[email] Lead name:", leadForSave.name);
+
       const emailRequest = buildEmailRequest(leadForSave, args.feedback);
+      console.log("[email] Email request built:", emailRequest);
+
       if (emailRequest) {
+        console.log("[email] Sending email notification...");
         void sendEmailNotification(emailRequest)
           .then((result) => {
+            console.log("[email] Response:", result);
             if (!result.success) {
               console.warn("[email notification]", result.message);
+            } else {
+              console.log("[email] Email sent successfully!");
             }
           })
           .catch((err) => {
             console.error("[email notification] Error:", err);
           });
+      } else {
+        console.warn(
+          "[email] No email request built - substage may not trigger emails or missing email",
+        );
       }
 
       notifySuccess("Saved");
