@@ -339,6 +339,13 @@ export default function CompleteTaskModal({
       return;
     }
 
+    if (scheduleMode && designerEmailMissingForMeeting) {
+      setApiError(
+        "Add design preference email for the designer (Assignments tab) — used for Google/Meet copy and Design QA.",
+      );
+      return;
+    }
+
     if (scheduleMode && meetingFieldsMissing) {
       setApiError("Select designer, date, and an available slot.");
       return;
