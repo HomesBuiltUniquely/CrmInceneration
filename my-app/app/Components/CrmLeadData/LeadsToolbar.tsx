@@ -110,6 +110,7 @@ type LeadsToolbarProps = {
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
+  reinquiry: string;
   salesAdminFilter: string;
   salesManagerFilter: string;
   salesExecFilter: string;
@@ -132,6 +133,7 @@ type LeadsToolbarProps = {
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
+  onReinquiryChange: (next: string) => void;
   onSalesAdminFilterChange: (next: string) => void;
   onSalesManagerFilterChange: (next: string) => void;
   onSalesExecFilterChange: (next: string) => void;
@@ -158,6 +160,7 @@ export default function LeadsToolbar({
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
+  reinquiry,
   salesAdminFilter,
   salesManagerFilter,
   salesExecFilter,
@@ -180,6 +183,7 @@ export default function LeadsToolbar({
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
+  onReinquiryChange,
   onSalesAdminFilterChange,
   onSalesManagerFilterChange,
   onSalesExecFilterChange,
@@ -210,10 +214,16 @@ export default function LeadsToolbar({
     { value: "websitelead", label: "Website Lead" },
     ...(isSalesExecutive ? [{ value: "verified", label: "Verified Leads" }] : []),
   ];
+  const leadTypeOptions = isPresalesManager
+    ? [{ value: "formlead", label: "Form Lead" }]
+    : commonLeadTypeOptions;
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
-    if (leadType !== "all") c += 1;
+    const isDefaultLeadType = isPresalesManager
+      ? leadType === "formlead"
+      : leadType === "all";
+    if (!isDefaultLeadType) c += 1;
     if (assignee) c += 1;
     if (milestoneStage) c += 1;
     if (milestoneStageCategory) c += 1;
@@ -225,11 +235,13 @@ export default function LeadsToolbar({
     if (presalesExecFilter) c += 1;
     if (dateFrom) c += 1;
     if (dateTo) c += 1;
+    if (reinquiry) c += 1;
     return c;
   }, [
     assignee,
     dateFrom,
     dateTo,
+    isPresalesManager,
     leadType,
     milestoneStage,
     milestoneStageCategory,
@@ -239,10 +251,11 @@ export default function LeadsToolbar({
     salesAdminFilter,
     salesExecFilter,
     salesManagerFilter,
+    reinquiry,
   ]);
 
   const resetFilter = () => {
-    onLeadTypeChange("all");
+    onLeadTypeChange(isPresalesManager ? "formlead" : "all");
     onAssigneeChange("");
     onMilestoneStageChange("");
     onMilestoneStageCategoryChange("");
@@ -254,6 +267,7 @@ export default function LeadsToolbar({
     onPresalesExecFilterChange("");
     onDateFromChange("");
     onDateToChange("");
+    onReinquiryChange("");
   };
 
   const resetSort = () => {
@@ -452,8 +466,22 @@ export default function LeadsToolbar({
                   </SelectField>
                 </>
               ) : null}
+              {isPresalesManager ? (
+                <SelectField
+                  label="Presales Exec"
+                  value={presalesExecFilter}
+                  onChange={onPresalesExecFilterChange}
+                >
+                  <option value="">All</option>
+                  {presalesExecOptions.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </SelectField>
+              ) : null}
               <SelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
-                {commonLeadTypeOptions.map((option) => (
+                {leadTypeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -496,6 +524,11 @@ export default function LeadsToolbar({
                     {v}
                   </option>
                 ))}
+              </SelectField>
+              <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
+                <option value="">All</option>
+                <option value="true">Reinquiry only</option>
+                <option value="false">Non-reinquiry only</option>
               </SelectField>
               <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
                 <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">From</span>

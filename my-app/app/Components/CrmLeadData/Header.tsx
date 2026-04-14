@@ -39,6 +39,7 @@ export default function Header() {
   const [milestoneStage, setMilestoneStage] = useState("");
   const [milestoneStageCategory, setMilestoneStageCategory] = useState("");
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
+  const [reinquiry, setReinquiry] = useState("");
   const [managerLeadView, setManagerLeadView] = useState<"my" | "team">("my");
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
 
@@ -149,6 +150,7 @@ export default function Header() {
     if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
     if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
     if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
+    if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     if (isSalesManager) q.set("roleView", managerLeadView);
     return q.toString();
   }, [
@@ -159,6 +161,7 @@ export default function Header() {
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
+    reinquiry,
     isSalesManager,
     managerLeadView,
   ]);
@@ -238,6 +241,7 @@ export default function Header() {
                 milestoneStage={milestoneStage}
                 milestoneStageCategory={milestoneStageCategory}
                 milestoneSubStage={milestoneSubStage}
+                reinquiry={reinquiry}
                 onLeadTypeChange={(next) => {
                   if (currentRole === "PRESALES_MANAGER") {
                     setLeadType("formlead");
@@ -257,6 +261,7 @@ export default function Header() {
                 onMilestoneStageChange={setMilestoneStage}
                 onMilestoneStageCategoryChange={setMilestoneStageCategory}
                 onMilestoneSubStageChange={setMilestoneSubStage}
+                onReinquiryChange={setReinquiry}
               />
             </>
           )}

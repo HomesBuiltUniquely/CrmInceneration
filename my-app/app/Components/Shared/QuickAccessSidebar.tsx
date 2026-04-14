@@ -47,7 +47,10 @@ interface QuickAccessSidebarProps {
 }
 
 function normalizeRole(value: string): string {
-  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (normalized === "PRE_SALES") return "PRESALES_EXECUTIVE";
+  if (normalized === "PRE_SALES_MANAGER") return "PRESALES_MANAGER";
+  return normalized;
 }
 
 function roleDisplayName(role: string): string {

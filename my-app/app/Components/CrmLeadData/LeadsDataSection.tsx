@@ -22,6 +22,7 @@ type Props = {
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
+  reinquiry: string;
   leadView?: "default" | "my" | "team";
   currentUserName?: string;
   currentUserId?: number;
@@ -34,6 +35,7 @@ type Props = {
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
+  onReinquiryChange: (next: string) => void;
 };
 
 type SubStatusResp = {
@@ -74,6 +76,7 @@ async function fetchMergedPage(
   milestoneStage: string,
   milestoneStageCategory: string,
   milestoneSubStage: string,
+  reinquiry: string,
   leadView: "default" | "my" | "team" = "default"
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
@@ -92,6 +95,7 @@ async function fetchMergedPage(
   if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
   if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
   if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
+  if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
   if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
   if (leadView === "my" || leadView === "team") qs.set("roleView", leadView);
 
@@ -222,6 +226,7 @@ export default function LeadsDataSection({
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
+  reinquiry,
   leadView = "default",
   currentUserName = "",
   currentUserId = 0,
@@ -234,6 +239,7 @@ export default function LeadsDataSection({
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
+  onReinquiryChange,
 }: Props) {
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(20);
@@ -405,7 +411,7 @@ export default function LeadsDataSection({
     setRowAssignLoadingUsers(true);
     setRowAssignError("");
     try {
-      const roles = ["SALES_EXECUTIVE", "PRESALES_MANAGER", "PRESALES_EXECUTIVE"];
+      const roles = ["SALES_EXECUTIVE", "PRESALES_MANAGER", "PRESALES_EXECUTIVE", "PRE_SALES"];
       const responses = await Promise.all(
         roles.map((role) =>
           fetch(`${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(role)}`, {
@@ -487,6 +493,11 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     let cancelled = false;
+    if (currentRole === "PRESALES_MANAGER") {
+      return () => {
+        cancelled = true;
+      };
+    }
     const auth = getCrmAuthHeaders();
     void Promise.all([
       fetch("/api/admin/users-by-role?role=SALES_ADMIN", { cache: "no-store", headers: auth, credentials: "include" }),
@@ -494,20 +505,32 @@ export default function LeadsDataSection({
       fetch("/api/admin/users-by-role?role=SALES_EXECUTIVE", { cache: "no-store", headers: auth, credentials: "include" }),
       fetch("/api/admin/users-by-role?role=PRESALES_MANAGER", { cache: "no-store", headers: auth, credentials: "include" }),
       fetch("/api/admin/users-by-role?role=PRESALES_EXECUTIVE", { cache: "no-store", headers: auth, credentials: "include" }),
+      fetch("/api/admin/users-by-role?role=PRE_SALES", { cache: "no-store", headers: auth, credentials: "include" }),
     ])
-      .then(async ([sa, sm, se, pm, pe]) => {
+      .then(async ([sa, sm, se, pm, pe, pre]) => {
         const parse = async (r: Response): Promise<HierarchyUser[]> => {
           if (!r.ok) return [];
           const j = (await r.json().catch(() => [])) as unknown;
           return Array.isArray(j) ? (j as HierarchyUser[]) : [];
         };
-        const [saJ, smJ, seJ, pmJ, peJ] = await Promise.all([parse(sa), parse(sm), parse(se), parse(pm), parse(pe)]);
+        const [saJ, smJ, seJ, pmJ, peJ, preJ] = await Promise.all([
+          parse(sa),
+          parse(sm),
+          parse(se),
+          parse(pm),
+          parse(pe),
+          parse(pre),
+        ]);
         if (cancelled) return;
         setSalesAdmins(saJ.filter((u) => u.active !== false));
         setSalesManagers(smJ.filter((u) => u.active !== false));
         setSalesExecs(seJ.filter((u) => u.active !== false));
         setPresalesManagers(pmJ.filter((u) => u.active !== false));
-        setPresalesExecs(peJ.filter((u) => u.active !== false));
+        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
+        const dedupedPresalesExecs = Array.from(
+          new Map(mergedPresalesExecs.map((u) => [u.id, u])).values()
+        );
+        setPresalesExecs(dedupedPresalesExecs);
       })
       .catch(() => {
         if (cancelled) return;
@@ -520,7 +543,71 @@ export default function LeadsDataSection({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentRole]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (currentRole !== "PRESALES_MANAGER") return;
+    const auth = getCrmAuthHeaders();
+    void fetch(`${getAuthApiBaseUrl()}/api/auth/users-by-role?role=PRESALES_EXECUTIVE`, {
+      cache: "no-store",
+      headers: auth,
+      credentials: "include",
+    })
+      .then(async (pe) => {
+        const parse = async (r: Response): Promise<HierarchyUser[]> => {
+          if (!r.ok) return [];
+          const j = (await r.json().catch(() => [])) as unknown;
+          return Array.isArray(j) ? (j as HierarchyUser[]) : [];
+        };
+        const peJ = await parse(pe);
+        let rows = peJ;
+        if (rows.length === 0) {
+          // Backend may block PRE_SALES role query for manager; try admin fallbacks.
+          const [adminPe, adminPre, preSalesRes] = await Promise.all([
+            fetch("/api/admin/users-by-role?role=PRESALES_EXECUTIVE", {
+              cache: "no-store",
+              headers: auth,
+              credentials: "include",
+            }).catch(() => null),
+            fetch("/api/admin/users-by-role?role=PRE_SALES", {
+              cache: "no-store",
+              headers: auth,
+              credentials: "include",
+            }).catch(() => null),
+            fetch("/api/admin/pre-sales", {
+              cache: "no-store",
+              headers: auth,
+              credentials: "include",
+            }).catch(() => null),
+          ]);
+          const adminRows = [
+            ...(adminPe ? await parse(adminPe) : []),
+            ...(adminPre ? await parse(adminPre) : []),
+            ...(preSalesRes ? await parse(preSalesRes) : []),
+          ];
+          rows = adminRows;
+        }
+        if (cancelled) return;
+        const mergedPresalesExecs = rows.filter((u) => {
+          if (u.active === false) return false;
+          if (normalizeRole(String(u.role ?? "")) !== "PRESALES_EXECUTIVE") return false;
+          if (currentUserId > 0) return Number(u.managerId ?? 0) === Number(currentUserId);
+          return true;
+        });
+        const dedupedPresalesExecs = Array.from(
+          new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
+        );
+        setPresalesExecs(dedupedPresalesExecs);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPresalesExecs([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRole, currentUserId]);
 
   const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
   const leadViewKey: "default" | "my" | "team" =
@@ -575,6 +662,7 @@ export default function LeadsDataSection({
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
+              reinquiry,
               leadViewKey,
             );
             return [t, page.totalElements ?? 0] as const;
@@ -597,6 +685,7 @@ export default function LeadsDataSection({
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
+    reinquiry,
     presalesExecFilter,
     presalesManagerFilter,
     salesAdminFilter,
@@ -621,6 +710,7 @@ export default function LeadsDataSection({
         milestoneStage,
         milestoneStageCategory,
         milestoneSubStage,
+      reinquiry,
         leadViewKey
       );
       setData(json);
@@ -644,6 +734,7 @@ export default function LeadsDataSection({
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
+    reinquiry,
     page,
     size,
     sort,
@@ -941,6 +1032,7 @@ export default function LeadsDataSection({
         milestoneStage={milestoneStage}
         milestoneStageCategory={milestoneStageCategory}
         milestoneSubStage={milestoneSubStage}
+        reinquiry={reinquiry}
         salesAdminFilter={salesAdminFilter}
         salesManagerFilter={salesManagerFilter}
         salesExecFilter={salesExecFilter}
@@ -963,6 +1055,7 @@ export default function LeadsDataSection({
         onMilestoneStageChange={onMilestoneStageChange}
         onMilestoneStageCategoryChange={onMilestoneStageCategoryChange}
         onMilestoneSubStageChange={onMilestoneSubStageChange}
+        onReinquiryChange={onReinquiryChange}
         onSalesAdminFilterChange={(next) => {
           setSalesAdminFilter(next);
           setSalesManagerFilter("");
