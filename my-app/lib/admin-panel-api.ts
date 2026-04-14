@@ -43,6 +43,7 @@ export const adminPanelApi = {
   listDesigners: () => list("designers"),
   listAdmins: () => list("admins"),
   listAllUsers: () => list("all-users"),
+  listUsersByRole: (role: string) => list(`users-by-role?role=${encodeURIComponent(role)}`),
   branchTransferUsers: () => list("branch-transfer-users"),
   /** Super Admin: optional `userId` filters audit trail (`GET .../branch-transfer-history?userId=`). */
   branchTransferHistory: (userId?: number | string) => {

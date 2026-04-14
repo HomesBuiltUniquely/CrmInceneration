@@ -146,6 +146,9 @@ export default function LeadDetailsApiClient({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [verifyPincode, setVerifyPincode] = useState("");
+  const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState("Your quote from Hub Interior");
@@ -342,20 +345,39 @@ export default function LeadDetailsApiClient({
     }
   }, [baseDetail, lead, leadId, leadTypeParam, validLeadType]);
 
+  const handleOpenVerify = useCallback(() => {
+    setVerifyPincode((lead.pincode ?? "").trim());
+    setVerifySalesExecutiveId("");
+    setVerifyModalOpen(true);
+  }, [lead.pincode]);
+
   const handleVerify = useCallback(async () => {
     if (!validLeadType) return;
+    const pincode = verifyPincode.trim();
+    if (!pincode) {
+      notifyError("Pincode is required to verify this lead.");
+      return;
+    }
+
+    const payload: Record<string, unknown> = { pincode };
+    const salesExecutiveId = Number(verifySalesExecutiveId);
+    if (Number.isFinite(salesExecutiveId) && salesExecutiveId > 0) {
+      payload.salesExecutiveId = salesExecutiveId;
+    }
+
     const lt = leadTypeParam as CrmLeadType;
     setVerifying(true);
     try {
-      await postVerifyLead(lt, leadId, {});
+      await postVerifyLead(lt, leadId, payload);
       notifySuccess("Verification request sent.");
+      setVerifyModalOpen(false);
       await load();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Verify failed");
     } finally {
       setVerifying(false);
     }
-  }, [leadId, leadTypeParam, load, validLeadType]);
+  }, [leadId, leadTypeParam, load, notifyError, notifySuccess, validLeadType, verifyPincode, verifySalesExecutiveId]);
 
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;
@@ -542,7 +564,7 @@ export default function LeadDetailsApiClient({
         <FooterActions
           onSave={handleSave}
           saving={saving}
-          onVerify={canVerifyRole ? handleVerify : undefined}
+          onVerify={canVerifyRole ? handleOpenVerify : undefined}
           verifying={verifying}
         />
       </div>
@@ -563,6 +585,56 @@ export default function LeadDetailsApiClient({
           sending: quoteSending,
         }}
       />
+      {verifyModalOpen ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-xl">
+            <h3 className="text-[15px] font-semibold text-[var(--crm-text-primary)]">Verify Lead</h3>
+            <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
+              Pincode is mandatory. You can optionally provide Sales Executive ID for manual assignment.
+            </p>
+            <div className="mt-4 space-y-3">
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">Pincode *</span>
+                <input
+                  value={verifyPincode}
+                  onChange={(e) => setVerifyPincode(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  placeholder="Enter pincode"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                  Sales Executive ID (optional)
+                </span>
+                <input
+                  value={verifySalesExecutiveId}
+                  onChange={(e) => setVerifySalesExecutiveId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  placeholder="e.g. 52"
+                />
+              </label>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--crm-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--crm-text-secondary)]"
+                onClick={() => setVerifyModalOpen(false)}
+                disabled={verifying}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-[var(--crm-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60"
+                onClick={() => void handleVerify()}
+                disabled={verifying}
+              >
+                {verifying ? "Verifying..." : "Verify"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

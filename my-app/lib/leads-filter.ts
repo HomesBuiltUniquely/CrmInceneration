@@ -29,6 +29,9 @@ export type ApiLead = {
   assignee?: string | { name?: string; fullName?: string };
   salesOwner?: string | { name?: string; fullName?: string };
   updatedAt?: string;
+  verified?: boolean | null;
+  verificationStatus?: string | null;
+  additionalLeadSources?: string | string[] | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
@@ -45,6 +48,8 @@ export type LeadRowModel = {
   name: string;
   company: string;
   statusLabel?: string;
+  verificationTag?: "verified" | "unverified";
+  reinquiry?: boolean;
   journey: {
     stage: string;
     progressLabel: string;
@@ -55,6 +60,20 @@ export type LeadRowModel = {
   engagement: { time: string; action: string; tone?: "ok" | "late" };
   actionIcon?: "bolt" | "alert";
 };
+
+function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | undefined {
+  const vs = String(lead.verificationStatus ?? "").trim().toLowerCase();
+  if (vs === "verified") return "verified";
+  if (vs === "unverified") return "unverified";
+  if (typeof lead.verified === "boolean") return lead.verified ? "verified" : "unverified";
+  return undefined;
+}
+
+function hasReinquiry(lead: ApiLead): boolean {
+  const src = lead.additionalLeadSources;
+  if (Array.isArray(src)) return src.some((v) => String(v).trim().length > 0);
+  return typeof src === "string" && src.trim().length > 0;
+}
 
 function assigneeName(lead: ApiLead): string {
   const a = lead.assignee ?? lead.salesOwner;
@@ -120,6 +139,8 @@ export function mapApiLeadToRow(
     name: leadDisplayName(lead),
     company: companyFallback(lead),
     statusLabel,
+    verificationTag: normalizeVerificationTag(lead),
+    reinquiry: hasReinquiry(lead),
     journey: {
       stage: journeyStage,
       progressLabel: orderedPipelineStages.length > 0 ? prog.progressLabel : "—",

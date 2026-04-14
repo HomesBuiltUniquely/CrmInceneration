@@ -35,6 +35,21 @@ function inDateRange(
   return true;
 }
 
+async function resolveViewerRole(req: NextRequest): Promise<string> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/me`, {
+      headers: upstreamAuthHeaders(req),
+      cache: "no-store",
+    });
+    if (!res.ok) return "";
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const role = json.role ?? json.userRole ?? json.authority ?? "";
+    return typeof role === "string" ? role.trim().toUpperCase() : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const mergeAll = url.searchParams.get("mergeAll") === "1";
@@ -44,6 +59,7 @@ export async function GET(req: NextRequest) {
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
+  const viewerRole = await resolveViewerRole(req);
 
   const extraParams = [
     "stage",
@@ -85,6 +101,12 @@ export async function GET(req: NextRequest) {
 
   if (!mergeAll && !managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (viewerRole === "PRESALES_MANAGER" && leadType !== "formlead") {
+      return NextResponse.json(
+        { error: "PRESALES_MANAGER can only access formlead in filter flow." },
+        { status: 403 }
+      );
+    }
     const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("milestoneScope", "crm");

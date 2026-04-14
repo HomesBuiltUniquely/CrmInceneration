@@ -25,6 +25,20 @@ function ChipPill({ chip }: { chip: Chip }) {
   return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${cls}`}>{chip.label}</span>;
 }
 
+function TinyTag({ chip }: { chip: Chip }) {
+  const cls =
+    chip.tone === "blue"
+      ? "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]"
+      : chip.tone === "green"
+        ? "bg-[var(--crm-success-bg)] text-[var(--crm-success-text)] ring-1 ring-[var(--crm-success)]"
+        : chip.tone === "amber"
+          ? "bg-[var(--crm-warning-bg)] text-[var(--crm-warning-text)] ring-1 ring-[var(--crm-warning-border)]"
+          : chip.tone === "rose"
+            ? "bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)] ring-1 ring-[var(--crm-danger)]"
+            : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]";
+  return <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold leading-none ${cls}`}>{chip.label}</span>;
+}
+
 function ProgressBar({ pct, tone }: { pct: number; tone: "normal" | "critical" }) {
   const bar = tone === "critical" ? "bg-[var(--crm-danger)]" : "bg-[var(--crm-accent)]";
   return (
@@ -105,7 +119,7 @@ function LeadRowAction({
   return (
     <div
       onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
-      className={`grid grid cursor-pointer grid-cols-12 items-center gap-3 border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle) ${
+      className={`grid cursor-pointer grid-cols-12 items-start gap-3 border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
       role="button"
@@ -117,7 +131,7 @@ function LeadRowAction({
         }
       }}
     >
-      <div className="col-span-1 flex items-center gap-2">
+      <div className="col-span-1 flex min-h-[64px] items-center gap-2">
         {showSelection ? (
           <input
             type="checkbox"
@@ -128,19 +142,29 @@ function LeadRowAction({
           />
         ) : null}
       </div>
-      <div className="col-span-3 flex items-center gap-3">
+      <div className="col-span-3 flex min-h-[64px] items-start gap-3">
         <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[var(--crm-border)] to-slate-300 shadow-inner" />
         <div className="leading-tight">
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            {row.verificationTag === "verified" ? (
+              <TinyTag chip={{ label: "Verified", tone: "green" }} />
+            ) : row.verificationTag === "unverified" ? (
+              <TinyTag chip={{ label: "Unverified", tone: "amber" }} />
+            ) : null}
+            {row.reinquiry ? <TinyTag chip={{ label: "Reinquiry", tone: "blue" }} /> : null}
+          </div>
         </div>
       </div>
 
-      <div className="col-span-2">
-        {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "green" }} /> : null}
+      <div className="col-span-2 flex min-h-[64px] items-center pt-0.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "slate" }} /> : null}
+        </div>
       </div>
 
-      <div className="col-span-2">
+      <div className="col-span-2 min-h-[64px]">
         <div className="text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">{row.journey.stage}</div>
         <div className="mt-2 flex items-center gap-3">
           <ProgressBar pct={row.journey.progressPct} tone={critical ? "critical" : "normal"} />
@@ -149,20 +173,22 @@ function LeadRowAction({
         {row.journey.status ? <StatusInline status={row.journey.status} /> : null}
       </div>
 
-      <div className="col-span-2 flex items-center gap-2">
+      <div className="col-span-2 flex min-h-[64px] items-center gap-2">
         <OwnerAvatar />
         <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 
-      <div className={showActions ? "col-span-1" : "col-span-2"}>
+      <div className={showActions ? "col-span-1 min-h-[64px] pt-0.5" : "col-span-2 min-h-[64px] pt-0.5"}>
         <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
           {row.engagement.time}
         </div>
-        <div className="mt-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">{row.engagement.action}</div>
+        <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-[var(--crm-text-secondary)]">
+          {row.engagement.action}
+        </div>
       </div>
 
       {showActions ? (
-        <div className="col-span-1 flex justify-end gap-2">
+        <div className="col-span-1 flex min-h-[64px] items-center justify-end gap-2">
           {onAssign ? (
             <button
               onClick={(event) => {

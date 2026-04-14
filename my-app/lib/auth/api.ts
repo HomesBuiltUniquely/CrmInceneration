@@ -15,7 +15,11 @@ export type LoginResult = {
 
 export function normalizeRole(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  // Backward compatibility: some APIs still emit PRE_SALES.
+  if (normalized === "PRE_SALES") return "PRESALES_EXECUTIVE";
+  if (normalized === "PRE_SALES_MANAGER") return "PRESALES_MANAGER";
+  return normalized;
 }
 
 /** Extract role from common login payload shapes. */

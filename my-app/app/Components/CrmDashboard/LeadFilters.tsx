@@ -43,18 +43,24 @@ async function fetchUsersByRole(
   role: string,
   token: string,
 ): Promise<HierarchyUser[]> {
-  const res = await fetch(
-    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(role)}`,
-    {
-      cache: "no-store",
-      headers: {
-        Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+  const header = {
+    Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+  };
+  const rolesToTry = role === "PRESALES_EXECUTIVE" ? ["PRESALES_EXECUTIVE", "PRE_SALES"] : [role];
+  const merged: HierarchyUser[] = [];
+  for (const r of rolesToTry) {
+    const res = await fetch(
+      `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(r)}`,
+      {
+        cache: "no-store",
+        headers: header,
       },
-    },
-  );
-  if (!res.ok) return [];
-  const data = (await res.json()) as HierarchyUser[];
-  return Array.isArray(data) ? data : [];
+    );
+    if (!res.ok) continue;
+    const data = (await res.json()) as HierarchyUser[];
+    if (Array.isArray(data)) merged.push(...data);
+  }
+  return Array.from(new Map(merged.map((u) => [u.id, u])).values());
 }
 
 function FilterIcon() {

@@ -5,13 +5,22 @@ function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
 }
 
+async function buildApiError(res: Response, fallback: string): Promise<Error> {
+  const text = (await res.text()).trim();
+  if (res.status === 401) return new Error("Session expired. Please login again.");
+  if (res.status === 403) {
+    return new Error("You don't have permission to perform this action.");
+  }
+  return new Error(text || fallback);
+}
+
 export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<Record<string, unknown>> {
   const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
     cache: "no-store",
     credentials: "include",
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await buildApiError(res, `Failed to load lead details (${res.status})`);
   return res.json() as Promise<Record<string, unknown>>;
 }
 
@@ -21,7 +30,7 @@ export async function getLeadActivities(leadType: CrmLeadType, id: string): Prom
     credentials: "include",
     headers: authHeaders(),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await buildApiError(res, `Failed to load activities (${res.status})`);
   return res.json();
 }
 
@@ -37,7 +46,7 @@ export async function putLeadDetail(
     body: JSON.stringify(body),
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await buildApiError(res, `Save failed (${res.status})`);
   return res.json() as Promise<Record<string, unknown>>;
 }
 
@@ -55,7 +64,10 @@ export async function postManualActivity(
     cache: "no-store",
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text);
+  if (!res.ok) {
+    if (res.status === 403) throw new Error("You don't have permission to add activity.");
+    throw new Error(text || `Activity update failed (${res.status})`);
+  }
   return text;
 }
 
@@ -73,7 +85,12 @@ export async function postVerifyLead(
     cache: "no-store",
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text || `Verify failed (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 403) {
+      throw new Error("You don't have permission to verify this lead.");
+    }
+    throw new Error(text || `Verify failed (${res.status})`);
+  }
   try {
     return text ? JSON.parse(text) : {};
   } catch {
