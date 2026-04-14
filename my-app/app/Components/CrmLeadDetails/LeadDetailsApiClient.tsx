@@ -621,7 +621,59 @@ export default function LeadDetailsApiClient({
           .catch((err) => {
             console.error("[email notification] Error:", err);
           });
-      } else {
+      }
+
+      // Additionally, when a meeting is scheduled/rescheduled, send a design-preference
+      // email to the designer (if available). This copies the meeting payload but
+      // targets the designer's email/name so backend can use the same meeting template
+      // or a designer-facing template as configured server-side.
+      const ms = persistedSubstage?.trim();
+      if (ms === "Meeting Scheduled" || ms === "Meeting Rescheduled") {
+        const designerEmail = leadForSave.designerEmail?.trim();
+        if (designerEmail) {
+          // Build a separate email request for the designer by using the same
+          // builder but substituting the lead's email/name with the designer's.
+          const designerLead = {
+            ...leadForSave,
+            email: designerEmail,
+            name:
+              leadForSave.designerName?.trim() ||
+              leadForSave.name ||
+              "Designer",
+          } as Lead;
+
+          const designerRequest = buildEmailRequest(
+            designerLead,
+            persistedSubstage || "Meeting Scheduled",
+          );
+
+          if (designerRequest) {
+            console.log(
+              "[email] Sending design-preference email to designer:",
+              designerEmail,
+            );
+            void sendEmailNotification(designerRequest)
+              .then((res) => {
+                console.log("[email][designer] Response:", res);
+                if (!res.success)
+                  console.warn("[email][designer]", res.message);
+              })
+              .catch((err) => {
+                console.error("[email][designer] Error:", err);
+              });
+          } else {
+            console.log(
+              "[email] Designer email not sent — builder returned null for designer request.",
+            );
+          }
+        } else {
+          console.log(
+            "[email] No designer email available; skipping design-preference email.",
+          );
+        }
+      }
+
+      if (!emailRequest) {
         console.warn(
           "[email] No email request built - substage may not trigger emails or missing email",
         );

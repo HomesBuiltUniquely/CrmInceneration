@@ -372,12 +372,12 @@ export default function CompleteTaskModal({
       return;
     }
 
-    if (scheduleMode && designerEmailMissingForMeeting) {
-      setApiError(
-        "Add design preference email for the designer (Assignments tab) — used for Google/Meet copy and Design QA.",
-      );
-      return;
-    }
+    // Previously we blocked saving when the designer's design-preference email
+    // was missing. That prevented the Save flow from calling the API and
+    // sending emails. We now allow the save to proceed so the server/client
+    // email-sending logic can run; if the designer email exists it will be
+    // used to send the Design QA email, otherwise it will be skipped and we
+    // show a non-blocking warning below (see UI render).
 
     if (scheduleMode && meetingFieldsMissing) {
       setApiError("Select designer, date, and an available slot.");

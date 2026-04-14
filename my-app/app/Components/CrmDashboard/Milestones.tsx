@@ -3,7 +3,8 @@
 import type { MilestoneStage } from "@/lib/crm-pipeline";
 
 function formatCompact(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000_000)
+    return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
   return `${n}`;
 }
@@ -21,14 +22,22 @@ function normStage(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export default function Milestones({ stages, selectedStage, onSelectStage }: Props) {
+export default function Milestones({
+  stages,
+  selectedStage,
+  onSelectStage,
+}: Props) {
   return (
     <main>
       <div className="xl:w-263.75 xl:mt-7 xl:ml-6 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-[var(--crm-border)] xl:bg-[var(--crm-surface)] xl:shadow-[var(--crm-shadow-sm)]">
         <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-5 py-2.5">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--crm-text-muted)]">Journey stages</p>
-            <p className="text-[11px] font-medium italic text-[var(--crm-text-muted)]">Select a stage to view paths</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--crm-text-muted)]">
+              Journey stages
+            </p>
+            <p className="text-[11px] font-medium italic text-[var(--crm-text-muted)]">
+              Select a stage to view paths
+            </p>
           </div>
         </div>
 
@@ -42,7 +51,7 @@ export default function Milestones({ stages, selectedStage, onSelectStage }: Pro
 
             const badge = active
               ? "bg-white/22 text-white ring-1 ring-white/35 backdrop-blur-[2px] group-hover:bg-white/30 group-hover:ring-white/45"
-              : "bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] ring-1 ring-[var(--crm-border)] group-hover:text-[var(--crm-text-primary)] group-hover:ring-[var(--crm-border-strong)]";
+              : "light:bg-[var(--crm-accent)] light:text-white dark:bg-[var(--crm-accent-soft)] dark:text-[var(--crm-accent-strong)] ring-1 group-hover:ring-[var(--crm-accent-strong)]";
 
             return (
               <button
@@ -56,7 +65,9 @@ export default function Milestones({ stages, selectedStage, onSelectStage }: Pro
                   ${CHEVRON}
                   focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--crm-accent)]`}
               >
-                <span className="min-w-0 flex-1 truncate pl-3 text-left tracking-wide">{s.label}</span>
+                <span className="min-w-0 flex-1 truncate pl-3 text-left tracking-wide">
+                  {s.label}
+                </span>
                 <span
                   className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold tabular-nums transition-all duration-200 ${badge}`}
                 >
