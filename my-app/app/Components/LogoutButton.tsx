@@ -1,6 +1,11 @@
 "use client";
 
-import { CRM_TOKEN_STORAGE_KEY, logout as apiLogout } from "@/lib/auth/api";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  logout as apiLogout,
+} from "@/lib/auth/api";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -21,6 +26,8 @@ export default function LogoutButton({ className = "" }: Props) {
       }
     } finally {
       localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
       router.replace("/login");
       setBusy(false);
     }

@@ -1,0 +1,101 @@
+import type { CrmLeadType } from "@/lib/leads-filter";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+
+function authHeaders(): HeadersInit {
+  return getCrmAuthHeaders({ "Content-Type": "application/json" });
+}
+
+export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+export async function getLeadActivities(leadType: CrmLeadType, id: string): Promise<unknown> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/activities`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function putLeadDetail(
+  leadType: CrmLeadType,
+  id: string,
+  body: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+export async function postManualActivity(
+  leadType: CrmLeadType,
+  id: string,
+  activityType: "CALL" | "WHATSAPP" | "SMS" | "NOTE",
+  value: string
+): Promise<string> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/activity`, {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify({ activityType, value }),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text);
+  return text;
+}
+
+/** `POST .../verify/{id}` — body shape depends on Hub (e.g. sales executive id). */
+export async function postVerifyLead(
+  leadType: CrmLeadType,
+  id: string,
+  body: Record<string, unknown> = {}
+): Promise<unknown> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/verify`, {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `Verify failed (${res.status})`);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
+}
+
+/** `POST /v1/quote/send` — multipart fields: quoteLink, toEmail, subject, body, leadId, leadType. */
+export async function postQuoteSend(formData: FormData): Promise<unknown> {
+  const headers = getCrmAuthHeaders();
+  const res = await fetch(`/api/crm/quote/send`, {
+    method: "POST",
+    credentials: "include",
+    headers,
+    body: formData,
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `Quote send failed (${res.status})`);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
+}
