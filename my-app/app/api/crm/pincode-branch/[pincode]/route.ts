@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = (process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081").replace(/\/$/, "");
 
 /** Proxies `GET /v1/SalesExecutive/pincode/{pincode}/branch` (plain text branch). */
 export async function GET(
@@ -11,8 +10,8 @@ export async function GET(
   const { pincode } = await ctx.params;
   const encoded = encodeURIComponent(pincode.trim());
   const urls = [
-    `${BASE}/v1/SalesExecutive/pincode/${encoded}/branch`,
-    `${BASE}/SalesExecutive/pincode/${encoded}/branch`,
+    `${BASE_URL}/v1/SalesExecutive/pincode/${encoded}/branch`,
+    `${BASE_URL}/SalesExecutive/pincode/${encoded}/branch`,
   ];
   let last: Response | null = null;
   for (const url of urls) {

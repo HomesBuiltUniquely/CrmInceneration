@@ -54,6 +54,8 @@ type LeadRowActionProps = {
   row: LeadRowModel;
   selected: boolean;
   onToggleSelected: (checked: boolean) => void;
+  showSelection: boolean;
+  showActions: boolean;
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
 };
@@ -93,6 +95,8 @@ function LeadRowAction({
   row,
   selected,
   onToggleSelected,
+  showSelection,
+  showActions,
   onDelete,
   onAssign,
 }: LeadRowActionProps) {
@@ -114,13 +118,15 @@ function LeadRowAction({
       }}
     >
       <div className="col-span-1 flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={selected}
-          onClick={(event) => event.stopPropagation()}
-          onChange={(event) => onToggleSelected(event.target.checked)}
-          className="h-4 w-4 cursor-pointer accent-blue-600"
-        />
+        {showSelection ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => onToggleSelected(event.target.checked)}
+            className="h-4 w-4 cursor-pointer accent-blue-600"
+          />
+        ) : null}
       </div>
       <div className="col-span-3 flex items-center gap-3">
         <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[var(--crm-border)] to-slate-300 shadow-inner" />
@@ -148,33 +154,39 @@ function LeadRowAction({
         <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 
-      <div className="col-span-1">
+      <div className={showActions ? "col-span-1" : "col-span-2"}>
         <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
           {row.engagement.time}
         </div>
         <div className="mt-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">{row.engagement.action}</div>
       </div>
 
-      <div className="col-span-1 flex justify-end gap-2">
-        <button
-          onClick={(event) => {
-            event.stopPropagation();
-            onAssign?.(row);
-          }}
-          className="rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
-        >
-          Assign
-        </button>
-        <button
-          onClick={(event) => {
-            event.stopPropagation();
-            onDelete?.(row);
-          }}
-          className="rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
-        >
-          Delete
-        </button>
-      </div>
+      {showActions ? (
+        <div className="col-span-1 flex justify-end gap-2">
+          {onAssign ? (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onAssign(row);
+              }}
+              className="rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
+            >
+              Assign
+            </button>
+          ) : null}
+          {onDelete ? (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(row);
+              }}
+              className="rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
+            >
+              Delete
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -320,6 +332,8 @@ export default function LeadsTable({
   });
 
   const showPagination = onPageChange && onPageSizeChange;
+  const showActions = Boolean(onAssignRow || onDeleteRow);
+  const showSelection = showActions && Boolean(onSelectedRowIdsChange);
   const allSelected = rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
   const someSelected = selectedRowIds.length > 0 && !allSelected;
   const selectAllRef = useRef<HTMLInputElement | null>(null);
@@ -334,24 +348,26 @@ export default function LeadsTable({
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         <div className="grid grid-cols-12 gap-3 bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">
           <div className="col-span-1">
-            <input
-              ref={selectAllRef}
-              type="checkbox"
-              checked={allSelected}
-              onChange={(event) =>
-                onSelectedRowIdsChange?.(
-                  event.target.checked ? rows.map((row) => row.id) : []
-                )
-              }
-              className="h-4 w-4 cursor-pointer accent-blue-600"
-            />
+            {showSelection ? (
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allSelected}
+                onChange={(event) =>
+                  onSelectedRowIdsChange?.(
+                    event.target.checked ? rows.map((row) => row.id) : []
+                  )
+                }
+                className="h-4 w-4 cursor-pointer accent-blue-600"
+              />
+            ) : null}
           </div>
           <div className="col-span-3">LEAD NAME</div>
           <div className="col-span-2">STATUS</div>
           <div className="col-span-2">JOURNEY TRACK</div>
           <div className="col-span-2">OWNER</div>
-          <div className="col-span-1">ENGAGEMENT</div>
-          <div className="col-span-1 text-right">ACTIONS</div>
+          <div className={showActions ? "col-span-1" : "col-span-2"}>ENGAGEMENT</div>
+          {showActions ? <div className="col-span-1 text-right">ACTIONS</div> : null}
         </div>
         {loading ? (
           <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
@@ -375,6 +391,8 @@ export default function LeadsTable({
                 }
                 onSelectedRowIdsChange(selectedRowIds.filter((id) => id !== r.id));
               }}
+              showSelection={showSelection}
+              showActions={showActions}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
             />

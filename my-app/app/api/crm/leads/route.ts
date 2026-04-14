@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 function parseUpdatedAt(a: ApiLead): number {
   const u = a.updatedAt;
@@ -39,6 +38,7 @@ function inDateRange(
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const mergeAll = url.searchParams.get("mergeAll") === "1";
+  const roleView = (url.searchParams.get("roleView") ?? "").trim().toLowerCase();
   const page = url.searchParams.get("page") ?? "0";
   const size = url.searchParams.get("size") ?? "20";
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
@@ -59,9 +59,33 @@ export async function GET(req: NextRequest) {
     "reinquiry",
   ] as const;
 
-  if (!mergeAll) {
+  const managerEndpoint =
+    roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
+
+  if (!mergeAll && managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
-    const upstream = new URL(`${BASE}/v1/leads/filter`);
+    const upstream = new URL(`${BASE_URL}${managerEndpoint}`);
+    upstream.searchParams.set("leadType", leadType);
+    upstream.searchParams.set("page", page);
+    upstream.searchParams.set("size", size);
+    upstream.searchParams.set("sort", sort);
+    if (search) upstream.searchParams.set("search", search);
+    for (const key of extraParams) {
+      const v = (url.searchParams.get(key) ?? "").trim();
+      if (v) upstream.searchParams.set(key, v);
+    }
+
+    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
+    const text = await res.text();
+    return new NextResponse(text, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    });
+  }
+
+  if (!mergeAll && !managerEndpoint) {
+    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("milestoneScope", "crm");
     upstream.searchParams.set("page", page);
@@ -94,9 +118,9 @@ export async function GET(req: NextRequest) {
 
   const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const fetches = selectedTypes.map(async (leadType) => {
-    const upstream = new URL(`${BASE}/v1/leads/filter`);
+    const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
     upstream.searchParams.set("leadType", leadType);
-    upstream.searchParams.set("milestoneScope", "crm");
+    if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
     upstream.searchParams.set("page", "0");
     upstream.searchParams.set("size", String(perType));
     upstream.searchParams.set("sort", sort);

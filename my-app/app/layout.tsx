@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { CRM_THEME_STORAGE_KEY } from "@/lib/theme";
+import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -47,7 +48,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <GlobalNotifierProvider>{children}</GlobalNotifierProvider>
       </body>
     </html>
   );

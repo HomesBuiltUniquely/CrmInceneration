@@ -55,6 +55,25 @@ export const adminPanelApi = {
   /** Body: `{ userId, toBranch, reason? }` per backend contract. */
   branchTransfer: (payload: AnyJson) =>
     call<AnyJson>("branch-transfer", { method: "POST", body: JSON.stringify(payload) }),
+  /** Master API: PUT /v1/SalesExecutive/{id}/status with raw boolean body. */
+  setSalesExecutiveStatus: async (id: number | string, active: boolean) => {
+    const res = await fetch(`/api/sales-executive/${id}/status`, {
+      method: "PUT",
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders({
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }),
+      body: JSON.stringify(active),
+    });
+    const data = (await res.json().catch(() => ({}))) as AnyJson;
+    if (!res.ok) {
+      const msg = typeof data.message === "string" ? data.message : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  },
   updateSalesExecutive: (id: number | string, payload: AnyJson) =>
     call<AnyJson>(`sales-executives/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deleteSalesExecutive: (id: number | string) =>

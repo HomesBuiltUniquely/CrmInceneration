@@ -7,11 +7,15 @@ export default function LeadHeader({
   lead,
   onCompleteTask,
   salesClosureHref,
+  createdTimelineOptions = [],
+  createdTimelineLoading = false,
 }: {
   lead: Lead;
   onCompleteTask: () => void;
   /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
   salesClosureHref?: string | null;
+  createdTimelineOptions?: Array<{ value: string; label: string }>;
+  createdTimelineLoading?: boolean;
 }) {
   return (
     <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
@@ -25,15 +29,35 @@ export default function LeadHeader({
 
       {/* Meta */}
       <div className="flex-1 min-w-0">
-        <h1 className="mb-1.5 text-[22px] font-bold tracking-[-0.4px] text-[var(--crm-text-primary)]">
-          {lead.name}
-        </h1>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-[22px] font-bold tracking-[-0.4px] text-[var(--crm-text-primary)]">
+            {lead.name}
+          </h1>
+        </div>
         <div className="flex items-center gap-3 flex-wrap">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
-          <span className="flex items-center gap-1 text-[11px] text-[var(--crm-text-muted)]">
-            🕐 Created {lead.createdAt}
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-800">
+            <span>🕐</span>
+            <span>Created {lead.createdAt}</span>
           </span>
+        </div>
+        <div className="mt-2">
+          <select
+            className="w-full max-w-[350px] rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[12px] font-medium text-[var(--crm-text-secondary)] outline-none transition focus:border-[var(--crm-accent)] focus:ring-2 focus:ring-[var(--crm-accent-soft)]"
+            defaultValue=""
+            disabled={createdTimelineLoading || createdTimelineOptions.length === 0}
+            aria-label="Lead created timeline"
+          >
+            <option value="" disabled>
+              {createdTimelineLoading ? "Loading timeline..." : "Lead created"}
+            </option>
+            {createdTimelineOptions.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = (process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081").replace(/\/$/, "");
 
 function buildUrl(req: NextRequest, path: string[]) {
   const joined = path.join("/");
   const q = req.nextUrl.searchParams.toString();
-  return `${BASE}/v1/assignment/${joined}${q ? `?${q}` : ""}`;
+  return `${BASE_URL}/v1/assignment/${joined}${q ? `?${q}` : ""}`;
 }
 
 async function proxy(req: NextRequest, path: string[], method: string) {

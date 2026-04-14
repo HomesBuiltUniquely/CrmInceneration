@@ -11,13 +11,14 @@ import Image from "next/image";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
+import { BASE_URL } from "@/lib/base-url";
 import {
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   normalizeRole,
 } from "@/lib/auth/api";
 
-const IMPORT_BASE = `${process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081"}/v1/import`;
+const IMPORT_BASE = `${BASE_URL}/v1/import`;
 
 type ImportStep = "upload" | "sheet" | "mapping" | "progress" | "results";
 type AlertTone = "error" | "success";

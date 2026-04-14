@@ -6,16 +6,11 @@ import { Button } from "./ui";
 export default function FooterActions({
   onSave,
   saving,
-  onSaveSecondBox,
-  savingSecondBox,
   onVerify,
   verifying,
 }: {
   onSave?: () => void | Promise<void>;
   saving?: boolean;
-  /** Legacy second-box save: additional fields only (`mergeSecondBoxIntoDetail`). */
-  onSaveSecondBox?: () => void | Promise<void>;
-  savingSecondBox?: boolean;
   /** `POST .../verify/{id}` — Presales Executive / Manager only (parent gates). */
   onVerify?: () => void | Promise<void>;
   verifying?: boolean;
@@ -32,16 +27,6 @@ export default function FooterActions({
       >
         {saving ? "Saving…" : "Save Changes"}
       </Button>
-      {onSaveSecondBox ? (
-        <Button
-          variant="outline"
-          icon="📋"
-          disabled={savingSecondBox || saving}
-          onClick={() => void onSaveSecondBox()}
-        >
-          {savingSecondBox ? "Saving…" : "Save additional info"}
-        </Button>
-      ) : null}
       <Button variant="ghost" icon="🖨" onClick={() => window.print()}>
         Print
       </Button>

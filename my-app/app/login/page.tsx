@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BASE_URL } from "@/lib/base-url";
 import {
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
@@ -20,8 +21,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const apiBase =
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8081";
+  const apiBase = BASE_URL;
 
   useEffect(() => {
     if (typeof window === "undefined") return;

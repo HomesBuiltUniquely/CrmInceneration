@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 type CountsRow = { key: string; count: number };
 type CountsResponse = {
@@ -14,8 +13,8 @@ type CountsResponse = {
 
 async function fetchUpstreamCounts(queryString: string, headers: HeadersInit): Promise<Response> {
   const candidates = [
-    `${BASE}/v1/Leads/crm-milestone-counts-filtered${queryString ? `?${queryString}` : ""}`,
-    `${BASE}/Leads/crm-milestone-counts-filtered${queryString ? `?${queryString}` : ""}`,
+    `${BASE_URL}/v1/Leads/crm-milestone-counts-filtered${queryString ? `?${queryString}` : ""}`,
+    `${BASE_URL}/Leads/crm-milestone-counts-filtered${queryString ? `?${queryString}` : ""}`,
   ];
 
   let last: Response | null = null;

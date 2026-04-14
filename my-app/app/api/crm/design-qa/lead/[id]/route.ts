@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 export async function GET(
   _req: NextRequest,
@@ -11,7 +10,7 @@ export async function GET(
   if (!id?.trim()) {
     return NextResponse.json({ error: "Missing id" }, { status: 400 });
   }
-  const url = `${BASE}/api/design-qa/lead/${encodeURIComponent(id)}`;
+  const url = `${BASE_URL}/api/design-qa/lead/${encodeURIComponent(id)}`;
   const res = await fetch(url, { headers: upstreamAuthHeaders(_req), cache: "no-store" });
   const text = await res.text();
   return new NextResponse(text, {

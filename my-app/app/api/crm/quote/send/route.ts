@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 /** Proxies `POST /v1/quote/send` (multipart/form-data). */
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
-  const res = await fetch(`${BASE}/v1/quote/send`, {
+  const res = await fetch(`${BASE_URL}/v1/quote/send`, {
     method: "POST",
     headers: upstreamAuthHeaders(req),
     body: formData,

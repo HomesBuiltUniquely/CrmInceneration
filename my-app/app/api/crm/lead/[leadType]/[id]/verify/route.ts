@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { isCrmLeadType, verifyUrl } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 export async function POST(
   req: NextRequest,
@@ -12,7 +11,7 @@ export async function POST(
   if (!isCrmLeadType(leadType)) {
     return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
   }
-  const url = `${BASE}${verifyUrl(leadType, id)}`;
+  const url = `${BASE_URL}${verifyUrl(leadType, id)}`;
   const bodyText = await req.text();
   const res = await fetch(url, {
     method: "POST",

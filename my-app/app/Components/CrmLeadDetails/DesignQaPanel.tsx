@@ -3,8 +3,13 @@
 import { useEffect, useState } from "react";
 import { fetchDesignQaForLead } from "@/lib/design-qa-client";
 
-export default function DesignQaPanel({ leadId }: { leadId: string }) {
-  const [open, setOpen] = useState(false);
+export default function DesignQaPanel({
+  leadId,
+  open,
+}: {
+  leadId: string;
+  open: boolean;
+}) {
   const [data, setData] = useState<unknown | null>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -37,20 +42,8 @@ export default function DesignQaPanel({ leadId }: { leadId: string }) {
 
   return (
     <div className="mb-6 animate-fade-up delay-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-[var(--crm-surface)] px-5 py-2.5 text-[13px] font-semibold tracking-tight text-slate-800 shadow-sm transition hover:bg-[var(--crm-surface-subtle)] dark:border-[var(--crm-border-strong)] dark:text-[var(--crm-text-primary)]"
-      >
-        <span className="text-[15px] leading-none" aria-hidden>
-          ✦
-        </span>
-        Design Preferences
-      </button>
-
       {open ? (
-        <section className="mt-4 rounded-[20px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 py-4 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+        <section className="rounded-[20px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 py-4 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Design QA</h2>

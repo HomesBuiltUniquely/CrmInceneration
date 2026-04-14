@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
-import type { CrmMilestoneCountsApiResponse } from "@/lib/crm-milestone-counts";
+import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 
 type Phase = {
   phaseLabel: string;
@@ -16,6 +16,10 @@ type Phase = {
 export type JourneyPhaseHeatmapProps = {
   /** Query string for `/Leads/crm-milestone-counts-filtered` (no leading `?`), e.g. `leadType=all&search=foo` */
   milestoneFilterQuery?: string;
+  currentRole?: string;
+  leadView?: "default" | "my" | "team";
+  currentUserName?: string;
+  managerTeamNames?: string[];
 };
 
 function normName(s: string) {
@@ -30,33 +34,25 @@ function toneByCount(count: number, max: number): Phase["tone"] {
   return "critical";
 }
 
-function mapCountsToPhases(rows: CrmMilestoneCountsApiResponse["countsByMilestoneStage"], defaults: Phase[]): Phase[] {
-  const list = rows ?? [];
-  const total = list.reduce((sum, r) => sum + (r.count ?? 0), 0);
-  const max = list.reduce((m, r) => Math.max(m, r.count ?? 0), 0);
-  if (list.length === 0) {
-    return defaults.map((d) => ({
-      ...d,
-      count: 0,
-      sharePct: 0,
-      tone: "critical",
-      note: { icon: d.note.icon, text: "No leads in this stage." },
-    }));
+function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
+  const counts = new Map<string, number>();
+  for (const lead of leads) {
+    const stage = (lead.stage?.milestoneStage ?? "").trim();
+    if (!stage) continue;
+    counts.set(stage, (counts.get(stage) ?? 0) + 1);
   }
-  return list.map((row, i) => {
-    const meta =
-      defaults.find((p) => normName(p.name) === normName(row.key)) ?? defaults[i] ?? defaults[0]!;
-    const count = row.count ?? 0;
+  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  const max = Math.max(...counts.values(), 0);
+  return defaults.map((phase) => {
+    const count = [...counts.entries()].find(([k]) => normName(k) === normName(phase.name))?.[1] ?? 0;
     return {
-      phaseLabel: `PHASE ${String(i + 1).padStart(2, "0")}`,
-      name: row.key,
+      ...phase,
       count,
       sharePct: total > 0 ? Math.round((count / total) * 100) : 0,
       tone: toneByCount(count, max),
       note: {
-        icon: meta.note.icon,
-        text:
-          count === 0 ? "No leads in this stage." : `${count} lead${count === 1 ? "" : "s"} in this stage.`,
+        icon: phase.note.icon,
+        text: count === 0 ? "No leads in this stage." : `${count} lead${count === 1 ? "" : "s"} in this stage.`,
       },
     };
   });
@@ -272,7 +268,13 @@ const DEFAULT_PHASES: Phase[] = [
   },
 ];
 
-export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPhaseHeatmapProps = {}) {
+export default function JourneyPhaseHeatmap({
+  milestoneFilterQuery,
+  currentRole = "",
+  leadView = "default",
+  currentUserName = "",
+  managerTeamNames = [],
+}: JourneyPhaseHeatmapProps = {}) {
   const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -287,25 +289,62 @@ export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPha
         setError("");
 
         const filtered = milestoneFilterQuery?.trim();
-        const path = filtered
-          ? `/api/crm/crm-milestone-counts-filtered?${filtered}`
-          : "/api/crm/crm-milestone-counts";
-
-        const response = await fetch(path, {
+        const query = new URLSearchParams(filtered ?? "");
+        query.set("mergeAll", "1");
+        query.set("page", "0");
+        query.set("size", "100");
+        query.set("sort", "updatedAt,desc");
+        const firstRes = await fetch(`/api/crm/leads?${query.toString()}`, {
           cache: "no-store",
           credentials: "include",
           headers: getCrmAuthHeaders(),
         });
-
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || `HTTP ${response.status}`);
+        if (!firstRes.ok) {
+          const text = await firstRes.text();
+          throw new Error(text || `HTTP ${firstRes.status}`);
+        }
+        const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
+        const allLeads: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+        const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+        if (totalPages > 1) {
+          const followUps = [];
+          for (let p = 1; p < Math.min(totalPages, 20); p++) {
+            const nextQuery = new URLSearchParams(query);
+            nextQuery.set("page", String(p));
+            followUps.push(
+              fetch(`/api/crm/leads?${nextQuery.toString()}`, {
+                cache: "no-store",
+                credentials: "include",
+                headers: getCrmAuthHeaders(),
+              }).then(async (r) => {
+                if (!r.ok) return [] as ApiLead[];
+                const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
+                return Array.isArray(json.content) ? json.content : [];
+              })
+            );
+          }
+          const rest = await Promise.all(followUps);
+          for (const chunk of rest) allLeads.push(...chunk);
         }
 
-        const data = (await response.json()) as CrmMilestoneCountsApiResponse;
-
+        const ownerName = (lead: ApiLead) =>
+          String(
+            (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
+            (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
+            ""
+          ).trim();
+        const norm = (v: string) => v.trim().toLowerCase();
+        const teamSet = new Set(managerTeamNames.map(norm));
+        const scopedLeads =
+          currentRole === "SALES_MANAGER" && leadView === "my"
+            ? allLeads.filter((lead) => norm(ownerName(lead)) === norm(currentUserName))
+            : currentRole === "SALES_MANAGER" && leadView === "team"
+              ? managerTeamNames.length > 0
+                ? allLeads.filter((lead) => teamSet.has(norm(ownerName(lead))))
+                : allLeads
+              : allLeads;
         if (!cancelled) {
-          setPhases(mapCountsToPhases(data.countsByMilestoneStage, DEFAULT_PHASES));
+          setPhases(mapLeadsToPhases(scopedLeads, DEFAULT_PHASES));
         }
       } catch (err) {
         if (!cancelled) {
@@ -323,7 +362,7 @@ export default function JourneyPhaseHeatmap({ milestoneFilterQuery }: JourneyPha
     return () => {
       cancelled = true;
     };
-  }, [milestoneFilterQuery]);
+  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, managerTeamNames]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">

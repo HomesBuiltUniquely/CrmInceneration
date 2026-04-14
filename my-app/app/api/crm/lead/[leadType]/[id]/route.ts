@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { detailsUrl, isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 export async function GET(
   req: NextRequest,
@@ -12,7 +11,7 @@ export async function GET(
   if (!isCrmLeadType(leadType)) {
     return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
   }
-  const url = `${BASE}${detailsUrl(leadType, id)}`;
+  const url = `${BASE_URL}${detailsUrl(leadType, id)}`;
   const res = await fetch(url, { headers: upstreamAuthHeaders(req), cache: "no-store" });
   const text = await res.text();
   return new NextResponse(text, {
@@ -29,7 +28,7 @@ export async function PUT(
   if (!isCrmLeadType(leadType)) {
     return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
   }
-  const url = `${BASE}${detailsUrl(leadType, id)}`;
+  const url = `${BASE_URL}${detailsUrl(leadType, id)}`;
   const body = await req.text();
   const res = await fetch(url, {
     method: "PUT",
@@ -55,7 +54,7 @@ export async function DELETE(
   if (!isCrmLeadType(leadType)) {
     return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
   }
-  const url = `${BASE}${detailsUrl(leadType, id)}`;
+  const url = `${BASE_URL}${detailsUrl(leadType, id)}`;
   const res = await fetch(url, {
     method: "DELETE",
     headers: upstreamAuthHeaders(req),

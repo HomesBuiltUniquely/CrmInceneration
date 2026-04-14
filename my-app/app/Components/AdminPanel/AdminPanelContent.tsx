@@ -16,6 +16,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   normalizeRole,
 } from "@/lib/auth/api";
+import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -1472,6 +1473,9 @@ function SalesExecSection() {
     password: "",
     parentId: "",
   });
+  const [deleteCandidate, setDeleteCandidate] = useState<SalesExecutive | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const { notifySuccess, notifyError } = useGlobalNotifier();
 
   useEffect(() => {
     if (viewerRole === "PRESALES_MANAGER") {
@@ -1510,6 +1514,9 @@ function SalesExecSection() {
       : isDesignManagerViewer
         ? "Design Manager *"
         : "Sales Manager *";
+  const canToggleSalesExecutiveStatus =
+    !isManagerViewer &&
+    (viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN");
 
   const load = () => {
     setLoading(true);
@@ -1566,16 +1573,27 @@ function SalesExecSection() {
   ]);
 
   const toggleStatus = (id: number, next: boolean) => {
+    if (!canToggleSalesExecutiveStatus) return;
     const req = isPresalesManagerViewer
       ? adminPanelApi.updatePreSales(id, { active: next })
       : isTerritoryDesignManagerViewer
         ? adminPanelApi.updateDesignManager(id, { active: next })
         : isDesignManagerViewer
           ? adminPanelApi.updateDesigner(id, { active: next })
-      : adminPanelApi.updateSalesExecutive(id, { active: next });
+      : adminPanelApi.setSalesExecutiveStatus(id, next);
     void req
-      .then(() => load())
-      .catch(() => {});
+      .then(() => {
+        load();
+        if (!isPresalesManagerViewer && !isTerritoryDesignManagerViewer && !isDesignManagerViewer) {
+          window.dispatchEvent(new Event("crm:sales-executive-status-changed"));
+          notifySuccess(
+            next ? "Sales executive activated successfully." : "Sales executive deactivated successfully."
+          );
+        }
+      })
+      .catch((e) => {
+        notifyError(e instanceof Error ? e.message : "Status update failed.");
+      });
   };
 
   return (
@@ -1825,8 +1843,14 @@ function SalesExecSection() {
               execs.map((e, i) => (
               <tr
                 key={e.id}
+                className={!e.status ? "inactive-row" : undefined}
                 style={{
-                  background: i % 2 === 0 ? C.card : C.surface,
+                  background: !e.status
+                    ? C.warningBg
+                    : i % 2 === 0
+                      ? C.card
+                      : C.surface,
+                  opacity: e.status ? 1 : 0.86,
                 }}
               >
                 <td style={{ padding: "12px 14px", fontSize: 14 }}>{e.id}</td>
@@ -1856,26 +1880,20 @@ function SalesExecSection() {
                   {e.manager}
                 </td>
                 <td style={{ padding: "12px 14px" }}>
-                  <Toggle
-                    active={e.status}
-                    onChange={() => toggleStatus(e.id, !e.status)}
-                  />
+                  {canToggleSalesExecutiveStatus ? (
+                    <Toggle
+                      active={e.status}
+                      onChange={() => toggleStatus(e.id, !e.status)}
+                    />
+                  ) : (
+                    <StatusPill active={e.status} />
+                  )}
                 </td>
                 <td style={{ padding: "12px 14px" }}>
                   <Btn
                     color={C.danger}
                     style={{ padding: "5px 14px", fontSize: 13 }}
-                    onClick={() => {
-                      if (!window.confirm("Delete this executive?")) return;
-                      const req = isPresalesManagerViewer
-                        ? adminPanelApi.deletePreSales(e.id)
-                        : isTerritoryDesignManagerViewer
-                          ? adminPanelApi.deleteDesignManager(e.id)
-                          : isDesignManagerViewer
-                            ? adminPanelApi.deleteDesigner(e.id)
-                        : adminPanelApi.deleteSalesExecutive(e.id);
-                      void req.then(() => load()).catch(() => {});
-                    }}
+                    onClick={() => setDeleteCandidate(e)}
                   >
                     Delete
                   </Btn>
@@ -1886,6 +1904,52 @@ function SalesExecSection() {
           </tbody>
         </table>
       </div>
+      {deleteCandidate ? (
+        <div style={{ marginTop: 14, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, background: C.card }}>
+          <p style={{ margin: 0, fontSize: 13, color: C.text, fontWeight: 600 }}>
+            Delete {deleteCandidate.name} (ID: {deleteCandidate.id})?
+          </p>
+          <p style={{ margin: "4px 0 0 0", fontSize: 12, color: C.muted }}>
+            This action cannot be undone.
+          </p>
+          <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn
+              color={C.neutral}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+              disabled={deleteBusy}
+              onClick={() => setDeleteCandidate(null)}
+            >
+              Cancel
+            </Btn>
+            <Btn
+              color={C.danger}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+              disabled={deleteBusy}
+              onClick={() => {
+                const target = deleteCandidate;
+                if (!target) return;
+                setDeleteBusy(true);
+                const req = isPresalesManagerViewer
+                  ? adminPanelApi.deletePreSales(target.id)
+                  : isTerritoryDesignManagerViewer
+                    ? adminPanelApi.deleteDesignManager(target.id)
+                    : isDesignManagerViewer
+                      ? adminPanelApi.deleteDesigner(target.id)
+                      : adminPanelApi.deleteSalesExecutive(target.id);
+                void req
+                  .then(() => {
+                    setDeleteCandidate(null);
+                    load();
+                  })
+                  .catch(() => {})
+                  .finally(() => setDeleteBusy(false));
+              }}
+            >
+              {deleteBusy ? "Deleting..." : "Confirm Delete"}
+            </Btn>
+          </div>
+        </div>
+      ) : null}
     </Card>
   );
 }

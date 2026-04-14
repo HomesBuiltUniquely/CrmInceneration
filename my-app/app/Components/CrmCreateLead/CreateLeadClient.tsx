@@ -7,10 +7,8 @@ import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
+import { BASE_URL } from "@/lib/base-url";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 const LEAD_SOURCES = [
   "Website",
@@ -318,7 +316,7 @@ export default function CreateLeadClient() {
             ? window.localStorage.getItem("authToken")
             : null;
 
-        const response = await fetch(`${API_BASE}/v1/AddLead`, {
+        const response = await fetch(`${BASE_URL}/v1/AddLead`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

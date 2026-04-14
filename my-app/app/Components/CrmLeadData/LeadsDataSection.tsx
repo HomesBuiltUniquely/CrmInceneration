@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import type { ApiLead, LeadRowModel, SpringPage } from "@/lib/leads-filter";
 import { asCrmLeadType, mapApiLeadToRow } from "@/lib/leads-filter";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
@@ -10,6 +10,7 @@ import { adminPanelApi } from "@/lib/admin-panel-api";
 import { CRM_ROLE_STORAGE_KEY, getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
+import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 type Props = {
   search: string;
@@ -21,6 +22,10 @@ type Props = {
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
+  leadView?: "default" | "my" | "team";
+  currentUserName?: string;
+  currentUserId?: number;
+  managerTeamNamesFromHeader?: string[];
   onLeadTypeChange: (next: string) => void;
   onSortChange: (next: string) => void;
   onAssigneeChange: (next: string) => void;
@@ -68,13 +73,16 @@ async function fetchMergedPage(
   dateTo: string,
   milestoneStage: string,
   milestoneStageCategory: string,
-  milestoneSubStage: string
+  milestoneSubStage: string,
+  leadView: "default" | "my" | "team" = "default"
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   const normalizedLeadType = leadType.trim().toLowerCase();
-  qs.set("mergeAll", "1");
-  qs.set("page", String(page));
-  qs.set("size", String(size));
+  const managerScopedView = leadView === "my" || leadView === "team";
+  const shouldMerge = managerScopedView || normalizedLeadType === "all" || normalizedLeadType === "verified";
+  qs.set("mergeAll", shouldMerge ? "1" : "0");
+  qs.set("page", managerScopedView ? "0" : String(page));
+  qs.set("size", managerScopedView ? "500" : String(size));
   qs.set("sort", sort);
   qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
   if (search.trim()) qs.set("search", search.trim());
@@ -85,6 +93,7 @@ async function fetchMergedPage(
   if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
   if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
   if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
+  if (leadView === "my" || leadView === "team") qs.set("roleView", leadView);
 
   const res = await fetch(
     `/api/crm/leads?${qs.toString()}`,
@@ -92,19 +101,34 @@ async function fetchMergedPage(
   );
   if (!res.ok) {
     const text = await res.text();
+    if (res.status === 401) {
+      throw new Error("Session expired. Please login again.");
+    }
+    if (res.status === 403) {
+      throw new Error("You don't have access to this lead view.");
+    }
     throw new Error(text || `HTTP ${res.status}`);
   }
   return res.json();
 }
 
-async function fetchFilterOptions(): Promise<{
+async function fetchFilterOptions(leadView: "default" | "my" | "team" = "default"): Promise<{
   assignees: string[];
   stages: string[];
   categories: string[];
   subStages: string[];
 }> {
+  const leadsQs = new URLSearchParams({
+    mergeAll: "1",
+    page: "0",
+    size: "250",
+    sort: "updatedAt,desc",
+  });
+  if (leadView === "my" || leadView === "team") {
+    leadsQs.set("roleView", leadView);
+  }
   const [leadsRes, subRes] = await Promise.all([
-    fetch("/api/crm/leads?mergeAll=1&page=0&size=250&sort=updatedAt,desc", {
+    fetch(`/api/crm/leads?${leadsQs.toString()}`, {
       cache: "no-store",
       credentials: "include",
       headers: getCrmAuthHeaders(),
@@ -174,6 +198,20 @@ function toAdminDeleteAllPath(leadType: string): string {
   return "delete-all-websiteleads";
 }
 
+async function deleteLeadRowsByType(leadType: string, ids: number[]) {
+  const res = await fetch(`/api/admin/${toAdminBulkDeletePath(leadType)}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ ids }),
+  });
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || body.success === false) {
+    throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
+  }
+  return body;
+}
+
 export default function LeadsDataSection({
   search,
   leadType,
@@ -184,6 +222,10 @@ export default function LeadsDataSection({
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
+  leadView = "default",
+  currentUserName = "",
+  currentUserId = 0,
+  managerTeamNamesFromHeader = [],
   onLeadTypeChange,
   onSortChange,
   onAssigneeChange,
@@ -225,7 +267,9 @@ export default function LeadsDataSection({
   const [previewResult, setPreviewResult] = useState<Record<string, unknown> | null>(null);
   const [assignmentError, setAssignmentError] = useState<string>("");
   const [showAssignModal, setShowAssignModal] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteModalType, setDeleteModalType] = useState<"row" | "selected" | "all" | null>(null);
+  const [deleteRowCandidate, setDeleteRowCandidate] = useState<LeadRowModel | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [isExecuteLoading, setIsExecuteLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -237,6 +281,31 @@ export default function LeadsDataSection({
   const [rowAssignLoadingUsers, setRowAssignLoadingUsers] = useState(false);
   const [rowAssignSubmitting, setRowAssignSubmitting] = useState(false);
   const [rowAssignError, setRowAssignError] = useState("");
+  const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
+  const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
+
+  const loadAssignableUsers = useCallback(async () => {
+    const rows = await adminPanelApi.listAllUsers();
+    const eligibleRoles = new Set([
+      "SALES_EXECUTIVE",
+      "SALES_MANAGER",
+      "PRESALES_MANAGER",
+      "PRESALES_EXECUTIVE",
+    ]);
+    const mapped = rows
+      .filter((row) => {
+        const role = normalizeRole(row.role);
+        return eligibleRoles.has(role) && Boolean(row.active ?? true);
+      })
+      .map((row) => ({
+        userId: Number(row.id ?? 0),
+        name: String(row.fullName ?? row.name ?? row.username ?? `User ${row.id}`),
+        role: normalizeRole(row.role),
+      }))
+      .filter((row) => row.userId > 0);
+    setAssigneeUsers(mapped);
+    return mapped;
+  }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
@@ -279,28 +348,34 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     let cancelled = false;
+    if (currentRole !== "SALES_MANAGER" || !currentUserId) {
+      setManagerTeamNames([]);
+      return;
+    }
     void adminPanelApi
       .listAllUsers()
-      .then((rows) => {
+      .then((users) => {
         if (cancelled) return;
-        const eligibleRoles = new Set([
-          "SALES_EXECUTIVE",
-          "SALES_MANAGER",
-          "PRESALES_MANAGER",
-          "PRESALES_EXECUTIVE",
-        ]);
-        const mapped = rows
-          .filter((row) => {
-            const role = normalizeRole(row.role);
-            return eligibleRoles.has(role) && Boolean(row.active ?? true);
-          })
-          .map((row) => ({
-            userId: Number(row.id ?? 0),
-            name: String(row.fullName ?? row.name ?? row.username ?? `User ${row.id}`),
-            role: normalizeRole(row.role),
-          }))
-          .filter((row) => row.userId > 0);
-        setAssigneeUsers(mapped);
+        const names = users
+          .filter((u) => normalizeRole(u.role) === "SALES_EXECUTIVE" && Number(u.managerId ?? 0) === Number(currentUserId))
+          .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
+          .filter(Boolean);
+        setManagerTeamNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setManagerTeamNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentRole, currentUserId]);
+
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadAssignableUsers()
+      .then(() => {
+        if (cancelled) return;
       })
       .catch(() => {
         if (!cancelled) setAssigneeUsers([]);
@@ -308,12 +383,14 @@ export default function LeadsDataSection({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAssignableUsers]);
 
   const clearSelection = useCallback(() => {
     setSelectedRowIds([]);
     setShowAssignModal(false);
-    setShowDeleteModal(false);
+    setDeleteModalType(null);
+    setDeleteRowCandidate(null);
+    setDeleteConfirmText("");
     setSelectedAssigneeIds([]);
     setManualPercentages({});
     setPreviewResult(null);
@@ -346,15 +423,24 @@ export default function LeadsDataSection({
       const mapped = merged
         .map((row) => {
           const item = row as Record<string, unknown>;
+          const active =
+            item.active === undefined && item.isActive === undefined
+              ? true
+              : Boolean(item.active ?? item.isActive);
           return {
             userId: Number(item.id ?? 0),
             name: String(item.fullName ?? item.name ?? item.username ?? `User ${item.id}`),
             role: normalizeRole(item.role),
+            active,
           };
         })
-        .filter((row) => row.userId > 0);
+        .filter((row) => row.userId > 0 && row.active);
       const unique = Array.from(new Map(mapped.map((u) => [u.userId, u])).values());
-      setRowAssignUsers(unique);
+      setRowAssignUsers(unique.map(({ userId, name, role }) => ({ userId, name, role })));
+      if (rowAssignUserId && !unique.some((u) => u.userId === rowAssignUserId)) {
+        setRowAssignUserId(null);
+        setRowAssignError("Selected assignee is inactive now. Please choose another active user.");
+      }
     } catch {
       setRowAssignUsers([]);
       setRowAssignError("Failed to load assignee list.");
@@ -362,6 +448,19 @@ export default function LeadsDataSection({
       setRowAssignLoadingUsers(false);
     }
   }, []);
+
+  useEffect(() => {
+    const onStatusChanged = () => {
+      void loadAssignableUsers().catch(() => setAssigneeUsers([]));
+      if (rowAssignModalOpen) {
+        void loadRowAssignUsers();
+      }
+    };
+    window.addEventListener("crm:sales-executive-status-changed", onStatusChanged as EventListener);
+    return () => {
+      window.removeEventListener("crm:sales-executive-status-changed", onStatusChanged as EventListener);
+    };
+  }, [loadAssignableUsers, loadRowAssignUsers, rowAssignModalOpen]);
 
   useEffect(() => {
     clearSelection();
@@ -377,13 +476,14 @@ export default function LeadsDataSection({
       if (showAssignModal) {
         setShowAssignModal(false);
       }
-      if (showDeleteModal) {
-        setShowDeleteModal(false);
+      if (deleteModalType) {
+        setDeleteModalType(null);
+        setDeleteRowCandidate(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [rowAssignModalOpen, showAssignModal, showDeleteModal]);
+  }, [deleteModalType, rowAssignModalOpen, showAssignModal]);
 
   useEffect(() => {
     let cancelled = false;
@@ -423,6 +523,8 @@ export default function LeadsDataSection({
   }, []);
 
   const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
+  const leadViewKey: "default" | "my" | "team" =
+    leadView === "my" || leadView === "team" ? leadView : "default";
   const effectiveAssignee =
     salesExecFilter ||
     presalesExecFilter ||
@@ -435,7 +537,7 @@ export default function LeadsDataSection({
     let cancelled = false;
     void (async () => {
       try {
-        const o = await fetchFilterOptions();
+        const o = await fetchFilterOptions(leadViewKey);
         if (cancelled) return;
         setAssigneeOptions(o.assignees);
         setMilestoneStageOptions(o.stages);
@@ -452,7 +554,7 @@ export default function LeadsDataSection({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [leadViewKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -467,12 +569,13 @@ export default function LeadsDataSection({
               t,
               "updatedAt,desc",
               debouncedSearch,
-              assignee,
+              effectiveAssignee,
               dateFrom,
               dateTo,
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
+              leadViewKey,
             );
             return [t, page.totalElements ?? 0] as const;
           }),
@@ -487,7 +590,7 @@ export default function LeadsDataSection({
       cancelled = true;
     };
   }, [
-    assignee,
+    effectiveAssignee,
     dateFrom,
     dateTo,
     debouncedSearch,
@@ -499,6 +602,7 @@ export default function LeadsDataSection({
     salesAdminFilter,
     salesExecFilter,
     salesManagerFilter,
+    leadViewKey,
   ]);
 
   const load = useCallback(async () => {
@@ -516,11 +620,17 @@ export default function LeadsDataSection({
         dateTo,
         milestoneStage,
         milestoneStageCategory,
-        milestoneSubStage
+        milestoneSubStage,
+        leadViewKey
       );
       setData(json);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load leads");
+      const msg = e instanceof Error ? e.message : "Failed to load leads";
+      if (msg.toLowerCase().includes("session expired")) {
+        window.dispatchEvent(new Event("crm:auth-expired"));
+        return;
+      }
+      setError(msg);
       setData(null);
     } finally {
       setLoading(false);
@@ -537,6 +647,7 @@ export default function LeadsDataSection({
     page,
     size,
     sort,
+    leadViewKey,
   ]);
 
   useEffect(() => {
@@ -544,14 +655,28 @@ export default function LeadsDataSection({
   }, [load]);
 
   const content = data?.content ?? [];
-  const rows = content.map((lead) =>
+  const baseRows = content.map((lead) =>
     mapApiLeadToRow(lead, asCrmLeadType(lead.leadType, "formlead"), stageOrder)
   );
-  const total = data?.totalElements ?? 0;
-  const totalPages = data?.totalPages ?? 1;
+  const norm = (v: string) => v.trim().toLowerCase();
+  const myName = norm(currentUserName);
+  const scopedTeamNames = managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
+  const teamSet = new Set(scopedTeamNames.map(norm));
+  const rows =
+    currentRole === "SALES_MANAGER" && leadView === "my"
+      ? baseRows.filter((row) => norm(row.owner.name) === myName)
+      : currentRole === "SALES_MANAGER" && leadView === "team"
+        ? scopedTeamNames.length > 0
+          ? baseRows.filter((row) => teamSet.has(norm(row.owner.name)))
+          : baseRows.filter((row) => row.owner.name.trim() !== "")
+        : baseRows;
+  const managerScopedView = currentRole === "SALES_MANAGER" && (leadView === "my" || leadView === "team");
+  const visibleRows = managerScopedView ? rows.slice(page * size, page * size + size) : rows;
+  const total = managerScopedView ? rows.length : (data?.totalElements ?? rows.length);
+  const totalPages = managerScopedView ? Math.max(1, Math.ceil(total / size)) : (data?.totalPages ?? 1);
   const start = total === 0 ? 0 : page * size + 1;
-  const end = Math.min(total, page * size + content.length);
-  const rowsById = new Map(rows.map((row) => [row.id, row]));
+  const end = Math.min(total, page * size + visibleRows.length);
+  const rowsById = new Map(visibleRows.map((row) => [row.id, row]));
   const selectedLeads = selectedRowIds
     .map((id) => rowsById.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
@@ -566,7 +691,12 @@ export default function LeadsDataSection({
     currentRole === "SALES_MANAGER" ||
     currentRole === "PRESALES_MANAGER";
   const canBulkDelete = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
-  const canDeleteAll = canBulkDelete && leadType !== "all";
+  const showDeleteAll = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
+  const canDeleteAll = showDeleteAll;
+  const deleteAllConfirmPhrase =
+    leadType === "all"
+      ? "DELETE ALL"
+      : `DELETE ${toAssignmentLeadType(leadType).toUpperCase()}`;
   const previewSuccess = previewResult?.success === true;
   const previewDistribution = Array.isArray(previewResult?.distribution)
     ? (previewResult.distribution as Array<Record<string, unknown>>)
@@ -642,7 +772,7 @@ export default function LeadsDataSection({
       }
       clearSelection();
       await load();
-      window.alert(typeof res.message === "string" ? res.message : "Bulk assign completed.");
+      notifySuccess(typeof res.message === "string" ? res.message : "Bulk assign completed.");
     } catch (e) {
       setAssignmentError(e instanceof Error ? e.message : "Bulk assign failed.");
     } finally {
@@ -650,25 +780,26 @@ export default function LeadsDataSection({
     }
   };
 
-  const deleteLeadRow = async (row: (typeof rows)[number]) => {
-    if (!window.confirm(`Delete lead #${row.id}?`)) return;
+  const executeDeleteLeadRow = async (row: LeadRowModel) => {
     try {
       setIsDeleting(true);
-      const res = await fetch(`/api/crm/lead/${row.leadType}/${row.id}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: getCrmAuthHeaders(),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
-      }
+      await deleteLeadRowsByType(row.leadType, [Number(row.id)]);
       await load();
+      notifySuccess(`Lead #${row.id} deleted successfully.`);
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Delete failed");
+      notifyError(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const requestDeleteLeadRow = (row: LeadRowModel) => {
+    if (!canBulkDelete) {
+      setError("Access denied. Only Admin/Super Admin can delete leads.");
+      return;
+    }
+    setDeleteRowCandidate(row);
+    setDeleteModalType("row");
   };
 
   const openRowAssignModal = async (row: (typeof rows)[number]) => {
@@ -699,24 +830,33 @@ export default function LeadsDataSection({
         salesExecutiveId: rowAssignUserId,
       });
       if (res.success === false) {
-        setRowAssignError(typeof res.message === "string" ? res.message : "Assign failed.");
+        const msg = typeof res.message === "string" ? res.message : "Assign failed.";
+        if (/inactive|not active|cannot assign lead to inactive user/i.test(msg)) {
+          setRowAssignError("This assignee is inactive. Please select an active user and try again.");
+        } else {
+          setRowAssignError(msg);
+        }
         return;
       }
       setRowAssignModalOpen(false);
       setRowAssignLead(null);
       setRowAssignUserId(null);
       await load();
-      window.alert(typeof res.message === "string" ? res.message : "Lead assigned successfully.");
+      notifySuccess(typeof res.message === "string" ? res.message : "Lead assigned successfully.");
     } catch (e) {
-      setRowAssignError(e instanceof Error ? e.message : "Assign failed.");
+      const msg = e instanceof Error ? e.message : "Assign failed.";
+      if (/inactive|not active|cannot assign lead to inactive user/i.test(msg)) {
+        setRowAssignError("This assignee is inactive. Please select an active user and try again.");
+      } else {
+        setRowAssignError(msg);
+      }
     } finally {
       setRowAssignSubmitting(false);
     }
   };
 
-  const bulkDeleteSelected = async () => {
-    if (selectedLeads.length === 0) return;
-    if (!window.confirm(`Delete ${selectedLeads.length} selected lead(s)?`)) return;
+  const executeBulkDeleteSelected = async () => {
+    if (selectedLeads.length === 0 || !canBulkDelete) return;
     try {
       setIsDeleting(true);
       const grouped = new Map<string, number[]>();
@@ -726,38 +866,59 @@ export default function LeadsDataSection({
         grouped.set(row.leadType, list);
       }
       for (const [type, ids] of grouped.entries()) {
-        await fetch(`/api/admin/${toAdminBulkDeletePath(type)}`, {
-          method: "DELETE",
-          credentials: "include",
-          headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ ids }),
-        });
+        await deleteLeadRowsByType(type, ids);
       }
       clearSelection();
       await load();
+      notifySuccess("Selected leads deleted successfully.");
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Bulk delete failed");
+      notifyError(e instanceof Error ? e.message : "Bulk delete failed");
     } finally {
       setIsDeleting(false);
     }
   };
 
-  const deleteAllByType = async () => {
+  const executeDeleteAllByType = async () => {
     if (!canDeleteAll) return;
-    if (!window.confirm(`Delete all ${toAssignmentLeadType(leadType)} records? This cannot be undone.`)) {
-      return;
-    }
     try {
       setIsDeleting(true);
-      const res = await fetch(`/api/admin/${toAdminDeleteAllPath(leadType)}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: getCrmAuthHeaders(),
-      });
-      if (!res.ok) throw new Error("Delete-all failed.");
+      if (leadType !== "all") {
+        const res = await fetch(`/api/admin/${toAdminDeleteAllPath(leadType)}`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: getCrmAuthHeaders(),
+        });
+        if (!res.ok) throw new Error("Delete-all failed.");
+      } else {
+        const targets = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
+        const results = await Promise.all(
+          targets.map(async (t) => {
+            const res = await fetch(`/api/admin/${toAdminDeleteAllPath(t)}`, {
+              method: "DELETE",
+              credentials: "include",
+              headers: getCrmAuthHeaders(),
+            });
+            const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+            return {
+              type: toAssignmentLeadType(t),
+              ok: res.ok && body.success !== false,
+              message: typeof body.message === "string" ? body.message : "",
+            };
+          })
+        );
+        const successTypes = results.filter((r) => r.ok).map((r) => r.type);
+        const failedTypes = results.filter((r) => !r.ok).map((r) => r.type);
+        if (failedTypes.length === 0) {
+          notifySuccess("All lead types deleted successfully.");
+        } else if (successTypes.length === 0) {
+          throw new Error(`Delete failed for: ${failedTypes.join(", ")}`);
+        } else {
+          notifyInfo(`Deleted ${successTypes.join(", ")}. Failed: ${failedTypes.join(", ")}.`);
+        }
+      }
       await load();
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : "Delete-all failed");
+      notifyError(e instanceof Error ? e.message : "Delete-all failed");
     } finally {
       setIsDeleting(false);
     }
@@ -817,6 +978,10 @@ export default function LeadsDataSection({
           setPresalesExecFilter("");
         }}
         onPresalesExecFilterChange={setPresalesExecFilter}
+        showDeleteAllButton={showDeleteAll}
+        deleteAllLabel={leadType === "all" ? "Delete All" : `Delete All (${toAssignmentLeadType(leadType)})`}
+        deleteAllDisabled={isDeleting || !canDeleteAll}
+        onDeleteAllClick={() => setDeleteModalType("all")}
       />
       {isBulkBarVisible ? (
       <section className="mx-auto sticky top-2 z-20 mt-3 max-w-[1200px] px-6">
@@ -854,7 +1019,7 @@ export default function LeadsDataSection({
             <button
               type="button"
               disabled={selectedCount === 0 || isDeleting}
-              onClick={() => setShowDeleteModal(true)}
+              onClick={() => setDeleteModalType("selected")}
               className="h-9 rounded-lg bg-[#e85246] px-4 text-[13px] font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#dc4639] disabled:cursor-not-allowed disabled:opacity-50"
             >
               🗑 Delete Selected
@@ -867,16 +1032,6 @@ export default function LeadsDataSection({
             >
               Clear Selection
             </button>
-            {canDeleteAll ? (
-              <button
-                type="button"
-                disabled={isDeleting}
-                onClick={() => void deleteAllByType()}
-                className="rounded-xl bg-slate-800 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Delete All ({toAssignmentLeadType(leadType)})
-              </button>
-            ) : null}
           </div>
           </div>
         </div>
@@ -897,7 +1052,7 @@ export default function LeadsDataSection({
         </div>
       ) : null}
       <LeadsTable
-        rows={rows}
+        rows={visibleRows}
         loading={loading}
         page={page}
         totalPages={totalPages}
@@ -906,8 +1061,8 @@ export default function LeadsDataSection({
         onPageSizeChange={(nextSize) => setSize(nextSize)}
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
-        onDeleteRow={(row) => void deleteLeadRow(row)}
-        onAssignRow={(row) => void openRowAssignModal(row)}
+        onDeleteRow={canBulkDelete ? (row) => void requestDeleteLeadRow(row) : undefined}
+        onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
       />
       {rowAssignModalOpen && rowAssignLead ? (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(9,14,30,0.55)] backdrop-blur-[4px] px-3 py-4">
@@ -1178,26 +1333,73 @@ export default function LeadsDataSection({
           </div>
         </div>
       ) : null}
-      {showDeleteModal ? (
+      {deleteModalType ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 backdrop-blur-[2px] px-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_25px_60px_rgba(15,23,42,0.25)]">
-            <h3 className="text-sm font-bold text-slate-800">Delete selected leads?</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              {deleteModalType === "row"
+                ? `Delete lead #${deleteRowCandidate?.id ?? ""}?`
+                : deleteModalType === "all"
+                  ? leadType === "all"
+                    ? "Delete all lead types (global)?"
+                    : `Delete all ${toAssignmentLeadType(leadType)} records?`
+                  : "Delete selected leads?"}
+            </h3>
             <p className="mt-1 text-xs text-slate-500">This action cannot be undone.</p>
-            <p className="mt-2 text-xs font-semibold text-slate-700">Selected: {selectedCount}</p>
+            {deleteModalType === "all" ? (
+              <div className="mt-3">
+                <p className="text-[11px] font-semibold text-slate-700">
+                  Type <span className="font-bold">{deleteAllConfirmPhrase}</span> to confirm.
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  className="mt-1.5 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-[12px] text-slate-800 outline-none focus:border-slate-500"
+                  placeholder={deleteAllConfirmPhrase}
+                />
+              </div>
+            ) : null}
+            {deleteModalType === "selected" ? (
+              <p className="mt-2 text-xs font-semibold text-slate-700">Selected: {selectedCount}</p>
+            ) : null}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-                onClick={() => setShowDeleteModal(false)}
+                onClick={() => {
+                  setDeleteModalType(null);
+                  setDeleteRowCandidate(null);
+                  setDeleteConfirmText("");
+                }}
                 disabled={isDeleting}
               >
                 Cancel
               </button>
               <button
                 className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
-                onClick={() => void bulkDeleteSelected()}
-                disabled={isDeleting}
+                onClick={() => {
+                  if (deleteModalType === "row" && deleteRowCandidate) {
+                    void executeDeleteLeadRow(deleteRowCandidate);
+                  } else if (deleteModalType === "all") {
+                    if (deleteConfirmText.trim().toUpperCase() !== deleteAllConfirmPhrase) {
+                      setError(`Please type "${deleteAllConfirmPhrase}" to confirm.`);
+                      return;
+                    }
+                    void executeDeleteAllByType();
+                  } else {
+                    void executeBulkDeleteSelected();
+                  }
+                  setDeleteModalType(null);
+                  setDeleteRowCandidate(null);
+                  setDeleteConfirmText("");
+                }}
+                disabled={
+                  isDeleting ||
+                  (deleteModalType === "all" &&
+                    deleteConfirmText.trim().toUpperCase() !== deleteAllConfirmPhrase)
+                }
               >
-                {isDeleting ? "Deleting selected leads..." : "Confirm Delete"}
+                {isDeleting ? "Deleting..." : "Confirm Delete"}
               </button>
             </div>
           </div>

@@ -15,6 +15,7 @@ import {
 } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 function formatDt(value: unknown): string {
   if (value === undefined || value === null || value === "") return "—";
@@ -102,10 +103,10 @@ export default function AppointmentManagementClient() {
   const [rows, setRows] = useState<RowVM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
 
   const [leadId, setLeadId] = useState("");
   const [leadType, setLeadType] = useState<CrmLeadType>("formlead");
@@ -172,19 +173,14 @@ export default function AppointmentManagementClient() {
     };
   }, [apptDate, createOpen, designerName]);
 
-  const showToast = (msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 4000);
-  };
-
   const handleCreate = async () => {
     const idNum = Number(leadId);
     if (!Number.isFinite(idNum) || idNum <= 0) {
-      showToast("Enter a valid Lead ID");
+      notifyInfo("Enter a valid Lead ID");
       return;
     }
     if (!designerName.trim() || !apptDate.trim() || !slotId.trim()) {
-      showToast("Designer, date, and slot are required");
+      notifyInfo("Designer, date, and slot are required");
       return;
     }
     setBusy(true);
@@ -200,10 +196,10 @@ export default function AppointmentManagementClient() {
       setCreateOpen(false);
       setLeadId("");
       setSlotId("");
-      showToast("Appointment created");
+      notifySuccess("Appointment created");
       await load();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Create failed");
+      notifyError(e instanceof Error ? e.message : "Create failed");
     } finally {
       setBusy(false);
     }
@@ -215,10 +211,10 @@ export default function AppointmentManagementClient() {
     try {
       await deleteAppointment(deleteId);
       setDeleteId(null);
-      showToast("Appointment removed");
+      notifySuccess("Appointment removed");
       await load();
     } catch (e) {
-      showToast(e instanceof Error ? e.message : "Delete failed");
+      notifyError(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setBusy(false);
     }
@@ -226,15 +222,6 @@ export default function AppointmentManagementClient() {
 
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      {toast ? (
-        <div
-          className="fixed right-4 top-4 z-[70] max-w-[min(420px,calc(100vw-2rem))] rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900 shadow-[var(--crm-shadow-md)] dark:border-emerald-900 dark:bg-emerald-950/90 dark:text-emerald-100"
-          role="status"
-        >
-          {toast}
-        </div>
-      ) : null}
-
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar

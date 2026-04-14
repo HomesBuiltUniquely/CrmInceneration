@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 function targetUrl(req: NextRequest, segments: string[] | undefined): string {
   const suffix = segments?.length ? `/${segments.join("/")}` : "";
-  const url = new URL(`${BASE}/v1/Appointment${suffix}`);
+  const url = new URL(`${BASE_URL}/v1/Appointment${suffix}`);
   req.nextUrl.searchParams.forEach((value, key) => {
     url.searchParams.set(key, value);
   });

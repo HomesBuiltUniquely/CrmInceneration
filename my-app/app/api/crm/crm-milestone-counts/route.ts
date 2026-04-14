@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
 
 /** Proxies milestone counts, preferring `/v1/Leads` and falling back to `/Leads`. */
 export async function GET(req: NextRequest) {
   const headers = upstreamAuthHeaders(req);
   const candidates = [
-    `${BASE}/v1/Leads/crm-milestone-counts`,
-    `${BASE}/Leads/crm-milestone-counts`,
+    `${BASE_URL}/v1/Leads/crm-milestone-counts`,
+    `${BASE_URL}/Leads/crm-milestone-counts`,
   ];
 
   let last: Response | null = null;

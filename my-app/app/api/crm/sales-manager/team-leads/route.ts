@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const BASE = (process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081").replace(/\/$/, "");
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.toString();
-  const url = `${BASE}/v1/leads/sales-manager/team-leads${q ? `?${q}` : ""}`;
+  const url = `${BASE_URL}/v1/leads/sales-manager/team-leads${q ? `?${q}` : ""}`;
   const res = await fetch(url, {
     cache: "no-store",
     headers: upstreamAuthHeaders(req),

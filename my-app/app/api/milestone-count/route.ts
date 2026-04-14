@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
 
-const CRM_BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
-const CRM_PIPELINE_URL = `${CRM_BASE}/Leads/crm-pipeline?nested=true`;
+const CRM_PIPELINE_URL = `${BASE_URL}/Leads/crm-pipeline?nested=true`;
 
 /** Optional legacy milestone microservice (often not running locally → avoid 500). */
 const COUNT_URL =

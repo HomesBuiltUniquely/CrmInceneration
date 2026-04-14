@@ -137,6 +137,10 @@ type LeadsToolbarProps = {
   onSalesExecFilterChange: (next: string) => void;
   onPresalesManagerFilterChange: (next: string) => void;
   onPresalesExecFilterChange: (next: string) => void;
+  showDeleteAllButton?: boolean;
+  deleteAllLabel?: string;
+  deleteAllDisabled?: boolean;
+  onDeleteAllClick?: () => void;
 };
 
 export default function LeadsToolbar({
@@ -181,6 +185,10 @@ export default function LeadsToolbar({
   onSalesExecFilterChange,
   onPresalesManagerFilterChange,
   onPresalesExecFilterChange,
+  showDeleteAllButton = false,
+  deleteAllLabel = "Delete All",
+  deleteAllDisabled = false,
+  onDeleteAllClick,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
@@ -299,6 +307,16 @@ export default function LeadsToolbar({
               <span>Lead Types</span>
             </button>
             <Pill label="Total Leads" value={countLabel} active />
+            {showDeleteAllButton ? (
+              <button
+                type="button"
+                disabled={deleteAllDisabled}
+                onClick={onDeleteAllClick}
+                className="inline-flex items-center rounded-full bg-[#dc2626] px-3.5 py-2 text-[12px] font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#b91c1c] hover:shadow-[0_8px_16px_rgba(220,38,38,0.28)] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {deleteAllLabel}
+              </button>
+            ) : null}
           </div>
         </div>
 

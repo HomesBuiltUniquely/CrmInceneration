@@ -1,13 +1,11 @@
-const BASE =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) ||
-  "http://localhost:8081";
+import { BASE_URL } from "@/lib/base-url";
 
 export const CRM_TOKEN_STORAGE_KEY = "crm_token";
 export const CRM_ROLE_STORAGE_KEY = "crm_role";
 export const CRM_USER_NAME_STORAGE_KEY = "crm_user_name";
 
 export function getAuthApiBaseUrl(): string {
-  return BASE.replace(/\/$/, "");
+  return BASE_URL;
 }
 
 export type LoginResult = {

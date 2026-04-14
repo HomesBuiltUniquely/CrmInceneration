@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Button } from "./ui";
 
-export default function TopBar() {
+export default function TopBar({
+  designQaOpen,
+  onToggleDesignQa,
+}: {
+  designQaOpen?: boolean;
+  onToggleDesignQa?: () => void;
+}) {
   return (
     <div className="mb-8 flex items-center justify-between animate-fade-up">
       {/* Brand */}
@@ -23,14 +28,26 @@ export default function TopBar() {
 
       {/* Actions */}
       <div className="flex items-center gap-2.5">
-        <button className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3.5 py-2 text-[11px] font-semibold text-[var(--crm-text-secondary)] transition-all hover:border-[var(--crm-border-strong)]">
-          ✦ Design Preferences
-        </button>
+        {onToggleDesignQa ? (
+          <button
+            type="button"
+            onClick={onToggleDesignQa}
+            aria-expanded={Boolean(designQaOpen)}
+            className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-[var(--crm-surface)] px-5 py-2.5 text-[13px] font-semibold tracking-tight text-slate-800 shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:bg-[var(--crm-surface-subtle)] hover:shadow-[0_6px_14px_rgba(15,23,42,0.14)] dark:border-[var(--crm-border-strong)] dark:text-[var(--crm-text-primary)]"
+          >
+            <span className="text-[15px] leading-none" aria-hidden>
+              ✦
+            </span>
+            Design Preferences
+          </button>
+        ) : null}
         <Link
           href="/Leads"
-          className="inline-flex items-center gap-1.5 rounded-xl bg-[var(--crm-text-primary)] px-3.5 py-2 text-[12px] font-semibold text-[var(--crm-surface)] shadow-[0_2px_6px_rgba(15,23,42,0.16)] ring-1 ring-white/10 transition-all duration-150 hover:-translate-y-[1px] hover:shadow-[0_6px_14px_rgba(15,23,42,0.18)] active:translate-y-0 active:shadow-[0_2px_6px_rgba(15,23,42,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent)] focus-visible:ring-offset-2"
+          className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-slate-800 px-5 py-2.5 text-[13px] font-semibold tracking-tight text-white shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:bg-slate-700 hover:shadow-[0_6px_14px_rgba(15,23,42,0.22)] dark:border-[var(--crm-border-strong)]"
         >
-          <span className="text-sm leading-none">✕</span>
+          <span className="text-[14px] leading-none" aria-hidden>
+            ✕
+          </span>
           Close
         </Link>
       </div>

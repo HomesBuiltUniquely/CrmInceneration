@@ -321,8 +321,6 @@ export default function CompleteTaskModal({
     scheduleMode &&
     (!meetingDesigner.trim() || !appointmentDate.trim() || !selectedSlotId.trim());
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
-  const designerEmailMissingForMeeting =
-    scheduleMode && !isValidEmail(lead.designerEmail?.trim() ?? "");
 
   if (!open) {
     return null;
@@ -338,11 +336,6 @@ export default function CompleteTaskModal({
 
     if (scheduleMode && emailMissingForMeeting) {
       setApiError("Add a valid customer email on the lead (Lead tab) before scheduling.");
-      return;
-    }
-
-    if (scheduleMode && designerEmailMissingForMeeting) {
-      setApiError("Add design preference email for the designer (Assignments tab) — used for Google/Meet copy and Design QA.");
       return;
     }
 
@@ -654,8 +647,7 @@ export default function CompleteTaskModal({
                 <p className="text-[11px] text-[var(--crm-text-muted)]">
                   After the meeting is fixed, Hub typically sends <strong className="font-medium text-[var(--crm-text-secondary)]">two</strong> emails:{" "}
                   <span className="text-[var(--crm-text-secondary)]">(1) Google Calendar / Meet</span> to the customer (lead email) and participants, and{" "}
-                  <span className="text-[var(--crm-text-secondary)]">(2) Design QA</span> to the designer’s{" "}
-                  <span className="text-[var(--crm-text-secondary)]">design preference email</span> (Assignments tab). Ensure both emails are set on the lead before scheduling.
+                  <span className="text-[var(--crm-text-secondary)]">(2) Design QA</span> to the designer channel configured by Hub.
                 </p>
                 <div>
                   <FieldLabel required>Designer</FieldLabel>
@@ -716,11 +708,9 @@ export default function CompleteTaskModal({
                       ))}
                   </Select>
                 </div>
-                {scheduleMode && showErrors && (emailMissingForMeeting || designerEmailMissingForMeeting) ? (
+                {scheduleMode && showErrors && emailMissingForMeeting ? (
                   <p className="text-[12px] text-rose-600">
-                    {emailMissingForMeeting
-                      ? "Add a valid customer email on the Lead tab."
-                      : "Add design preference email (Assignments tab) for the designer."}
+                    Add a valid customer email on the Lead tab.
                   </p>
                 ) : null}
               </div>

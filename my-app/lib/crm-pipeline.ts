@@ -4,12 +4,14 @@ import type {
   CrmPipelineResponse,
   MilestonePathItem,
 } from "@/types/crm-pipeline";
-
-const BASE = process.env.NEXT_PUBLIC_CRM_API_BASE ?? "http://localhost:8081";
+import { BASE_URL } from "@/lib/base-url";
 
 export async function fetchCrmPipeline(nested = true): Promise<CrmPipelineResponse> {
   const q = nested ? "?nested=true" : "";
-  const urls = [`${BASE}/v1/Leads/crm-pipeline${q}`, `${BASE}/Leads/crm-pipeline${q}`];
+  const urls = [
+    `${BASE_URL}/v1/Leads/crm-pipeline${q}`,
+    `${BASE_URL}/Leads/crm-pipeline${q}`,
+  ];
   let lastStatus = 0;
   for (const url of urls) {
     const res = await fetch(url, { cache: "no-store" });
