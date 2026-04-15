@@ -15,8 +15,8 @@
   --crm-text-muted: #64748b;
   --crm-accent: #2563eb;
   --crm-accent-strong: #1d4ed8;
-  --crm-accent-soft: rgba(37, 99, 235, 0.1);
-  --crm-accent-ring: rgba(59, 130, 246, 0.2);
+  --crm-accent-soft: rgba(37, 99, 235, 0.14);
+  --crm-accent-ring: rgba(59, 130, 246, 0.28);
   --crm-sidebar-bg: linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
   --crm-sidebar-surface: rgba(255, 255, 255, 0.88);
   --crm-sidebar-pill: rgba(37, 99, 235, 0.08);
