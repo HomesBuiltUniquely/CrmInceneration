@@ -17,6 +17,10 @@ type Props = {
   onSelectStage: (stage: string) => void;
 };
 
+function normStage(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export default function Milestones({ stages, selectedStage, onSelectStage }: Props) {
   return (
     <main>
@@ -30,10 +34,10 @@ export default function Milestones({ stages, selectedStage, onSelectStage }: Pro
 
         <div className="flex w-full min-w-0 flex-nowrap items-stretch gap-1 px-4 py-4">
           {stages.map((s) => {
-            const active = s.stage === selectedStage;
+            const active = normStage(s.stage) === normStage(selectedStage);
 
             const shell = active
-              ? "bg-[var(--crm-tab-grad)] text-white shadow-[var(--crm-shadow-sm)] hover:brightness-110 hover:ring-2 hover:ring-[var(--crm-accent-ring)]"
+              ? "bg-[var(--crm-accent)] text-white shadow-[var(--crm-shadow-md)] ring-2 ring-[var(--crm-accent-ring)] hover:brightness-110"
               : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)] shadow-sm ring-1 ring-inset ring-[var(--crm-border)] hover:bg-[var(--crm-surface)] hover:text-[var(--crm-text-secondary)] hover:ring-2 hover:ring-[var(--crm-accent-ring)]";
 
             const badge = active
@@ -44,6 +48,7 @@ export default function Milestones({ stages, selectedStage, onSelectStage }: Pro
               <button
                 key={s.stage}
                 type="button"
+                aria-pressed={active}
                 title={s.label}
                 onClick={() => onSelectStage(s.stage)}
                 className={`group relative flex h-12 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 px-3 font-bold transition-all duration-200 ease-out xl:text-[13px]
