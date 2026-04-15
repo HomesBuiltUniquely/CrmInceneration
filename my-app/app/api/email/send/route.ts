@@ -1,29 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BASE_URL } from "@/lib/base-url";
+import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/email/send
- * Handles email sending by forwarding requests to the backend Java service
+ * Forwards email request to Java backend with auth headers
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Get backend URL from environment
-    const backendUrl = process.env.BASE_URL || "http://localhost:8081";
-    const backendEndpoint = `${backendUrl}/api/email/send`;
+    const backendEndpoint = `${BASE_URL}/api/email/send`;
 
     console.log("[email/send] Forwarding request to backend");
     console.log("[email/send] Backend endpoint:", backendEndpoint);
     console.log("[email/send] Payload:", JSON.stringify(body, null, 2));
 
-    // Forward request to Java backend
+    // ✅ SAME AUTH PATTERN AS OTHER APIs
+    const headers = {
+      ...upstreamAuthHeaders(request),
+      "Content-Type": "application/json",
+    };
+
     const response = await fetch(backendEndpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -51,10 +54,12 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("[email/send] Error:", error);
+
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to send email",
+        error:
+          error instanceof Error ? error.message : "Failed to send email",
       },
       { status: 500 }
     );
