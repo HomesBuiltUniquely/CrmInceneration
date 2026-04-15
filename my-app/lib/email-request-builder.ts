@@ -103,8 +103,8 @@ export function buildEmailRequest(
 }
 
 /**
- * Send email via the backend API endpoint
- * Calls: POST http://localhost:8080/api/email/send
+ * Send email via Next.js API route
+ * Calls: POST /api/email/send (which forwards to backend)
  */
 export async function sendEmailNotification(
   payload: EmailRequestPayload
@@ -114,10 +114,8 @@ export async function sendEmailNotification(
   console.log("[sendEmailNotification] Payload:", JSON.stringify(payload, null, 2));
   
   try {
-    const backendUrl = process.env.BASE_URL || "http://localhost:8081";
-    const endpoint = `${backendUrl}/api/email/send`;
+    const endpoint = '/api/email/send';
     
-    console.log("[sendEmailNotification] Backend URL:", backendUrl);
     console.log("[sendEmailNotification] Endpoint:", endpoint);
     
     const response = await fetch(endpoint, {
