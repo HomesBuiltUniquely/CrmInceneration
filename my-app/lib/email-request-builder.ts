@@ -114,7 +114,7 @@ export async function sendEmailNotification(
   console.log("[sendEmailNotification] Payload:", JSON.stringify(payload, null, 2));
   
   try {
-    const backendUrl = process.env.NEXT_PUBLIC_CRM_API_BASE || "http://localhost:8080";
+    const backendUrl = process.env.BASE_URL || "http://localhost:8081";
     const endpoint = `${backendUrl}/api/email/send`;
     
     console.log("[sendEmailNotification] Backend URL:", backendUrl);
