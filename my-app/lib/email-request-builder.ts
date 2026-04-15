@@ -1,4 +1,5 @@
 import type { Lead } from "@/lib/data";
+import { BASE_URL } from "@/lib/base-url";
 import { shouldSendEmail } from "@/lib/email-substage-mapper";
 
 /**
@@ -114,7 +115,7 @@ export async function sendEmailNotification(
   console.log("[sendEmailNotification] Payload:", JSON.stringify(payload, null, 2));
   
   try {
-    const endpoint = '/api/email/send';
+    const endpoint = `${BASE_URL}/api/email/send`;
     
     console.log("[sendEmailNotification] Endpoint:", endpoint);
     
