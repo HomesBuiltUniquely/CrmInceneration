@@ -4,7 +4,7 @@ import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 
 type GStatus = { success?: boolean; connected?: boolean; googleEmail?: string; message?: string };
 type GConnect = { success?: boolean; connectUrl?: string; url?: string; authUrl?: string; message?: string };
-type GEvent = { id?: string; summary?: string; start?: string; end?: string; htmlLink?: string };
+type GEvent = { id?: string; summary?: string; start?: string; end?: string; htmlLink?: string; description?: string; organizer?: { email?: string; displayName?: string }; attendees?: { email?: string; displayName?: string }[] };
 
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
