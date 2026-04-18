@@ -13,7 +13,9 @@ import { pickNumber } from "@/lib/api-normalize";
 import { cn } from "@/lib/cn";
 import {
   CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
+  getMe,
   normalizeRole,
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -1485,6 +1487,8 @@ interface SalesExecutive {
   phone: string;
   branch: string;
   manager: string;
+  /** Parent sales / presales manager user id — required for manager-scoped rows. */
+  managerId: number;
   status: boolean;
 }
 
@@ -1493,12 +1497,34 @@ function SalesExecSection() {
   const [loading, setLoading] = useState(false);
   const [viewerRole, setViewerRole] = useState("");
   const [viewerName, setViewerName] = useState("");
+  const [viewerUserId, setViewerUserId] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     const name = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
     setViewerName(name.trim());
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    let cancelled = false;
+    void getMe(token)
+      .then((res) => {
+        if (cancelled) return;
+        const raw = res as Record<string, unknown>;
+        const u =
+          raw.user && typeof raw.user === "object"
+            ? (raw.user as Record<string, unknown>)
+            : raw;
+        const id = Number(u.id ?? 0);
+        if (Number.isFinite(id) && id > 0) setViewerUserId(id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const [allUsers, setAllUsers] = useState<Array<Record<string, unknown>>>([]);
   const [showCreate, setShowCreate] = useState(false);
@@ -1527,6 +1553,14 @@ function SalesExecSection() {
       setCreateForm((prev) => ({ ...prev, role: "SALES_EXECUTIVE" }));
     }
   }, [viewerRole]);
+
+  useEffect(() => {
+    if (viewerRole !== "SALES_MANAGER" || !viewerUserId) return;
+    setCreateForm((prev) => ({
+      ...prev,
+      parentId: prev.parentId || String(viewerUserId),
+    }));
+  }, [viewerRole, viewerUserId]);
 
   const isSalesManagerViewer = viewerRole === "SALES_MANAGER";
   const isPresalesManagerViewer = viewerRole === "PRESALES_MANAGER";
@@ -1586,22 +1620,26 @@ function SalesExecSection() {
         ? adminPanelApi.listDesignManagers()
         : isDesignManagerViewer
           ? adminPanelApi.listDesigners()
-          : Promise.all([
-              adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
-              loadPresalesUsers(),
-            ]).then(([sales, presales]) => {
-              const merged = [...sales, ...presales];
-              const byId = new Map<number, Record<string, unknown>>();
-              for (const row of merged) {
-                const id = Number(row.id ?? 0);
-                if (id > 0 && !byId.has(id)) byId.set(id, row);
-              }
-              return Array.from(byId.values());
-            });
+          : isSalesManagerViewer
+            ? adminPanelApi
+                .listSalesExecutivesLegacyAll()
+                .catch(() => [] as Array<Record<string, unknown>>)
+            : Promise.all([
+                adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
+                loadPresalesUsers(),
+              ]).then(([sales, presales]) => {
+                const merged = [...sales, ...presales];
+                const byId = new Map<number, Record<string, unknown>>();
+                for (const row of merged) {
+                  const id = Number(row.id ?? 0);
+                  if (id > 0 && !byId.has(id)) byId.set(id, row);
+                }
+                return Array.from(byId.values());
+              });
     const parentReq = !showCreate
       ? Promise.resolve([] as Array<Record<string, unknown>>)
       : isSalesManagerViewer
-        ? adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>)
+        ? Promise.resolve([] as Array<Record<string, unknown>>)
         : isPresalesManagerViewer
           ? adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>)
           : isTerritoryDesignManagerViewer
@@ -1611,18 +1649,29 @@ function SalesExecSection() {
             : adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>);
     void Promise.all([listReq, parentReq])
       .then(([rows, users]) => {
-        const mapped = rows.map((r) => ({
+        const mapped = rows.map((r) => {
+          const mid = Number(r.managerId ?? 0);
+          const managerLabel =
+            isSalesManagerViewer && viewerUserId > 0 && mid === viewerUserId && viewerName.trim()
+              ? viewerName.trim()
+              : String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—");
+          return {
             id: Number(r.id ?? 0),
             name: String(r.fullName ?? r.name ?? r.username ?? ""),
             email: String(r.email ?? ""),
             phone: String(r.phone ?? ""),
             branch: String(r.branch ?? ""),
-            manager: String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—"),
-            status: Boolean(r.active ?? true),
-          }));
-        const filtered = isManagerViewer && viewerName
-          ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
-          : mapped;
+            manager: managerLabel,
+            managerId: mid,
+            status: Boolean(r.active ?? r.enabled ?? true),
+          };
+        });
+        const filtered =
+          isSalesManagerViewer && viewerUserId > 0
+            ? mapped.filter((e) => e.managerId === viewerUserId)
+            : isManagerViewer && viewerName
+              ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
+              : mapped;
         setExecs(filtered);
         setAllUsers(users);
       })
@@ -1641,6 +1690,7 @@ function SalesExecSection() {
     showCreate,
     viewerRole,
     viewerName,
+    viewerUserId,
   ]);
 
   const toggleStatus = (id: number, next: boolean) => {
@@ -1765,29 +1815,45 @@ function SalesExecSection() {
               <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
                 {parentLabel}
               </label>
-              <Select
-                value={createForm.parentId}
-                onChange={(e) => setCreateForm({ ...createForm, parentId: e.target.value })}
-              >
-                <option value="">Select Parent</option>
-                {allUsers
-                  .filter((u) => {
-                    const role = normalizedUserRole(u);
-                    if (isPresalesManagerViewer) return role === "PRESALES_MANAGER";
-                    if (isTerritoryDesignManagerViewer) {
-                      return createForm.role === "DESIGN_MANAGER"
-                        ? role === "TERRITORY_DESIGN_MANAGER"
-                        : role === "DESIGN_MANAGER";
-                    }
-                    if (isDesignManagerViewer) return role === "DESIGN_MANAGER";
-                    return role === "SALES_MANAGER";
-                  })
-                  .map((u) => (
-                    <option key={String(u.id)} value={String(u.id)}>
-                      {String(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`)}
-                    </option>
-                  ))}
-              </Select>
+              {isSalesManagerViewer && viewerUserId > 0 ? (
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    color: C.text,
+                  }}
+                >
+                  You (logged-in Sales Manager) — user ID <strong>{viewerUserId}</strong>. New executives are created
+                  with <code style={{ fontSize: 12 }}>managerId</code> set to this id (legacy CRM rule).
+                </div>
+              ) : (
+                <Select
+                  value={createForm.parentId}
+                  onChange={(e) => setCreateForm({ ...createForm, parentId: e.target.value })}
+                >
+                  <option value="">Select Parent</option>
+                  {allUsers
+                    .filter((u) => {
+                      const role = normalizedUserRole(u);
+                      if (isPresalesManagerViewer) return role === "PRESALES_MANAGER";
+                      if (isTerritoryDesignManagerViewer) {
+                        return createForm.role === "DESIGN_MANAGER"
+                          ? role === "TERRITORY_DESIGN_MANAGER"
+                          : role === "DESIGN_MANAGER";
+                      }
+                      if (isDesignManagerViewer) return role === "DESIGN_MANAGER";
+                      return role === "SALES_MANAGER";
+                    })
+                    .map((u) => (
+                      <option key={String(u.id)} value={String(u.id)}>
+                        {String(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`)}
+                      </option>
+                    ))}
+                </Select>
+              )}
             </div>
             <div>
               <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
@@ -1821,9 +1887,12 @@ function SalesExecSection() {
                 !createForm.branch.trim() ||
                 !createForm.username.trim() ||
                 !createForm.password.trim() ||
-                !createForm.parentId
+                (isSalesManagerViewer ? viewerUserId <= 0 : !createForm.parentId.trim())
               }
               onClick={() => {
+                const resolvedManagerId = isSalesManagerViewer
+                  ? viewerUserId
+                  : Number(createForm.parentId);
                 const payload = {
                   role: createForm.role,
                   fullName: createForm.fullName.trim(),
@@ -1833,7 +1902,7 @@ function SalesExecSection() {
                   branch: createForm.branch,
                   username: createForm.username.trim(),
                   password: createForm.password,
-                  managerId: Number(createForm.parentId),
+                  managerId: resolvedManagerId,
                 };
                 const req = isPresalesManagerViewer
                   ? adminPanelApi.createPreSales(payload)
@@ -1858,7 +1927,8 @@ function SalesExecSection() {
                       branch: "",
                       username: "",
                       password: "",
-                      parentId: "",
+                      parentId:
+                        isSalesManagerViewer && viewerUserId > 0 ? String(viewerUserId) : "",
                     });
                     setShowCreate(false);
                     load();

@@ -130,7 +130,7 @@ export default function MilestonePaths({
   lostItems,
 }: Props) {
   return (
-    <section className="xl:ml-6 xl:mt-10 xl:w-263.75">
+    <section className="xl:mx-6 xl:mt-10 xl:w-[calc(100%-3rem)] xl:min-w-0">
       <div className="flex gap-6">
         <div className="w-64 rounded-3xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-7 py-8">
           <div className="flex items-center gap-3">

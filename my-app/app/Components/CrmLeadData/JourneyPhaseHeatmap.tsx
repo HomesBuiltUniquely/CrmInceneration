@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import {
+  filterLeadsForInsightMode,
+  type InsightTableMode,
+} from "@/lib/lead-follow-up-insights";
+import { narrowSalesManagerLeadsIfTeamKnown } from "@/lib/sales-manager-lead-scope";
 
 type Phase = {
   phaseLabel: string;
@@ -20,6 +26,8 @@ export type JourneyPhaseHeatmapProps = {
   leadView?: "default" | "my" | "team";
   currentUserName?: string;
   managerTeamNames?: string[];
+  /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
+  insightTableMode?: InsightTableMode | null;
 };
 
 function normName(s: string) {
@@ -274,10 +282,32 @@ export default function JourneyPhaseHeatmap({
   leadView = "default",
   currentUserName = "",
   managerTeamNames = [],
+  insightTableMode = null,
 }: JourneyPhaseHeatmapProps = {}) {
-  const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
+  const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const insightOpts = useMemo(
+    () => ({
+      viewerRole: normalizeRole(currentRole),
+      currentUserName: currentUserName ?? "",
+      managerTeamNames,
+      leadView:
+        leadView === "my" || leadView === "team" ? leadView : ("default" as const),
+    }),
+    [currentRole, currentUserName, managerTeamNames, leadView],
+  );
+
+  const phases = useMemo(() => {
+    const filtered = filterLeadsForInsightMode(
+      poolLeads,
+      insightTableMode ?? null,
+      insightOpts,
+    );
+    return mapLeadsToPhases(filtered, DEFAULT_PHASES);
+  }, [poolLeads, insightTableMode, insightOpts]);
+
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
 
   useEffect(() => {
@@ -327,6 +357,16 @@ export default function JourneyPhaseHeatmap({
           for (const chunk of rest) allLeads.push(...chunk);
         }
 
+        const roleKey = normalizeRole(currentRole);
+        const pool =
+          roleKey === "SALES_MANAGER"
+            ? narrowSalesManagerLeadsIfTeamKnown(
+                allLeads,
+                currentUserName ?? "",
+                managerTeamNames,
+              )
+            : allLeads;
+
         const ownerName = (lead: ApiLead) =>
           String(
             (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
@@ -336,15 +376,15 @@ export default function JourneyPhaseHeatmap({
         const norm = (v: string) => v.trim().toLowerCase();
         const teamSet = new Set(managerTeamNames.map(norm));
         const scopedLeads =
-          currentRole === "SALES_MANAGER" && leadView === "my"
-            ? allLeads.filter((lead) => norm(ownerName(lead)) === norm(currentUserName))
-            : currentRole === "SALES_MANAGER" && leadView === "team"
+          roleKey === "SALES_MANAGER" && leadView === "my"
+            ? pool.filter((lead) => norm(ownerName(lead)) === norm(currentUserName))
+            : roleKey === "SALES_MANAGER" && leadView === "team"
               ? managerTeamNames.length > 0
-                ? allLeads.filter((lead) => teamSet.has(norm(ownerName(lead))))
-                : allLeads
-              : allLeads;
+                ? pool.filter((lead) => teamSet.has(norm(ownerName(lead))))
+                : pool
+              : pool;
         if (!cancelled) {
-          setPhases(mapLeadsToPhases(scopedLeads, DEFAULT_PHASES));
+          setPoolLeads(scopedLeads);
         }
       } catch (err) {
         if (!cancelled) {

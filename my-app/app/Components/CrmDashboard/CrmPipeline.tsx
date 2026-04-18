@@ -8,7 +8,7 @@ import {
   fetchCrmPipeline,
   type MilestoneStage,
 } from "@/lib/crm-pipeline";
-import type { CrmMilestoneCountsApiResponse } from "@/lib/crm-milestone-counts";
+import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import type { MilestonePathItem } from "@/types/crm-pipeline";
 import type { CrmPipelineResponse } from "@/types/crm-pipeline";
 import Milestones from "./Milestones";
@@ -45,13 +45,60 @@ function leftAccent(i: number): MilestonePathItem["leftAccent"] {
   return order[i % order.length]!;
 }
 
+function stageFromLead(lead: ApiLead): string {
+  return String(lead.stage?.milestoneStage ?? "").trim();
+}
+
+function subStageFromLead(lead: ApiLead): string {
+  return String(lead.stage?.milestoneSubStage ?? "").trim();
+}
+
+function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
+  const q = new URLSearchParams();
+  q.set("mergeAll", "1");
+  q.set("page", "0");
+  q.set("size", "500");
+  q.set("sort", "updatedAt,desc");
+  q.set("leadType", "all");
+  const effectiveAssignee = (assignee ?? filters.assignee).trim();
+  if (effectiveAssignee) q.set("assignee", effectiveAssignee);
+  if (filters.dateFrom) q.set("dateFrom", filters.dateFrom);
+  if (filters.dateTo) q.set("dateTo", filters.dateTo);
+  if (filters.milestoneStage) q.set("milestoneStage", filters.milestoneStage);
+  if (filters.milestoneStageCategory) q.set("milestoneStageCategory", filters.milestoneStageCategory);
+  if (filters.milestoneSubStage) q.set("milestoneSubStage", filters.milestoneSubStage);
+  return q;
+}
+
+async function fetchDashboardLeads(filters: DashboardFilterState): Promise<ApiLead[]> {
+  const assignees = [...new Set((filters.assignees ?? []).map((x) => x.trim()).filter(Boolean))];
+  const leadsById = new Map<string, ApiLead>();
+  const requests =
+    assignees.length > 0 ? assignees.map((assignee) => buildLeadsQuery(filters, assignee)) : [buildLeadsQuery(filters)];
+  for (const query of requests) {
+    const res = await fetch(`/api/crm/leads?${query.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders(),
+    });
+    if (!res.ok) continue;
+    const json = (await res.json()) as SpringPage<ApiLead>;
+    for (const lead of json.content ?? []) {
+      const id = String(lead.id ?? "").trim();
+      if (!id || leadsById.has(id)) continue;
+      leadsById.set(id, lead);
+    }
+  }
+  return [...leadsById.values()];
+}
+
 type Props = {
   filters?: DashboardFilterState;
 };
 
 export default function CrmPipeline({ filters }: Props) {
   const [data, setData] = useState<CrmPipelineResponse | null>(null);
-  const [baseCounts, setBaseCounts] = useState<Record<string, number>>({});
+  const [filteredLeads, setFilteredLeads] = useState<ApiLead[]>([]);
   const [subMappings, setSubMappings] = useState<SubStatusMappingsResp["mappings"]>([]);
   const [pathData, setPathData] = useState<{
     stageTitle: string;
@@ -79,24 +126,9 @@ export default function CrmPipeline({ filters }: Props) {
     let cancelled = false;
     void (async () => {
       try {
-        const baseQ = new URLSearchParams();
-        baseQ.set("leadType", "all");
-        if (sharedFilters.assignee) baseQ.set("assignee", sharedFilters.assignee);
-        if ((sharedFilters.assignees ?? []).length > 0) {
-          baseQ.set("assignees", (sharedFilters.assignees ?? []).join(","));
-        }
-        if (sharedFilters.dateFrom) baseQ.set("dateFrom", sharedFilters.dateFrom);
-        if (sharedFilters.dateTo) baseQ.set("dateTo", sharedFilters.dateTo);
-        if (sharedFilters.milestoneStageCategory) baseQ.set("milestoneStageCategory", sharedFilters.milestoneStageCategory);
-        if (sharedFilters.milestoneSubStage) baseQ.set("milestoneSubStage", sharedFilters.milestoneSubStage);
-
-        const [pipeline, countsRes, subMapRes] = await Promise.all([
+        const [pipeline, leads, subMapRes] = await Promise.all([
           fetchCrmPipeline(true),
-          fetch(`/api/crm/crm-milestone-counts-filtered?${baseQ.toString()}`, {
-            cache: "no-store",
-            credentials: "include",
-            headers: getCrmAuthHeaders(),
-          }),
+          fetchDashboardLeads(sharedFilters),
           fetch("/api/milestone-count?resource=sub-status", {
             cache: "no-store",
             credentials: "include",
@@ -105,17 +137,7 @@ export default function CrmPipeline({ filters }: Props) {
         ]);
         if (cancelled) return;
         setData(pipeline);
-
-        if (countsRes.ok) {
-          const countsJson = (await countsRes.json()) as CrmMilestoneCountsApiResponse;
-          const m: Record<string, number> = {};
-          for (const row of countsJson.countsByMilestoneStage ?? []) {
-            m[row.key] = row.count;
-          }
-          setBaseCounts(m);
-        } else {
-          setBaseCounts({});
-        }
+        setFilteredLeads(leads);
 
         if (subMapRes.ok) {
           const mapJson = (await subMapRes.json()) as SubStatusMappingsResp;
@@ -142,13 +164,21 @@ export default function CrmPipeline({ filters }: Props) {
     (sharedFilters.assignees ?? []).join("|"),
     sharedFilters.dateFrom,
     sharedFilters.dateTo,
+    sharedFilters.milestoneStage,
     sharedFilters.milestoneStageCategory,
     sharedFilters.milestoneSubStage,
   ]);
 
+  const stageCounts = filteredLeads.reduce<Record<string, number>>((acc, lead) => {
+    const stage = stageFromLead(lead);
+    if (!stage) return acc;
+    acc[stage] = (acc[stage] ?? 0) + 1;
+    return acc;
+  }, {});
+
   const stages: MilestoneStage[] = (data ? buildMilestoneStages(data.entries, data.nested) : []).map((s) => ({
     ...s,
-    count: baseCounts[s.stage] ?? baseCounts[s.label] ?? s.count,
+    count: stageCounts[s.stage] ?? stageCounts[s.label] ?? 0,
   }));
 
   const onSelectStage = useCallback((stage: string) => {
@@ -156,94 +186,47 @@ export default function CrmPipeline({ filters }: Props) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
     if (!selectedStage) {
       setPathData(null);
       return;
     }
-    void (async () => {
-      try {
-        const q = new URLSearchParams();
-        q.set("milestoneStage", selectedStage);
-        q.set("leadType", "all");
-        if (sharedFilters.assignee) q.set("assignee", sharedFilters.assignee);
-        if ((sharedFilters.assignees ?? []).length > 0) {
-          q.set("assignees", (sharedFilters.assignees ?? []).join(","));
-        }
-        if (sharedFilters.dateFrom) q.set("dateFrom", sharedFilters.dateFrom);
-        if (sharedFilters.dateTo) q.set("dateTo", sharedFilters.dateTo);
-        if (sharedFilters.milestoneStageCategory) q.set("milestoneStageCategory", sharedFilters.milestoneStageCategory);
-        if (sharedFilters.milestoneSubStage) q.set("milestoneSubStage", sharedFilters.milestoneSubStage);
-        const res = await fetch(`/api/crm/crm-milestone-counts-filtered?${q.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-          headers: getCrmAuthHeaders(),
-        });
-        if (!res.ok) throw new Error(`Stage counts HTTP ${res.status}`);
-        const json = (await res.json()) as CrmMilestoneCountsApiResponse;
-
-        const stageCount =
-          json.countsByMilestoneStage?.find((r) => norm(r.key) === norm(selectedStage))?.count ?? 0;
-        const bySub = new Map<string, number>();
-        for (const row of json.countsByMilestoneSubStage ?? []) {
-          bySub.set(norm(row.key), row.count);
-        }
-
-        const wonItems: MilestonePathItem[] = [];
-        const lostItems: MilestonePathItem[] = [];
-        let wi = 0;
-        let li = 0;
-        for (const m of subMappings ?? []) {
-          if (norm(m.stage) !== norm(selectedStage)) continue;
-          const count = bySub.get(norm(m.subStageName)) ?? 0;
-          const item: MilestonePathItem = {
-            title: m.subStageName.toUpperCase(),
-            value: count,
-            leftAccent: isWonCategory(m.stageCategory) ? leftAccent(wi++) : leftAccent(li++),
-          };
-          if (isWonCategory(m.stageCategory)) wonItems.push(item);
-          if (isLostCategory(m.stageCategory)) lostItems.push(item);
-        }
-
-        const wonTotal = wonItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
-        const lostTotal = lostItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
-
-        if (!cancelled) {
-          setPathData({
-            stageTitle: selectedStage,
-            stageSubtitle: subtitleForStage(selectedStage),
-            totalActiveLeads: stageCount,
-            wonTotal,
-            lostTotal,
-            wonItems,
-            lostItems,
-          });
-        }
-      } catch {
-        if (!cancelled) {
-          setPathData({
-            stageTitle: selectedStage,
-            stageSubtitle: subtitleForStage(selectedStage),
-            totalActiveLeads: 0,
-            wonTotal: 0,
-            lostTotal: 0,
-            wonItems: [],
-            lostItems: [],
-          });
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    const scopedLeads = filteredLeads.filter((lead) => norm(stageFromLead(lead)) === norm(selectedStage));
+    const bySub = scopedLeads.reduce<Map<string, number>>((acc, lead) => {
+      const sub = subStageFromLead(lead);
+      if (!sub) return acc;
+      const key = norm(sub);
+      acc.set(key, (acc.get(key) ?? 0) + 1);
+      return acc;
+    }, new Map());
+    const wonItems: MilestonePathItem[] = [];
+    const lostItems: MilestonePathItem[] = [];
+    let wi = 0;
+    let li = 0;
+    for (const m of subMappings ?? []) {
+      if (norm(m.stage) !== norm(selectedStage)) continue;
+      const count = bySub.get(norm(m.subStageName)) ?? 0;
+      const item: MilestonePathItem = {
+        title: m.subStageName.toUpperCase(),
+        value: count,
+        leftAccent: isWonCategory(m.stageCategory) ? leftAccent(wi++) : leftAccent(li++),
+      };
+      if (isWonCategory(m.stageCategory)) wonItems.push(item);
+      if (isLostCategory(m.stageCategory)) lostItems.push(item);
+    }
+    const wonTotal = wonItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
+    const lostTotal = lostItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
+    setPathData({
+      stageTitle: selectedStage,
+      stageSubtitle: subtitleForStage(selectedStage),
+      totalActiveLeads: scopedLeads.length,
+      wonTotal,
+      lostTotal,
+      wonItems,
+      lostItems,
+    });
   }, [
     selectedStage,
-    sharedFilters.assignee,
-    (sharedFilters.assignees ?? []).join("|"),
-    sharedFilters.dateFrom,
-    sharedFilters.dateTo,
-    sharedFilters.milestoneStageCategory,
-    sharedFilters.milestoneSubStage,
+    filteredLeads,
     subMappings,
   ]);
 

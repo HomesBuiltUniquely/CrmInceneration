@@ -31,6 +31,8 @@ export type ApiLead = {
   updatedAt?: string;
   verified?: boolean | null;
   verificationStatus?: string | null;
+  /** Next follow-up (string in API; parse client-side for “today” / overdue). */
+  followUpDate?: string | null;
   additionalLeadSources?: string | string[] | null;
   stage?: {
     milestoneStage?: string | null;
@@ -75,11 +77,17 @@ function hasReinquiry(lead: ApiLead): boolean {
   return typeof src === "string" && src.trim().length > 0;
 }
 
-function assigneeName(lead: ApiLead): string {
+/** Same fields the list uses for “owner”; includes `username` when name/fullName missing. */
+export function crmLeadAssigneeLabel(lead: ApiLead): string {
   const a = lead.assignee ?? lead.salesOwner;
-  if (!a) return "—";
-  if (typeof a === "string") return a;
-  return a.name ?? a.fullName ?? "—";
+  if (!a) return "";
+  if (typeof a === "string") return a.trim();
+  const o = a as { name?: string; fullName?: string; username?: string };
+  return String(o.name ?? o.fullName ?? o.username ?? "").trim();
+}
+
+function assigneeName(lead: ApiLead): string {
+  return crmLeadAssigneeLabel(lead) || "—";
 }
 
 function leadDisplayName(lead: ApiLead): string {

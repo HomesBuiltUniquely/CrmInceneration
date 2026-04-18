@@ -2,7 +2,7 @@
 
 import { type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
+import { dedupeLeadSources, formatLeadSourceLabel } from "@/lib/lead-source-utils";
 
 /* ─────────────────────────────────────────────
    BUTTON
@@ -198,24 +198,13 @@ export function StatusPill({ status }: { status: string }) {
 
 /** Primary tag = `leadSource` from GET details; optional chips = parsed `additionalLeadSources`. */
 export function LeadSourceTag({ primary, extras }: { primary: string; extras?: string[] }) {
-  const mainRaw = primary.trim() || "—";
-  const main = formatLeadSourceLabel(mainRaw);
-  const filtered = (extras ?? []).filter(
-    (x) => x.trim() && x.trim().toLowerCase() !== mainRaw.toLowerCase()
-  );
+  const deduped = dedupeLeadSources([primary, ...(extras ?? [])]);
+  const main = deduped[0] ?? "External Lead";
   return (
-    <span className="inline-flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center rounded-full border border-[var(--crm-info)] bg-[var(--crm-info-bg)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-info-text)]">
-        {main}
+    <span className="inline-flex items-center">
+      <span className="inline-flex rounded-full border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-accent)]">
+        {formatLeadSourceLabel(main)}
       </span>
-      {filtered.map((x) => (
-        <span
-          key={x}
-          className="inline-flex rounded-full border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--crm-accent)]"
-        >
-          {formatLeadSourceLabel(x)}
-        </span>
-      ))}
     </span>
   );
 }

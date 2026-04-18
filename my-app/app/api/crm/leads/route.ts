@@ -3,6 +3,7 @@ import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 
 function parseUpdatedAt(a: ApiLead): number {
   const u = a.updatedAt;
@@ -60,6 +61,7 @@ export async function GET(req: NextRequest) {
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
   const viewerRole = await resolveViewerRole(req);
+  const allowedLeadTypes = getAllowedLeadTypesForRole(viewerRole);
 
   const extraParams = [
     "stage",
@@ -80,6 +82,12 @@ export async function GET(req: NextRequest) {
 
   if (!mergeAll && managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+      return NextResponse.json(
+        { error: `${viewerRole || "Current role"} cannot access ${leadType} in this view.` },
+        { status: 403 }
+      );
+    }
     const upstream = new URL(`${BASE_URL}${managerEndpoint}`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("page", page);
@@ -101,9 +109,9 @@ export async function GET(req: NextRequest) {
 
   if (!mergeAll && !managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
-    if (viewerRole === "PRESALES_MANAGER" && leadType !== "formlead") {
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
-        { error: "PRESALES_MANAGER can only access formlead in filter flow." },
+        { error: `${viewerRole || "Current role"} cannot access ${leadType} in filter flow.` },
         { status: 403 }
       );
     }
@@ -133,10 +141,19 @@ export async function GET(req: NextRequest) {
 
   const selectedTypes =
     leadTypeParam === "all"
-      ? CRM_LEAD_TYPES
+      ? allowedLeadTypes
       : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
-        : CRM_LEAD_TYPES;
+        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+          : []
+        : allowedLeadTypes;
+
+  if (selectedTypes.length === 0) {
+    return NextResponse.json(
+      { error: `${viewerRole || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { status: 403 }
+    );
+  }
 
   const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const fetches = selectedTypes.map(async (leadType) => {
