@@ -78,13 +78,14 @@ function parseBudgetInInr(raw: unknown, assumeLakhsWhenUnitMissing = false): num
 }
 
 function leadBudgetInInr(lead: ApiLead): number {
+  const leadRecord = lead as Record<string, unknown>;
   const dynamic =
     lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
       ? (lead.dynamicFields as Record<string, unknown>)
       : {};
   return parseBudgetInInr(
-    lead.budget ??
-      (lead as Record<string, unknown>).estimatedBudget ??
+    leadRecord.budget ??
+      leadRecord.estimatedBudget ??
       dynamic.budget ??
       dynamic.estimatedBudget ??
       dynamic.customerBudget,
