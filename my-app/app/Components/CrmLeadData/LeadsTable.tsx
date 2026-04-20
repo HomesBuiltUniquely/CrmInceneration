@@ -60,9 +60,6 @@ function StatusInline({ status }: { status: NonNullable<LeadRowModel["journey"][
   );
 }
 
-function OwnerAvatar() {
-  return <div className="h-7 w-7 rounded-full bg-[var(--crm-border)] ring-2 ring-[var(--crm-surface)]" />;
-}
 
 type LeadRowActionProps = {
   row: LeadRowModel;
@@ -143,7 +140,6 @@ function LeadRowAction({
         ) : null}
       </div>
       <div className="col-span-3 flex min-h-[64px] items-start gap-3">
-        <div className="h-9 w-9 rounded-full bg-gradient-to-br from-[var(--crm-border)] to-slate-300 shadow-inner" />
         <div className="leading-tight">
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
@@ -174,7 +170,6 @@ function LeadRowAction({
       </div>
 
       <div className="col-span-2 flex min-h-[64px] items-center gap-2">
-        <OwnerAvatar />
         <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 

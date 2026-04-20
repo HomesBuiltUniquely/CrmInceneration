@@ -382,7 +382,6 @@ export default function LeadsToolbar({
                     ["Overdue Leads", leadTypeCounts.overdue ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
-                    ["Verified Leads", leadTypeCounts.verified ?? 0],
                   ]
                 : isSalesManager
                   ? [
