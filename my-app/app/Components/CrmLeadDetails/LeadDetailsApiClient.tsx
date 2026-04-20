@@ -39,10 +39,39 @@ import {
 } from "@/lib/sales-closure";
 import { canPresalesVerifyLead } from "@/lib/lead-verify-role";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
-import {
-  buildEmailRequest,
-  sendEmailNotification,
-} from "@/lib/email-request-builder";
+import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
+import { CRM_TOKEN_STORAGE_KEY, getAuthApiBaseUrl } from "@/lib/auth/api";
+
+type SalesExecutiveOption = {
+  id: number;
+  fullName?: string;
+  username?: string;
+  active?: boolean;
+};
+
+function salesExecutiveLabel(u: SalesExecutiveOption): string {
+  return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
+}
+
+async function fetchSalesExecutivesForPicker(token: string): Promise<SalesExecutiveOption[]> {
+  const header = {
+    Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+  };
+  const res = await fetch(
+    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent("SALES_EXECUTIVE")}`,
+    { cache: "no-store", headers: header },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as SalesExecutiveOption[];
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter((u) => u.active !== false)
+    .sort((a, b) =>
+      salesExecutiveLabel(a).localeCompare(salesExecutiveLabel(b), undefined, {
+        sensitivity: "base",
+      }),
+    );
+}
 
 const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   id,
@@ -82,12 +111,14 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
 type TimelineEntry = {
   key: string;
   createdAt: string;
-  source: string;
+  sourceType: string;
   name: string;
+  leadType: CrmLeadType;
+  leadId: string;
 };
 
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
-  formlead: "External/Form",
+  formlead: "External Lead",
   glead: "Google Ads",
   mlead: "Meta Ads",
   addlead: "Add Lead",
@@ -116,26 +147,45 @@ function formatTimelineDate(input: string): string {
   return `${day}-${month}-${year} ${String(hour12).padStart(2, "0")}:${mm} ${ampm}`;
 }
 
-function timeAgo(input: string): string {
+function relativeDayText(input: string): string {
   const dt = parseDateLoose(input);
-  if (!dt) return "some time ago";
-  const diffMs = Date.now() - dt.getTime();
-  const mins = Math.max(1, Math.floor(diffMs / (60 * 1000)));
-  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs} hour${hrs === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks} week${weeks === 1 ? "" : "s"} ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
-  const years = Math.floor(days / 365);
-  return `${years} year${years === 1 ? "" : "s"} ago`;
+  if (!dt) return "some day";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  const diffDays = Math.floor((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return "today";
+  if (diffDays === 1) return "yesterday";
+  return `${diffDays} days ago`;
 }
 
 function buildTimelineLabel(entry: TimelineEntry): string {
-  return `${timeAgo(entry.createdAt)} it came on ${formatTimelineDate(entry.createdAt)} in ${entry.source} as ${entry.name}`;
+  return `${relativeDayText(entry.createdAt)} it came on ${formatTimelineDate(entry.createdAt)} in ${entry.sourceType} as ${entry.name}`;
+}
+
+function parseSourceTypeFromDescription(description: unknown): string | null {
+  if (typeof description !== "string") return null;
+  const text = description.trim();
+  if (!text) return null;
+  const match = text.match(/\breceived\s+from\s+(.+?)(?:\s+as\s+|$)/i);
+  if (!match?.[1]) return null;
+  const parsed = match[1].trim().replace(/[.,;:]$/, "");
+  return parsed ? normalizeLeadTypeLabel(parsed) : null;
+}
+
+function parseNameFromDescription(description: unknown): string | null {
+  if (typeof description !== "string") return null;
+  const text = description.trim();
+  if (!text) return null;
+  const match = text.match(/\bfor\s+(.+?)(?:[.!,;:]|$)/i);
+  if (!match?.[1]) return null;
+  const parsed = match[1].trim().replace(/[.,;:]$/, "");
+  return parsed || null;
+}
+
+function truncateLabel(label: string, max = 80): string {
+  if (label.length <= max) return label;
+  return `${label.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
 }
 
 export default function LeadDetailsApiClient({
@@ -164,7 +214,10 @@ export default function LeadDetailsApiClient({
   const [verifying, setVerifying] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [verifyPincode, setVerifyPincode] = useState("");
+  /** Selected sales executive user id as string; empty = do not send assignment. */
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
+  const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<SalesExecutiveOption[]>([]);
+  const [salesExecutivesLoading, setSalesExecutivesLoading] = useState(false);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
@@ -172,12 +225,11 @@ export default function LeadDetailsApiClient({
   );
   const [quoteBody, setQuoteBody] = useState("");
   const [createdTimelineOptions, setCreatedTimelineOptions] = useState<
-    Array<{ value: string; label: string }>
+    Array<{ value: string; label: string; fullLabel: string; leadType: CrmLeadType; leadId: string }>
   >([]);
   const [createdTimelineLoading, setCreatedTimelineLoading] = useState(false);
-  const [lead, setLead] = useState<Lead>(() =>
-    emptyLead(leadId, validLeadType ? leadType : "formlead"),
-  );
+  const [selectedTimelineValue, setSelectedTimelineValue] = useState("");
+  const [lead, setLead] = useState<Lead>(() => emptyLead(leadId, validLeadType ? leadType : "formlead"));
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown>>({});
   const { notifySuccess, notifyError } = useGlobalNotifier();
 
@@ -217,6 +269,33 @@ export default function LeadDetailsApiClient({
     setCanVerifyRole(canPresalesVerifyLead());
   }, []);
 
+  useEffect(() => {
+    if (!verifyModalOpen) return;
+    let cancelled = false;
+    const token =
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? ""
+        : "";
+    if (!token.trim()) {
+      setSalesExecutiveOptions([]);
+      return;
+    }
+    setSalesExecutivesLoading(true);
+    void fetchSalesExecutivesForPicker(token)
+      .then((list) => {
+        if (!cancelled) setSalesExecutiveOptions(list);
+      })
+      .catch(() => {
+        if (!cancelled) setSalesExecutiveOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSalesExecutivesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [verifyModalOpen]);
+
   const patchLead = useCallback((patch: Partial<Lead>) => {
     setLead((prev) => ({ ...prev, ...patch }));
   }, []);
@@ -225,24 +304,25 @@ export default function LeadDetailsApiClient({
     async (detailJson: Record<string, unknown>, activitiesJson: unknown) => {
       if (!validLeadType) return;
       setCreatedTimelineLoading(true);
-      const entries = new Map<string, TimelineEntry>();
+      const entries: TimelineEntry[] = [];
       try {
         const currentCreatedAt =
-          typeof detailJson.createdAt === "string" &&
-          detailJson.createdAt.trim()
-            ? detailJson.createdAt.trim()
-            : "";
+          typeof detailJson.createdAt === "string" && detailJson.createdAt.trim() ? detailJson.createdAt.trim() : "";
+        const currentName =
+          (typeof detailJson.name === "string" && detailJson.name.trim()) ||
+          (typeof detailJson.fullName === "string" && detailJson.fullName.trim()) ||
+          (((detailJson.dynamicFields as Record<string, unknown> | undefined)?.customerName as string | undefined)?.trim() || "") ||
+          lead.name ||
+          "Unknown";
+
         if (currentCreatedAt) {
-          entries.set(`${leadType}:${leadId}`, {
-            key: `${leadType}:${leadId}`,
+          entries.push({
+            key: `original:${leadType}:${leadId}:${currentCreatedAt}`,
             createdAt: currentCreatedAt,
-            source: SOURCE_LABELS[leadType],
-            name:
-              (typeof detailJson.name === "string" && detailJson.name.trim()) ||
-              (typeof detailJson.fullName === "string" &&
-                detailJson.fullName.trim()) ||
-              lead.name ||
-              "Unknown",
+            sourceType: SOURCE_LABELS[leadType],
+            name: currentName,
+            leadType,
+            leadId,
           });
         }
 
@@ -253,90 +333,36 @@ export default function LeadDetailsApiClient({
               )
             ? ((activitiesJson as { content?: unknown[] }).content ?? [])
             : [];
-        for (const row of activityRows) {
+
+        for (let idx = 0; idx < activityRows.length; idx++) {
+          const row = activityRows[idx];
           const item = row as Record<string, unknown>;
           const type = String(item.activityType ?? "").toUpperCase();
-          if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED")
-            continue;
-          const createdAt =
-            typeof item.createdAt === "string" ? item.createdAt.trim() : "";
-          if (!createdAt) continue;
-          const desc =
-            typeof item.description === "string" ? item.description : "";
-          entries.set(`${type}:${createdAt}:${desc}`, {
-            key: `${type}:${createdAt}:${desc}`,
-            createdAt,
-            source: SOURCE_LABELS[leadType],
-            name:
-              (typeof detailJson.name === "string" && detailJson.name.trim()) ||
-              (typeof detailJson.fullName === "string" &&
-                detailJson.fullName.trim()) ||
-              lead.name ||
-              "Unknown",
-          });
-        }
+          if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED") continue;
 
-        const queries = [
-          typeof detailJson.phone === "string" ? detailJson.phone.trim() : "",
-          typeof detailJson.phoneNumber === "string"
-            ? detailJson.phoneNumber.trim()
-            : "",
-          typeof detailJson.email === "string" ? detailJson.email.trim() : "",
-          typeof detailJson.name === "string" ? detailJson.name.trim() : "",
-        ].filter(Boolean);
-        const searchTerm = queries[0] || "";
-        if (searchTerm) {
-          const allTypes: CrmLeadType[] = [
-            "formlead",
-            "glead",
-            "mlead",
-            "addlead",
-            "websitelead",
-          ];
-          const res = await Promise.all(
-            allTypes.map(async (t) => {
-              const q = new URLSearchParams({
-                leadType: t,
-                page: "0",
-                size: "100",
-                search: searchTerm,
-              });
-              const r = await fetch(`/api/crm/leads?${q.toString()}`, {
-                cache: "no-store",
-                credentials: "include",
-              });
-              if (!r.ok) return [];
-              const json = (await r.json().catch(() => ({}))) as {
-                content?: unknown[];
-              };
-              return Array.isArray(json.content) ? json.content : [];
-            }),
-          );
-          for (let i = 0; i < allTypes.length; i++) {
-            const t = allTypes[i];
-            for (const raw of res[i]) {
-              const row = raw as Record<string, unknown>;
-              const id = String(row.id ?? "");
-              if (!id || (id === leadId && t === leadType)) continue;
-              const createdAt =
-                typeof row.createdAt === "string" ? row.createdAt.trim() : "";
-              if (!createdAt) continue;
-              entries.set(`${t}:${id}`, {
-                key: `${t}:${id}`,
-                createdAt,
-                source: SOURCE_LABELS[t],
-                name:
-                  (typeof row.name === "string" && row.name.trim()) ||
-                  (typeof row.fullName === "string" && row.fullName.trim()) ||
-                  "Unknown",
-              });
-            }
-          }
+          const createdAt = typeof item.createdAt === "string" ? item.createdAt.trim() : "";
+          if (!createdAt) continue;
+
+          const sourceType = parseSourceTypeFromDescription(item.description) ?? SOURCE_LABELS[leadType];
+          const name = parseNameFromDescription(item.description) ?? currentName;
+          entries.push({
+            key: `${type}:${createdAt}:${idx}`,
+            createdAt,
+            sourceType,
+            name,
+            leadType,
+            leadId,
+          });
         }
       } catch {
         // keep fallback and avoid page failure
       } finally {
-        const sorted = [...entries.values()].sort((a, b) => {
+        const dedup = new Map<string, TimelineEntry>();
+        for (const entry of entries) {
+          const dedupKey = `${entry.createdAt}|${entry.sourceType.toLowerCase()}|${entry.name.toLowerCase()}`;
+          if (!dedup.has(dedupKey)) dedup.set(dedupKey, entry);
+        }
+        const sorted = [...dedup.values()].sort((a, b) => {
           const bt = parseDateLoose(b.createdAt)?.getTime() ?? 0;
           const at = parseDateLoose(a.createdAt)?.getTime() ?? 0;
           return bt - at;
@@ -344,15 +370,28 @@ export default function LeadDetailsApiClient({
         const options = sorted.length
           ? sorted.map((entry) => ({
               value: entry.key,
-              label: buildTimelineLabel(entry),
+              fullLabel: buildTimelineLabel(entry),
+              label: truncateLabel(buildTimelineLabel(entry)),
+              leadType: entry.leadType,
+              leadId: entry.leadId,
             }))
           : [
               {
-                value: "fallback",
-                label: `${lead.createdAt} in ${SOURCE_LABELS[leadType]} as ${lead.name}`,
+                value: `fallback:${leadType}:${leadId}`,
+                fullLabel: `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(
+                  lead.createdAt
+                )} in ${SOURCE_LABELS[leadType]} as ${lead.name}`,
+                label: truncateLabel(
+                  `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(lead.createdAt)} in ${
+                    SOURCE_LABELS[leadType]
+                  } as ${lead.name}`
+                ),
+                leadType,
+                leadId,
               },
             ];
         setCreatedTimelineOptions(options);
+        setSelectedTimelineValue(options[0]?.value ?? "");
         setCreatedTimelineLoading(false);
       }
     },
@@ -595,90 +634,6 @@ export default function LeadDetailsApiClient({
       }));
       await postManualActivity(lt, leadId, "NOTE", args.note);
       await refreshActivities();
-
-      // Trigger email notification for this substage
-      console.log(
-        "[email] Attempting to send email for substage:",
-        args.feedback,
-      );
-      console.log("[email] Lead email:", leadForSave.email);
-      console.log("[email] Lead name:", leadForSave.name);
-
-      const emailRequest = buildEmailRequest(leadForSave, args.feedback);
-      console.log("[email] Email request built:", emailRequest);
-
-      if (emailRequest) {
-        console.log("[email] Sending email notification...");
-        void sendEmailNotification(emailRequest)
-          .then((result) => {
-            console.log("[email] Response:", result);
-            if (!result.success) {
-              console.warn("[email notification]", result.message);
-            } else {
-              console.log("[email] Email sent successfully!");
-            }
-          })
-          .catch((err) => {
-            console.error("[email notification] Error:", err);
-          });
-      }
-
-      // Additionally, when a meeting is scheduled/rescheduled, send a design-preference
-      // email to the designer (if available). This copies the meeting payload but
-      // targets the designer's email/name so backend can use the same meeting template
-      // or a designer-facing template as configured server-side.
-      const ms = persistedSubstage?.trim();
-      if (ms === "Meeting Scheduled" || ms === "Meeting Rescheduled") {
-        const designerEmail = leadForSave.designerEmail?.trim();
-        if (designerEmail) {
-          // Build a separate email request for the designer by using the same
-          // builder but substituting the lead's email/name with the designer's.
-          const designerLead = {
-            ...leadForSave,
-            email: designerEmail,
-            name:
-              leadForSave.designerName?.trim() ||
-              leadForSave.name ||
-              "Designer",
-          } as Lead;
-
-          const designerRequest = buildEmailRequest(
-            designerLead,
-            persistedSubstage || "Meeting Scheduled",
-          );
-
-          if (designerRequest) {
-            console.log(
-              "[email] Sending design-preference email to designer:",
-              designerEmail,
-            );
-            void sendEmailNotification(designerRequest)
-              .then((res) => {
-                console.log("[email][designer] Response:", res);
-                if (!res.success)
-                  console.warn("[email][designer]", res.message);
-              })
-              .catch((err) => {
-                console.error("[email][designer] Error:", err);
-              });
-          } else {
-            console.log(
-              "[email] Designer email not sent — builder returned null for designer request.",
-            );
-          }
-        } else {
-          console.log(
-            "[email] No designer email available; skipping design-preference email.",
-          );
-        }
-      }
-
-      if (!emailRequest) {
-        console.warn(
-          "[email] No email request built - substage may not trigger emails or missing email",
-        );
-      }
-
       notifySuccess("Saved");
     },
     [baseDetail, lead, leadId, leadTypeParam, refreshActivities, validLeadType],
@@ -724,6 +679,16 @@ export default function LeadDetailsApiClient({
           salesClosureHref={salesClosureHref}
           createdTimelineOptions={createdTimelineOptions}
           createdTimelineLoading={createdTimelineLoading}
+          createdTimelineValue={selectedTimelineValue}
+          onCreatedTimelineChange={(selected) => {
+            if (!selected) return;
+            setSelectedTimelineValue(selected);
+            const chosen = createdTimelineOptions.find((opt) => opt.value === selected);
+            if (!chosen) return;
+            const { leadType: nextLeadType, leadId: nextLeadId } = chosen;
+            if (nextLeadType === leadType && nextLeadId === leadId) return;
+            window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
+          }}
         />
         <DesignQaPanel leadId={leadId} open={designQaOpen} />
         <StatsRow lead={lead} />
@@ -794,8 +759,7 @@ export default function LeadDetailsApiClient({
               Verify Lead
             </h3>
             <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
-              Pincode is mandatory. You can optionally provide Sales Executive
-              ID for manual assignment.
+              Pincode is mandatory. Optionally assign a sales executive by name when verifying this lead.
             </p>
             <div className="mt-4 space-y-3">
               <label className="block">
@@ -811,14 +775,35 @@ export default function LeadDetailsApiClient({
               </label>
               <label className="block">
                 <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Sales Executive ID (optional)
+                  Sales Executive (optional)
                 </span>
-                <input
-                  value={verifySalesExecutiveId}
-                  onChange={(e) => setVerifySalesExecutiveId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  placeholder="e.g. 52"
-                />
+                <div className="relative mt-1">
+                  <select
+                    value={verifySalesExecutiveId}
+                    onChange={(e) => setVerifySalesExecutiveId(e.target.value)}
+                    className="w-full appearance-none rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 pr-9 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                    disabled={salesExecutivesLoading}
+                  >
+                    <option value="">— No assignment —</option>
+                    {salesExecutiveOptions.map((u) => (
+                      <option key={u.id} value={String(u.id)}>
+                        {salesExecutiveLabel(u)}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[var(--crm-text-muted)]">
+                    ▾
+                  </span>
+                </div>
+                {salesExecutivesLoading ? (
+                  <span className="mt-1 block text-[11px] text-[var(--crm-text-muted)]">
+                    Loading sales executives…
+                  </span>
+                ) : salesExecutiveOptions.length === 0 ? (
+                  <span className="mt-1 block text-[11px] text-amber-700">
+                    Could not load the list. You can still verify with pincode only.
+                  </span>
+                ) : null}
               </label>
             </div>
             <div className="mt-5 flex justify-end gap-2">

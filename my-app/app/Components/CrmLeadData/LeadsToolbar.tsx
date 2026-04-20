@@ -1,4 +1,13 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { getLeadTypeFilterOptions, isPresalesRole } from "@/lib/crm-role-access";
+import {
+  milestoneCategoryOptionsForStage,
+  milestoneStageOptionsFromNested,
+  milestoneSubStageOptionsForCategory,
+} from "@/lib/milestone-filter-tree";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
+import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
+import { normalizeRole } from "@/lib/auth/api";
 
 function Pill({
   label,
@@ -69,21 +78,26 @@ function SelectField({
   label,
   value,
   onChange,
+  disabled,
   children,
 }: {
   label: string;
   value: string;
   onChange: (next: string) => void;
+  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label className="group flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
+    <label
+      className={`group flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)] ${disabled ? "opacity-60" : ""}`}
+    >
       <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</span>
       <div className="relative min-w-0 flex-1">
         <select
           value={value}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-transparent pr-6 text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
+          className="w-full cursor-pointer appearance-none bg-transparent pr-6 text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none disabled:cursor-not-allowed"
         >
           {children}
         </select>
@@ -101,6 +115,8 @@ type LeadsToolbarProps = {
   rangeEnd?: number;
   loading?: boolean;
   leadTypeCounts?: Record<string, number>;
+  /** When set (e.g. from `Header`), used for badge / role checks on first paint so exec assignee scoping is not counted as a filter. */
+  authRole?: string;
   viewerRole?: string;
   leadType: string;
   sort: string;
@@ -122,9 +138,7 @@ type LeadsToolbarProps = {
   presalesManagerOptions: string[];
   presalesExecOptions: string[];
   assigneeOptions: string[];
-  milestoneStageOptions: string[];
-  milestoneStageCategoryOptions: string[];
-  milestoneSubStageOptions: string[];
+  pipelineNested: CrmNestedStage[];
   onLeadTypeChange: (next: string) => void;
   onSortChange: (next: string) => void;
   onAssigneeChange: (next: string) => void;
@@ -143,6 +157,8 @@ type LeadsToolbarProps = {
   deleteAllLabel?: string;
   deleteAllDisabled?: boolean;
   onDeleteAllClick?: () => void;
+  insightActive?: InsightTableMode;
+  onInsightNavigate?: (mode: Exclude<InsightTableMode, null>) => void;
 };
 
 export default function LeadsToolbar({
@@ -151,6 +167,7 @@ export default function LeadsToolbar({
   rangeEnd,
   loading,
   leadTypeCounts = {},
+  authRole = "",
   viewerRole = "",
   leadType,
   sort,
@@ -172,9 +189,7 @@ export default function LeadsToolbar({
   presalesManagerOptions,
   presalesExecOptions,
   assigneeOptions,
-  milestoneStageOptions,
-  milestoneStageCategoryOptions,
-  milestoneSubStageOptions,
+  pipelineNested,
   onLeadTypeChange,
   onSortChange,
   onAssigneeChange,
@@ -193,38 +208,48 @@ export default function LeadsToolbar({
   deleteAllLabel = "Delete All",
   deleteAllDisabled = false,
   onDeleteAllClick,
+  insightActive = null,
+  onInsightNavigate,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
   const [openFilter, setOpenFilter] = useState(false);
   const [openSort, setOpenSort] = useState(false);
   const [openLeadTypes, setOpenLeadTypes] = useState(false);
-  const role = viewerRole.toUpperCase();
+  const role = normalizeRole(authRole || viewerRole);
   const isSalesManager = role === "SALES_MANAGER";
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = role === "PRESALES_EXECUTIVE";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
-  const commonLeadTypeOptions = [
-    { value: "all", label: "All Types" },
-    { value: "addlead", label: "Add Lead" },
-    { value: "formlead", label: "Form Lead" },
-    { value: "glead", label: "Google Leads" },
-    { value: "mlead", label: "Meta Leads" },
-    { value: "websitelead", label: "Website Lead" },
-    ...(isSalesExecutive ? [{ value: "verified", label: "Verified Leads" }] : []),
-  ];
-  const leadTypeOptions = isPresalesManager
-    ? [{ value: "formlead", label: "Form Lead" }]
-    : commonLeadTypeOptions;
+  const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
+
+  const milestoneStageOptions = useMemo(
+    () => milestoneStageOptionsFromNested(pipelineNested),
+    [pipelineNested],
+  );
+  const milestoneStageCategoryOptions = useMemo(
+    () => milestoneCategoryOptionsForStage(pipelineNested, milestoneStage),
+    [pipelineNested, milestoneStage],
+  );
+  const milestoneSubStageOptions = useMemo(
+    () =>
+      milestoneSubStageOptionsForCategory(
+        pipelineNested,
+        milestoneStage,
+        milestoneStageCategory,
+      ),
+    [pipelineNested, milestoneStage, milestoneStageCategory],
+  );
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
-    const isDefaultLeadType = isPresalesManager
-      ? leadType === "formlead"
-      : leadType === "all";
+    const isDefaultLeadType = leadType === "all";
     if (!isDefaultLeadType) c += 1;
-    if (assignee) c += 1;
+    /** Exec roles get assignee forced to self in the parent for API scoping; not a user-applied filter (Assignee UI is hidden). */
+    const assigneeIsUserFilter =
+      assignee.trim().length > 0 && !isSalesExecutive && !isPresalesExecutive;
+    if (assigneeIsUserFilter) c += 1;
     if (milestoneStage) c += 1;
     if (milestoneStageCategory) c += 1;
     if (milestoneSubStage) c += 1;
@@ -239,9 +264,9 @@ export default function LeadsToolbar({
     return c;
   }, [
     assignee,
+    authRole,
     dateFrom,
     dateTo,
-    isPresalesManager,
     leadType,
     milestoneStage,
     milestoneStageCategory,
@@ -252,10 +277,11 @@ export default function LeadsToolbar({
     salesExecFilter,
     salesManagerFilter,
     reinquiry,
+    viewerRole,
   ]);
 
   const resetFilter = () => {
-    onLeadTypeChange(isPresalesManager ? "formlead" : "all");
+    onLeadTypeChange("all");
     onAssigneeChange("");
     onMilestoneStageChange("");
     onMilestoneStageCategoryChange("");
@@ -351,7 +377,8 @@ export default function LeadsToolbar({
                 ? [
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
-                    ["Followup Date", leadTypeCounts.followup ?? 0],
+                    ["Active Follow Up Date", leadTypeCounts.followupsActive ?? 0],
+                    ["Closure Follow Up Date", leadTypeCounts.followupsClosure ?? 0],
                     ["Overdue Leads", leadTypeCounts.overdue ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
@@ -359,37 +386,74 @@ export default function LeadsToolbar({
                   ]
                 : isSalesManager
                   ? [
-                      ["My Assigned Leads", leadTypeCounts.all ?? 0],
+                      [
+                        "My Assigned Leads",
+                        leadTypeCounts.managerMine ?? leadTypeCounts.all ?? 0,
+                      ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
-                      ["Follow Ups Today", leadTypeCounts.followups ?? 0],
-                      ["External Leads", leadTypeCounts.formlead ?? 0],
+                      ["Active Follow Up Date", leadTypeCounts.followupsActive ?? 0],
+                      ["Closure Follow Up Date", leadTypeCounts.followupsClosure ?? 0],
+                      ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                      ["Add Leads", leadTypeCounts.addlead ?? 0],
-                      ["Website Leads", leadTypeCounts.websitelead ?? 0],
+                      ["Add Lead", leadTypeCounts.addlead ?? 0],
+                      ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]
-                  : isPresalesFlow
+                  : isPresalesRole(role)
                     ? [
-                        ["My Assigned Leads", leadTypeCounts.all ?? 0],
-                        ["External Leads", leadTypeCounts.formlead ?? 0],
-                        ["Google Leads", leadTypeCounts.glead ?? 0],
-                        ["Meta Leads", leadTypeCounts.mlead ?? 0],
-                        ["Add Leads", leadTypeCounts.addlead ?? 0],
-                        ["Website Leads", leadTypeCounts.websitelead ?? 0],
+                        ["External Lead", leadTypeCounts.formlead ?? 0],
+                        ["Add Lead", leadTypeCounts.addlead ?? 0],
+                        ["Website Lead", leadTypeCounts.websitelead ?? 0],
                       ]
                   : [
                       ["My Assigned Leads", leadTypeCounts.all ?? 0],
-                      ["External Leads", leadTypeCounts.formlead ?? 0],
+                      ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                      ["Add Leads", leadTypeCounts.addlead ?? 0],
-                      ["Website Leads", leadTypeCounts.websitelead ?? 0],
-                    ]).map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-4 text-center">
-                  <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
-                  <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</div>
-                </div>
-              ))}
+                      ["Add Lead", leadTypeCounts.addlead ?? 0],
+                      ["Website Lead", leadTypeCounts.websitelead ?? 0],
+                    ]).map(([label, value]) => {
+                const insightKey: Exclude<InsightTableMode, null> | null =
+                  label === "Active Follow Up Date"
+                    ? "followUpActive"
+                    : label === "Closure Follow Up Date"
+                      ? "followUpClosure"
+                      : label === "Overdue Leads"
+                        ? "overdue"
+                        : label === "Team Leads"
+                          ? "teamLeads"
+                          : null;
+                const interactive = Boolean(insightKey && onInsightNavigate);
+                const isActive = Boolean(insightKey && insightActive === insightKey);
+                const tileClass = `rounded-xl border px-3 py-4 text-center transition-colors ${
+                  isActive
+                    ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
+                    : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
+                } ${interactive ? "cursor-pointer hover:bg-[var(--crm-surface)] w-full" : ""}`;
+                const inner = (
+                  <>
+                    <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
+                    <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</div>
+                  </>
+                );
+                if (interactive && insightKey) {
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => onInsightNavigate?.(insightKey)}
+                      className={tileClass}
+                    >
+                      {inner}
+                    </button>
+                  );
+                }
+                return (
+                  <div key={label} className={tileClass}>
+                    {inner}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -497,7 +561,15 @@ export default function LeadsToolbar({
                   ))}
                 </SelectField>
               ) : null}
-              <SelectField label="Stage" value={milestoneStage} onChange={onMilestoneStageChange}>
+              <SelectField
+                label="Stage"
+                value={milestoneStage}
+                onChange={(v) => {
+                  onMilestoneStageChange(v);
+                  onMilestoneStageCategoryChange("");
+                  onMilestoneSubStageChange("");
+                }}
+              >
                 <option value="">All</option>
                 {milestoneStageOptions.map((v) => (
                   <option key={v} value={v}>
@@ -508,17 +580,34 @@ export default function LeadsToolbar({
               <SelectField
                 label="Category"
                 value={milestoneStageCategory}
-                onChange={onMilestoneStageCategoryChange}
+                onChange={(v) => {
+                  onMilestoneStageCategoryChange(v);
+                  onMilestoneSubStageChange("");
+                }}
+                disabled={!milestoneStage.trim()}
               >
-                <option value="">All</option>
+                <option value="">
+                  {milestoneStage.trim() ? "All" : "Select stage first"}
+                </option>
                 {milestoneStageCategoryOptions.map((v) => (
                   <option key={v} value={v}>
                     {v}
                   </option>
                 ))}
               </SelectField>
-              <SelectField label="Sub Stage" value={milestoneSubStage} onChange={onMilestoneSubStageChange}>
-                <option value="">All</option>
+              <SelectField
+                label="Sub Stage"
+                value={milestoneSubStage}
+                onChange={onMilestoneSubStageChange}
+                disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+              >
+                <option value="">
+                  {milestoneStage.trim() && milestoneStageCategory.trim()
+                    ? "All"
+                    : milestoneStage.trim()
+                      ? "Select category first"
+                      : "Select stage first"}
+                </option>
                 {milestoneSubStageOptions.map((v) => (
                   <option key={v} value={v}>
                     {v}

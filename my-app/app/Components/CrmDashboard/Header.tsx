@@ -126,7 +126,7 @@ export default function Header({ role = "sales_admin" }: Props) {
           ) : (
             <div>
               <LeadFilters role={role} onFiltersChange={handleFiltersChange} />
-              <AnalyticsBar />
+              <AnalyticsBar filters={dashboardFilters} />
               <CrmPipeline filters={dashboardFilters} />
               <InsightsStrip />
             </div>

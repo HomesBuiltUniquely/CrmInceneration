@@ -29,7 +29,7 @@ export default function Milestones({
 }: Props) {
   return (
     <main>
-      <div className="xl:w-263.75 xl:mt-7 xl:ml-6 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-[var(--crm-border)] xl:bg-[var(--crm-surface)] xl:shadow-[var(--crm-shadow-sm)]">
+      <div className="xl:mx-6 xl:mt-7 xl:w-[calc(100%-3rem)] xl:min-w-0 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-[var(--crm-border)] xl:bg-[var(--crm-surface)] xl:shadow-[var(--crm-shadow-sm)]">
         <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-5 py-2.5">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--crm-text-muted)]">

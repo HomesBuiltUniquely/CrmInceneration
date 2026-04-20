@@ -28,25 +28,33 @@ export function serializeAdditionalLeadSources(list: string[], rawFallback?: str
   return JSON.stringify(list);
 }
 
-/** Display labels: API slugs like `addlead` → `AddLead`, `glead` → `GLead`; otherwise title-case words. */
-const LEAD_SOURCE_SLUG_LABEL: Record<string, string> = {
-  addlead: "AddLead",
-  glead: "GLead",
-  mlead: "MLead",
-  formlead: "FormLead",
-  websitelead: "WebsiteLead",
-};
+export function normalizeLeadTypeLabel(raw: unknown): string {
+  const original = String(raw ?? "").trim();
+  const s = original.toLowerCase();
+  const compact = s.replace(/[^a-z0-9]/g, "");
+  if (!s) return "";
+  if (compact === "formlead" || compact === "externallead") return "External Lead";
+  if (compact === "glead" || compact === "googleads") return "Google Ads";
+  if (compact === "mlead" || compact === "metaads") return "Meta Ads";
+  if (compact === "alead" || compact === "addlead") return "Add Lead";
+  if (compact === "wlead" || compact === "websitelead") return "Website Lead";
+  return original;
+}
+
+export function dedupeLeadSources(rawSources: unknown[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const source of rawSources) {
+    const normalized = normalizeLeadTypeLabel(source);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+  }
+  return out;
+}
 
 export function formatLeadSourceLabel(raw: string): string {
-  const v = raw.trim();
-  if (!v || v === "—") return "—";
-  const compact = v.toLowerCase().replace(/\s+/g, "").replace(/-/g, "");
-  if (LEAD_SOURCE_SLUG_LABEL[compact]) {
-    return LEAD_SOURCE_SLUG_LABEL[compact];
-  }
-  return v
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
+  return normalizeLeadTypeLabel(raw);
 }

@@ -1,4 +1,5 @@
 type AnyLead = Record<string, unknown>;
+import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 
 function pick(...vals: unknown[]): string {
   for (const v of vals) {
@@ -135,5 +136,5 @@ export function getLeadDisplaySource(lead: AnyLead): string {
     firstMatchingValueByKeyPart(dynamic, ["source"]),
     lead.leadType,
   );
-  return resolved || "—";
+  return normalizeLeadTypeLabel(resolved || lead.leadType || "formlead");
 }

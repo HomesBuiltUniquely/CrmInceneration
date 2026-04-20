@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 
@@ -9,14 +10,36 @@ export default function LeadHeader({
   salesClosureHref,
   createdTimelineOptions = [],
   createdTimelineLoading = false,
+  createdTimelineValue = "",
+  onCreatedTimelineChange,
 }: {
   lead: Lead;
   onCompleteTask: () => void;
   /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
   salesClosureHref?: string | null;
-  createdTimelineOptions?: Array<{ value: string; label: string }>;
+  createdTimelineOptions?: Array<{ value: string; label: string; fullLabel?: string }>;
   createdTimelineLoading?: boolean;
+  createdTimelineValue?: string;
+  onCreatedTimelineChange?: (value: string) => void;
 }) {
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const timelineWrapRef = useRef<HTMLDivElement | null>(null);
+  const selectedTimeline = useMemo(
+    () => createdTimelineOptions.find((x) => x.value === createdTimelineValue) ?? null,
+    [createdTimelineOptions, createdTimelineValue]
+  );
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!timelineWrapRef.current) return;
+      if (!timelineWrapRef.current.contains(event.target as Node)) {
+        setTimelineOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, []);
+
   return (
     <div className="relative mb-6 flex flex-wrap items-center gap-5 overflow-hidden rounded-[24px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-7 py-6 shadow-[0_18px_40px_rgba(15,23,42,0.08)] animate-fade-up delay-1">
       {/* Left accent bar */}
@@ -42,22 +65,54 @@ export default function LeadHeader({
             <span>Created {lead.createdAt}</span>
           </span>
         </div>
-        <div className="mt-2">
-          <select
-            className="w-full max-w-[350px] rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[12px] font-medium text-[var(--crm-text-secondary)] outline-none transition focus:border-[var(--crm-accent)] focus:ring-2 focus:ring-[var(--crm-accent-soft)]"
-            defaultValue=""
+        <div className="mt-2" ref={timelineWrapRef}>
+          <button
+            type="button"
+            className="inline-flex w-full max-w-[420px] items-center justify-between gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[12px] font-medium text-[var(--crm-text-secondary)] outline-none transition focus:border-[var(--crm-accent)] focus:ring-2 focus:ring-[var(--crm-accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
             disabled={createdTimelineLoading || createdTimelineOptions.length === 0}
+            aria-haspopup="listbox"
+            aria-expanded={timelineOpen}
             aria-label="Lead created timeline"
+            title={selectedTimeline?.fullLabel ?? undefined}
+            onClick={() => setTimelineOpen((v) => !v)}
           >
-            <option value="" disabled>
-              {createdTimelineLoading ? "Loading timeline..." : "Lead created"}
-            </option>
-            {createdTimelineOptions.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+            <span className="truncate whitespace-nowrap overflow-hidden text-left">
+              {createdTimelineLoading ? "Loading timeline..." : selectedTimeline?.label ?? "Lead created"}
+            </span>
+            <span aria-hidden className="text-[10px]">
+              {timelineOpen ? "▲" : "▼"}
+            </span>
+          </button>
+          {timelineOpen ? (
+            <div
+              role="listbox"
+              className="mt-1 w-full max-w-[520px] overflow-y-auto rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-1 shadow-lg max-h-56"
+            >
+              {createdTimelineOptions.map((item) => {
+                const isSelected = item.value === createdTimelineValue;
+                return (
+                  <button
+                    key={item.value}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`block w-full rounded-lg px-2.5 py-2 text-left text-[12px] whitespace-nowrap overflow-hidden text-ellipsis ${
+                      isSelected
+                        ? "bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]"
+                        : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
+                    }`}
+                    title={item.fullLabel ?? item.label}
+                    onClick={() => {
+                      onCreatedTimelineChange?.(item.value);
+                      setTimelineOpen(false);
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
 
