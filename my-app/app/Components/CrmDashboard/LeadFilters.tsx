@@ -8,14 +8,6 @@ import {
   normalizeRole,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
-import { fetchCrmPipeline } from "@/lib/crm-pipeline";
-import {
-  milestoneCategoryOptionsForStage,
-  milestoneStageOptionsFromNested,
-  milestoneSubStageOptionsForCategory,
-  nestedStageForSelection,
-} from "@/lib/milestone-filter-tree";
-import type { CrmNestedStage } from "@/types/crm-pipeline";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
@@ -109,103 +101,6 @@ const selectClass =
 const labelClass =
   "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--crm-text-muted)]";
 
-type DashboardMilestoneSelectsProps = {
-  stage: string;
-  stageCategory: string;
-  substage: string;
-  stageOptions: string[];
-  categoryOptionsForStage: string[];
-  substageOptionsForCategory: string[];
-  onStageChange: (next: string) => void;
-  onCategoryChange: (next: string) => void;
-  onSubstageChange: (next: string) => void;
-};
-
-function DashboardMilestoneSelects({
-  stage,
-  stageCategory,
-  substage,
-  stageOptions,
-  categoryOptionsForStage,
-  substageOptionsForCategory,
-  onStageChange,
-  onCategoryChange,
-  onSubstageChange,
-}: DashboardMilestoneSelectsProps) {
-  return (
-    <>
-      <label className="col-span-1 min-w-0">
-        <span className={labelClass}>Stage</span>
-        <div className="relative">
-          <select
-            value={stage}
-            onChange={(e) => onStageChange(e.target.value)}
-            className={selectClass}
-          >
-            <option value="">All</option>
-            {stageOptions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-            <SelectChevron />
-          </div>
-        </div>
-      </label>
-      <label className="col-span-1 min-w-0">
-        <span className={labelClass}>Category</span>
-        <div className="relative">
-          <select
-            value={stageCategory}
-            onChange={(e) => onCategoryChange(e.target.value)}
-            disabled={!stage.trim()}
-            className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <option value="">{stage.trim() ? "All" : "Select stage first"}</option>
-            {categoryOptionsForStage.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-            <SelectChevron />
-          </div>
-        </div>
-      </label>
-      <label className="col-span-1 min-w-0">
-        <span className={labelClass}>Sub stage</span>
-        <div className="relative">
-          <select
-            value={substage}
-            onChange={(e) => onSubstageChange(e.target.value)}
-            disabled={!stage.trim() || !stageCategory.trim()}
-            className={`${selectClass} disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <option value="">
-              {stage.trim() && stageCategory.trim()
-                ? "All"
-                : stage.trim()
-                  ? "Select category first"
-                  : "Select stage first"}
-            </option>
-            {substageOptionsForCategory.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-            <SelectChevron />
-          </div>
-        </div>
-      </label>
-    </>
-  );
-}
-
 const QUICK_RANGES = [
   { id: "7d", label: "Last 7 days" },
   { id: "30d", label: "Last 30 days" },
@@ -255,8 +150,6 @@ export default function LeadFilters({
   const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
   const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
 
-  const [pipelineNested, setPipelineNested] = useState<CrmNestedStage[]>([]);
-
   const [salesAdminId, setSalesAdminId] = useState("");
   const [salesManagerId, setSalesManagerId] = useState("");
   const [salesExecId, setSalesExecId] = useState("");
@@ -305,7 +198,7 @@ export default function LeadFilters({
           Number(meRecord.id ?? 0) > 0 ? (meRecord as HierarchyUser) : undefined;
         setViewerMe(me ?? null);
 
-        const [sa, sm, se, pm, pe, pipeline] = await Promise.all([
+        const [sa, sm, se, pm, pe] = await Promise.all([
           token ? fetchUsersByRole("SALES_ADMIN", token) : Promise.resolve([]),
           token
             ? fetchUsersByRole("SALES_MANAGER", token)
@@ -319,7 +212,6 @@ export default function LeadFilters({
           token
             ? fetchUsersByRole("PRESALES_EXECUTIVE", token)
             : Promise.resolve([]),
-          fetchCrmPipeline(true),
         ]);
         if (cancelled) return;
 
@@ -333,8 +225,6 @@ export default function LeadFilters({
         setSalesExecs(se.filter((u) => u.active !== false));
         setPresalesManagers(pm.filter((u) => u.active !== false));
         setPresalesExecs(pe.filter((u) => u.active !== false));
-
-        setPipelineNested(pipeline.nested ?? []);
       } catch {
         if (!cancelled) {
           setSalesAdmins([]);
@@ -342,7 +232,6 @@ export default function LeadFilters({
           setSalesExecs([]);
           setPresalesManagers([]);
           setPresalesExecs([]);
-          setPipelineNested([]);
         }
       }
     })();
@@ -376,51 +265,6 @@ export default function LeadFilters({
         : presalesExecs,
     [presalesExecs, presalesManagerId],
   );
-
-  const stageOptions = useMemo(
-    () => milestoneStageOptionsFromNested(pipelineNested),
-    [pipelineNested],
-  );
-
-  const categoryOptionsForStage = useMemo(
-    () => milestoneCategoryOptionsForStage(pipelineNested, stage),
-    [pipelineNested, stage],
-  );
-
-  const substageOptionsForCategory = useMemo(
-    () => milestoneSubStageOptionsForCategory(pipelineNested, stage, stageCategory),
-    [pipelineNested, stage, stageCategory],
-  );
-
-  useEffect(() => {
-    if (!stage.trim()) {
-      if (stageCategory) setStageCategory("");
-      if (substage) setSubstage("");
-      return;
-    }
-    const node = nestedStageForSelection(pipelineNested, stage);
-    if (!node) {
-      setStage("");
-      setStageCategory("");
-      setSubstage("");
-      return;
-    }
-    const catList = node.categories.map((c) => c.stageCategory.trim());
-    const catOk = Boolean(stageCategory.trim() && catList.includes(stageCategory.trim()));
-    if (!catOk) {
-      if (stageCategory || substage) {
-        setStageCategory("");
-        setSubstage("");
-      }
-      return;
-    }
-    const cat = node.categories.find(
-      (c) => c.stageCategory.trim() === stageCategory.trim(),
-    );
-    const subList = (cat?.subStages ?? []).map((s) => s.trim());
-    const subOk = !substage.trim() || subList.includes(substage.trim());
-    if (!subOk) setSubstage("");
-  }, [stage, stageCategory, substage, pipelineNested]);
 
   const adminTeamExecAssignees = useMemo(() => {
     if (!salesAdminId) return [];
@@ -577,41 +421,6 @@ export default function LeadFilters({
                     </div>
                   </div>
                 </label>
-                <DashboardMilestoneSelects
-                  stage={stage}
-                  stageCategory={stageCategory}
-                  substage={substage}
-                  stageOptions={stageOptions}
-                  categoryOptionsForStage={categoryOptionsForStage}
-                  substageOptionsForCategory={substageOptionsForCategory}
-                  onStageChange={(v) => {
-                    setStage(v);
-                    setStageCategory("");
-                    setSubstage("");
-                  }}
-                  onCategoryChange={(v) => {
-                    setStageCategory(v);
-                    setSubstage("");
-                  }}
-                  onSubstageChange={setSubstage}
-                />
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Date range</span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)}
-                      className={selectClass}
-                    />
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      className={selectClass}
-                    />
-                  </div>
-                </label>
               </>
             ) : (
               <>
@@ -730,46 +539,6 @@ export default function LeadFilters({
               </>
             )}
           </div>
-
-          {!isManager ? (
-            <div className="mt-4 grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-              <DashboardMilestoneSelects
-                stage={stage}
-                stageCategory={stageCategory}
-                substage={substage}
-                stageOptions={stageOptions}
-                categoryOptionsForStage={categoryOptionsForStage}
-                substageOptionsForCategory={substageOptionsForCategory}
-                onStageChange={(v) => {
-                  setStage(v);
-                  setStageCategory("");
-                  setSubstage("");
-                }}
-                onCategoryChange={(v) => {
-                  setStageCategory(v);
-                  setSubstage("");
-                }}
-                onSubstageChange={setSubstage}
-              />
-              <label className="col-span-1 min-w-0">
-                <span className={labelClass}>Date range</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className={selectClass}
-                  />
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
-                    className={selectClass}
-                  />
-                </div>
-              </label>
-            </div>
-          ) : null}
 
           <div className="mt-6 border-t border-[var(--crm-border)] pt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">

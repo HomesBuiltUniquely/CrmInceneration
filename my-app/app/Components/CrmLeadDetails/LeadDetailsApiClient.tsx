@@ -117,6 +117,82 @@ type TimelineEntry = {
   leadId: string;
 };
 
+const EXTERNAL_INTAKE_URL = "http://106.51.65.185:3001/api/leads/external-intake";
+const EXTERNAL_INTAKE_API_KEY = "HI";
+
+function pickCityForExternalIntake(
+  lead: Lead,
+  baseDetail: Record<string, unknown>,
+): string {
+  const dynamicFields =
+    baseDetail.dynamicFields &&
+    typeof baseDetail.dynamicFields === "object" &&
+    !Array.isArray(baseDetail.dynamicFields)
+      ? (baseDetail.dynamicFields as Record<string, unknown>)
+      : {};
+
+  const directCityCandidates = [
+    baseDetail.city,
+    baseDetail.City,
+    baseDetail.locationCity,
+    baseDetail.propertyCity,
+    dynamicFields.city,
+    dynamicFields.City,
+    dynamicFields.locationCity,
+    dynamicFields.propertyCity,
+  ];
+
+  for (const candidate of directCityCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+
+  const location = lead.propertyLocation?.trim() ?? "";
+  if (!location) return "";
+  const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : location;
+}
+
+function parseBudgetForExternalIntake(rawBudget: string): number | string {
+  const cleaned = rawBudget.trim();
+  if (!cleaned) return "";
+  const numeric = Number(cleaned.replace(/,/g, ""));
+  if (Number.isFinite(numeric)) return numeric;
+  return cleaned;
+}
+
+async function postExternalIntakeLead(args: {
+  lead: Lead;
+  baseDetail: Record<string, unknown>;
+}): Promise<void> {
+  const city = pickCityForExternalIntake(args.lead, args.baseDetail);
+  const payload = {
+    projectName: args.lead.name?.trim() || "",
+    contactNo: args.lead.phone?.trim() || "",
+    clientEmail: args.lead.email?.trim() || "",
+    externalLeadId: "",
+    sourceProject: "crm-service",
+    allOtherFieldsFromOtherProject: {
+      budget: parseBudgetForExternalIntake(args.lead.budget ?? ""),
+      city,
+    },
+  };
+
+  const res = await fetch(EXTERNAL_INTAKE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-external-api-key": EXTERNAL_INTAKE_API_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(
+      `External intake failed (${res.status})${msg ? `: ${msg}` : ""}`,
+    );
+  }
+}
+
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
   formlead: "External Lead",
   glead: "Google Ads",
@@ -604,6 +680,14 @@ export default function LeadDetailsApiClient({
           followUpDate = appt.endTime;
         }
         designerName = args.meetingAppointment.designerName;
+        try {
+          await postExternalIntakeLead({ lead, baseDetail });
+        } catch (e) {
+          console.error(
+            "External intake API call failed after meeting schedule:",
+            e,
+          );
+        }
       }
 
       const nextStage = {
