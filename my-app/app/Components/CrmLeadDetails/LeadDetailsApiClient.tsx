@@ -41,6 +41,7 @@ import { canPresalesVerifyLead } from "@/lib/lead-verify-role";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import { CRM_TOKEN_STORAGE_KEY, getAuthApiBaseUrl } from "@/lib/auth/api";
+import { buildEmailRequest, sendEmailNotification } from "@/lib/email-request-builder";
 
 type SalesExecutiveOption = {
   id: number;
@@ -633,10 +634,19 @@ export default function LeadDetailsApiClient({
         stageBlock: nextStage,
       }));
       await postManualActivity(lt, leadId, "NOTE", args.note);
+
+      const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
+      if (emailPayload) {
+        const emailResult = await sendEmailNotification(emailPayload);
+        if (!emailResult.success) {
+          notifyError(`Email warning: ${emailResult.message}`);
+        }
+      }
+
       await refreshActivities();
       notifySuccess("Saved");
     },
-    [baseDetail, lead, leadId, leadTypeParam, refreshActivities, validLeadType],
+    [baseDetail, lead, leadId, leadTypeParam, refreshActivities, validLeadType, notifySuccess, notifyError],
   );
 
   if (!validLeadType) {
