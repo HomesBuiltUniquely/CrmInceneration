@@ -349,6 +349,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
   const allowedRoles = [
     "SUPER_ADMIN",
     "ADMIN",
+    "SALES_ADMIN",
     "CRM_MANAGER",
     "SALES_MANAGER",
     "SALES_EXECUTIVE",
