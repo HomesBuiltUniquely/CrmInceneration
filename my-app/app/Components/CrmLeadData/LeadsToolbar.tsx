@@ -383,7 +383,6 @@ export default function LeadsToolbar({
                     ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
-                    ["Verified Leads", leadTypeCounts.verified ?? 0],
                   ]
                 : isSalesManager
                   ? [
