@@ -10,6 +10,7 @@ import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
 import { assignmentApi } from "@/lib/assignment-api";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
+  canLoadAllUsers,
   CRM_ROLE_STORAGE_KEY,
   fetchSalesExecutivesForManager,
   getAuthApiBaseUrl,
@@ -19,6 +20,7 @@ import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import {
+  assigneeAliasNorms,
   computeFollowUpInsightCounts,
   filterLeadsForInsightMode,
   type InsightTableMode,
@@ -41,6 +43,7 @@ type Props = {
   reinquiry: string;
   leadView?: "default" | "my" | "team" | "combined";
   currentUserName?: string;
+  currentUserAliases?: string[];
   currentUserId?: number;
   managerTeamNamesFromHeader?: string[];
   /** From layout; avoids empty-role first paint so filter badge does not count forced exec assignee. */
@@ -77,6 +80,30 @@ type AssigneeUser = {
   name: string;
   role: string;
 };
+
+function getAllowedRoleQueries(role?: string): string[] {
+  switch (normalizeRole(role ?? "")) {
+    case "SUPER_ADMIN":
+    case "ADMIN":
+    case "SALES_ADMIN":
+      return [
+        "SALES_ADMIN",
+        "SALES_MANAGER",
+        "SALES_EXECUTIVE",
+        "PRESALES_MANAGER",
+        "PRESALES_EXECUTIVE",
+        "PRE_SALES",
+      ];
+    case "SALES_MANAGER":
+      return ["SALES_EXECUTIVE", "PRESALES_MANAGER"];
+    case "PRESALES_MANAGER":
+      return ["PRESALES_EXECUTIVE"];
+    case "PRESALES_EXECUTIVE":
+    case "PRE_SALES":
+    default:
+      return [];
+  }
+}
 
 type AssignmentMode = "AUTO" | "MANUAL";
 type RowAssignLead = {
@@ -331,6 +358,7 @@ export default function LeadsDataSection({
   reinquiry,
   leadView = "default",
   currentUserName = "",
+  currentUserAliases = [],
   currentUserId = 0,
   managerTeamNamesFromHeader = [],
   authRole: authRoleProp,
@@ -407,6 +435,11 @@ export default function LeadsDataSection({
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
 
   const loadAssignableUsers = useCallback(async () => {
+    if (!canLoadAllUsers(currentRole)) {
+      console.warn("Skipping /api/admin/all-users: only SUPER_ADMIN can access this endpoint.");
+      setAssigneeUsers([]);
+      return [];
+    }
     const rows = await adminPanelApi.listAllUsers();
     const eligibleRoles = new Set([
       "SALES_EXECUTIVE",
@@ -427,7 +460,7 @@ export default function LeadsDataSection({
       .filter((row) => row.userId > 0);
     setAssigneeUsers(mapped);
     return mapped;
-  }, []);
+  }, [currentRole]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
@@ -598,36 +631,57 @@ export default function LeadsDataSection({
     let cancelled = false;
     const auth = getCrmAuthHeaders();
     const authBase = getAuthApiBaseUrl();
-    void Promise.all([
-      fetch(`${authBase}/api/auth/users-by-role?role=SALES_ADMIN`, { cache: "no-store", headers: auth, credentials: "include" }),
-      fetch(`${authBase}/api/auth/users-by-role?role=SALES_MANAGER`, { cache: "no-store", headers: auth, credentials: "include" }),
-      fetch(`${authBase}/api/auth/users-by-role?role=SALES_EXECUTIVE`, { cache: "no-store", headers: auth, credentials: "include" }),
-      fetch(`${authBase}/api/auth/users-by-role?role=PRESALES_MANAGER`, { cache: "no-store", headers: auth, credentials: "include" }),
-      fetch(`${authBase}/api/auth/users-by-role?role=PRESALES_EXECUTIVE`, { cache: "no-store", headers: auth, credentials: "include" }),
-      fetch(`${authBase}/api/auth/users-by-role?role=PRE_SALES`, { cache: "no-store", headers: auth, credentials: "include" }),
-    ])
-      .then(async ([sa, sm, se, pm, pe, pre]) => {
-        const parse = async (r: Response): Promise<HierarchyUser[]> => {
-          if (!r.ok) return [];
-          const j = (await r.json().catch(() => [])) as unknown;
-          return Array.isArray(j) ? (j as HierarchyUser[]) : [];
-        };
-        const [saJ, smJ, seJ, pmJ, peJ, preJ] = await Promise.all([
-          parse(sa),
-          parse(sm),
-          parse(se),
-          parse(pm),
-          parse(pe),
-          parse(pre),
-        ]);
+    const rolesToFetch = getAllowedRoleQueries(currentRole);
+    if (rolesToFetch.length === 0) {
+      setSalesAdmins([]);
+      setSalesManagers([]);
+      setSalesExecs([]);
+      setPresalesManagers([]);
+      setPresalesExecs([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void Promise.all(
+      rolesToFetch.map(async (roleName) => {
+        try {
+          const res = await fetch(
+            `${authBase}/api/auth/users-by-role?role=${encodeURIComponent(roleName)}`,
+            { cache: "no-store", headers: auth, credentials: "include" },
+          );
+          if (res.status === 403) {
+            console.warn(`[RBAC] users-by-role 403 role=${roleName}, viewerRole=${currentRole}`);
+            return [roleName, [] as HierarchyUser[]] as const;
+          }
+          if (!res.ok) {
+            console.warn(`[RBAC] users-by-role failed role=${roleName}, status=${res.status}`);
+            return [roleName, [] as HierarchyUser[]] as const;
+          }
+          const j = (await res.json().catch(() => [])) as unknown;
+          const rows = Array.isArray(j) ? (j as HierarchyUser[]) : [];
+          return [roleName, rows] as const;
+        } catch (err) {
+          console.warn(`[RBAC] users-by-role request failed role=${roleName}`, err);
+          return [roleName, [] as HierarchyUser[]] as const;
+        }
+      }),
+    )
+      .then((pairs) => {
         if (cancelled) return;
+        const byRole = new Map<string, HierarchyUser[]>(pairs);
+        const saJ = byRole.get("SALES_ADMIN") ?? [];
+        const smJ = byRole.get("SALES_MANAGER") ?? [];
+        const seJ = byRole.get("SALES_EXECUTIVE") ?? [];
+        const pmJ = byRole.get("PRESALES_MANAGER") ?? [];
+        const peJ = byRole.get("PRESALES_EXECUTIVE") ?? [];
+        const preJ = byRole.get("PRE_SALES") ?? [];
         setSalesAdmins(saJ.filter((u) => u.active !== false));
         setSalesManagers(smJ.filter((u) => u.active !== false));
         setSalesExecs(seJ.filter((u) => u.active !== false));
         setPresalesManagers(pmJ.filter((u) => u.active !== false));
         const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
         const dedupedPresalesExecs = Array.from(
-          new Map(mergedPresalesExecs.map((u) => [u.id, u])).values()
+          new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
         setPresalesExecs(dedupedPresalesExecs);
       })
@@ -710,6 +764,56 @@ export default function LeadsDataSection({
   }, [currentRole, currentUserId]);
 
   const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
+  const meNorm = (currentUserName ?? "").trim().toLowerCase();
+  const meAliasSet = new Set(
+    [meNorm, ...currentUserAliases.map((v) => v.trim().toLowerCase())].filter(Boolean)
+  );
+  const leadAssignedToSelf = (lead: ApiLead): boolean => {
+    if (meAliasSet.size === 0) return false;
+    const aliases = assigneeAliasNorms(lead);
+    for (const meAlias of meAliasSet) {
+      if (aliases.has(meAlias)) return true;
+    }
+    return false;
+  };
+  const canViewLeadByRole = useCallback(
+    (lead: ApiLead, roleRaw: string) => {
+      const roleKey = normalizeRole(roleRaw);
+      if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
+
+      const leadAliases = assigneeAliasNorms(lead);
+      const isSelf = leadAssignedToSelf(lead);
+
+      if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+        return isSelf;
+      }
+
+      if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
+        const scopedTeam =
+          managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
+        const teamSet = new Set(scopedTeam.map((n) => n.trim().toLowerCase()).filter(Boolean));
+        if (teamSet.size === 0) return isSelf;
+        for (const alias of leadAliases) {
+          if (teamSet.has(alias)) return true;
+        }
+        return isSelf;
+      }
+
+      if (roleKey === "PRESALES_MANAGER") {
+        const presalesTeamSet = new Set(
+          presalesExecs.map((u) => userName(u).trim().toLowerCase()).filter(Boolean)
+        );
+        if (presalesTeamSet.size === 0) return isSelf;
+        for (const alias of leadAliases) {
+          if (presalesTeamSet.has(alias)) return true;
+        }
+        return isSelf;
+      }
+
+      return false;
+    },
+    [managerTeamNames, managerTeamNamesFromHeader, meNorm, presalesExecs]
+  );
   const leadViewKey: "default" | "my" | "team" | "combined" =
     leadView === "my" || leadView === "team" || leadView === "combined" ? leadView : "default";
   const filterOptionsView =
@@ -819,10 +923,7 @@ export default function LeadsDataSection({
         const scopedTeam =
           managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
         const roleKey = normalizeRole(authRoleProp ?? currentRole);
-        const scoped =
-          roleKey === "SALES_MANAGER"
-            ? narrowSalesManagerLeadsIfTeamKnown(raw, currentUserName ?? "", scopedTeam)
-            : raw;
+        const scoped = raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computePrimarySourceCounts(scoped);
         const smMineTeam =
           roleKey === "SALES_MANAGER"
@@ -924,14 +1025,7 @@ export default function LeadsDataSection({
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const scopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
-  const content =
-    scopeRoleKey === "SALES_MANAGER"
-      ? narrowSalesManagerLeadsIfTeamKnown(
-          contentFromApi,
-          currentUserName ?? "",
-          scopedTeamForInsight,
-        )
-      : contentFromApi;
+  const content = contentFromApi.filter((lead) => canViewLeadByRole(lead, scopeRoleKey));
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -961,10 +1055,23 @@ export default function LeadsDataSection({
   const managerScopedView =
     currentRole === "SALES_MANAGER" &&
     (leadView === "my" || leadView === "team" || leadView === "combined");
+  const isClientScopedRole = (() => {
+    const role = normalizeRole(authRoleProp ?? currentRole);
+    return (
+      role === "SALES_MANAGER" ||
+      role === "MANAGER" ||
+      role === "SALES_EXECUTIVE" ||
+      role === "PRESALES_MANAGER" ||
+      role === "PRESALES_EXECUTIVE" ||
+      role === "PRE_SALES"
+    );
+  })();
   const visibleRows = managerScopedView ? rows.slice(page * size, page * size + size) : rows;
   const total =
     insightTableMode !== null
       ? rows.length
+      : isClientScopedRole
+        ? rows.length
       : managerScopedView
         ? rows.length
         : (data?.totalElements ?? rows.length);
@@ -1228,8 +1335,12 @@ export default function LeadsDataSection({
         ? currentRole === "SALES_MANAGER"
           ? "Closure follow up date — team (Experience & Design → Closed)"
           : "Closure follow up date (Experience & Design → Closed)"
-        : insightTableMode === "overdue"
-          ? "Overdue follow-ups"
+        : insightTableMode === "overdueActive"
+          ? "Overdue lead follow up (Discovery · Connection)"
+          : insightTableMode === "overdueClosure"
+            ? "Overdue opportunity follow up (Experience & Design → Closed)"
+            : insightTableMode === "overdue"
+              ? "Overdue follow-ups"
           : insightTableMode === "teamLeads"
             ? "Team leads — assigned to your sales executives"
             : null;
@@ -1237,7 +1348,9 @@ export default function LeadsDataSection({
   const insightBannerFollowUpNote =
     insightTableMode === "followUpActive" ||
     insightTableMode === "followUpClosure" ||
-    insightTableMode === "overdue";
+    insightTableMode === "overdue" ||
+    insightTableMode === "overdueActive" ||
+    insightTableMode === "overdueClosure";
 
   return (
     <>

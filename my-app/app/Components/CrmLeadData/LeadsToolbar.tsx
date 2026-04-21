@@ -220,7 +220,7 @@ export default function LeadsToolbar({
   const isSalesManager = role === "SALES_MANAGER";
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
-  const isPresalesExecutive = role === "PRESALES_EXECUTIVE";
+  const isPresalesExecutive = role === "PRESALES_EXECUTIVE" || role === "PRE_SALES";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
   const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
 
@@ -377,9 +377,10 @@ export default function LeadsToolbar({
                 ? [
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
-                    ["Active Follow Up Date", leadTypeCounts.followupsActive ?? 0],
-                    ["Closure Follow Up Date", leadTypeCounts.followupsClosure ?? 0],
-                    ["Overdue Leads", leadTypeCounts.overdue ?? 0],
+                    ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
+                    ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
+                    ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
+                    ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
                     ["Verified Leads", leadTypeCounts.verified ?? 0],
@@ -391,8 +392,10 @@ export default function LeadsToolbar({
                         leadTypeCounts.managerMine ?? leadTypeCounts.all ?? 0,
                       ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
-                      ["Active Follow Up Date", leadTypeCounts.followupsActive ?? 0],
-                      ["Closure Follow Up Date", leadTypeCounts.followupsClosure ?? 0],
+                      ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
+                      ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
+                      ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
+                      ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
                       ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
@@ -414,12 +417,14 @@ export default function LeadsToolbar({
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => {
                 const insightKey: Exclude<InsightTableMode, null> | null =
-                  label === "Active Follow Up Date"
+                  label === "Lead Follow up"
                     ? "followUpActive"
-                    : label === "Closure Follow Up Date"
+                    : label === "Opportunity follow up"
                       ? "followUpClosure"
-                      : label === "Overdue Leads"
-                        ? "overdue"
+                      : label === "OverDue Lead Follow up"
+                        ? "overdueActive"
+                        : label === "Overdue Opportunity follow up"
+                          ? "overdueClosure"
                         : label === "Team Leads"
                           ? "teamLeads"
                           : null;

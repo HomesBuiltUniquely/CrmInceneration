@@ -201,22 +201,55 @@ export async function GET(req: NextRequest) {
   const merged = [...byId.values()]
     .filter((lead) => {
       if (search) {
+        const needle = search.toLowerCase();
+        const needleDigits = search.replace(/\D/g, "");
         const assigneeText =
           typeof lead.assignee === "string"
             ? lead.assignee
             : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
+        const dynamic =
+          lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+            ? (lead.dynamicFields as Record<string, unknown>)
+            : {};
         const hay = [
           lead.name,
           lead.customerName,
           lead.companyName,
           lead.email,
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          lead.customerId,
+          dynamic.customerName,
+          dynamic.customerPhone,
+          dynamic.phone,
+          dynamic.customerEmail,
           assigneeText,
           lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-        if (!hay.includes(search.toLowerCase())) return false;
+        if (hay.includes(needle)) return true;
+
+        const phoneLike = [
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          dynamic.customerPhone,
+          dynamic.phone,
+        ]
+          .map((v) => String(v ?? "").replace(/\D/g, ""))
+          .filter(Boolean)
+          .join(" ");
+        if (needleDigits && phoneLike.includes(needleDigits)) return true;
+
+        // Global visible-record fallback search for old/new CRM parity.
+        const deepHay = JSON.stringify(lead).toLowerCase();
+        if (deepHay.includes(needle)) return true;
+        return false;
       }
 
       if (assignee) {

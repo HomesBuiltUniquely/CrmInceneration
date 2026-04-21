@@ -8,6 +8,14 @@ export function getAuthApiBaseUrl(): string {
   return BASE_URL;
 }
 
+export function canLoadAllUsers(role?: string): boolean {
+  return normalizeRole(role ?? "") === "SUPER_ADMIN";
+}
+
+export function getSalesExecEndpointForVerify(): string {
+  return "/api/auth/active-sales-executives";
+}
+
 export type LoginResult = {
   token: string;
   user: Record<string, unknown>;

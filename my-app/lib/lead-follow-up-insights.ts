@@ -122,6 +122,8 @@ export function computeFollowUpInsightCounts(
   followupsActive: number;
   followupsClosure: number;
   overdue: number;
+  overdueActive: number;
+  overdueClosure: number;
   team: number;
 } {
   const norm = (s: string) => s.trim().toLowerCase();
@@ -133,6 +135,8 @@ export function computeFollowUpInsightCounts(
   let followupsActive = { n: 0 };
   let followupsClosure = { n: 0 };
   let overdue = 0;
+  let overdueActive = 0;
+  let overdueClosure = 0;
   let team = 0;
 
   for (const lead of leads) {
@@ -140,7 +144,11 @@ export function computeFollowUpInsightCounts(
 
     if (opts.viewerRole === "SALES_EXECUTIVE") {
       if (leadAssignedToSelf(lead, me)) {
-        if (isFollowUpOverdueLocal(fu)) overdue += 1;
+        if (isFollowUpOverdueLocal(fu)) {
+          overdue += 1;
+          if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
+          if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
+        }
         if (isFollowUpDueLocalToday(fu)) {
           followup += 1;
           bumpFollowUpsTodaySplit(lead, fu, followupsActive, followupsClosure);
@@ -152,17 +160,34 @@ export function computeFollowUpInsightCounts(
       if (opts.leadView === "team") {
         if (leadAssignedToTeamMember(lead, teamSet)) {
           team += 1;
+          if (isFollowUpOverdueLocal(fu)) {
+            overdue += 1;
+            if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
+            if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
+          }
           if (isFollowUpDueLocalToday(fu)) {
             followups += 1;
             bumpFollowUpsTodaySplit(lead, fu, followupsActive, followupsClosure);
           }
         }
       } else if (opts.leadView === "my") {
-        if (leadAssignedToSelf(lead, me) && isFollowUpDueLocalToday(fu)) {
-          followups += 1;
-          bumpFollowUpsTodaySplit(lead, fu, followupsActive, followupsClosure);
+        if (leadAssignedToSelf(lead, me)) {
+          if (isFollowUpOverdueLocal(fu)) {
+            overdue += 1;
+            if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
+            if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
+          }
+          if (isFollowUpDueLocalToday(fu)) {
+            followups += 1;
+            bumpFollowUpsTodaySplit(lead, fu, followupsActive, followupsClosure);
+          }
         }
       } else {
+        if (isFollowUpOverdueLocal(fu)) {
+          overdue += 1;
+          if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
+          if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
+        }
         if (isFollowUpDueLocalToday(fu)) {
           followups += 1;
           bumpFollowUpsTodaySplit(lead, fu, followupsActive, followupsClosure);
@@ -173,7 +198,16 @@ export function computeFollowUpInsightCounts(
 
   const fa = followupsActive.n;
   const fc = followupsClosure.n;
-  return { followup, followups, followupsActive: fa, followupsClosure: fc, overdue, team };
+  return {
+    followup,
+    followups,
+    followupsActive: fa,
+    followupsClosure: fc,
+    overdue,
+    overdueActive,
+    overdueClosure,
+    team,
+  };
 }
 
 export type InsightTableMode =
@@ -181,6 +215,8 @@ export type InsightTableMode =
   | "followUpActive"
   | "followUpClosure"
   | "overdue"
+  | "overdueActive"
+  | "overdueClosure"
   | "teamLeads";
 
 export function filterLeadsForInsightMode(
@@ -218,14 +254,35 @@ export function filterLeadsForInsightMode(
       return true;
     }
 
-    if (mode === "overdue") {
+    if (mode === "overdue" || mode === "overdueActive" || mode === "overdueClosure") {
       if (!isFollowUpOverdueLocal(fu)) return false;
       if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
-        return leadAssignedToTeamMember(lead, teamSet);
+        return (
+          leadAssignedToTeamMember(lead, teamSet) &&
+          (mode === "overdue"
+            ? true
+            : matchesFollowUpMilestoneSegment(
+                lead,
+                mode === "overdueActive" ? "active" : "closure",
+              ))
+        );
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my")
-        return leadAssignedToSelf(lead, me);
-      return true;
+        return (
+          leadAssignedToSelf(lead, me) &&
+          (mode === "overdue"
+            ? true
+            : matchesFollowUpMilestoneSegment(
+                lead,
+                mode === "overdueActive" ? "active" : "closure",
+              ))
+        );
+      return mode === "overdue"
+        ? true
+        : matchesFollowUpMilestoneSegment(
+            lead,
+            mode === "overdueActive" ? "active" : "closure",
+          );
     }
 
     return true;

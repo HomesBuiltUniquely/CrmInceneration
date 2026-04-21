@@ -5,10 +5,10 @@ import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import {
+  assigneeAliasNorms,
   filterLeadsForInsightMode,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
-import { narrowSalesManagerLeadsIfTeamKnown } from "@/lib/sales-manager-lead-scope";
 
 type Phase = {
   phaseLabel: string;
@@ -25,6 +25,7 @@ export type JourneyPhaseHeatmapProps = {
   currentRole?: string;
   leadView?: "default" | "my" | "team";
   currentUserName?: string;
+  currentUserAliases?: string[];
   managerTeamNames?: string[];
   /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
   insightTableMode?: InsightTableMode | null;
@@ -281,6 +282,7 @@ export default function JourneyPhaseHeatmap({
   currentRole = "",
   leadView = "default",
   currentUserName = "",
+  currentUserAliases = [],
   managerTeamNames = [],
   insightTableMode = null,
 }: JourneyPhaseHeatmapProps = {}) {
@@ -358,31 +360,32 @@ export default function JourneyPhaseHeatmap({
         }
 
         const roleKey = normalizeRole(currentRole);
-        const pool =
-          roleKey === "SALES_MANAGER"
-            ? narrowSalesManagerLeadsIfTeamKnown(
-                allLeads,
-                currentUserName ?? "",
-                managerTeamNames,
-              )
-            : allLeads;
-
-        const ownerName = (lead: ApiLead) =>
-          String(
-            (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
-            (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
-            ""
-          ).trim();
-        const norm = (v: string) => v.trim().toLowerCase();
-        const teamSet = new Set(managerTeamNames.map(norm));
-        const scopedLeads =
-          roleKey === "SALES_MANAGER" && leadView === "my"
-            ? pool.filter((lead) => norm(ownerName(lead)) === norm(currentUserName))
-            : roleKey === "SALES_MANAGER" && leadView === "team"
-              ? managerTeamNames.length > 0
-                ? pool.filter((lead) => teamSet.has(norm(ownerName(lead))))
-                : pool
-              : pool;
+        const myAliases = new Set(
+          [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
+        );
+        const teamSet = new Set(managerTeamNames.map((v) => v.trim().toLowerCase()).filter(Boolean));
+        const isSelfLead = (lead: ApiLead) => {
+          const aliases = assigneeAliasNorms(lead);
+          for (const me of myAliases) if (aliases.has(me)) return true;
+          return false;
+        };
+        const isTeamLead = (lead: ApiLead) => {
+          const aliases = assigneeAliasNorms(lead);
+          for (const alias of aliases) if (teamSet.has(alias)) return true;
+          return false;
+        };
+        const scopedLeads = allLeads.filter((lead) => {
+          if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
+          if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+            return isSelfLead(lead);
+          }
+          if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
+            if (leadView === "my") return isSelfLead(lead);
+            if (leadView === "team") return teamSet.size > 0 ? isTeamLead(lead) : false;
+            return isSelfLead(lead) || (teamSet.size > 0 ? isTeamLead(lead) : false);
+          }
+          return false;
+        });
         if (!cancelled) {
           setPoolLeads(scopedLeads);
         }
@@ -402,7 +405,7 @@ export default function JourneyPhaseHeatmap({
     return () => {
       cancelled = true;
     };
-  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, managerTeamNames]);
+  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, currentUserAliases, managerTeamNames]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">
