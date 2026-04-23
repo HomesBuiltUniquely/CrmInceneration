@@ -346,7 +346,15 @@ export default function HubCalendarPage(): React.ReactElement | null {
     return result;
   }, [events]);
 
-  const allowedRoles = ["SUPER_ADMIN", "SALES_MANAGER", "DESIGNER", "ADMIN", "CRM_MANAGER"];
+  const allowedRoles = [
+    "SUPER_ADMIN",
+    "ADMIN",
+    "SALES_ADMIN",
+    "CRM_MANAGER",
+    "SALES_MANAGER",
+    "SALES_EXECUTIVE",
+    "DESIGNER",
+  ];
   const isAuthorized = allowedRoles.includes(role);
 
   if (!mounted) return null;

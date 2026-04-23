@@ -26,6 +26,11 @@ export type ApiLead = {
   dynamicFields?: Record<string, unknown>;
   companyName?: string;
   email?: string;
+  phone?: string;
+  phoneNumber?: string;
+  mobile?: string;
+  mobileNumber?: string;
+  customerId?: string | number;
   assignee?: string | { name?: string; fullName?: string };
   salesOwner?: string | { name?: string; fullName?: string };
   updatedAt?: string;

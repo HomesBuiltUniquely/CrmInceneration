@@ -31,6 +31,7 @@ export default function Header() {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
   });
+  const [currentUserAliases, setCurrentUserAliases] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState(0);
   const [authResolved, setAuthResolved] = useState(false);
   const [search, setSearch] = useState("");
@@ -77,6 +78,15 @@ export default function Header() {
         if (Number.isFinite(id) && id > 0) {
           setCurrentUserId(id);
         }
+        const aliases = [
+          String(user.fullName ?? ""),
+          String(user.name ?? ""),
+          String(user.username ?? ""),
+          String(user.email ?? ""),
+        ]
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean);
+        setCurrentUserAliases(Array.from(new Set(aliases)));
       })
       .finally(() => {
         if (!cancelled) setAuthResolved(true);
@@ -104,12 +114,7 @@ export default function Header() {
     return sanitizeLeadTypeForRole(currentRole, leadType);
   }, [currentRole, leadType]);
 
-  const forcedAssignee = useMemo(() => {
-    if (currentRole === "SALES_EXECUTIVE" || currentRole === "PRESALES_EXECUTIVE") {
-      return currentUserName.trim();
-    }
-    return assignee;
-  }, [assignee, currentRole, currentUserName]);
+  const forcedAssignee = useMemo(() => assignee, [assignee]);
 
   useEffect(() => {
     if (!isPresalesRole(currentRole)) return;
@@ -121,7 +126,7 @@ export default function Header() {
     currentRole === "DESIGNER" ||
     currentRole === "DESIGN_MANAGER" ||
     currentRole === "TERRITORY_DESIGN_MANAGER";
-  const isSalesManager = currentRole === "SALES_MANAGER";
+  const isSalesManager = currentRole === "SALES_MANAGER" || currentRole === "MANAGER";
 
   useEffect(() => {
     let cancelled = false;
@@ -152,6 +157,7 @@ export default function Header() {
 
   const milestoneFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
+    if (search.trim()) q.set("search", search.trim());
     if (forcedLeadType && forcedLeadType !== "all") q.set("leadType", forcedLeadType);
     const assigneeForHeatmap =
       heatmapToolbarAssignee.trim() || forcedAssignee.trim();
@@ -164,6 +170,7 @@ export default function Header() {
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     return q.toString();
   }, [
+    search,
     dateFrom,
     dateTo,
     forcedAssignee,
@@ -206,6 +213,8 @@ export default function Header() {
                 currentRole={currentRole}
                 leadView="default"
                 currentUserName={currentUserName}
+                currentUserAliases={currentUserAliases}
+                currentUserId={currentUserId}
                 managerTeamNames={managerTeamNames}
                 insightTableMode={insightTableMode}
               />
@@ -215,6 +224,7 @@ export default function Header() {
                 authRole={currentRole}
                 leadView={isSalesManager ? "combined" : "default"}
                 currentUserName={currentUserName}
+                currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}
                 managerTeamNamesFromHeader={managerTeamNames}
                 sort={sort}
@@ -234,7 +244,11 @@ export default function Header() {
                 }}
                 onSortChange={setSort}
                 onAssigneeChange={(next) => {
-                  if (currentRole === "SALES_EXECUTIVE" || currentRole === "PRESALES_EXECUTIVE") {
+                  if (
+                    currentRole === "SALES_EXECUTIVE" ||
+                    currentRole === "PRESALES_EXECUTIVE" ||
+                    currentRole === "PRE_SALES"
+                  ) {
                     return;
                   }
                   setAssignee(next);

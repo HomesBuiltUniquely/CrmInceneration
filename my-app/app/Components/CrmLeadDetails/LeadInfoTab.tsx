@@ -28,10 +28,26 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
   const quoteEligible =
     Boolean(c && quoteExtras && isExperienceDesignQuoteSentStage(lead));
   const [quoteOpen, setQuoteOpen] = useState(false);
+  const [lockedIdentityFields, setLockedIdentityFields] = useState({
+    name: false,
+    email: false,
+    phone: false,
+    pincode: false,
+  });
 
   useEffect(() => {
     if (!quoteEligible) setQuoteOpen(false);
   }, [quoteEligible]);
+
+  useEffect(() => {
+    setLockedIdentityFields({
+      // Lock only if backend already had a value for this lead.
+      name: Boolean((lead.name ?? "").trim()),
+      email: Boolean((lead.email ?? "").trim()),
+      phone: Boolean((lead.phone ?? "").trim()),
+      pincode: Boolean((lead.pincode ?? "").trim()),
+    });
+  }, [lead.id]);
 
   return (
     <div className="space-y-5 animate-fade-up delay-3">
@@ -44,8 +60,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
             <Input
               placeholder="Customer name"
               {...(c
-                ? { value: lead.name, onChange: (e) => c({ name: e.target.value }) }
-                : { defaultValue: lead.name })}
+                ? {
+                    value: lead.name,
+                    onChange: (e) => c({ name: e.target.value }),
+                    readOnly: lockedIdentityFields.name,
+                  }
+                : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
             />
           </div>
 
@@ -56,8 +76,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
               placeholder="Not provided — add email"
               missing={!lead.email}
               {...(c
-                ? { value: lead.email, onChange: (e) => c({ email: e.target.value }) }
-                : { defaultValue: lead.email })}
+                ? {
+                    value: lead.email,
+                    onChange: (e) => c({ email: e.target.value }),
+                    readOnly: lockedIdentityFields.email,
+                  }
+                : { defaultValue: lead.email, readOnly: lockedIdentityFields.email })}
             />
             {!lead.email && (
               <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-300">
@@ -73,8 +97,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 <Input
                   className="min-w-0 flex-1"
                   {...(c
-                    ? { value: lead.phone, onChange: (e) => c({ phone: e.target.value }) }
-                    : { defaultValue: lead.phone })}
+                    ? {
+                        value: lead.phone,
+                        onChange: (e) => c({ phone: e.target.value }),
+                        readOnly: lockedIdentityFields.phone,
+                      }
+                    : { defaultValue: lead.phone, readOnly: lockedIdentityFields.phone })}
                 />
                 {c && onLogCall ? (
                   <button
@@ -129,8 +157,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
               <FieldLabel>Pincode</FieldLabel>
               <Input
                 {...(c
-                  ? { value: lead.pincode, onChange: (e) => c({ pincode: e.target.value }) }
-                  : { defaultValue: lead.pincode })}
+                  ? {
+                      value: lead.pincode,
+                      onChange: (e) => c({ pincode: e.target.value }),
+                      readOnly: lockedIdentityFields.pincode,
+                    }
+                  : { defaultValue: lead.pincode, readOnly: lockedIdentityFields.pincode })}
               />
             </div>
             <div>

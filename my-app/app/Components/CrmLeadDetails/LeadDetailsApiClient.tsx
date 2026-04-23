@@ -40,7 +40,11 @@ import {
 import { canPresalesVerifyLead } from "@/lib/lead-verify-role";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
-import { CRM_TOKEN_STORAGE_KEY, getAuthApiBaseUrl } from "@/lib/auth/api";
+import {
+  CRM_TOKEN_STORAGE_KEY,
+  getAuthApiBaseUrl,
+  getSalesExecEndpointForVerify,
+} from "@/lib/auth/api";
 import { buildEmailRequest, sendEmailNotification } from "@/lib/email-request-builder";
 
 type SalesExecutiveOption = {
@@ -59,10 +63,12 @@ async function fetchSalesExecutivesForPicker(token: string): Promise<SalesExecut
     Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
   };
   const res = await fetch(
-    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent("SALES_EXECUTIVE")}`,
+    `${getAuthApiBaseUrl()}${getSalesExecEndpointForVerify()}`,
     { cache: "no-store", headers: header },
   );
-  if (!res.ok) return [];
+  if (!res.ok) {
+    throw new Error(`SALES_EXEC_FETCH_FAILED:${res.status}`);
+  }
   const data = (await res.json()) as SalesExecutiveOption[];
   if (!Array.isArray(data)) return [];
   return data
@@ -117,6 +123,82 @@ type TimelineEntry = {
   leadType: CrmLeadType;
   leadId: string;
 };
+
+const EXTERNAL_INTAKE_URL = "http://106.51.65.185:3001/api/leads/external-intake";
+const EXTERNAL_INTAKE_API_KEY = "HI";
+
+function pickCityForExternalIntake(
+  lead: Lead,
+  baseDetail: Record<string, unknown>,
+): string {
+  const dynamicFields =
+    baseDetail.dynamicFields &&
+    typeof baseDetail.dynamicFields === "object" &&
+    !Array.isArray(baseDetail.dynamicFields)
+      ? (baseDetail.dynamicFields as Record<string, unknown>)
+      : {};
+
+  const directCityCandidates = [
+    baseDetail.city,
+    baseDetail.City,
+    baseDetail.locationCity,
+    baseDetail.propertyCity,
+    dynamicFields.city,
+    dynamicFields.City,
+    dynamicFields.locationCity,
+    dynamicFields.propertyCity,
+  ];
+
+  for (const candidate of directCityCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+
+  const location = lead.propertyLocation?.trim() ?? "";
+  if (!location) return "";
+  const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : location;
+}
+
+function parseBudgetForExternalIntake(rawBudget: string): number | string {
+  const cleaned = rawBudget.trim();
+  if (!cleaned) return "";
+  const numeric = Number(cleaned.replace(/,/g, ""));
+  if (Number.isFinite(numeric)) return numeric;
+  return cleaned;
+}
+
+async function postExternalIntakeLead(args: {
+  lead: Lead;
+  baseDetail: Record<string, unknown>;
+}): Promise<void> {
+  const city = pickCityForExternalIntake(args.lead, args.baseDetail);
+  const payload = {
+    projectName: args.lead.name?.trim() || "",
+    contactNo: args.lead.phone?.trim() || "",
+    clientEmail: args.lead.email?.trim() || "",
+    externalLeadId: "",
+    sourceProject: "crm-service",
+    allOtherFieldsFromOtherProject: {
+      budget: parseBudgetForExternalIntake(args.lead.budget ?? ""),
+      city,
+    },
+  };
+
+  const res = await fetch(EXTERNAL_INTAKE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-external-api-key": EXTERNAL_INTAKE_API_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(
+      `External intake failed (${res.status})${msg ? `: ${msg}` : ""}`,
+    );
+  }
+}
 
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
   formlead: "External Lead",
@@ -219,6 +301,7 @@ export default function LeadDetailsApiClient({
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
   const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<SalesExecutiveOption[]>([]);
   const [salesExecutivesLoading, setSalesExecutivesLoading] = useState(false);
+  const [salesExecutivesError, setSalesExecutivesError] = useState<string | null>(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
@@ -279,15 +362,29 @@ export default function LeadDetailsApiClient({
         : "";
     if (!token.trim()) {
       setSalesExecutiveOptions([]);
+      setSalesExecutivesError("You don't have access to this resource.");
       return;
     }
     setSalesExecutivesLoading(true);
+    setSalesExecutivesError(null);
     void fetchSalesExecutivesForPicker(token)
       .then((list) => {
-        if (!cancelled) setSalesExecutiveOptions(list);
+        if (!cancelled) {
+          setSalesExecutiveOptions(list);
+          setSalesExecutivesError(null);
+        }
       })
-      .catch(() => {
-        if (!cancelled) setSalesExecutiveOptions([]);
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setSalesExecutiveOptions([]);
+          const msg = e instanceof Error ? e.message : "";
+          if (msg.includes("SALES_EXEC_FETCH_FAILED:403")) {
+            setSalesExecutivesError("You don't have access to this resource.");
+            console.warn("Sales executive picker permission denied (403).");
+          } else {
+            setSalesExecutivesError("Could not load the list. You can still verify with pincode only.");
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setSalesExecutivesLoading(false);
@@ -605,6 +702,14 @@ export default function LeadDetailsApiClient({
           followUpDate = appt.endTime;
         }
         designerName = args.meetingAppointment.designerName;
+        try {
+          await postExternalIntakeLead({ lead, baseDetail });
+        } catch (e) {
+          console.error(
+            "External intake API call failed after meeting schedule:",
+            e,
+          );
+        }
       }
 
       const nextStage = {
@@ -808,6 +913,10 @@ export default function LeadDetailsApiClient({
                 {salesExecutivesLoading ? (
                   <span className="mt-1 block text-[11px] text-[var(--crm-text-muted)]">
                     Loading sales executives…
+                  </span>
+                ) : salesExecutivesError ? (
+                  <span className="mt-1 block text-[11px] text-amber-700">
+                    {salesExecutivesError}
                   </span>
                 ) : salesExecutiveOptions.length === 0 ? (
                   <span className="mt-1 block text-[11px] text-amber-700">
