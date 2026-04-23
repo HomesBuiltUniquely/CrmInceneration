@@ -79,7 +79,7 @@ export default function CompleteTaskModal({
   onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
-  /** Quote Sent popup when Status = Experience & Design + Feedback = Quote Sent. */
+  /** Quote popup when Status = Experience & Design + Feedback = MEETING SUCCESSFUL. */
   quoteInline?: {
     quoteLink: string;
     onQuoteLinkChange: (v: string) => void;
@@ -929,7 +929,7 @@ export default function CompleteTaskModal({
                   id="quote-sent-popup-title"
                   className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
                 >
-                  Quote Sent
+                  Meeting Successful
                 </h3>
                 <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
                   Experience &amp; Design — add link and send quote email, or

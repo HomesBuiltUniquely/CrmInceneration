@@ -8,8 +8,7 @@ export type EmailSubstage =
   | "Meeting Rescheduled"
   | "Meeting Cancelled/Paused"
   | "No Response After Discussion"
-  | "Consultation Completed (1st Meeting Done)"
-  | "Quote Sent"
+  | "MEETING SUCCESSFUL"
   | "Customer Dropped After Proposal"
   | "Budget Mismatch (Major)"
   | "Project Postponed Indefinitely"
@@ -53,17 +52,11 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
     requiresEmail: true,
     optionalFields: ["reconnectDate"],
   },
-  "Consultation Completed (1st Meeting Done)": {
-    substage: "Consultation Completed (1st Meeting Done)",
+  "MEETING SUCCESSFUL": {
+    substage: "MEETING SUCCESSFUL",
     subject: "Meeting Done – Your Quote is Coming Soon!",
     requiresEmail: true,
     optionalFields: [],
-  },
-  "Quote Sent": {
-    substage: "Quote Sent",
-    subject: "Your Interior Design Quote is Ready",
-    requiresEmail: true,
-    optionalFields: ["quotedAmount"],
   },
   "Customer Dropped After Proposal": {
     substage: "Customer Dropped After Proposal",

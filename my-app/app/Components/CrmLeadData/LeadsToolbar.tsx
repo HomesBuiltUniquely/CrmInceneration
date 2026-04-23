@@ -377,10 +377,10 @@ export default function LeadsToolbar({
                 ? [
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
-                    ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
-                    ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
-                    ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
-                    ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
+                    ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
+                    ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                    ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
+                    ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
                   ]
@@ -391,10 +391,10 @@ export default function LeadsToolbar({
                         leadTypeCounts.managerMine ?? leadTypeCounts.all ?? 0,
                       ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
-                      ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
-                      ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
-                      ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
-                      ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
+                      ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
+                      ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                      ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
+                      ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                       ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
@@ -416,13 +416,13 @@ export default function LeadsToolbar({
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => {
                 const insightKey: Exclude<InsightTableMode, null> | null =
-                  label === "Lead Follow up"
+                  label === "Today's Lead"
                     ? "followUpActive"
-                    : label === "Opportunity follow up"
+                    : label === "Today's Opportunity"
                       ? "followUpClosure"
-                      : label === "OverDue Lead Follow up"
+                      : label === "Lead Overdue"
                         ? "overdueActive"
-                        : label === "Overdue Opportunity follow up"
+                        : label === "Opportunity Overdue"
                           ? "overdueClosure"
                         : label === "Team Leads"
                           ? "teamLeads"

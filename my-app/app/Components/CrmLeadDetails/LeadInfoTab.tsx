@@ -299,11 +299,11 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 <span className="text-[15px] leading-none" aria-hidden>
                   ✦
                 </span>
-                Quote Sent
+                Meeting Successful
               </button>
               <p className="mt-2 text-[11px] text-[var(--crm-text-muted)]">
                 Shown when milestone is <strong className="text-[var(--crm-text-secondary)]">Experience and Design</strong> and
-                feedback is <strong className="text-[var(--crm-text-secondary)]">Quote Sent</strong>. Use Complete Task to save that stage first.
+                feedback is <strong className="text-[var(--crm-text-secondary)]">MEETING SUCCESSFUL</strong>. Use Complete Task to save that stage first.
               </p>
 
               {quoteOpen && quoteExtras ? (
