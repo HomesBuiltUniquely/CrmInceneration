@@ -768,7 +768,30 @@ export default function LeadsDataSection({
   const meAliasSet = new Set(
     [meNorm, ...currentUserAliases.map((v) => v.trim().toLowerCase())].filter(Boolean)
   );
+  const leadAssignedToSelfById = (lead: ApiLead): boolean => {
+    if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
+    const r = lead as Record<string, unknown>;
+    const assigneeObj =
+      r.assignee && typeof r.assignee === "object" && !Array.isArray(r.assignee)
+        ? (r.assignee as Record<string, unknown>)
+        : null;
+    const salesOwnerObj =
+      r.salesOwner && typeof r.salesOwner === "object" && !Array.isArray(r.salesOwner)
+        ? (r.salesOwner as Record<string, unknown>)
+        : null;
+    const idCandidates = [
+      r.assigneeId,
+      r.assignedToId,
+      r.salesExecutiveId,
+      r.salesOwnerId,
+      r.userId,
+      assigneeObj?.id,
+      salesOwnerObj?.id,
+    ];
+    return idCandidates.some((v) => Number(v ?? 0) === Number(currentUserId));
+  };
   const leadAssignedToSelf = (lead: ApiLead): boolean => {
+    if (leadAssignedToSelfById(lead)) return true;
     if (meAliasSet.size === 0) return false;
     const aliases = assigneeAliasNorms(lead);
     for (const meAlias of meAliasSet) {

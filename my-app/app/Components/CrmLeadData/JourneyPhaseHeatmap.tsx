@@ -26,6 +26,7 @@ export type JourneyPhaseHeatmapProps = {
   leadView?: "default" | "my" | "team";
   currentUserName?: string;
   currentUserAliases?: string[];
+  currentUserId?: number;
   managerTeamNames?: string[];
   /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
   insightTableMode?: InsightTableMode | null;
@@ -283,6 +284,7 @@ export default function JourneyPhaseHeatmap({
   leadView = "default",
   currentUserName = "",
   currentUserAliases = [],
+  currentUserId = 0,
   managerTeamNames = [],
   insightTableMode = null,
 }: JourneyPhaseHeatmapProps = {}) {
@@ -364,7 +366,30 @@ export default function JourneyPhaseHeatmap({
           [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
         );
         const teamSet = new Set(managerTeamNames.map((v) => v.trim().toLowerCase()).filter(Boolean));
+        const isSelfLeadById = (lead: ApiLead) => {
+          if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
+          const r = lead as Record<string, unknown>;
+          const assigneeObj =
+            r.assignee && typeof r.assignee === "object" && !Array.isArray(r.assignee)
+              ? (r.assignee as Record<string, unknown>)
+              : null;
+          const salesOwnerObj =
+            r.salesOwner && typeof r.salesOwner === "object" && !Array.isArray(r.salesOwner)
+              ? (r.salesOwner as Record<string, unknown>)
+              : null;
+          const idCandidates = [
+            r.assigneeId,
+            r.assignedToId,
+            r.salesExecutiveId,
+            r.salesOwnerId,
+            r.userId,
+            assigneeObj?.id,
+            salesOwnerObj?.id,
+          ];
+          return idCandidates.some((v) => Number(v ?? 0) === Number(currentUserId));
+        };
         const isSelfLead = (lead: ApiLead) => {
+          if (isSelfLeadById(lead)) return true;
           const aliases = assigneeAliasNorms(lead);
           for (const me of myAliases) if (aliases.has(me)) return true;
           return false;
@@ -405,7 +430,7 @@ export default function JourneyPhaseHeatmap({
     return () => {
       cancelled = true;
     };
-  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, currentUserAliases, managerTeamNames]);
+  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, currentUserAliases, currentUserId, managerTeamNames]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">

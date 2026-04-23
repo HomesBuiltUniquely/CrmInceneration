@@ -214,6 +214,7 @@ export default function Header() {
                 leadView="default"
                 currentUserName={currentUserName}
                 currentUserAliases={currentUserAliases}
+                currentUserId={currentUserId}
                 managerTeamNames={managerTeamNames}
                 insightTableMode={insightTableMode}
               />
