@@ -33,7 +33,10 @@ import CompleteTaskModal, {
 } from "./CompleteTaskModal";
 import { createAppointment } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
-import { normalizeMilestoneSubStageForApi } from "@/lib/milestone-substage-map";
+import {
+  normalizeMilestoneSubStageForApi,
+
+} from "@/lib/milestone-substage-map";
 import {
   buildSalesClosureUrl,
   isCloserStageBookingDone,
@@ -945,6 +948,7 @@ export default function LeadDetailsApiClient({
           notifyError(`Email warning: ${emailResult.message}`);
         }
       }
+
 
       await refreshActivities();
       notifySuccess("Saved");
