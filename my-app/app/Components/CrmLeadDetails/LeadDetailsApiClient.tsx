@@ -136,7 +136,7 @@ type TimelineEntry = {
   leadId: string;
 };
 
-const EXTERNAL_INTAKE_URL =
+const hi =
   "https://api.hubinterior.com/api/leads/external-intake";
 const EXTERNAL_INTAKE_API_KEY = "hi";
 
@@ -201,11 +201,11 @@ async function postExternalIntakeLead(args: {
     },
   };
 
-  const res = await fetch(EXTERNAL_INTAKE_URL, {
+  const res = await fetch(hi, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-external-api-key": EXTERNAL_INTAKE_API_KEY,
+      "x-external-api-key": hi,
     },
     body: JSON.stringify(payload),
   });
