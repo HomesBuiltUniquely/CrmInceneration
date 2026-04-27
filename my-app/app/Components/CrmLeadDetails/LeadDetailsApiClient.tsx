@@ -48,7 +48,10 @@ import {
   getSalesExecEndpointForVerify,
   normalizeRole,
 } from "@/lib/auth/api";
-import { buildEmailRequest, sendEmailNotification } from "@/lib/email-request-builder";
+import {
+  buildEmailRequest,
+  sendEmailNotification,
+} from "@/lib/email-request-builder";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
@@ -64,7 +67,9 @@ function salesExecutiveLabel(u: SalesExecutiveOption): string {
   return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
 }
 
-async function fetchSalesExecutivesForPicker(token: string): Promise<SalesExecutiveOption[]> {
+async function fetchSalesExecutivesForPicker(
+  token: string,
+): Promise<SalesExecutiveOption[]> {
   const header = {
     Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
   };
@@ -131,8 +136,9 @@ type TimelineEntry = {
   leadId: string;
 };
 
-const EXTERNAL_INTAKE_URL = "http://106.51.65.185:3001/api/leads/external-intake";
-const EXTERNAL_INTAKE_API_KEY = "HI";
+const EXTERNAL_INTAKE_URL =
+  "https://api.hubinterior.com/api/leads/external-intake";
+const EXTERNAL_INTAKE_API_KEY = "hi";
 
 function pickCityForExternalIntake(
   lead: Lead,
@@ -157,12 +163,16 @@ function pickCityForExternalIntake(
   ];
 
   for (const candidate of directCityCandidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (typeof candidate === "string" && candidate.trim())
+      return candidate.trim();
   }
 
   const location = lead.propertyLocation?.trim() ?? "";
   if (!location) return "";
-  const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+  const parts = location
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
   return parts.length ? parts[parts.length - 1] : location;
 }
 
@@ -230,7 +240,9 @@ function relativeDayText(input: string): string {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const target = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
-  const diffDays = Math.floor((today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000));
+  const diffDays = Math.floor(
+    (today.getTime() - target.getTime()) / (24 * 60 * 60 * 1000),
+  );
   if (diffDays <= 0) return "today";
   if (diffDays === 1) return "yesterday";
   return `${diffDays} days ago`;
@@ -293,9 +305,13 @@ export default function LeadDetailsApiClient({
   const [verifyPincode, setVerifyPincode] = useState("");
   /** Selected sales executive user id as string; empty = do not send assignment. */
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
-  const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<SalesExecutiveOption[]>([]);
+  const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<
+    SalesExecutiveOption[]
+  >([]);
   const [salesExecutivesLoading, setSalesExecutivesLoading] = useState(false);
-  const [salesExecutivesError, setSalesExecutivesError] = useState<string | null>(null);
+  const [salesExecutivesError, setSalesExecutivesError] = useState<
+    string | null
+  >(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
@@ -312,11 +328,19 @@ export default function LeadDetailsApiClient({
   );
   const [quoteBody, setQuoteBody] = useState("");
   const [createdTimelineOptions, setCreatedTimelineOptions] = useState<
-    Array<{ value: string; label: string; fullLabel: string; leadType: CrmLeadType; leadId: string }>
+    Array<{
+      value: string;
+      label: string;
+      fullLabel: string;
+      leadType: CrmLeadType;
+      leadId: string;
+    }>
   >([]);
   const [createdTimelineLoading, setCreatedTimelineLoading] = useState(false);
   const [selectedTimelineValue, setSelectedTimelineValue] = useState("");
-  const [lead, setLead] = useState<Lead>(() => emptyLead(leadId, validLeadType ? leadType : "formlead"));
+  const [lead, setLead] = useState<Lead>(() =>
+    emptyLead(leadId, validLeadType ? leadType : "formlead"),
+  );
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown>>({});
   const { notifySuccess, notifyError } = useGlobalNotifier();
 
@@ -366,7 +390,7 @@ export default function LeadDetailsApiClient({
     let cancelled = false;
     const token =
       typeof window !== "undefined"
-        ? window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? ""
+        ? (window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "")
         : "";
     if (!token.trim()) {
       setSalesExecutiveOptions([]);
@@ -390,7 +414,9 @@ export default function LeadDetailsApiClient({
             setSalesExecutivesError("You don't have access to this resource.");
             console.warn("Sales executive picker permission denied (403).");
           } else {
-            setSalesExecutivesError("Could not load the list. You can still verify with pincode only.");
+            setSalesExecutivesError(
+              "Could not load the list. You can still verify with pincode only.",
+            );
           }
         }
       })
@@ -413,11 +439,19 @@ export default function LeadDetailsApiClient({
       const entries: TimelineEntry[] = [];
       try {
         const currentCreatedAt =
-          typeof detailJson.createdAt === "string" && detailJson.createdAt.trim() ? detailJson.createdAt.trim() : "";
+          typeof detailJson.createdAt === "string" &&
+          detailJson.createdAt.trim()
+            ? detailJson.createdAt.trim()
+            : "";
         const currentName =
           (typeof detailJson.name === "string" && detailJson.name.trim()) ||
-          (typeof detailJson.fullName === "string" && detailJson.fullName.trim()) ||
-          (((detailJson.dynamicFields as Record<string, unknown> | undefined)?.customerName as string | undefined)?.trim() || "") ||
+          (typeof detailJson.fullName === "string" &&
+            detailJson.fullName.trim()) ||
+          (
+            (detailJson.dynamicFields as Record<string, unknown> | undefined)
+              ?.customerName as string | undefined
+          )?.trim() ||
+          "" ||
           lead.name ||
           "Unknown";
 
@@ -444,13 +478,18 @@ export default function LeadDetailsApiClient({
           const row = activityRows[idx];
           const item = row as Record<string, unknown>;
           const type = String(item.activityType ?? "").toUpperCase();
-          if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED") continue;
+          if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED")
+            continue;
 
-          const createdAt = typeof item.createdAt === "string" ? item.createdAt.trim() : "";
+          const createdAt =
+            typeof item.createdAt === "string" ? item.createdAt.trim() : "";
           if (!createdAt) continue;
 
-          const sourceType = parseSourceTypeFromDescription(item.description) ?? SOURCE_LABELS[leadType];
-          const name = parseNameFromDescription(item.description) ?? currentName;
+          const sourceType =
+            parseSourceTypeFromDescription(item.description) ??
+            SOURCE_LABELS[leadType];
+          const name =
+            parseNameFromDescription(item.description) ?? currentName;
           entries.push({
             key: `${type}:${createdAt}:${idx}`,
             createdAt,
@@ -485,12 +524,12 @@ export default function LeadDetailsApiClient({
               {
                 value: `fallback:${leadType}:${leadId}`,
                 fullLabel: `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(
-                  lead.createdAt
+                  lead.createdAt,
                 )} in ${SOURCE_LABELS[leadType]} as ${lead.name}`,
                 label: truncateLabel(
                   `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(lead.createdAt)} in ${
                     SOURCE_LABELS[leadType]
-                  } as ${lead.name}`
+                  } as ${lead.name}`,
                 ),
                 leadType,
                 leadId,
@@ -895,7 +934,16 @@ export default function LeadDetailsApiClient({
       await refreshActivities();
       notifySuccess("Saved");
     },
-    [baseDetail, lead, leadId, leadTypeParam, refreshActivities, validLeadType, notifySuccess, notifyError],
+    [
+      baseDetail,
+      lead,
+      leadId,
+      leadTypeParam,
+      refreshActivities,
+      validLeadType,
+      notifySuccess,
+      notifyError,
+    ],
   );
 
   if (!validLeadType) {
@@ -944,7 +992,9 @@ export default function LeadDetailsApiClient({
           onCreatedTimelineChange={(selected) => {
             if (!selected) return;
             setSelectedTimelineValue(selected);
-            const chosen = createdTimelineOptions.find((opt) => opt.value === selected);
+            const chosen = createdTimelineOptions.find(
+              (opt) => opt.value === selected,
+            );
             if (!chosen) return;
             const { leadType: nextLeadType, leadId: nextLeadId } = chosen;
             if (nextLeadType === leadType && nextLeadId === leadId) return;
@@ -1121,7 +1171,8 @@ export default function LeadDetailsApiClient({
               Verify Lead
             </h3>
             <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
-              Pincode is mandatory. Optionally assign a sales executive by name when verifying this lead.
+              Pincode is mandatory. Optionally assign a sales executive by name
+              when verifying this lead.
             </p>
             <div className="mt-4 space-y-3">
               <label className="block">
@@ -1167,7 +1218,8 @@ export default function LeadDetailsApiClient({
                   </span>
                 ) : salesExecutiveOptions.length === 0 ? (
                   <span className="mt-1 block text-[11px] text-amber-700">
-                    Could not load the list. You can still verify with pincode only.
+                    Could not load the list. You can still verify with pincode
+                    only.
                   </span>
                 ) : null}
               </label>
