@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getLeadTypeFilterOptions, isPresalesRole } from "@/lib/crm-role-access";
 import {
   milestoneCategoryOptionsForStage,
@@ -216,6 +216,19 @@ export default function LeadsToolbar({
   const [openFilter, setOpenFilter] = useState(false);
   const [openSort, setOpenSort] = useState(false);
   const [openLeadTypes, setOpenLeadTypes] = useState(false);
+  const [callsTileMode, setCallsTileMode] = useState<"totalCalls" | "callDelayed">(
+    "totalCalls"
+  );
+  useEffect(() => {
+    if (insightActive === "callDelayed") setCallsTileMode("callDelayed");
+    if (insightActive === "totalCalls") setCallsTileMode("totalCalls");
+  }, [insightActive]);
+  const callsTileLabel =
+    callsTileMode === "totalCalls" ? "Total Calls" : "First Call Delayed";
+  const callsTileValue =
+    callsTileMode === "totalCalls"
+      ? leadTypeCounts.totalCalls ?? 0
+      : leadTypeCounts.callDelayed ?? 0;
   const role = normalizeRole(authRole || viewerRole);
   const isSalesManager = role === "SALES_MANAGER";
   const isSalesExecutive = role === "SALES_EXECUTIVE";
@@ -377,10 +390,11 @@ export default function LeadsToolbar({
                 ? [
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
-                    ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
-                    ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
-                    ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
-                    ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
+                    [callsTileLabel, callsTileValue],
+                    ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
+                    ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                    ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
+                    ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
                   ]
@@ -391,10 +405,11 @@ export default function LeadsToolbar({
                         leadTypeCounts.managerMine ?? leadTypeCounts.all ?? 0,
                       ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
-                      ["Lead Follow up", leadTypeCounts.followupsActive ?? 0],
-                      ["Opportunity follow up", leadTypeCounts.followupsClosure ?? 0],
-                      ["OverDue Lead Follow up", leadTypeCounts.overdueActive ?? 0],
-                      ["Overdue Opportunity follow up", leadTypeCounts.overdueClosure ?? 0],
+                      [callsTileLabel, callsTileValue],
+                      ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
+                      ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                      ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
+                      ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                       ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
@@ -416,13 +431,17 @@ export default function LeadsToolbar({
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => {
                 const insightKey: Exclude<InsightTableMode, null> | null =
-                  label === "Lead Follow up"
+                  label === "Today's Lead"
                     ? "followUpActive"
-                    : label === "Opportunity follow up"
+                    : label === "First Call Delayed"
+                      ? "callDelayed"
+                    : label === "Total Calls"
+                      ? "totalCalls"
+                    : label === "Today's Opportunity"
                       ? "followUpClosure"
-                      : label === "OverDue Lead Follow up"
+                      : label === "Lead Overdue"
                         ? "overdueActive"
-                        : label === "Overdue Opportunity follow up"
+                        : label === "Opportunity Overdue"
                           ? "overdueClosure"
                         : label === "Team Leads"
                           ? "teamLeads"
@@ -446,6 +465,14 @@ export default function LeadsToolbar({
                       key={label}
                       type="button"
                       onClick={() => onInsightNavigate?.(insightKey)}
+                      onDoubleClick={() => {
+                        if (label === "Total Calls" || label === "First Call Delayed") {
+                          const nextMode =
+                            callsTileMode === "totalCalls" ? "callDelayed" : "totalCalls";
+                          setCallsTileMode(nextMode);
+                          onInsightNavigate?.(nextMode);
+                        }
+                      }}
                       className={tileClass}
                     >
                       {inner}

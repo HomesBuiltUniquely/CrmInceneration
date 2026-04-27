@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
+import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 
 export default function LeadHeader({
   lead,
   onCompleteTask,
+  onOpenStageRollback,
+  canStageRollback = false,
   salesClosureHref,
   createdTimelineOptions = [],
   createdTimelineLoading = false,
@@ -15,6 +18,8 @@ export default function LeadHeader({
 }: {
   lead: Lead;
   onCompleteTask: () => void;
+  onOpenStageRollback?: () => void;
+  canStageRollback?: boolean;
   /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
   salesClosureHref?: string | null;
   createdTimelineOptions?: Array<{ value: string; label: string; fullLabel?: string }>;
@@ -28,6 +33,19 @@ export default function LeadHeader({
     () => createdTimelineOptions.find((x) => x.value === createdTimelineValue) ?? null,
     [createdTimelineOptions, createdTimelineValue]
   );
+  const firstCallAt = useMemo(() => {
+    if (lead.firstCallAt?.trim()) {
+      return formatCrmDateTime(lead.firstCallAt.trim());
+    }
+    const callRows = lead.activities.filter((a) => a.type === "call");
+    if (callRows.length === 0) return "";
+    const sorted = [...callRows].sort((a, b) => {
+      const at = parseCrmDateTime(a.createdAtIso ?? a.timestamp)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const bt = parseCrmDateTime(b.createdAtIso ?? b.timestamp)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return at - bt;
+    });
+    return formatCrmDateTime(sorted[0]?.createdAtIso ?? sorted[0]?.timestamp);
+  }, [lead.activities, lead.firstCallAt]);
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -64,6 +82,12 @@ export default function LeadHeader({
             <span>🕐</span>
             <span>Created {lead.createdAt}</span>
           </span>
+          {firstCallAt ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-800">
+              <span>📞</span>
+              <span>First Call {firstCallAt}</span>
+            </span>
+          ) : null}
         </div>
         <div className="mt-2" ref={timelineWrapRef}>
           <button
@@ -140,6 +164,16 @@ export default function LeadHeader({
             <span aria-hidden>🔗</span>
             Sales closure
           </a>
+        ) : null}
+        {canStageRollback ? (
+          <button
+            type="button"
+            onClick={onOpenStageRollback}
+            className="inline-flex items-center gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-[13px] font-semibold text-amber-900 shadow-sm transition hover:bg-amber-100"
+          >
+            <span aria-hidden>↩</span>
+            Stage Rollback
+          </button>
         ) : null}
 
         {/* Complete Task */}

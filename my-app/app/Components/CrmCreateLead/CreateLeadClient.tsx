@@ -34,6 +34,8 @@ const LANGUAGE_OPTIONS = [
 const FEEDBACK_OPTIONS = [
   { stage: "Initial Stage", substage: "Fresh Leads" },
   { stage: "Initial Stage", substage: "NAT" },
+  { stage: "Discovery Won", substage: "NO IMMEDIATE REQUIREMENT" },
+  { stage: "Discovery Lost", substage: "QUALIFICATIONS CONSTRAINT" },
   { stage: "Active", substage: "RNR" },
   { stage: "Active", substage: "Call Back" },
   { stage: "Active", substage: "Asked to call back" },
@@ -45,8 +47,7 @@ const FEEDBACK_OPTIONS = [
   { stage: "Follow Up", substage: "Schedule ONLINE meeting" },
   { stage: "Follow Up", substage: "Schedule OFFLINE meeting" },
   { stage: "Follow Up", substage: "Budget issues" },
-  { stage: "OPPORTUNITY", substage: "Meeting done" },
-  { stage: "OPPORTUNITY", substage: "Quote sent" },
+  { stage: "OPPORTUNITY", substage: "MEETING SUCCESSFUL" },
   { stage: "OPPORTUNITY", substage: "MD but Quote pending" },
   { stage: "OPPORTUNITY", substage: "Schedule Re-visit" },
   { stage: "Booking", substage: "Prebooking" },

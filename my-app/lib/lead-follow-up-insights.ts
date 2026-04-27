@@ -14,6 +14,35 @@ export function readFollowUpDateRaw(lead: ApiLead): string {
   ).trim();
 }
 
+export function readLeadCreatedAtRaw(lead: ApiLead): string {
+  const r = lead as Record<string, unknown>;
+  return String(
+    lead.createdAt ??
+      lead.createdDate ??
+      lead.leadDate ??
+      lead.createdOn ??
+      r.createdAt ??
+      r.createdDate ??
+      r.leadDate ??
+      r.createdOn ??
+      "",
+  ).trim();
+}
+
+export function isFirstCallDelayedLead(
+  lead: ApiLead,
+  nowMs = Date.now(),
+  thresholdMs = 60 * 60 * 1000,
+): boolean {
+  const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+  if (firstCallAt) return false;
+  const createdRaw = readLeadCreatedAtRaw(lead);
+  if (!createdRaw) return false;
+  const createdTs = Date.parse(createdRaw);
+  if (Number.isNaN(createdTs)) return false;
+  return nowMs - createdTs >= thresholdMs;
+}
+
 /** Normalized assignee tokens (name / fullName / username / string assignee) for matching team lists and self. */
 export function assigneeAliasNorms(lead: ApiLead): Set<string> {
   const out = new Set<string>();
@@ -57,7 +86,33 @@ export type InsightCountOpts = {
   currentUserName: string;
   managerTeamNames: string[];
   leadView: "default" | "my" | "team";
+  dateFrom?: string;
+  dateTo?: string;
 };
+
+function isCalledLead(lead: ApiLead): boolean {
+  return String((lead.firstCallAt ?? "") as string).trim().length > 0;
+}
+
+function inDateRangeByField(
+  value: string,
+  from?: string,
+  to?: string,
+): boolean {
+  if (!from && !to) return true;
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return false;
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (from) {
+    const fromTs = Date.parse(`${from}T00:00:00`);
+    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
+  }
+  if (to) {
+    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
+    if (!Number.isNaN(toTs) && ts > toTs) return false;
+  }
+  return true;
+}
 
 export function readMilestoneStageNorm(lead: ApiLead): string {
   const st = lead.stage;
@@ -124,6 +179,8 @@ export function computeFollowUpInsightCounts(
   overdue: number;
   overdueActive: number;
   overdueClosure: number;
+  callDelayed: number;
+  totalCalls: number;
   team: number;
 } {
   const norm = (s: string) => s.trim().toLowerCase();
@@ -137,6 +194,8 @@ export function computeFollowUpInsightCounts(
   let overdue = 0;
   let overdueActive = 0;
   let overdueClosure = 0;
+  let callDelayed = 0;
+  let totalCalls = 0;
   let team = 0;
 
   for (const lead of leads) {
@@ -144,6 +203,16 @@ export function computeFollowUpInsightCounts(
 
     if (opts.viewerRole === "SALES_EXECUTIVE") {
       if (leadAssignedToSelf(lead, me)) {
+        const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+        if (
+          firstCallAt &&
+          inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)
+        ) {
+          totalCalls += 1;
+        }
+        if (isFirstCallDelayedLead(lead)) {
+          callDelayed += 1;
+        }
         if (isFollowUpOverdueLocal(fu)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
@@ -160,6 +229,16 @@ export function computeFollowUpInsightCounts(
       if (opts.leadView === "team") {
         if (leadAssignedToTeamMember(lead, teamSet)) {
           team += 1;
+          const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+          if (
+            firstCallAt &&
+            inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)
+          ) {
+            totalCalls += 1;
+          }
+          if (isFirstCallDelayedLead(lead)) {
+            callDelayed += 1;
+          }
           if (isFollowUpOverdueLocal(fu)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
@@ -172,6 +251,16 @@ export function computeFollowUpInsightCounts(
         }
       } else if (opts.leadView === "my") {
         if (leadAssignedToSelf(lead, me)) {
+          const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+          if (
+            firstCallAt &&
+            inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)
+          ) {
+            totalCalls += 1;
+          }
+          if (isFirstCallDelayedLead(lead)) {
+            callDelayed += 1;
+          }
           if (isFollowUpOverdueLocal(fu)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
@@ -183,6 +272,16 @@ export function computeFollowUpInsightCounts(
           }
         }
       } else {
+        const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+        if (
+          firstCallAt &&
+          inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)
+        ) {
+          totalCalls += 1;
+        }
+        if (isFirstCallDelayedLead(lead)) {
+          callDelayed += 1;
+        }
         if (isFollowUpOverdueLocal(fu)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
@@ -206,6 +305,8 @@ export function computeFollowUpInsightCounts(
     overdue,
     overdueActive,
     overdueClosure,
+    callDelayed,
+    totalCalls,
     team,
   };
 }
@@ -217,6 +318,8 @@ export type InsightTableMode =
   | "overdue"
   | "overdueActive"
   | "overdueClosure"
+  | "callDelayed"
+  | "totalCalls"
   | "teamLeads";
 
 export function filterLeadsForInsightMode(
@@ -240,6 +343,30 @@ export function filterLeadsForInsightMode(
 
   return leads.filter((lead) => {
     const fu = readFollowUpDateRaw(lead);
+    const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
+
+    if (mode === "totalCalls") {
+      if (!isCalledLead(lead)) return false;
+      if (!inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)) {
+        return false;
+      }
+      if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
+        return leadAssignedToTeamMember(lead, teamSet);
+      if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my")
+        return leadAssignedToSelf(lead, me);
+      return true;
+    }
+
+    if (mode === "callDelayed") {
+      if (!isFirstCallDelayedLead(lead)) return false;
+      if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
+        return leadAssignedToTeamMember(lead, teamSet);
+      if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my")
+        return leadAssignedToSelf(lead, me);
+      return true;
+    }
 
     if (mode === "followUpActive" || mode === "followUpClosure") {
       const segment: FollowUpMilestoneSegment = mode === "followUpActive" ? "active" : "closure";

@@ -9,6 +9,7 @@ import {
   getLeadDisplaySource,
 } from "@/lib/lead-display";
 import { applyLostReasonToDetailPayload, readLostReasonFromDetail } from "@/lib/lead-lost-fields";
+import { formatCrmDateTime } from "@/lib/date-time-format";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -151,7 +152,8 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     (detail.id !== undefined && detail.id !== null ? `CRM-${detail.id}` : "—");
   const phone = getLeadDisplayPhone(detail);
   const createdRaw = pickStr(detail, "createdAt", "createdDate", "leadDate", "createdOn");
-  const createdAt = createdRaw ? new Date(createdRaw).toLocaleString() : "—";
+  const createdAt = createdRaw ? formatCrmDateTime(createdRaw) : "—";
+  const firstCallAtRaw = pickStr(detail, "firstCallAt");
   const assignee = pickAssigneeDisplay(detail);
 
   const requirementsRaw = detail.requirements ?? detail.requirementList;
@@ -168,6 +170,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     customerId,
     status,
     createdAt,
+    firstCallAt: firstCallAtRaw || "",
     assignee: assignee || "—",
     designerName: pickDesignerDisplay(detail) || "—",
     designerEmail:
@@ -210,7 +213,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       milestoneStageCategory: st.milestoneStageCategory,
       milestoneSubStage: st.milestoneSubStage,
       stage: st.legacyStage ?? "Initial Stage",
-      substage: { substage: st.legacySubstage ?? "Fresh Leads" },
+      substage: { substage: st.legacySubstage ?? null },
     },
   };
 }
@@ -299,7 +302,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
     milestoneStageCategory: sb?.milestoneStageCategory ?? prevStage.milestoneStageCategory,
     milestoneSubStage: sb?.milestoneSubStage ?? prevStage.milestoneSubStage,
     stage: sb?.stage ?? prevStage.stage ?? "Initial Stage",
-    substage: sb?.substage ?? prevStage.substage ?? { substage: "Fresh Leads" },
+    substage: sb?.substage ?? prevStage.substage ?? { substage: null },
   };
 
   return next;
@@ -349,15 +352,15 @@ function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase();
   if (u.includes("ASSIGN")) return "assignment";
   if (u.includes("NOTE")) return "note";
+  if (u.includes("CALL")) return "call";
   if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD")) return "status";
   return "update";
 }
 
 function formatActivityTime(iso: string | undefined): string {
   if (!iso) return "—";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleString();
+  const formatted = formatCrmDateTime(iso);
+  return formatted === "—" ? iso : formatted;
 }
 
 export function mapActivitiesJson(rows: unknown): ActivityItem[] {
@@ -383,6 +386,7 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
       id,
       type: mapBackendActivityType(activityType),
       timestamp: formatActivityTime(pickStr(r, "createdAt", "timestamp")),
+      createdAtIso: pickStr(r, "createdAt", "timestamp"),
       description,
       by: pickStr(r, "performedBy", "performedByName", "userName") || "—",
       note: pickStr(r, "note", "comments") || undefined,

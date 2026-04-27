@@ -68,6 +68,11 @@ function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
   });
 }
 
+function pickPhase(phases: Phase[], name: string): Phase | undefined {
+  const n = normName(name);
+  return phases.find((p) => normName(p.name) === n);
+}
+
 function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
   if (kind === "clock")
     return (
@@ -235,7 +240,39 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
   );
 }
 
+function SummaryCard({ label, total }: { label: string; total: number }) {
+  return (
+    <div className="relative min-h-[132px] rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-4">
+      <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
+        SUMMARY
+      </div>
+      <div className="mt-2 flex items-start justify-between">
+        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
+          {label}
+        </div>
+        <div className="text-right">
+          <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">
+            {total}
+          </div>
+          <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">
+            total leads
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
+    </div>
+  );
+}
+
 const DEFAULT_PHASES: Phase[] = [
+  {
+    phaseLabel: "PHASE 00",
+    name: "Fresh Lead",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "Newly created leads" },
+  },
   {
     phaseLabel: "PHASE 01",
     name: "Discovery",
@@ -291,6 +328,8 @@ export default function JourneyPhaseHeatmap({
   const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [opportunityOpen, setOpportunityOpen] = useState(false);
 
   const insightOpts = useMemo(
     () => ({
@@ -313,6 +352,20 @@ export default function JourneyPhaseHeatmap({
   }, [poolLeads, insightTableMode, insightOpts]);
 
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
+  const freshLeadPhase = pickPhase(phases, "Fresh Lead");
+  const discoveryPhase = pickPhase(phases, "Discovery");
+  const connectionPhase = pickPhase(phases, "Connection");
+  const expDesignPhase = pickPhase(phases, "Experience & Design");
+  const decisionPhase = pickPhase(phases, "Decision");
+  const closedPhase = pickPhase(phases, "Closed");
+  const leadPhases = [freshLeadPhase, discoveryPhase, connectionPhase].filter(
+    (p): p is Phase => Boolean(p),
+  );
+  const opportunityPhases = [expDesignPhase, decisionPhase, closedPhase].filter(
+    (p): p is Phase => Boolean(p),
+  );
+  const leadTotal = leadPhases.reduce((sum, p) => sum + p.count, 0);
+  const opportunityTotal = opportunityPhases.reduce((sum, p) => sum + p.count, 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -451,10 +504,63 @@ export default function JourneyPhaseHeatmap({
             {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
           </div>
         ) : null}
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-5">
-          {phases.map((p) => (
-            <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
-          ))}
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          <div
+            className={`self-start rounded-2xl transition-all ${
+              leadOpen
+                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                : "border-0 bg-transparent p-0 shadow-none"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setLeadOpen((v) => !v)}
+              className="w-full text-left"
+              aria-expanded={leadOpen}
+            >
+              <div className="relative">
+                <SummaryCard label="Lead" total={leadTotal} />
+                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                  {leadOpen ? "Hide" : "Open"}
+                </span>
+              </div>
+            </button>
+            {leadOpen ? (
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                {leadPhases.map((p) => (
+                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div
+            className={`self-start rounded-2xl transition-all ${
+              opportunityOpen
+                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                : "border-0 bg-transparent p-0 shadow-none"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setOpportunityOpen((v) => !v)}
+              className="w-full text-left"
+              aria-expanded={opportunityOpen}
+            >
+              <div className="relative">
+                <SummaryCard label="Opportunity" total={opportunityTotal} />
+                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                  {opportunityOpen ? "Hide" : "Open"}
+                </span>
+              </div>
+            </button>
+            {opportunityOpen ? (
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                {opportunityPhases.map((p) => (
+                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </section>

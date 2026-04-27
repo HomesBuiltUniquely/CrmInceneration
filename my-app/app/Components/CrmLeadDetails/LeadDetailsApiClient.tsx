@@ -7,6 +7,7 @@ import {
   getLeadDetail,
   postManualActivity,
   postQuoteSend,
+  postStageRollback,
   postVerifyLead,
   putLeadDetail,
 } from "@/lib/lead-details-client";
@@ -41,14 +42,19 @@ import { canPresalesVerifyLead } from "@/lib/lead-verify-role";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import {
+  CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
   getSalesExecEndpointForVerify,
+  normalizeRole,
 } from "@/lib/auth/api";
 import {
   buildEmailRequest,
   sendEmailNotification,
 } from "@/lib/email-request-builder";
+import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
+import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
 
 type SalesExecutiveOption = {
   id: number;
@@ -91,6 +97,7 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   customerId: "—",
   status: "—",
   createdAt: "—",
+  firstCallAt: "",
   assignee: "—",
   designerName: "—",
   email: "",
@@ -219,25 +226,12 @@ const SOURCE_LABELS: Record<CrmLeadType, string> = {
 };
 
 function parseDateLoose(input: unknown): Date | null {
-  if (typeof input !== "string" || !input.trim()) return null;
-  const raw = input.trim();
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) return parsed;
-  const utcCandidate = new Date(`${raw}Z`);
-  return Number.isNaN(utcCandidate.getTime()) ? null : utcCandidate;
+  return parseCrmDateTime(input);
 }
 
 function formatTimelineDate(input: string): string {
-  const dt = parseDateLoose(input);
-  if (!dt) return "Unknown date";
-  const day = String(dt.getDate()).padStart(2, "0");
-  const month = String(dt.getMonth() + 1).padStart(2, "0");
-  const year = dt.getFullYear();
-  const hh = dt.getHours();
-  const mm = String(dt.getMinutes()).padStart(2, "0");
-  const ampm = hh >= 12 ? "PM" : "AM";
-  const hour12 = hh % 12 || 12;
-  return `${day}-${month}-${year} ${String(hour12).padStart(2, "0")}:${mm} ${ampm}`;
+  const formatted = formatCrmDateTime(input);
+  return formatted === "—" ? "Unknown date" : formatted;
 }
 
 function relativeDayText(input: string): string {
@@ -319,6 +313,15 @@ export default function LeadDetailsApiClient({
     string | null
   >(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+  const [rollbackBusy, setRollbackBusy] = useState(false);
+  const [rollbackError, setRollbackError] = useState("");
+  const [rollbackStages, setRollbackStages] = useState<CrmNestedStage[]>([]);
+  const [rollbackStage, setRollbackStage] = useState("");
+  const [rollbackCategory, setRollbackCategory] = useState("");
+  const [rollbackSubStage, setRollbackSubStage] = useState("");
+  const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
     "Your quote from Hub Interior",
@@ -375,6 +378,11 @@ export default function LeadDetailsApiClient({
 
   useEffect(() => {
     setCanVerifyRole(canPresalesVerifyLead());
+    const role =
+      typeof window !== "undefined"
+        ? normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "")
+        : "";
+    setIsSuperAdmin(role === "SUPER_ADMIN");
   }, []);
 
   useEffect(() => {
@@ -544,6 +552,72 @@ export default function LeadDetailsApiClient({
       .catch(() => loadCreatedTimeline(baseDetail, []));
   }, [baseDetail, leadId, leadTypeParam, loadCreatedTimeline, validLeadType]);
 
+  useEffect(() => {
+    if (!rollbackOpen) return;
+    let cancelled = false;
+    setRollbackError("");
+    setRollbackReason("");
+    setRollbackStage(lead.stageBlock?.milestoneStage?.trim() ?? "");
+    setRollbackCategory(lead.stageBlock?.milestoneStageCategory?.trim() ?? "");
+    setRollbackSubStage(lead.stageBlock?.milestoneSubStage?.trim() ?? "");
+    void fetchCrmPipeline({ nested: true })
+      .then((pipeline) => {
+        if (cancelled) return;
+        setRollbackStages(pipeline.nested ?? []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRollbackStages([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lead.stageBlock?.milestoneStage, lead.stageBlock?.milestoneStageCategory, lead.stageBlock?.milestoneSubStage, rollbackOpen]);
+
+  const rollbackCategories = useMemo(() => {
+    const selected = rollbackStages.find(
+      (stage) => stage.stage.trim() === rollbackStage.trim(),
+    );
+    return selected?.categories ?? [];
+  }, [rollbackStage, rollbackStages]);
+
+  const rollbackSubStages = useMemo(() => {
+    const selected = rollbackCategories.find(
+      (cat) => cat.stageCategory.trim() === rollbackCategory.trim(),
+    );
+    return selected?.subStages ?? [];
+  }, [rollbackCategories, rollbackCategory]);
+
+  useEffect(() => {
+    if (!rollbackStage.trim()) {
+      setRollbackCategory("");
+      setRollbackSubStage("");
+      return;
+    }
+    if (
+      rollbackCategory.trim() &&
+      rollbackCategories.every(
+        (cat) => cat.stageCategory.trim() !== rollbackCategory.trim(),
+      )
+    ) {
+      setRollbackCategory("");
+      setRollbackSubStage("");
+    }
+  }, [rollbackCategories, rollbackCategory, rollbackStage]);
+
+  useEffect(() => {
+    if (!rollbackCategory.trim()) {
+      setRollbackSubStage("");
+      return;
+    }
+    if (
+      rollbackSubStage.trim() &&
+      !rollbackSubStages.some((sub) => sub.trim() === rollbackSubStage.trim())
+    ) {
+      setRollbackSubStage("");
+    }
+  }, [rollbackCategory, rollbackSubStage, rollbackSubStages]);
+
   const salesClosureHref = useMemo(() => {
     if (typeof window === "undefined") return undefined;
     if (!isCloserStageBookingDone(lead)) return undefined;
@@ -707,6 +781,70 @@ export default function LeadDetailsApiClient({
     }
   }, [leadId, leadTypeParam, validLeadType]);
 
+  const handleStageRollback = useCallback(async () => {
+    if (!validLeadType || !isSuperAdmin) return;
+    const toMilestoneStage = rollbackStage.trim();
+    const toMilestoneStageCategory = rollbackCategory.trim();
+    const toMilestoneSubStage = rollbackSubStage.trim();
+    const reason = rollbackReason.trim();
+    const currentStage = lead.stageBlock?.milestoneStage?.trim() ?? "";
+    const currentCategory = lead.stageBlock?.milestoneStageCategory?.trim() ?? "";
+    const currentSubStage = lead.stageBlock?.milestoneSubStage?.trim() ?? "";
+
+    if (!toMilestoneStage || !toMilestoneStageCategory || !toMilestoneSubStage) {
+      setRollbackError("Select stage, category, and sub-stage.");
+      return;
+    }
+    if (reason.length < 5) {
+      setRollbackError("Reason is required (minimum 5 characters).");
+      return;
+    }
+    if (
+      currentStage === toMilestoneStage &&
+      currentCategory === toMilestoneStageCategory &&
+      currentSubStage === toMilestoneSubStage
+    ) {
+      setRollbackError("Target milestone must be different from current milestone.");
+      return;
+    }
+
+    setRollbackBusy(true);
+    setRollbackError("");
+    try {
+      await postStageRollback(leadTypeParam as CrmLeadType, leadId, {
+        toMilestoneStage,
+        toMilestoneStageCategory,
+        toMilestoneSubStage,
+        reason,
+      });
+      notifySuccess("Stage rollback completed.");
+      setRollbackOpen(false);
+      await load();
+      await refreshActivities();
+    } catch (e) {
+      setRollbackError(
+        e instanceof Error ? e.message : "Stage rollback failed.",
+      );
+    } finally {
+      setRollbackBusy(false);
+    }
+  }, [
+    isSuperAdmin,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.milestoneSubStage,
+    leadId,
+    leadTypeParam,
+    load,
+    notifySuccess,
+    refreshActivities,
+    rollbackCategory,
+    rollbackReason,
+    rollbackStage,
+    rollbackSubStage,
+    validLeadType,
+  ]);
+
   const handlePhoneCallLog = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
@@ -720,7 +858,11 @@ export default function LeadDetailsApiClient({
     async (args: CompleteTaskApiPayload) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
-      const persistedSubstage = normalizeMilestoneSubStageForApi(args.feedback);
+      const isFreshLeadStage = args.milestoneStage.trim().toLowerCase() === "fresh lead";
+      const persistedSubstage = isFreshLeadStage
+        ? ""
+        : normalizeMilestoneSubStageForApi(args.feedback);
+      const persistedCategory = isFreshLeadStage ? "" : args.milestoneStageCategory;
 
       let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
       let designerName = lead.designerName;
@@ -731,6 +873,7 @@ export default function LeadDetailsApiClient({
           designerName: args.meetingAppointment.designerName,
           date: args.meetingAppointment.date,
           slotId: args.meetingAppointment.slotId,
+          meetingType: args.meetingAppointment.meetingType,
           description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
           leadType: crmLeadTypeToApiLabel(lt),
           leadId: leadIdNum,
@@ -753,15 +896,16 @@ export default function LeadDetailsApiClient({
 
       const nextStage = {
         milestoneStage: args.milestoneStage,
-        milestoneStageCategory: args.milestoneStageCategory,
+        milestoneStageCategory: persistedCategory,
         milestoneSubStage: persistedSubstage,
         stage: lead.stageBlock?.stage ?? "Initial Stage",
-        substage: { substage: persistedSubstage },
+        substage: { substage: persistedSubstage || null },
       };
       const leadForSave: Lead = {
         ...lead,
         followUpDate,
         designerName,
+        meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
         status: persistedSubstage,
         stageBlock: nextStage,
         lostReason: args.lostReason?.trim()
@@ -839,6 +983,8 @@ export default function LeadDetailsApiClient({
         <LeadHeader
           lead={lead}
           onCompleteTask={() => setCompleteTaskOpen(true)}
+          canStageRollback={isSuperAdmin}
+          onOpenStageRollback={() => setRollbackOpen(true)}
           salesClosureHref={salesClosureHref}
           createdTimelineOptions={createdTimelineOptions}
           createdTimelineLoading={createdTimelineLoading}
@@ -917,6 +1063,107 @@ export default function LeadDetailsApiClient({
           sending: quoteSending,
         }}
       />
+      {rollbackOpen ? (
+        <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-xl">
+            <h3 className="text-[15px] font-semibold text-[var(--crm-text-primary)]">
+              Stage Rollback (Super Admin)
+            </h3>
+            <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
+              Move lead back to a previous milestone with mandatory reason.
+            </p>
+            <div className="mt-4 space-y-3">
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                  Stage *
+                </span>
+                <select
+                  value={rollbackStage}
+                  onChange={(e) => setRollbackStage(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  disabled={rollbackBusy}
+                >
+                  <option value="">Select stage</option>
+                  {rollbackStages.map((stage) => (
+                    <option key={stage.stage} value={stage.stage}>
+                      {stage.stage}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                  Stage category *
+                </span>
+                <select
+                  value={rollbackCategory}
+                  onChange={(e) => setRollbackCategory(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  disabled={rollbackBusy || !rollbackStage.trim()}
+                >
+                  <option value="">Select category</option>
+                  {rollbackCategories.map((category) => (
+                    <option key={category.stageCategory} value={category.stageCategory}>
+                      {category.stageCategory}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                  Sub-stage *
+                </span>
+                <select
+                  value={rollbackSubStage}
+                  onChange={(e) => setRollbackSubStage(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  disabled={rollbackBusy || !rollbackCategory.trim()}
+                >
+                  <option value="">Select sub-stage</option>
+                  {rollbackSubStages.map((subStage) => (
+                    <option key={subStage} value={subStage}>
+                      {subStage}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                  Reason * (min 5 chars)
+                </span>
+                <textarea
+                  value={rollbackReason}
+                  onChange={(e) => setRollbackReason(e.target.value)}
+                  className="mt-1 min-h-[82px] w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                  placeholder="Explain why rollback is required..."
+                  disabled={rollbackBusy}
+                />
+              </label>
+              {rollbackError ? (
+                <p className="text-[12px] text-rose-600">{rollbackError}</p>
+              ) : null}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-[var(--crm-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--crm-text-secondary)]"
+                onClick={() => setRollbackOpen(false)}
+                disabled={rollbackBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-[var(--crm-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60"
+                onClick={() => void handleStageRollback()}
+                disabled={rollbackBusy}
+              >
+                {rollbackBusy ? "Submitting..." : "Rollback Stage"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {verifyModalOpen ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4">
           <div className="w-full max-w-md rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-xl">

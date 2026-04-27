@@ -6,7 +6,7 @@ import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
-type ChipTone = "blue" | "green" | "amber" | "rose" | "slate";
+type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
 type Chip = { label: string; tone: ChipTone };
 
@@ -20,6 +20,8 @@ function ChipPill({ chip }: { chip: Chip }) {
           ? "bg-[var(--crm-warning-bg)] text-[var(--crm-warning-text)] ring-1 ring-[var(--crm-warning-border)]"
           : chip.tone === "rose"
             ? "bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)] ring-1 ring-[var(--crm-danger)]"
+            : chip.tone === "violet"
+              ? "bg-violet-100 text-violet-700 ring-1 ring-violet-300"
             : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]";
 
   return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${cls}`}>{chip.label}</span>;
@@ -35,6 +37,8 @@ function TinyTag({ chip }: { chip: Chip }) {
           ? "bg-[var(--crm-warning-bg)] text-[var(--crm-warning-text)] ring-1 ring-[var(--crm-warning-border)]"
           : chip.tone === "rose"
             ? "bg-[var(--crm-danger-bg)] text-[var(--crm-danger-text)] ring-1 ring-[var(--crm-danger)]"
+            : chip.tone === "violet"
+              ? "bg-violet-100 text-violet-700 ring-1 ring-violet-300"
             : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]";
   return <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold leading-none ${cls}`}>{chip.label}</span>;
 }
@@ -149,7 +153,8 @@ function LeadRowAction({
             ) : row.verificationTag === "unverified" ? (
               <TinyTag chip={{ label: "Unverified", tone: "amber" }} />
             ) : null}
-            {row.reinquiry ? <TinyTag chip={{ label: "Reinquiry", tone: "blue" }} /> : null}
+            {row.reinquiry ? <TinyTag chip={{ label: "Re-inquiry", tone: "rose" }} /> : null}
+            {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
           </div>
         </div>
       </div>
