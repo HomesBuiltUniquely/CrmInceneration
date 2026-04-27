@@ -153,7 +153,7 @@ function LeadRowAction({
             ) : row.verificationTag === "unverified" ? (
               <TinyTag chip={{ label: "Unverified", tone: "amber" }} />
             ) : null}
-            {row.reinquiry ? <TinyTag chip={{ label: "Reinquiry", tone: "blue" }} /> : null}
+            {row.reinquiry ? <TinyTag chip={{ label: "Re-inquiry", tone: "rose" }} /> : null}
             {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
           </div>
         </div>
