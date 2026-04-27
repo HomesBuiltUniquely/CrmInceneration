@@ -6,11 +6,26 @@ import type {
 } from "@/types/crm-pipeline";
 import { BASE_URL } from "@/lib/base-url";
 
-export async function fetchCrmPipeline(nested = true): Promise<CrmPipelineResponse> {
-  const q = nested ? "?nested=true" : "";
+type FetchCrmPipelineOptions = {
+  nested?: boolean;
+  forCompleteTask?: boolean;
+  currentStage?: string;
+};
+
+export async function fetchCrmPipeline(
+  options: boolean | FetchCrmPipelineOptions = true
+): Promise<CrmPipelineResponse> {
+  const opts: FetchCrmPipelineOptions =
+    typeof options === "boolean" ? { nested: options } : options;
+  const q = new URLSearchParams();
+  if (opts.nested !== false) q.set("nested", "true");
+  if (opts.forCompleteTask) q.set("forCompleteTask", "true");
+  if (opts.currentStage?.trim()) q.set("currentStage", opts.currentStage.trim());
+  const qs = q.toString();
+  const suffix = qs ? `?${qs}` : "";
   const urls = [
-    `${BASE_URL}/v1/Leads/crm-pipeline${q}`,
-    `${BASE_URL}/Leads/crm-pipeline${q}`,
+    `${BASE_URL}/v1/Leads/crm-pipeline${suffix}`,
+    `${BASE_URL}/Leads/crm-pipeline${suffix}`,
   ];
   let lastStatus = 0;
   for (const url of urls) {

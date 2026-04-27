@@ -1,11 +1,12 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 
-export type ActivityType = "assignment" | "note" | "update" | "status";
+export type ActivityType = "assignment" | "note" | "update" | "status" | "call";
 
 export interface ActivityItem {
   id: string;
   type: ActivityType;
   timestamp: string;
+  createdAtIso?: string;
   description: string;
   by: string;
   note?: string;
@@ -29,6 +30,8 @@ export interface Lead {
   customerId: string;
   status: string;
   createdAt: string;
+  /** First successful call timestamp from backend lead entity (`firstCallAt`). */
+  firstCallAt?: string;
   assignee: string;
   designerName: string;
   /** Designer contact for notifications (design preference email — QA + meeting copy). */

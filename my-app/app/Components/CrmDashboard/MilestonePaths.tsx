@@ -129,9 +129,10 @@ export default function MilestonePaths({
   wonItems,
   lostItems,
 }: Props) {
+  const isFreshLeadStage = stageTitle.trim().toLowerCase() === "fresh lead";
   return (
     <section className="xl:mx-6 xl:mt-10 xl:w-[calc(100%-3rem)] xl:min-w-0">
-      <div className="flex gap-6">
+      <div className={`flex gap-6 ${isFreshLeadStage ? "justify-center" : ""}`}>
         <div className="w-64 rounded-3xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-7 py-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
@@ -157,47 +158,49 @@ export default function MilestonePaths({
           </div>
         </div>
 
-        <div className="flex-1">
-          <div className="grid grid-cols-2 gap-8">
-            <div>
-              <SectionHeader
-                title="Won Path"
-                total={wonTotal}
-                underline="success"
-              />
-              <div className="mt-4 flex flex-col gap-3">
-                {wonItems.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-[var(--crm-border)] px-5 py-6 text-center text-sm text-[var(--crm-text-muted)]">
-                    No won substages for this stage.
-                  </div>
-                ) : (
-                  wonItems.map((item) => (
-                    <StatCard key={item.title} item={item} />
-                  ))
-                )}
+        {!isFreshLeadStage ? (
+          <div className="flex-1">
+            <div className="grid grid-cols-2 gap-8">
+              <div>
+                <SectionHeader
+                  title="Won Path"
+                  total={wonTotal}
+                  underline="success"
+                />
+                <div className="mt-4 flex flex-col gap-3">
+                  {wonItems.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--crm-border)] px-5 py-6 text-center text-sm text-[var(--crm-text-muted)]">
+                      No won substages for this stage.
+                    </div>
+                  ) : (
+                    wonItems.map((item) => (
+                      <StatCard key={item.title} item={item} />
+                    ))
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div>
-              <SectionHeader
-                title="Lost Path"
-                total={lostTotal}
-                underline="danger"
-              />
-              <div className="mt-4 flex flex-col gap-3">
-                {lostItems.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-[var(--crm-border)] px-5 py-6 text-center text-sm text-[var(--crm-text-muted)]">
-                    No lost substages for this stage.
-                  </div>
-                ) : (
-                  lostItems.map((item) => (
-                    <StatCard key={item.title} item={item} />
-                  ))
-                )}
+              <div>
+                <SectionHeader
+                  title="Lost Path"
+                  total={lostTotal}
+                  underline="danger"
+                />
+                <div className="mt-4 flex flex-col gap-3">
+                  {lostItems.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-[var(--crm-border)] px-5 py-6 text-center text-sm text-[var(--crm-text-muted)]">
+                      No lost substages for this stage.
+                    </div>
+                  ) : (
+                    lostItems.map((item) => (
+                      <StatCard key={item.title} item={item} />
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </section>
   );

@@ -98,6 +98,40 @@ export async function postVerifyLead(
   }
 }
 
+export async function postStageRollback(
+  leadType: CrmLeadType,
+  id: string,
+  body: {
+    toMilestoneStage: string;
+    toMilestoneStageCategory: string;
+    toMilestoneSubStage: string;
+    reason: string;
+  }
+): Promise<unknown> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/stage-rollback`, {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Session expired. Please login again.");
+    }
+    if (res.status === 403) {
+      throw new Error("Only Super Admin can rollback stage.");
+    }
+    throw new Error(text || `Stage rollback failed (${res.status})`);
+  }
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return text;
+  }
+}
+
 /** `POST /v1/quote/send` — multipart fields: quoteLink, toEmail, subject, body, leadId, leadType. */
 export async function postQuoteSend(formData: FormData): Promise<unknown> {
   const headers = getCrmAuthHeaders();

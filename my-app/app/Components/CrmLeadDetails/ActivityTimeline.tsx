@@ -20,6 +20,12 @@ const typeConfig: Record<
     dotClass: "border-amber-400/30 bg-amber-500/10 text-amber-300",
     labelClass: "text-amber-300",
   },
+  call: {
+    label: "Call",
+    icon: "📞",
+    dotClass: "border-cyan-400/30 bg-cyan-500/10 text-cyan-300",
+    labelClass: "text-cyan-300",
+  },
   update: {
     label: "Update",
     icon: "🔄",

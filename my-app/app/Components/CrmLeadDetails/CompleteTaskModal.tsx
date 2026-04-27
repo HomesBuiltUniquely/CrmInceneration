@@ -25,6 +25,18 @@ type SubStatusMapping = {
   stageCategory: string;
   subStageName: string;
 };
+type FeedbackOption = {
+  label: string;
+  stage: string;
+  stageCategory: string;
+  subStageName: string;
+};
+
+const MEETING_TYPE_OPTIONS = [
+  { label: "Showroom Visit", value: "SHOWROOM_VISIT" },
+  { label: "Virtual Meeting", value: "VIRTUAL_MEETING" },
+  { label: "Site Visit", value: "SITE_VISIT" },
+] as const;
 
 function toDateTimeLocalValue(value: string) {
   if (!value) {
@@ -58,6 +70,7 @@ export type CompleteTaskApiPayload = {
     designerName: string;
     date: string;
     slotId: string;
+    meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   };
 };
 
@@ -111,6 +124,7 @@ export default function CompleteTaskModal({
   const [meetingDesigner, setMeetingDesigner] = useState("");
   const [appointmentDate, setAppointmentDate] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
+  const [meetingType, setMeetingType] = useState("");
   const [designerOptions, setDesignerOptions] = useState<string[]>([]);
   const [availableSlots, setAvailableSlots] = useState<AvailableSlotRow[]>([]);
   const [designersLoading, setDesignersLoading] = useState(false);
@@ -160,6 +174,7 @@ export default function CompleteTaskModal({
     setMeetingDesigner("");
     setAppointmentDate("");
     setSelectedSlotId("");
+    setMeetingType("");
     setAvailableSlots([]);
     setCancelConfirmed(false);
     setApiError("");
@@ -179,16 +194,26 @@ export default function CompleteTaskModal({
 
       try {
         let mappings: SubStatusMapping[] = [];
+        const currentStage = (
+          lead.stageBlock?.milestoneStage ??
+          lead.status ??
+          ""
+        ).trim();
 
         try {
-          const pipeline = await fetchCrmPipeline(true);
+          const pipeline = await fetchCrmPipeline({
+            nested: true,
+            forCompleteTask: true,
+            currentStage,
+          });
           mappings = pipeline.entries.map((e) => ({
             stage: e.stage,
             stageCategory: e.stageCategory,
             subStageName: e.subStageName,
           }));
         } catch (pipelineError) {
-          // Fallback to existing milestone endpoint if pipeline is not reachable.
+          // Fallback to existing milestone endpoint only if complete-task
+          // filtered endpoint is not reachable.
           const response = await fetch(
             "/api/milestone-count?resource=sub-status",
             {
@@ -238,7 +263,7 @@ export default function CompleteTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [lead.status, open]);
+  }, [lead.stageBlock?.milestoneStage, lead.status, open]);
 
   useEffect(() => {
     if (!open || !scheduleMode) {
@@ -299,40 +324,35 @@ export default function CompleteTaskModal({
     };
   }, [appointmentDate, meetingDesigner, open, scheduleMode]);
 
-  const feedbackEnabled =
-    nextCallDate.trim().length > 0 || Boolean(onApiComplete);
-  const statusEnabled = feedbackEnabled && !feedbackLoading;
-  const pathEnabled = statusEnabled && status.trim().length > 0;
-  const feedbackSelectEnabled = pathEnabled && path.trim().length > 0;
-  const statusOptions = useMemo(
-    () =>
-      Array.from(new Set(feedbackMappings.map((m) => m.stage.trim()))).filter(
-        (value) => value.length > 0,
-      ),
-    [feedbackMappings],
-  );
-  const pathOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          feedbackMappings
-            .filter((m) => m.stage === status)
-            .map((m) => m.stageCategory.trim()),
-        ),
-      ).filter((value) => value.length > 0),
-    [feedbackMappings, status],
-  );
-  const feedbackOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          feedbackMappings
-            .filter((m) => m.stage === status && m.stageCategory === path)
-            .map((m) => m.subStageName.trim()),
-        ),
-      ).filter((value) => value.length > 0),
-    [feedbackMappings, path, status],
-  );
+  const feedbackOptions = useMemo<FeedbackOption[]>(() => {
+    const seen = new Set<string>();
+    const rows: FeedbackOption[] = [];
+    for (const m of feedbackMappings) {
+      const stage = m.stage.trim();
+      const stageCategory = m.stageCategory.trim();
+      const subStageName = m.subStageName.trim();
+      if (!stage) continue;
+      const label = subStageName || stage;
+      const key = `${stage}||${stageCategory}||${label}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({ label, stage, stageCategory, subStageName });
+    }
+    return rows;
+  }, [feedbackMappings]);
+  const feedbackSelectEnabled = !feedbackLoading && feedbackOptions.length > 0;
+  useEffect(() => {
+    const selected = feedbackOptions.find((m) => m.label === feedback);
+    if (selected) {
+      if (status !== selected.stage) setStatus(selected.stage);
+      if (path !== selected.stageCategory) setPath(selected.stageCategory);
+      return;
+    }
+    if (!feedback.trim()) {
+      if (status) setStatus("");
+      if (path) setPath("");
+    }
+  }, [feedback, feedbackOptions, path, status]);
   const reasonRequired = requiresResoneField(path, feedback);
   const nextCallDateMissing =
     !scheduleMode &&
@@ -348,7 +368,8 @@ export default function CompleteTaskModal({
     scheduleMode &&
     (!meetingDesigner.trim() ||
       !appointmentDate.trim() ||
-      !selectedSlotId.trim());
+      !selectedSlotId.trim() ||
+      !meetingType.trim());
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
   const designerEmailMissingForMeeting =
     scheduleMode && !isValidEmail(lead.designerEmail || "");
@@ -419,6 +440,10 @@ export default function CompleteTaskModal({
                 designerName: meetingDesigner.trim(),
                 date: appointmentDate.trim(),
                 slotId: selectedSlotId.trim(),
+                meetingType: meetingType.trim() as
+                  | "SHOWROOM_VISIT"
+                  | "VIRTUAL_MEETING"
+                  | "SITE_VISIT",
               }
             : undefined,
         });
@@ -595,59 +620,23 @@ export default function CompleteTaskModal({
               {/* Status */}
               <div>
                 <FieldLabel>Status</FieldLabel>
-                <Select
+                <Input
                   value={status}
-                  onChange={(e) => {
-                    const nextStatus = e.target.value;
-                    setStatus(nextStatus);
-                    setPath("");
-                    setFeedback("");
-                  }}
-                  disabled={!statusEnabled}
-                  className={[
-                    "h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]",
-                    !statusEnabled ? "opacity-60 cursor-not-allowed" : "",
-                  ].join(" ")}
-                >
-                  <option value="">
-                    {!statusEnabled
-                      ? "Wait…"
-                      : !onApiComplete && !feedbackEnabled
-                        ? "Select next call date first"
-                        : "Select status"}
-                  </option>
-                  {statusOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </Select>
+                  readOnly
+                  placeholder="Auto from feedback"
+                  className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] opacity-85"
+                />
               </div>
 
               {/* Path */}
               <div>
                 <FieldLabel>Path</FieldLabel>
-                <Select
+                <Input
                   value={path}
-                  onChange={(e) => {
-                    setPath(e.target.value);
-                    setFeedback("");
-                  }}
-                  disabled={!pathEnabled}
-                  className={[
-                    "h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]",
-                    !pathEnabled ? "opacity-60 cursor-not-allowed" : "",
-                  ].join(" ")}
-                >
-                  <option value="">
-                    {pathEnabled ? "Select path" : "Select status first"}
-                  </option>
-                  {pathOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </Select>
+                  readOnly
+                  placeholder="Auto from feedback"
+                  className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] opacity-85"
+                />
               </div>
 
               {/* Feedback */}
@@ -669,11 +658,14 @@ export default function CompleteTaskModal({
                   <option value="">
                     {feedbackSelectEnabled
                       ? "Select feedback"
-                      : "Select path first"}
+                      : "Wait..."}
                   </option>
                   {feedbackOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
+                    <option
+                      key={`${option.stage}-${option.stageCategory}-${option.label}`}
+                      value={option.label}
+                    >
+                      {option.label}
                     </option>
                   ))}
                 </Select>
@@ -681,11 +673,6 @@ export default function CompleteTaskModal({
                 {feedbackLoading && (
                   <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                     Loading feedback options...
-                  </p>
-                )}
-                {!onApiComplete && !feedbackEnabled && (
-                  <p className="mt-1 text-[12px] text-red-500">
-                    Please select next call date first
                   </p>
                 )}
                 {feedbackError && (
@@ -760,6 +747,21 @@ export default function CompleteTaskModal({
                       }}
                       className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
                     />
+                  </div>
+                  <div>
+                    <FieldLabel required>Meeting type</FieldLabel>
+                    <Select
+                      value={meetingType}
+                      onChange={(e) => setMeetingType(e.target.value)}
+                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                    >
+                      <option value="">Select meeting type</option>
+                      {MEETING_TYPE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </Select>
                   </div>
                   <div>
                     <FieldLabel required>Slot</FieldLabel>

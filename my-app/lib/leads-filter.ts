@@ -34,6 +34,11 @@ export type ApiLead = {
   assignee?: string | { name?: string; fullName?: string };
   salesOwner?: string | { name?: string; fullName?: string };
   updatedAt?: string;
+  createdAt?: string;
+  createdDate?: string;
+  leadDate?: string;
+  createdOn?: string;
+  firstCallAt?: string | null;
   verified?: boolean | null;
   verificationStatus?: string | null;
   /** Next follow-up (string in API; parse client-side for “today” / overdue). */
@@ -57,6 +62,7 @@ export type LeadRowModel = {
   statusLabel?: string;
   verificationTag?: "verified" | "unverified";
   reinquiry?: boolean;
+  callDelayed?: boolean;
   journey: {
     stage: string;
     progressLabel: string;

@@ -23,6 +23,7 @@ import {
   assigneeAliasNorms,
   computeFollowUpInsightCounts,
   filterLeadsForInsightMode,
+  isFirstCallDelayedLead,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
 import {
@@ -329,6 +330,28 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
   return "delete-all-websiteleads";
+}
+
+function formatRoleForDeleteNotice(role: string): string {
+  const normalized = normalizeRole(role);
+  if (normalized === "SUPER_ADMIN") return "SuperAdmin";
+  if (normalized === "SALES_ADMIN") return "SalesAdmin";
+  if (!normalized) return "User";
+  return normalized
+    .split("_")
+    .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function deleteNoticeText(role: string, scope = "Delete All"): string {
+  const actor = formatRoleForDeleteNotice(role);
+  const time = new Date().toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+  return `${scope} done by ${actor} at ${time}`;
 }
 
 async function deleteLeadRowsByType(leadType: string, ids: number[]) {
@@ -957,6 +980,8 @@ export default function LeadsDataSection({
           currentUserName: currentUserName ?? "",
           managerTeamNames: scopedTeam,
           leadView: insightLeadView,
+          dateFrom,
+          dateTo,
         });
         setLeadTypeCounts({
           ...base,
@@ -1054,15 +1079,18 @@ export default function LeadsDataSection({
     currentUserName: currentUserName ?? "",
     managerTeamNames: scopedTeamForInsight,
     leadView: insightLeadView,
+    dateFrom,
+    dateTo,
   };
   const insightFilteredContent = filterLeadsForInsightMode(
     content,
     insightTableMode,
     insightOpts,
   );
-  const baseRows = insightFilteredContent.map((lead) =>
-    mapApiLeadToRow(lead, asCrmLeadType(lead.leadType, "formlead"), stageOrder)
-  );
+  const baseRows = insightFilteredContent.map((lead) => ({
+    ...mapApiLeadToRow(lead, asCrmLeadType(lead.leadType, "formlead"), stageOrder),
+    callDelayed: isFirstCallDelayedLead(lead),
+  }));
   const norm = (v: string) => v.trim().toLowerCase();
   const myName = norm(currentUserName);
   const scopedTeamNames = managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
@@ -1227,7 +1255,7 @@ export default function LeadsDataSection({
     setDeleteModalType("row");
   };
 
-  const openRowAssignModal = async (row: (typeof rows)[number]) => {
+  const openRowAssignModal = async (row: LeadRowModel) => {
     setRowAssignLead({
       id: row.id,
       name: row.name,
@@ -1314,6 +1342,7 @@ export default function LeadsDataSection({
           headers: getCrmAuthHeaders(),
         });
         if (!res.ok) throw new Error("Delete-all failed.");
+        notifyInfo(deleteNoticeText(currentRole, `Delete All (${toAssignmentLeadType(leadType)})`));
       } else {
         const targets = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
         const results = await Promise.all(
@@ -1334,11 +1363,13 @@ export default function LeadsDataSection({
         const successTypes = results.filter((r) => r.ok).map((r) => r.type);
         const failedTypes = results.filter((r) => !r.ok).map((r) => r.type);
         if (failedTypes.length === 0) {
-          notifySuccess("All lead types deleted successfully.");
+          notifyInfo(deleteNoticeText(currentRole, "Delete All"));
         } else if (successTypes.length === 0) {
           throw new Error(`Delete failed for: ${failedTypes.join(", ")}`);
         } else {
-          notifyInfo(`Deleted ${successTypes.join(", ")}. Failed: ${failedTypes.join(", ")}.`);
+          notifyInfo(
+            `${deleteNoticeText(currentRole, "Delete All")} — Deleted ${successTypes.join(", ")}. Failed: ${failedTypes.join(", ")}.`
+          );
         }
       }
       await load();
@@ -1362,6 +1393,10 @@ export default function LeadsDataSection({
           ? "Lead Overdue (Discovery · Connection)"
           : insightTableMode === "overdueClosure"
             ? "Opportunity Overdue (Experience & Design → Closed)"
+            : insightTableMode === "callDelayed"
+              ? "First Call Delayed"
+            : insightTableMode === "totalCalls"
+              ? "Total Calls"
             : insightTableMode === "overdue"
               ? "Overdue follow-ups"
           : insightTableMode === "teamLeads"
@@ -1373,7 +1408,8 @@ export default function LeadsDataSection({
     insightTableMode === "followUpClosure" ||
     insightTableMode === "overdue" ||
     insightTableMode === "overdueActive" ||
-    insightTableMode === "overdueClosure";
+    insightTableMode === "overdueClosure" ||
+    insightTableMode === "callDelayed";
 
   return (
     <>

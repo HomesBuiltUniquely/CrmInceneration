@@ -10,8 +10,17 @@ export function nestedStageForSelection(
 }
 
 export function milestoneStageOptionsFromNested(nested: CrmNestedStage[]): string[] {
-  const stages = new Set(nested.map((n) => n.stage.trim()).filter(Boolean));
-  return [...stages].sort((a, b) => a.localeCompare(b));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const n of nested) {
+    const stage = n.stage.trim();
+    if (!stage) continue;
+    const key = normalizeStage(stage);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(stage);
+  }
+  return out;
 }
 
 export function milestoneCategoryOptionsForStage(
@@ -21,8 +30,17 @@ export function milestoneCategoryOptionsForStage(
   if (!stage.trim()) return [];
   const node = nestedStageForSelection(nested, stage);
   if (!node) return [];
-  const cats = node.categories.map((c) => c.stageCategory.trim()).filter(Boolean);
-  return [...new Set(cats)].sort((a, b) => a.localeCompare(b));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const c of node.categories) {
+    const cat = c.stageCategory.trim();
+    if (!cat) continue;
+    const key = cat.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cat);
+  }
+  return out;
 }
 
 export function milestoneSubStageOptionsForCategory(
@@ -37,5 +55,15 @@ export function milestoneSubStageOptionsForCategory(
     (c) => c.stageCategory.trim() === category.trim(),
   );
   if (!cat) return [];
-  return [...cat.subStages].sort((a, b) => a.localeCompare(b));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const sub of cat.subStages) {
+    const s = sub.trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
 }

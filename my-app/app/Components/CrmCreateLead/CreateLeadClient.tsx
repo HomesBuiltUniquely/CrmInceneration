@@ -35,7 +35,6 @@ const FEEDBACK_OPTIONS = [
   { stage: "Initial Stage", substage: "Fresh Leads" },
   { stage: "Initial Stage", substage: "NAT" },
   { stage: "Discovery Won", substage: "NO IMMEDIATE REQUIREMENT" },
-  { stage: "Discovery Won", substage: "RE-LANDED LEAD" },
   { stage: "Discovery Lost", substage: "QUALIFICATIONS CONSTRAINT" },
   { stage: "Active", substage: "RNR" },
   { stage: "Active", substage: "Call Back" },

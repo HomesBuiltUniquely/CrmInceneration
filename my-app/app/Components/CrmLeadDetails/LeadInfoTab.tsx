@@ -3,8 +3,18 @@
 import { useEffect, useState } from "react";
 import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Chip, Button } from "./ui";
 import type { Lead } from "@/lib/data";
-import { LANGUAGE_OPTIONS, LEAD_SOURCES, MEETING_TYPES } from "@/lib/data";
+import { LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+
+function meetingTypeDisplay(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "—";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  if (key === "SHOWROOM_VISIT") return "Showroom Visit";
+  if (key === "VIRTUAL_MEETING") return "Virtual Meeting";
+  if (key === "SITE_VISIT") return "Site Visit";
+  return raw;
+}
 
 type Props = {
   lead: Lead;
@@ -261,17 +271,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
             </div>
             <div>
               <FieldLabel>Meeting Type</FieldLabel>
-              <Select
-                {...(c
-                  ? { value: lead.meetingType, onChange: (e) => c({ meetingType: e.target.value }) }
-                  : { defaultValue: lead.meetingType })}
-              >
-                {MEETING_TYPES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
+              <Input value={meetingTypeDisplay(lead.meetingType)} readOnly />
             </div>
           </div>
 
