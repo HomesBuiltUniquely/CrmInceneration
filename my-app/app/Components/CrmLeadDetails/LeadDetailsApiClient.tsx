@@ -383,6 +383,13 @@ export default function LeadDetailsApiClient({
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown>>({});
   const { notifySuccess, notifyError } = useGlobalNotifier();
 
+  const loadCreatedTimeline = useCallback(
+    async (detailJson: Record<string, unknown>, activitiesJson: unknown) => {
+      await buildCreatedTimeline(detailJson, activitiesJson);
+    },
+    [leadId, leadType, validLeadType],
+  );
+
   const load = useCallback(async () => {
     if (!isCrmLeadType(leadTypeParam)) {
       return;
@@ -408,7 +415,7 @@ export default function LeadDetailsApiClient({
       setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
       setLoading(false);
     }
-  }, [leadId, leadTypeParam, loadCreatedTimeline]);
+  }, [leadId, leadTypeParam]);
 
   useEffect(() => {
     if (!validLeadType) {
@@ -474,120 +481,115 @@ export default function LeadDetailsApiClient({
     setLead((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  const loadCreatedTimeline = useCallback(
-    async (detailJson: Record<string, unknown>, activitiesJson: unknown) => {
-      if (!validLeadType) return;
-      setCreatedTimelineLoading(true);
-      const entries: TimelineEntry[] = [];
-      let fallbackCreatedAt = "";
-      let fallbackName = "Unknown";
-      try {
-        const currentCreatedAt =
-          typeof detailJson.createdAt === "string" &&
-          detailJson.createdAt.trim()
-            ? detailJson.createdAt.trim()
-            : "";
-        const currentName =
-          (typeof detailJson.name === "string" && detailJson.name.trim()) ||
-          (typeof detailJson.fullName === "string" &&
-            detailJson.fullName.trim()) ||
-          (
-            (detailJson.dynamicFields as Record<string, unknown> | undefined)
-              ?.customerName as string | undefined
-          )?.trim() ||
-          "" ||
-          "Unknown";
+  async function buildCreatedTimeline(
+    detailJson: Record<string, unknown>,
+    activitiesJson: unknown,
+  ) {
+    if (!validLeadType) return;
+    setCreatedTimelineLoading(true);
+    const entries: TimelineEntry[] = [];
+    let fallbackCreatedAt = "";
+    let fallbackName = "Unknown";
+    try {
+      const currentCreatedAt =
+        typeof detailJson.createdAt === "string" && detailJson.createdAt.trim()
+          ? detailJson.createdAt.trim()
+          : "";
+      const currentName =
+        (typeof detailJson.name === "string" && detailJson.name.trim()) ||
+        (typeof detailJson.fullName === "string" && detailJson.fullName.trim()) ||
+        (
+          (detailJson.dynamicFields as Record<string, unknown> | undefined)
+            ?.customerName as string | undefined
+        )?.trim() ||
+        "" ||
+        "Unknown";
 
-        fallbackCreatedAt = currentCreatedAt;
-        fallbackName = currentName;
+      fallbackCreatedAt = currentCreatedAt;
+      fallbackName = currentName;
 
-        if (currentCreatedAt) {
-          entries.push({
-            key: `original:${leadType}:${leadId}:${currentCreatedAt}`,
-            createdAt: currentCreatedAt,
-            sourceType: SOURCE_LABELS[leadType],
-            name: currentName,
-            leadType,
-            leadId,
-          });
-        }
-
-        const activityRows = Array.isArray(activitiesJson)
-          ? activitiesJson
-          : Array.isArray(
-                (activitiesJson as { content?: unknown[] } | null)?.content,
-              )
-            ? ((activitiesJson as { content?: unknown[] }).content ?? [])
-            : [];
-
-        for (let idx = 0; idx < activityRows.length; idx++) {
-          const row = activityRows[idx];
-          const item = row as Record<string, unknown>;
-          const type = String(item.activityType ?? "").toUpperCase();
-          if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED")
-            continue;
-
-          const createdAt =
-            typeof item.createdAt === "string" ? item.createdAt.trim() : "";
-          if (!createdAt) continue;
-
-          const sourceType =
-            parseSourceTypeFromDescription(item.description) ??
-            SOURCE_LABELS[leadType];
-          const name =
-            parseNameFromDescription(item.description) ?? currentName;
-          entries.push({
-            key: `${type}:${createdAt}:${idx}`,
-            createdAt,
-            sourceType,
-            name,
-            leadType,
-            leadId,
-          });
-        }
-      } catch {
-        // keep fallback and avoid page failure
-      } finally {
-        const dedup = new Map<string, TimelineEntry>();
-        for (const entry of entries) {
-          const dedupKey = `${entry.createdAt}|${entry.sourceType.toLowerCase()}|${entry.name.toLowerCase()}`;
-          if (!dedup.has(dedupKey)) dedup.set(dedupKey, entry);
-        }
-        const sorted = [...dedup.values()].sort((a, b) => {
-          const bt = parseDateLoose(b.createdAt)?.getTime() ?? 0;
-          const at = parseDateLoose(a.createdAt)?.getTime() ?? 0;
-          return bt - at;
+      if (currentCreatedAt) {
+        entries.push({
+          key: `original:${leadType}:${leadId}:${currentCreatedAt}`,
+          createdAt: currentCreatedAt,
+          sourceType: SOURCE_LABELS[leadType],
+          name: currentName,
+          leadType,
+          leadId,
         });
-        const options = sorted.length
-          ? sorted.map((entry) => ({
-              value: entry.key,
-              fullLabel: buildTimelineLabel(entry),
-              label: truncateLabel(buildTimelineLabel(entry)),
-              leadType: entry.leadType,
-              leadId: entry.leadId,
-            }))
-          : [
-              {
-                value: `fallback:${leadType}:${leadId}`,
-                fullLabel: `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(
-                  fallbackCreatedAt,
-                )} in ${SOURCE_LABELS[leadType]} as ${fallbackName}`,
-                label: truncateLabel(
-                  `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(fallbackCreatedAt)} in ${
-                    SOURCE_LABELS[leadType]
-                  } as ${fallbackName}`,
-                ),
-                leadType,
-                leadId,
-              },
-            ];
-        setCreatedTimelineOptions(options);
-        setSelectedTimelineValue(options[0]?.value ?? "");
-        setCreatedTimelineLoading(false);
       }
-    },
-    [leadId, leadType, validLeadType],
-  );
+
+      const activityRows = Array.isArray(activitiesJson)
+        ? activitiesJson
+        : Array.isArray((activitiesJson as { content?: unknown[] } | null)?.content)
+          ? ((activitiesJson as { content?: unknown[] }).content ?? [])
+          : [];
+
+      for (let idx = 0; idx < activityRows.length; idx++) {
+        const row = activityRows[idx];
+        const item = row as Record<string, unknown>;
+        const type = String(item.activityType ?? "").toUpperCase();
+        if (type !== "REINQUIRY_RECEIVED" && type !== "DUPLICATE_RECEIVED")
+          continue;
+
+        const createdAt =
+          typeof item.createdAt === "string" ? item.createdAt.trim() : "";
+        if (!createdAt) continue;
+
+        const sourceType =
+          parseSourceTypeFromDescription(item.description) ??
+          SOURCE_LABELS[leadType];
+        const name = parseNameFromDescription(item.description) ?? currentName;
+        entries.push({
+          key: `${type}:${createdAt}:${idx}`,
+          createdAt,
+          sourceType,
+          name,
+          leadType,
+          leadId,
+        });
+      }
+    } catch {
+      // keep fallback and avoid page failure
+    } finally {
+      const dedup = new Map<string, TimelineEntry>();
+      for (const entry of entries) {
+        const dedupKey = `${entry.createdAt}|${entry.sourceType.toLowerCase()}|${entry.name.toLowerCase()}`;
+        if (!dedup.has(dedupKey)) dedup.set(dedupKey, entry);
+      }
+      const sorted = [...dedup.values()].sort((a, b) => {
+        const bt = parseDateLoose(b.createdAt)?.getTime() ?? 0;
+        const at = parseDateLoose(a.createdAt)?.getTime() ?? 0;
+        return bt - at;
+      });
+      const options = sorted.length
+        ? sorted.map((entry) => ({
+            value: entry.key,
+            fullLabel: buildTimelineLabel(entry),
+            label: truncateLabel(buildTimelineLabel(entry)),
+            leadType: entry.leadType,
+            leadId: entry.leadId,
+          }))
+        : [
+            {
+              value: `fallback:${leadType}:${leadId}`,
+              fullLabel: `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(
+                fallbackCreatedAt,
+              )} in ${SOURCE_LABELS[leadType]} as ${fallbackName}`,
+              label: truncateLabel(
+                `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(fallbackCreatedAt)} in ${
+                  SOURCE_LABELS[leadType]
+                } as ${fallbackName}`,
+              ),
+              leadType,
+              leadId,
+            },
+          ];
+      setCreatedTimelineOptions(options);
+      setSelectedTimelineValue(options[0]?.value ?? "");
+      setCreatedTimelineLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!rollbackOpen) return;
