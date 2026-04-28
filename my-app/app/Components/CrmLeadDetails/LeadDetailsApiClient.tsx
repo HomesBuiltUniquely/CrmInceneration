@@ -206,17 +206,13 @@ async function postExternalIntakeLead(args: {
 
   const idCandidates: unknown[] = [
     args.baseDetail.externalLeadId,
-    args.baseDetail.id,
-    args.baseDetail.leadId,
-    args.baseDetail.customerId,
-    args.baseDetail.crmId,
+    args.baseDetail.externalId,
+    args.baseDetail.external_id,
+    args.baseDetail.externalLeadID,
     dynamicFields.externalLeadId,
-    dynamicFields.id,
-    dynamicFields.leadId,
-    dynamicFields.customerId,
-    dynamicFields.crmId,
-    args.lead.id,
-    args.lead.customerId,
+    dynamicFields.externalId,
+    dynamicFields.external_id,
+    dynamicFields.externalLeadID,
   ];
 
   const externalLeadId =
