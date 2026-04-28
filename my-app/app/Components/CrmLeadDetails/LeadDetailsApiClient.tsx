@@ -206,7 +206,7 @@ async function postExternalIntakeLead(args: {
     projectName: pickText(args.baseDetail.fullName),
     contactNo: pickText(args.baseDetail.phone),
     clientEmail: pickText(args.baseDetail.email),
-    externalLeadId,
+    externalLeadId: externalLeadId ?? "",
     sourceProject: "crm-inceneration",
   };
 
