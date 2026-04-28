@@ -191,14 +191,23 @@ async function postExternalIntakeLead(args: {
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
   const city = pickCityForExternalIntake(args.lead, args.baseDetail);
+  const normalizeExternalLeadId = (
+    value: unknown,
+  ): number | string | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^\d+$/.test(trimmed)) return Number(trimmed);
+    const crmNumeric = trimmed.match(/^crm-(\d+)$/i);
+    if (crmNumeric?.[1]) return Number(crmNumeric[1]);
+    return trimmed;
+  };
   const externalLeadId =
-    String(
-      args.baseDetail.externalLeadId ??
-        args.baseDetail.id ??
-        args.baseDetail.leadId ??
-        args.lead.id ??
-        "",
-    ).trim();
+    normalizeExternalLeadId(args.baseDetail.externalLeadId) ??
+    normalizeExternalLeadId(args.baseDetail.id) ??
+    normalizeExternalLeadId(args.baseDetail.leadId) ??
+    normalizeExternalLeadId(args.lead.id);
   const payload = {
     projectName: args.lead.name?.trim() || "",
     contactNo: args.lead.phone?.trim() || "",
@@ -211,7 +220,7 @@ async function postExternalIntakeLead(args: {
     },
   };
 
-  if (!payload.externalLeadId) {
+  if (payload.externalLeadId === null || payload.externalLeadId === "") {
     throw new Error("External intake failed: lead id is missing.");
   }
 
@@ -228,7 +237,7 @@ async function postExternalIntakeLead(args: {
       `External intake failed (${res.status})${msg ? `: ${msg}` : ""}`,
     );
   }
-}
+} 
 
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
   formlead: "External Lead",
