@@ -207,9 +207,18 @@ async function postExternalIntakeLead(args: {
   const chosen = idCandidates.find((c) => c.value);
   const externalLeadId = chosen ? normalizeExternalLeadId(chosen.value) : "";
   const payload = {
-    projectName: pickText(args.baseDetail.fullName),
-    contactNo: pickText(args.baseDetail.phone),
-    clientEmail: pickText(args.baseDetail.email),
+    projectName:
+      pickText(args.baseDetail.fullName) ||
+      pickText(args.baseDetail.customerName) ||
+      pickText(args.baseDetail.name),
+    contactNo:
+      pickText(args.baseDetail.phone) ||
+      pickText(args.baseDetail.phoneNumber) ||
+      pickText(args.baseDetail.mobile),
+    clientEmail:
+      pickText(args.baseDetail.email) ||
+      pickText(args.baseDetail.emailAddress) ||
+      pickText(args.baseDetail.mail),
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
