@@ -5,6 +5,16 @@ import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 
+const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
+  "SUPER_ADMIN",
+  "ADMIN",
+  "SALES_ADMIN",
+  "SALES_MANAGER",
+  "SALES_EXECUTIVE",
+  "PRESALES_MANAGER",
+  "PRESALES_EXECUTIVE",
+]);
+
 function parseUpdatedAt(a: ApiLead): number {
   const u = a.updatedAt;
   if (!u) return 0;
@@ -61,7 +71,15 @@ export async function GET(req: NextRequest) {
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
   const viewerRole = await resolveViewerRole(req);
-  const allowedLeadTypes = getAllowedLeadTypesForRole(viewerRole);
+  const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
+  const newCrmGlobalSearch = (url.searchParams.get("newCrmGlobalSearch") ?? "").trim().toLowerCase() === "true";
+  const isNewCrmGlobalSearchMode =
+    milestoneScope === "crm" &&
+    newCrmGlobalSearch &&
+    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRole);
+  const allowedLeadTypes = isNewCrmGlobalSearchMode
+    ? [...CRM_LEAD_TYPES]
+    : getAllowedLeadTypesForRole(viewerRole);
 
   const extraParams = [
     "stage",
@@ -94,6 +112,10 @@ export async function GET(req: NextRequest) {
     upstream.searchParams.set("size", size);
     upstream.searchParams.set("sort", sort);
     if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("milestoneScope", "crm");
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     for (const key of extraParams) {
       const v = (url.searchParams.get(key) ?? "").trim();
       if (v) upstream.searchParams.set(key, v);
@@ -118,6 +140,9 @@ export async function GET(req: NextRequest) {
     const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("milestoneScope", "crm");
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     upstream.searchParams.set("page", page);
     upstream.searchParams.set("size", size);
     upstream.searchParams.set("sort", sort);
@@ -160,6 +185,9 @@ export async function GET(req: NextRequest) {
     const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
     upstream.searchParams.set("leadType", leadType);
     if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
+    if (!managerEndpoint && isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     upstream.searchParams.set("page", "0");
     upstream.searchParams.set("size", String(perType));
     upstream.searchParams.set("sort", sort);

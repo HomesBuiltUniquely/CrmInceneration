@@ -212,11 +212,14 @@ async function fetchMergedPage(
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const wideListFetch = usesRoleEndpoint || leadView === "combined";
   const shouldMerge = wideListFetch || normalizedLeadType === "all" || normalizedLeadType === "verified";
+  const isNewCrmGlobalSearchMode = search.trim().length > 0;
   qs.set("mergeAll", shouldMerge ? "1" : "0");
   qs.set("page", wideListFetch ? "0" : String(page));
   qs.set("size", wideListFetch ? "500" : String(size));
   qs.set("sort", sort);
   qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
+  qs.set("milestoneScope", "crm");
+  if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
   if (assignee.trim()) qs.set("assignee", assignee.trim());
   if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
@@ -873,6 +876,7 @@ export default function LeadsDataSection({
     presalesManagerFilter ||
     salesAdminFilter ||
     assignee;
+  const isNewCrmGlobalSearchMode = debouncedSearch.trim().length > 0;
 
   useEffect(() => {
     onHeatmapAssigneeSync?.(effectiveAssignee);
@@ -969,7 +973,9 @@ export default function LeadsDataSection({
         const scopedTeam =
           managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
         const roleKey = normalizeRole(authRoleProp ?? currentRole);
-        const scoped = raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+        const scoped = isNewCrmGlobalSearchMode
+          ? raw
+          : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computePrimarySourceCounts(scoped);
         const smMineTeam =
           roleKey === "SALES_MANAGER"
@@ -1016,6 +1022,7 @@ export default function LeadsDataSection({
     salesExecFilter,
     salesManagerFilter,
     leadViewKey,
+    isNewCrmGlobalSearchMode,
   ]);
 
   const load = useCallback(async () => {
@@ -1073,7 +1080,9 @@ export default function LeadsDataSection({
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const scopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
-  const content = contentFromApi.filter((lead) => canViewLeadByRole(lead, scopeRoleKey));
+  const content = isNewCrmGlobalSearchMode
+    ? contentFromApi
+    : contentFromApi.filter((lead) => canViewLeadByRole(lead, scopeRoleKey));
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -1144,7 +1153,7 @@ export default function LeadsDataSection({
     currentRole === "SALES_MANAGER" ||
     currentRole === "PRESALES_MANAGER";
   const canBulkDelete = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
-  const showDeleteAll = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
+  const showDeleteAll = currentRole === "ADMIN";
   const canDeleteAll = showDeleteAll;
   const deleteAllConfirmPhrase =
     leadType === "all"
