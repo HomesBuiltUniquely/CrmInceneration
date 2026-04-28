@@ -186,15 +186,13 @@ async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
-  const normalizeExternalLeadId = (value: unknown): number | null => {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value !== "string") return null;
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (/^\d+$/.test(trimmed)) return Number(trimmed);
-    const crmNumeric = trimmed.match(/^crm-(\d+)$/i);
-    if (crmNumeric?.[1]) return Number(crmNumeric[1]);
-    return null;
+  const pickText = (...values: unknown[]): string => {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value))
+        return String(value);
+    }
+    return "";
   };
 
   const dynamicFields =
@@ -205,10 +203,12 @@ async function postExternalIntakeLead(args: {
       : {};
 
   const idCandidates: unknown[] = [
+    args.baseDetail.customerId,
     args.baseDetail.externalLeadId,
     args.baseDetail.externalId,
     args.baseDetail.external_id,
     args.baseDetail.externalLeadID,
+    dynamicFields.customerId,
     dynamicFields.externalLeadId,
     dynamicFields.externalId,
     dynamicFields.external_id,
@@ -216,11 +216,35 @@ async function postExternalIntakeLead(args: {
   ];
 
   const externalLeadId =
-    idCandidates.map(normalizeExternalLeadId).find((id) => id !== null) ?? null;
+    pickText(...idCandidates) || null;
   const payload = {
-    projectName: args.lead.name?.trim() || "",
-    contactNo: args.lead.phone?.trim() || "",
-    clientEmail: args.lead.email?.trim() || "",
+    projectName: pickText(
+      args.baseDetail.fullName,
+      args.baseDetail.customerName,
+      args.baseDetail.name,
+      dynamicFields.fullName,
+      dynamicFields.customerName,
+      dynamicFields.name,
+      args.lead.name,
+    ),
+    contactNo: pickText(
+      args.baseDetail.phone,
+      args.baseDetail.phoneNumber,
+      args.baseDetail.mobile,
+      dynamicFields.phone,
+      dynamicFields.phoneNumber,
+      dynamicFields.mobile,
+      args.lead.phone,
+    ),
+    clientEmail: pickText(
+      args.baseDetail.email,
+      args.baseDetail.emailAddress,
+      args.baseDetail.mail,
+      dynamicFields.email,
+      dynamicFields.emailAddress,
+      dynamicFields.mail,
+      args.lead.email,
+    ),
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
@@ -228,7 +252,11 @@ async function postExternalIntakeLead(args: {
   if (payload.externalLeadId === null) {
     console.warn(
       "Skipping external intake: no numeric externalLeadId found.",
-      idCandidates,
+      {
+        idCandidates,
+        baseDetailKeys: Object.keys(args.baseDetail),
+        dynamicFieldKeys: Object.keys(dynamicFields),
+      },
     );
     return;
   }
