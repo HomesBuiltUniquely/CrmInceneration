@@ -198,28 +198,38 @@ async function postExternalIntakeLead(args: {
     return noSpaces.trim().toUpperCase();
   };
 
-  const externalLeadIdRaw = pickText(args.baseDetail.customerId);
-  const externalLeadId = externalLeadIdRaw
-    ? normalizeExternalLeadId(externalLeadIdRaw)
-    : null;
+  const idCandidates: Array<{ source: string; value: string }> = [
+    { source: "baseDetail.externalLeadId", value: pickText(args.baseDetail.externalLeadId) },
+    { source: "baseDetail.leadId", value: pickText(args.baseDetail.leadId) },
+    { source: "baseDetail.id", value: pickText(args.baseDetail.id) },
+    { source: "baseDetail.customerId", value: pickText(args.baseDetail.customerId) },
+  ];
+  const chosen = idCandidates.find((c) => c.value);
+  const externalLeadId = chosen ? normalizeExternalLeadId(chosen.value) : "";
   const payload = {
     projectName: pickText(args.baseDetail.fullName),
     contactNo: pickText(args.baseDetail.phone),
     clientEmail: pickText(args.baseDetail.email),
-    externalLeadId: externalLeadId ?? "",
+    externalLeadId,
     sourceProject: "crm-inceneration",
   };
 
-  if (payload.externalLeadId === null) {
+  if (!payload.externalLeadId) {
     console.warn(
       "Skipping external intake: no externalLeadId found.",
       {
+        idCandidates,
         customerId: args.baseDetail.customerId ?? null,
         baseDetailKeys: Object.keys(args.baseDetail),
       },
     );
     return;
   }
+
+  console.info("External intake id mapping", {
+    selectedSource: chosen?.source ?? null,
+    externalLeadId: payload.externalLeadId,
+  });
 
   const res = await fetch("/api/crm/external-intake", {
     method: "POST",
