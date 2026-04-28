@@ -62,24 +62,49 @@ export function buildEmailRequest(
   switch (trimmedSubstage) {
     case "Meeting Scheduled":
     case "Meeting Rescheduled":
-      if (lead.meetingDate) {
-        payload.meetingDate = lead.meetingDate;
-      }
-      if (lead.meetingVenue) {
-        payload.meetingLocation = lead.meetingVenue;
-      }
-      if (lead.meetingType) {
-        payload.meetingType = lead.meetingType === "Physical" ? "physical" : "online";
-      }
       if (lead.followUpDate?.includes("T")) {
         const date = new Date(lead.followUpDate);
+        
+        const formattedDate = date.toLocaleDateString("en-IN", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+        payload.meetingDate = formattedDate;
+        
         const time = date.toLocaleTimeString("en-IN", {
           hour: "2-digit",
           minute: "2-digit",
           hour12: true,
         });
         payload.meetingTime = time;
+      } else if (lead.meetingDate) {
+        payload.meetingDate = lead.meetingDate;
       }
+
+      if (lead.meetingVenue) {
+        payload.meetingLocation = lead.meetingVenue;
+      } else if (lead.meetingType) {
+        payload.meetingLocation = lead.meetingType;
+      }
+      
+      if (lead.meetingType) {
+        payload.meetingType = lead.meetingType.toLowerCase().includes("physical") ? "physical" : "online";
+      }
+      break;
+
+    case "Meeting Cancelled/Paused":
+      payload.cancellationReason = lead.lostReason?.trim() || "No detailed reason provided";
+      break;
+      
+    case "Quote Sent":
+      if (lead.budget) {
+        payload.quotedAmount = lead.budget;
+      }
+      break;
+
+    case "Customer Cancelled Plan":
+      payload.feedbackFormLink = "https://hubinterior.com/feedback";
       break;
 
     case "Project Postponed Indefinitely":

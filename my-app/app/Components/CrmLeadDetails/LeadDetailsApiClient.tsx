@@ -33,7 +33,10 @@ import CompleteTaskModal, {
 } from "./CompleteTaskModal";
 import { createAppointment } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
-import { normalizeMilestoneSubStageForApi } from "@/lib/milestone-substage-map";
+import {
+  normalizeMilestoneSubStageForApi,
+
+} from "@/lib/milestone-substage-map";
 import {
   buildSalesClosureUrl,
   isCloserStageBookingDone,
@@ -135,6 +138,9 @@ type TimelineEntry = {
   leadType: CrmLeadType;
   leadId: string;
 };
+const hi =
+  "https://api.hubinterior.com/api/leads/external-intake";
+const EXTERNAL_INTAKE_API_KEY = "hi";
 
 function pickCityForExternalIntake(
   lead: Lead,
@@ -567,7 +573,12 @@ export default function LeadDetailsApiClient({
     return () => {
       cancelled = true;
     };
-  }, [lead.stageBlock?.milestoneStage, lead.stageBlock?.milestoneStageCategory, lead.stageBlock?.milestoneSubStage, rollbackOpen]);
+  }, [
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.milestoneSubStage,
+    rollbackOpen,
+  ]);
 
   const rollbackCategories = useMemo(() => {
     const selected = rollbackStages.find(
@@ -783,10 +794,15 @@ export default function LeadDetailsApiClient({
     const toMilestoneSubStage = rollbackSubStage.trim();
     const reason = rollbackReason.trim();
     const currentStage = lead.stageBlock?.milestoneStage?.trim() ?? "";
-    const currentCategory = lead.stageBlock?.milestoneStageCategory?.trim() ?? "";
+    const currentCategory =
+      lead.stageBlock?.milestoneStageCategory?.trim() ?? "";
     const currentSubStage = lead.stageBlock?.milestoneSubStage?.trim() ?? "";
 
-    if (!toMilestoneStage || !toMilestoneStageCategory || !toMilestoneSubStage) {
+    if (
+      !toMilestoneStage ||
+      !toMilestoneStageCategory ||
+      !toMilestoneSubStage
+    ) {
       setRollbackError("Select stage, category, and sub-stage.");
       return;
     }
@@ -799,7 +815,9 @@ export default function LeadDetailsApiClient({
       currentCategory === toMilestoneStageCategory &&
       currentSubStage === toMilestoneSubStage
     ) {
-      setRollbackError("Target milestone must be different from current milestone.");
+      setRollbackError(
+        "Target milestone must be different from current milestone.",
+      );
       return;
     }
 
@@ -853,14 +871,18 @@ export default function LeadDetailsApiClient({
     async (args: CompleteTaskApiPayload) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
-      const isFreshLeadStage = args.milestoneStage.trim().toLowerCase() === "fresh lead";
+      const isFreshLeadStage =
+        args.milestoneStage.trim().toLowerCase() === "fresh lead";
       const persistedSubstage = isFreshLeadStage
         ? ""
         : normalizeMilestoneSubStageForApi(args.feedback);
-      const persistedCategory = isFreshLeadStage ? "" : args.milestoneStageCategory;
+      const persistedCategory = isFreshLeadStage
+        ? ""
+        : args.milestoneStageCategory;
 
       let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
       let designerName = lead.designerName;
+      let meetingDate = lead.meetingDate;
 
       if (args.meetingAppointment) {
         const leadIdNum = Number(leadId);
@@ -925,6 +947,7 @@ export default function LeadDetailsApiClient({
           notifyError(`Email warning: ${emailResult.message}`);
         }
       }
+
 
       await refreshActivities();
       notifySuccess("Saved");
@@ -1091,7 +1114,10 @@ export default function LeadDetailsApiClient({
                 >
                   <option value="">Select category</option>
                   {rollbackCategories.map((category) => (
-                    <option key={category.stageCategory} value={category.stageCategory}>
+                    <option
+                      key={category.stageCategory}
+                      value={category.stageCategory}
+                    >
                       {category.stageCategory}
                     </option>
                   ))}
