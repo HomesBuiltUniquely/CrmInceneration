@@ -36,7 +36,6 @@ export default function LeadDetailsClient({ lead }: { lead: Lead }) {
         <Tabs active={activeTab} onChange={setActiveTab} />
 
         {activeTab === "lead" && <LeadInfoTab lead={leadWithCurrentStatus} />}
-        {activeTab === "additional" && <LeadInfoTab lead={leadWithCurrentStatus} />}
         {activeTab === "assignments" && <AssignmentsTab lead={leadWithCurrentStatus} />}
         {activeTab === "activity" && <ActivityTimeline activities={lead.activities} />}
         <FooterActions />
