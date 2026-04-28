@@ -10,10 +10,16 @@ export function isExperienceDesignStageName(stageName: string): boolean {
   );
 }
 
-/** Feedback (substage) — "Quote Sent". */
+/** Feedback (substage) used to unlock quote follow-up UI. */
 export function isQuoteSentFeedbackName(feedback: string): boolean {
   const f = feedback.trim().toLowerCase();
-  return f === "quote sent" || /\bquote\s*sent\b/.test(f);
+  return (
+    f === "meeting successful" ||
+    /\bmeeting\s*successful\b/.test(f) ||
+    // Backward compatibility for old saved leads.
+    f === "quote sent" ||
+    /\bquote\s*sent\b/.test(f)
+  );
 }
 
 /** Open quote popup in Complete Task when both match. */
@@ -23,7 +29,7 @@ export function shouldOpenQuoteSentPanelInCompleteTask(status: string, feedback:
 
 /**
  * Show quote link + send-quote UI only when pipeline is **Experience and Design**
- * with substage **Quote Sent** (matches CRM milestone labels).
+ * with substage **MEETING SUCCESSFUL** (matches CRM milestone labels).
  */
 export function isExperienceDesignQuoteSentStage(lead: Lead): boolean {
   const ms = (lead.stageBlock?.milestoneStage ?? "").trim().toLowerCase();

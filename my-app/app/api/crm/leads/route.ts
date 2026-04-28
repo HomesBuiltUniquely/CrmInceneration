@@ -3,6 +3,17 @@ import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
+
+const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
+  "SUPER_ADMIN",
+  "ADMIN",
+  "SALES_ADMIN",
+  "SALES_MANAGER",
+  "SALES_EXECUTIVE",
+  "PRESALES_MANAGER",
+  "PRESALES_EXECUTIVE",
+]);
 
 function parseUpdatedAt(a: ApiLead): number {
   const u = a.updatedAt;
@@ -35,6 +46,21 @@ function inDateRange(
   return true;
 }
 
+async function resolveViewerRole(req: NextRequest): Promise<string> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/me`, {
+      headers: upstreamAuthHeaders(req),
+      cache: "no-store",
+    });
+    if (!res.ok) return "";
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const role = json.role ?? json.userRole ?? json.authority ?? "";
+    return typeof role === "string" ? role.trim().toUpperCase() : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const mergeAll = url.searchParams.get("mergeAll") === "1";
@@ -44,6 +70,16 @@ export async function GET(req: NextRequest) {
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
+  const viewerRole = await resolveViewerRole(req);
+  const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
+  const newCrmGlobalSearch = (url.searchParams.get("newCrmGlobalSearch") ?? "").trim().toLowerCase() === "true";
+  const isNewCrmGlobalSearchMode =
+    milestoneScope === "crm" &&
+    newCrmGlobalSearch &&
+    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRole);
+  const allowedLeadTypes = isNewCrmGlobalSearchMode
+    ? [...CRM_LEAD_TYPES]
+    : getAllowedLeadTypesForRole(viewerRole);
 
   const extraParams = [
     "stage",
@@ -64,12 +100,22 @@ export async function GET(req: NextRequest) {
 
   if (!mergeAll && managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+      return NextResponse.json(
+        { error: `${viewerRole || "Current role"} cannot access ${leadType} in this view.` },
+        { status: 403 }
+      );
+    }
     const upstream = new URL(`${BASE_URL}${managerEndpoint}`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("page", page);
     upstream.searchParams.set("size", size);
     upstream.searchParams.set("sort", sort);
     if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("milestoneScope", "crm");
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     for (const key of extraParams) {
       const v = (url.searchParams.get(key) ?? "").trim();
       if (v) upstream.searchParams.set(key, v);
@@ -85,9 +131,18 @@ export async function GET(req: NextRequest) {
 
   if (!mergeAll && !managerEndpoint) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+      return NextResponse.json(
+        { error: `${viewerRole || "Current role"} cannot access ${leadType} in filter flow.` },
+        { status: 403 }
+      );
+    }
     const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", leadType);
     upstream.searchParams.set("milestoneScope", "crm");
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     upstream.searchParams.set("page", page);
     upstream.searchParams.set("size", size);
     upstream.searchParams.set("sort", sort);
@@ -111,16 +166,28 @@ export async function GET(req: NextRequest) {
 
   const selectedTypes =
     leadTypeParam === "all"
-      ? CRM_LEAD_TYPES
+      ? allowedLeadTypes
       : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
-        : CRM_LEAD_TYPES;
+        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+          : []
+        : allowedLeadTypes;
+
+  if (selectedTypes.length === 0) {
+    return NextResponse.json(
+      { error: `${viewerRole || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { status: 403 }
+    );
+  }
 
   const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const fetches = selectedTypes.map(async (leadType) => {
     const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
     upstream.searchParams.set("leadType", leadType);
     if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
+    if (!managerEndpoint && isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     upstream.searchParams.set("page", "0");
     upstream.searchParams.set("size", String(perType));
     upstream.searchParams.set("sort", sort);
@@ -162,22 +229,55 @@ export async function GET(req: NextRequest) {
   const merged = [...byId.values()]
     .filter((lead) => {
       if (search) {
+        const needle = search.toLowerCase();
+        const needleDigits = search.replace(/\D/g, "");
         const assigneeText =
           typeof lead.assignee === "string"
             ? lead.assignee
             : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
+        const dynamic =
+          lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+            ? (lead.dynamicFields as Record<string, unknown>)
+            : {};
         const hay = [
           lead.name,
           lead.customerName,
           lead.companyName,
           lead.email,
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          lead.customerId,
+          dynamic.customerName,
+          dynamic.customerPhone,
+          dynamic.phone,
+          dynamic.customerEmail,
           assigneeText,
           lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-        if (!hay.includes(search.toLowerCase())) return false;
+        if (hay.includes(needle)) return true;
+
+        const phoneLike = [
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          dynamic.customerPhone,
+          dynamic.phone,
+        ]
+          .map((v) => String(v ?? "").replace(/\D/g, ""))
+          .filter(Boolean)
+          .join(" ");
+        if (needleDigits && phoneLike.includes(needleDigits)) return true;
+
+        // Global visible-record fallback search for old/new CRM parity.
+        const deepHay = JSON.stringify(lead).toLowerCase();
+        if (deepHay.includes(needle)) return true;
+        return false;
       }
 
       if (assignee) {

@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import {
+  assigneeAliasNorms,
+  filterLeadsForInsightMode,
+  type InsightTableMode,
+} from "@/lib/lead-follow-up-insights";
 
 type Phase = {
   phaseLabel: string;
@@ -19,7 +25,11 @@ export type JourneyPhaseHeatmapProps = {
   currentRole?: string;
   leadView?: "default" | "my" | "team";
   currentUserName?: string;
+  currentUserAliases?: string[];
+  currentUserId?: number;
   managerTeamNames?: string[];
+  /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
+  insightTableMode?: InsightTableMode | null;
 };
 
 function normName(s: string) {
@@ -56,6 +66,11 @@ function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
       },
     };
   });
+}
+
+function pickPhase(phases: Phase[], name: string): Phase | undefined {
+  const n = normName(name);
+  return phases.find((p) => normName(p.name) === n);
 }
 
 function Icon({ kind }: { kind: Phase["note"]["icon"] }) {
@@ -225,7 +240,39 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
   );
 }
 
+function SummaryCard({ label, total }: { label: string; total: number }) {
+  return (
+    <div className="relative min-h-[132px] rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-4">
+      <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
+        SUMMARY
+      </div>
+      <div className="mt-2 flex items-start justify-between">
+        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
+          {label}
+        </div>
+        <div className="text-right">
+          <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">
+            {total}
+          </div>
+          <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">
+            total leads
+          </div>
+        </div>
+      </div>
+      <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
+    </div>
+  );
+}
+
 const DEFAULT_PHASES: Phase[] = [
+  {
+    phaseLabel: "PHASE 00",
+    name: "Fresh Lead",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "Newly created leads" },
+  },
   {
     phaseLabel: "PHASE 01",
     name: "Discovery",
@@ -273,12 +320,52 @@ export default function JourneyPhaseHeatmap({
   currentRole = "",
   leadView = "default",
   currentUserName = "",
+  currentUserAliases = [],
+  currentUserId = 0,
   managerTeamNames = [],
+  insightTableMode = null,
 }: JourneyPhaseHeatmapProps = {}) {
-  const [phases, setPhases] = useState<Phase[]>(DEFAULT_PHASES);
+  const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [leadOpen, setLeadOpen] = useState(false);
+  const [opportunityOpen, setOpportunityOpen] = useState(false);
+
+  const insightOpts = useMemo(
+    () => ({
+      viewerRole: normalizeRole(currentRole),
+      currentUserName: currentUserName ?? "",
+      managerTeamNames,
+      leadView:
+        leadView === "my" || leadView === "team" ? leadView : ("default" as const),
+    }),
+    [currentRole, currentUserName, managerTeamNames, leadView],
+  );
+
+  const phases = useMemo(() => {
+    const filtered = filterLeadsForInsightMode(
+      poolLeads,
+      insightTableMode ?? null,
+      insightOpts,
+    );
+    return mapLeadsToPhases(filtered, DEFAULT_PHASES);
+  }, [poolLeads, insightTableMode, insightOpts]);
+
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
+  const freshLeadPhase = pickPhase(phases, "Fresh Lead");
+  const discoveryPhase = pickPhase(phases, "Discovery");
+  const connectionPhase = pickPhase(phases, "Connection");
+  const expDesignPhase = pickPhase(phases, "Experience & Design");
+  const decisionPhase = pickPhase(phases, "Decision");
+  const closedPhase = pickPhase(phases, "Closed");
+  const leadPhases = [freshLeadPhase, discoveryPhase, connectionPhase].filter(
+    (p): p is Phase => Boolean(p),
+  );
+  const opportunityPhases = [expDesignPhase, decisionPhase, closedPhase].filter(
+    (p): p is Phase => Boolean(p),
+  );
+  const leadTotal = leadPhases.reduce((sum, p) => sum + p.count, 0);
+  const opportunityTotal = opportunityPhases.reduce((sum, p) => sum + p.count, 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,24 +414,58 @@ export default function JourneyPhaseHeatmap({
           for (const chunk of rest) allLeads.push(...chunk);
         }
 
-        const ownerName = (lead: ApiLead) =>
-          String(
-            (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
-            (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
-            ""
-          ).trim();
-        const norm = (v: string) => v.trim().toLowerCase();
-        const teamSet = new Set(managerTeamNames.map(norm));
-        const scopedLeads =
-          currentRole === "SALES_MANAGER" && leadView === "my"
-            ? allLeads.filter((lead) => norm(ownerName(lead)) === norm(currentUserName))
-            : currentRole === "SALES_MANAGER" && leadView === "team"
-              ? managerTeamNames.length > 0
-                ? allLeads.filter((lead) => teamSet.has(norm(ownerName(lead))))
-                : allLeads
-              : allLeads;
+        const roleKey = normalizeRole(currentRole);
+        const myAliases = new Set(
+          [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
+        );
+        const teamSet = new Set(managerTeamNames.map((v) => v.trim().toLowerCase()).filter(Boolean));
+        const isSelfLeadById = (lead: ApiLead) => {
+          if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
+          const r = lead as Record<string, unknown>;
+          const assigneeObj =
+            r.assignee && typeof r.assignee === "object" && !Array.isArray(r.assignee)
+              ? (r.assignee as Record<string, unknown>)
+              : null;
+          const salesOwnerObj =
+            r.salesOwner && typeof r.salesOwner === "object" && !Array.isArray(r.salesOwner)
+              ? (r.salesOwner as Record<string, unknown>)
+              : null;
+          const idCandidates = [
+            r.assigneeId,
+            r.assignedToId,
+            r.salesExecutiveId,
+            r.salesOwnerId,
+            r.userId,
+            assigneeObj?.id,
+            salesOwnerObj?.id,
+          ];
+          return idCandidates.some((v) => Number(v ?? 0) === Number(currentUserId));
+        };
+        const isSelfLead = (lead: ApiLead) => {
+          if (isSelfLeadById(lead)) return true;
+          const aliases = assigneeAliasNorms(lead);
+          for (const me of myAliases) if (aliases.has(me)) return true;
+          return false;
+        };
+        const isTeamLead = (lead: ApiLead) => {
+          const aliases = assigneeAliasNorms(lead);
+          for (const alias of aliases) if (teamSet.has(alias)) return true;
+          return false;
+        };
+        const scopedLeads = allLeads.filter((lead) => {
+          if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
+          if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+            return isSelfLead(lead);
+          }
+          if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
+            if (leadView === "my") return isSelfLead(lead);
+            if (leadView === "team") return teamSet.size > 0 ? isTeamLead(lead) : false;
+            return isSelfLead(lead) || (teamSet.size > 0 ? isTeamLead(lead) : false);
+          }
+          return false;
+        });
         if (!cancelled) {
-          setPhases(mapLeadsToPhases(scopedLeads, DEFAULT_PHASES));
+          setPoolLeads(scopedLeads);
         }
       } catch (err) {
         if (!cancelled) {
@@ -362,7 +483,7 @@ export default function JourneyPhaseHeatmap({
     return () => {
       cancelled = true;
     };
-  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, managerTeamNames]);
+  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, currentUserAliases, currentUserId, managerTeamNames]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">
@@ -383,10 +504,63 @@ export default function JourneyPhaseHeatmap({
             {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
           </div>
         ) : null}
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-5">
-          {phases.map((p) => (
-            <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
-          ))}
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          <div
+            className={`self-start rounded-2xl transition-all ${
+              leadOpen
+                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                : "border-0 bg-transparent p-0 shadow-none"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setLeadOpen((v) => !v)}
+              className="w-full text-left"
+              aria-expanded={leadOpen}
+            >
+              <div className="relative">
+                <SummaryCard label="Lead" total={leadTotal} />
+                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                  {leadOpen ? "Hide" : "Open"}
+                </span>
+              </div>
+            </button>
+            {leadOpen ? (
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                {leadPhases.map((p) => (
+                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div
+            className={`self-start rounded-2xl transition-all ${
+              opportunityOpen
+                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                : "border-0 bg-transparent p-0 shadow-none"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setOpportunityOpen((v) => !v)}
+              className="w-full text-left"
+              aria-expanded={opportunityOpen}
+            >
+              <div className="relative">
+                <SummaryCard label="Opportunity" total={opportunityTotal} />
+                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                  {opportunityOpen ? "Hide" : "Open"}
+                </span>
+              </div>
+            </button>
+            {opportunityOpen ? (
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                {opportunityPhases.map((p) => (
+                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </section>

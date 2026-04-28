@@ -3,8 +3,18 @@
 import { useEffect, useState } from "react";
 import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Chip, Button } from "./ui";
 import type { Lead } from "@/lib/data";
-import { LANGUAGE_OPTIONS, LEAD_SOURCES, MEETING_TYPES } from "@/lib/data";
+import { LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+
+function meetingTypeDisplay(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "—";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  if (key === "SHOWROOM_VISIT") return "Showroom Visit";
+  if (key === "VIRTUAL_MEETING") return "Virtual Meeting";
+  if (key === "SITE_VISIT") return "Site Visit";
+  return raw;
+}
 
 type Props = {
   lead: Lead;
@@ -28,10 +38,26 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
   const quoteEligible =
     Boolean(c && quoteExtras && isExperienceDesignQuoteSentStage(lead));
   const [quoteOpen, setQuoteOpen] = useState(false);
+  const [lockedIdentityFields, setLockedIdentityFields] = useState({
+    name: false,
+    email: false,
+    phone: false,
+    pincode: false,
+  });
 
   useEffect(() => {
     if (!quoteEligible) setQuoteOpen(false);
   }, [quoteEligible]);
+
+  useEffect(() => {
+    setLockedIdentityFields({
+      // Lock only if backend already had a value for this lead.
+      name: Boolean((lead.name ?? "").trim()),
+      email: Boolean((lead.email ?? "").trim()),
+      phone: Boolean((lead.phone ?? "").trim()),
+      pincode: Boolean((lead.pincode ?? "").trim()),
+    });
+  }, [lead.id]);
 
   return (
     <div className="space-y-5 animate-fade-up delay-3">
@@ -44,8 +70,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
             <Input
               placeholder="Customer name"
               {...(c
-                ? { value: lead.name, onChange: (e) => c({ name: e.target.value }) }
-                : { defaultValue: lead.name })}
+                ? {
+                    value: lead.name,
+                    onChange: (e) => c({ name: e.target.value }),
+                    readOnly: lockedIdentityFields.name,
+                  }
+                : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
             />
           </div>
 
@@ -56,8 +86,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
               placeholder="Not provided — add email"
               missing={!lead.email}
               {...(c
-                ? { value: lead.email, onChange: (e) => c({ email: e.target.value }) }
-                : { defaultValue: lead.email })}
+                ? {
+                    value: lead.email,
+                    onChange: (e) => c({ email: e.target.value }),
+                    readOnly: lockedIdentityFields.email,
+                  }
+                : { defaultValue: lead.email, readOnly: lockedIdentityFields.email })}
             />
             {!lead.email && (
               <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-300">
@@ -73,8 +107,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 <Input
                   className="min-w-0 flex-1"
                   {...(c
-                    ? { value: lead.phone, onChange: (e) => c({ phone: e.target.value }) }
-                    : { defaultValue: lead.phone })}
+                    ? {
+                        value: lead.phone,
+                        onChange: (e) => c({ phone: e.target.value }),
+                        readOnly: lockedIdentityFields.phone,
+                      }
+                    : { defaultValue: lead.phone, readOnly: lockedIdentityFields.phone })}
                 />
                 {c && onLogCall ? (
                   <button
@@ -129,8 +167,12 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
               <FieldLabel>Pincode</FieldLabel>
               <Input
                 {...(c
-                  ? { value: lead.pincode, onChange: (e) => c({ pincode: e.target.value }) }
-                  : { defaultValue: lead.pincode })}
+                  ? {
+                      value: lead.pincode,
+                      onChange: (e) => c({ pincode: e.target.value }),
+                      readOnly: lockedIdentityFields.pincode,
+                    }
+                  : { defaultValue: lead.pincode, readOnly: lockedIdentityFields.pincode })}
               />
             </div>
             <div>
@@ -229,17 +271,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
             </div>
             <div>
               <FieldLabel>Meeting Type</FieldLabel>
-              <Select
-                {...(c
-                  ? { value: lead.meetingType, onChange: (e) => c({ meetingType: e.target.value }) }
-                  : { defaultValue: lead.meetingType })}
-              >
-                {MEETING_TYPES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </Select>
+              <Input value={meetingTypeDisplay(lead.meetingType)} readOnly />
             </div>
           </div>
 
@@ -267,11 +299,11 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 <span className="text-[15px] leading-none" aria-hidden>
                   ✦
                 </span>
-                Quote Sent
+                Meeting Successful
               </button>
               <p className="mt-2 text-[11px] text-[var(--crm-text-muted)]">
                 Shown when milestone is <strong className="text-[var(--crm-text-secondary)]">Experience and Design</strong> and
-                feedback is <strong className="text-[var(--crm-text-secondary)]">Quote Sent</strong>. Use Complete Task to save that stage first.
+                feedback is <strong className="text-[var(--crm-text-secondary)]">MEETING SUCCESSFUL</strong>. Use Complete Task to save that stage first.
               </p>
 
               {quoteOpen && quoteExtras ? (

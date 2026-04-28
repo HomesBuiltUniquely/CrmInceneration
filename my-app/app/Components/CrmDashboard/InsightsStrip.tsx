@@ -51,7 +51,7 @@ export default function InsightsStrip() {
   ];
 
   return (
-    <section className="xl:ml-6 xl:mt-5 xl:w-263.75">
+    <section className="xl:mx-6 xl:mt-5 xl:w-[calc(100%-3rem)] xl:min-w-0">
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3 xl:h-50">
         {/* Stage dwell distribution */}
         <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">

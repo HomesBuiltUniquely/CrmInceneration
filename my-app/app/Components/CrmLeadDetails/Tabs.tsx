@@ -2,11 +2,10 @@
 
 import { cn } from "@/lib/cn";
 
-export type TabId = "lead" | "additional" | "assignments" | "activity";
+export type TabId = "lead" | "assignments" | "activity";
 
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "lead", label: "Lead Information", icon: "👤" },
-  { id: "additional", label: "Additional Info", icon: "📋" },
   { id: "assignments", label: "Assignments", icon: "🎯" },
   { id: "activity", label: "Activity History", icon: "📟" },
 ];

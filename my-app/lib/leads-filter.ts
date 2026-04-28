@@ -26,9 +26,24 @@ export type ApiLead = {
   dynamicFields?: Record<string, unknown>;
   companyName?: string;
   email?: string;
+  phone?: string;
+  phoneNumber?: string;
+  mobile?: string;
+  mobileNumber?: string;
+  customerId?: string | number;
   assignee?: string | { name?: string; fullName?: string };
   salesOwner?: string | { name?: string; fullName?: string };
   updatedAt?: string;
+  createdAt?: string;
+  createdDate?: string;
+  leadDate?: string;
+  createdOn?: string;
+  firstCallAt?: string | null;
+  verified?: boolean | null;
+  verificationStatus?: string | null;
+  /** Next follow-up (string in API; parse client-side for “today” / overdue). */
+  followUpDate?: string | null;
+  additionalLeadSources?: string | string[] | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
@@ -45,6 +60,9 @@ export type LeadRowModel = {
   name: string;
   company: string;
   statusLabel?: string;
+  verificationTag?: "verified" | "unverified";
+  reinquiry?: boolean;
+  callDelayed?: boolean;
   journey: {
     stage: string;
     progressLabel: string;
@@ -56,11 +74,31 @@ export type LeadRowModel = {
   actionIcon?: "bolt" | "alert";
 };
 
-function assigneeName(lead: ApiLead): string {
+function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | undefined {
+  const vs = String(lead.verificationStatus ?? "").trim().toLowerCase();
+  if (vs === "verified") return "verified";
+  if (vs === "unverified") return "unverified";
+  if (typeof lead.verified === "boolean") return lead.verified ? "verified" : "unverified";
+  return undefined;
+}
+
+function hasReinquiry(lead: ApiLead): boolean {
+  const src = lead.additionalLeadSources;
+  if (Array.isArray(src)) return src.some((v) => String(v).trim().length > 0);
+  return typeof src === "string" && src.trim().length > 0;
+}
+
+/** Same fields the list uses for “owner”; includes `username` when name/fullName missing. */
+export function crmLeadAssigneeLabel(lead: ApiLead): string {
   const a = lead.assignee ?? lead.salesOwner;
-  if (!a) return "—";
-  if (typeof a === "string") return a;
-  return a.name ?? a.fullName ?? "—";
+  if (!a) return "";
+  if (typeof a === "string") return a.trim();
+  const o = a as { name?: string; fullName?: string; username?: string };
+  return String(o.name ?? o.fullName ?? o.username ?? "").trim();
+}
+
+function assigneeName(lead: ApiLead): string {
+  return crmLeadAssigneeLabel(lead) || "—";
 }
 
 function leadDisplayName(lead: ApiLead): string {
@@ -120,6 +158,8 @@ export function mapApiLeadToRow(
     name: leadDisplayName(lead),
     company: companyFallback(lead),
     statusLabel,
+    verificationTag: normalizeVerificationTag(lead),
+    reinquiry: hasReinquiry(lead),
     journey: {
       stage: journeyStage,
       progressLabel: orderedPipelineStages.length > 0 ? prog.progressLabel : "—",

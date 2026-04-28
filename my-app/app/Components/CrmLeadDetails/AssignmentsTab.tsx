@@ -1,6 +1,6 @@
 "use client";
 
-import { Card, CardTitle, FieldLabel, Input, Select } from "./ui";
+import { Card, CardTitle, FieldLabel, Input } from "./ui";
 import type { Lead } from "@/lib/data";
 
 type Props = {
@@ -31,18 +31,10 @@ export default function AssignmentsTab({ lead, onLeadChange }: Props) {
           </div>
           <div>
             <FieldLabel>Status</FieldLabel>
-            <Select
-              value={lead.status}
-              disabled
-            >
-              <option>Requirement Received</option>
-              <option>Active / RNR</option>
-              <option>Initial Stage / Fresh Leads</option>
-              <option>Site Visit Scheduled</option>
-              <option>Proposal Sent</option>
-              <option>Won</option>
-              <option>Lost</option>
-            </Select>
+            <Input value={lead.status || "—"} readOnly />
+            <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
+              Mapped from selected feedback/milestone flow.
+            </p>
           </div>
         </div>
       </Card>

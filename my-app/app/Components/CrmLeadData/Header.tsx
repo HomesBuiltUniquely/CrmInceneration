@@ -1,22 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
-import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
+  fetchSalesExecutivesForManager,
   getMe,
-  getRoleFromUser,
   getNameFromUser,
+  getRoleFromUser,
   normalizeRole,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { readStoredCrmToken } from "@/lib/crm-client-auth";
+import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 
 export default function Header() {
   const [currentRole, setCurrentRole] = useState(() => {
@@ -28,6 +31,7 @@ export default function Header() {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
   });
+  const [currentUserAliases, setCurrentUserAliases] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState(0);
   const [authResolved, setAuthResolved] = useState(false);
   const [search, setSearch] = useState("");
@@ -39,8 +43,12 @@ export default function Header() {
   const [milestoneStage, setMilestoneStage] = useState("");
   const [milestoneStageCategory, setMilestoneStageCategory] = useState("");
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
-  const [managerLeadView, setManagerLeadView] = useState<"my" | "team">("my");
+  const [reinquiry, setReinquiry] = useState("");
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
+  /** Toolbar Sales Exec / hierarchy filters — same effective assignee as the lead table. */
+  const [heatmapToolbarAssignee, setHeatmapToolbarAssignee] = useState("");
+  /** Insight tile filter (Team Leads, Follow ups today, etc.) — heatmap uses same subset as the grid. */
+  const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,11 +61,12 @@ export default function Header() {
       return;
     }
     void getMe(token)
-      .then((user) => {
+      .then((raw) => {
         if (cancelled) return;
+        const user = unwrapAuthUserPayload(raw as Record<string, unknown>);
         const role = normalizeRole(getRoleFromUser(user));
         const name = getNameFromUser(user);
-        const id = Number((user as Record<string, unknown>).id ?? 0);
+        const id = Number(user.id ?? 0);
         if (role) {
           setCurrentRole(role);
           window.localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
@@ -69,6 +78,15 @@ export default function Header() {
         if (Number.isFinite(id) && id > 0) {
           setCurrentUserId(id);
         }
+        const aliases = [
+          String(user.fullName ?? ""),
+          String(user.name ?? ""),
+          String(user.username ?? ""),
+          String(user.email ?? ""),
+        ]
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean);
+        setCurrentUserAliases(Array.from(new Set(aliases)));
       })
       .finally(() => {
         if (!cancelled) setAuthResolved(true);
@@ -93,28 +111,22 @@ export default function Header() {
   }, []);
 
   const forcedLeadType = useMemo(() => {
-    if (currentRole === "PRESALES_MANAGER") return "formlead";
-    return leadType;
+    return sanitizeLeadTypeForRole(currentRole, leadType);
   }, [currentRole, leadType]);
 
-  const forcedAssignee = useMemo(() => {
-    if (currentRole === "SALES_EXECUTIVE" || currentRole === "PRESALES_EXECUTIVE") {
-      return currentUserName.trim();
-    }
-    return assignee;
-  }, [assignee, currentRole, currentUserName]);
+  const forcedAssignee = useMemo(() => assignee, [assignee]);
 
   useEffect(() => {
-    if (currentRole === "PRESALES_MANAGER" && leadType !== "formlead") {
-      setLeadType("formlead");
-    }
+    if (!isPresalesRole(currentRole)) return;
+    if (isLeadTypeAllowedForRole(currentRole, leadType)) return;
+    setLeadType("formlead");
   }, [currentRole, leadType]);
 
   const isDesignRole =
     currentRole === "DESIGNER" ||
     currentRole === "DESIGN_MANAGER" ||
     currentRole === "TERRITORY_DESIGN_MANAGER";
-  const isSalesManager = currentRole === "SALES_MANAGER";
+  const isSalesManager = currentRole === "SALES_MANAGER" || currentRole === "MANAGER";
 
   useEffect(() => {
     let cancelled = false;
@@ -122,12 +134,15 @@ export default function Header() {
       setManagerTeamNames([]);
       return;
     }
-    void adminPanelApi
-      .listAllUsers()
+    const token = readStoredCrmToken();
+    if (!token) {
+      setManagerTeamNames([]);
+      return;
+    }
+    void fetchSalesExecutivesForManager(token)
       .then((users) => {
         if (cancelled) return;
         const names = users
-          .filter((u) => normalizeRole(u.role) === "SALES_EXECUTIVE" && Number(u.managerId ?? 0) === Number(currentUserId))
           .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
           .filter(Boolean);
         setManagerTeamNames(names);
@@ -142,25 +157,29 @@ export default function Header() {
 
   const milestoneFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
+    if (search.trim()) q.set("search", search.trim());
     if (forcedLeadType && forcedLeadType !== "all") q.set("leadType", forcedLeadType);
-    if (forcedAssignee.trim()) q.set("assignee", forcedAssignee.trim());
+    const assigneeForHeatmap =
+      heatmapToolbarAssignee.trim() || forcedAssignee.trim();
+    if (assigneeForHeatmap) q.set("assignee", assigneeForHeatmap);
     if (dateFrom.trim()) q.set("dateFrom", dateFrom.trim());
     if (dateTo.trim()) q.set("dateTo", dateTo.trim());
     if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
     if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
     if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
-    if (isSalesManager) q.set("roleView", managerLeadView);
+    if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     return q.toString();
   }, [
+    search,
     dateFrom,
     dateTo,
     forcedAssignee,
     forcedLeadType,
+    heatmapToolbarAssignee,
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
-    isSalesManager,
-    managerLeadView,
+    reinquiry,
   ]);
 
   return (
@@ -189,46 +208,23 @@ export default function Header() {
             </div>
           ) : (
             <>
-              {isSalesManager ? (
-                <section className="mx-auto mt-4 flex max-w-[1200px] items-center justify-end px-6">
-                  <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-1">
-                    <button
-                      type="button"
-                      onClick={() => setManagerLeadView("my")}
-                      className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${
-                        managerLeadView === "my"
-                          ? "bg-[var(--crm-accent)] text-white"
-                          : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
-                      }`}
-                    >
-                      My Leads
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setManagerLeadView("team")}
-                      className={`rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${
-                        managerLeadView === "team"
-                          ? "bg-[var(--crm-accent)] text-white"
-                          : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
-                      }`}
-                    >
-                      Team Leads
-                    </button>
-                  </div>
-                </section>
-              ) : null}
               <JourneyPhaseHeatmap
                 milestoneFilterQuery={milestoneFilterQuery}
                 currentRole={currentRole}
-                leadView={isSalesManager ? managerLeadView : "default"}
+                leadView="default"
                 currentUserName={currentUserName}
+                currentUserAliases={currentUserAliases}
+                currentUserId={currentUserId}
                 managerTeamNames={managerTeamNames}
+                insightTableMode={insightTableMode}
               />
               <LeadsDataSection
                 search={search}
                 leadType={forcedLeadType}
-                leadView={isSalesManager ? managerLeadView : "default"}
+                authRole={currentRole}
+                leadView={isSalesManager ? "combined" : "default"}
                 currentUserName={currentUserName}
+                currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}
                 managerTeamNamesFromHeader={managerTeamNames}
                 sort={sort}
@@ -238,16 +234,21 @@ export default function Header() {
                 milestoneStage={milestoneStage}
                 milestoneStageCategory={milestoneStageCategory}
                 milestoneSubStage={milestoneSubStage}
+                reinquiry={reinquiry}
                 onLeadTypeChange={(next) => {
-                  if (currentRole === "PRESALES_MANAGER") {
-                    setLeadType("formlead");
+                  if (isPresalesRole(currentRole)) {
+                    setLeadType(sanitizeLeadTypeForRole(currentRole, next));
                     return;
                   }
                   setLeadType(next);
                 }}
                 onSortChange={setSort}
                 onAssigneeChange={(next) => {
-                  if (currentRole === "SALES_EXECUTIVE" || currentRole === "PRESALES_EXECUTIVE") {
+                  if (
+                    currentRole === "SALES_EXECUTIVE" ||
+                    currentRole === "PRESALES_EXECUTIVE" ||
+                    currentRole === "PRE_SALES"
+                  ) {
                     return;
                   }
                   setAssignee(next);
@@ -257,6 +258,9 @@ export default function Header() {
                 onMilestoneStageChange={setMilestoneStage}
                 onMilestoneStageCategoryChange={setMilestoneStageCategory}
                 onMilestoneSubStageChange={setMilestoneSubStage}
+                onReinquiryChange={setReinquiry}
+                onHeatmapAssigneeSync={setHeatmapToolbarAssignee}
+                onInsightTableModeChange={setInsightTableMode}
               />
             </>
           )}

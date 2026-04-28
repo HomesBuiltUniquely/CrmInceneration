@@ -1,18 +1,25 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import AdminPanelContent from "./AdminPanelContent";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 
+const DEFAULT_PANEL_ROLE = "SUPER_ADMIN";
+
 export default function AdminPanelClient() {
-  const [role] = useState(() => {
-    if (typeof window === "undefined") return "SUPER_ADMIN";
-    const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
-    return normalizeRole(stored) || "SUPER_ADMIN";
-  });
+  /** Same initial value on server and first client paint — read localStorage after mount to avoid hydration mismatch. */
+  const [role, setRole] = useState<string>(DEFAULT_PANEL_ROLE);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+      setRole(normalizeRole(stored) || DEFAULT_PANEL_ROLE);
+    } catch {
+      setRole(DEFAULT_PANEL_ROLE);
+    }
+  }, []);
   const roleLabel = useMemo(
     () =>
       role

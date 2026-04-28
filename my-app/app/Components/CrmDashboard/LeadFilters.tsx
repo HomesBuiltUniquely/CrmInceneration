@@ -6,8 +6,8 @@ import {
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
   normalizeRole,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
-import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
@@ -43,18 +43,24 @@ async function fetchUsersByRole(
   role: string,
   token: string,
 ): Promise<HierarchyUser[]> {
-  const res = await fetch(
-    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(role)}`,
-    {
-      cache: "no-store",
-      headers: {
-        Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+  const header = {
+    Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+  };
+  const rolesToTry = role === "PRESALES_EXECUTIVE" ? ["PRESALES_EXECUTIVE", "PRE_SALES"] : [role];
+  const merged: HierarchyUser[] = [];
+  for (const r of rolesToTry) {
+    const res = await fetch(
+      `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(r)}`,
+      {
+        cache: "no-store",
+        headers: header,
       },
-    },
-  );
-  if (!res.ok) return [];
-  const data = (await res.json()) as HierarchyUser[];
-  return Array.isArray(data) ? data : [];
+    );
+    if (!res.ok) continue;
+    const data = (await res.json()) as HierarchyUser[];
+    if (Array.isArray(data)) merged.push(...data);
+  }
+  return Array.from(new Map(merged.map((u) => [u.id, u])).values());
 }
 
 function FilterIcon() {
@@ -96,16 +102,34 @@ const labelClass =
   "mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--crm-text-muted)]";
 
 const QUICK_RANGES = [
-  { id: "7d", label: "Last 7 days", days: 7 },
-  { id: "30d", label: "Last 30 days", days: 30 },
-  { id: "q", label: "This Quarter", days: 90 },
+  { id: "7d", label: "Last 7 days" },
+  { id: "30d", label: "Last 30 days" },
+  { id: "q", label: "This Quarter" },
 ] as const;
+
 
 function formatDate(d: Date) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function computeQuickRangeDates(
+  rangeId: (typeof QUICK_RANGES)[number]["id"],
+): { from: string; to: string } {
+  const today = new Date();
+  const end = formatDate(today);
+  if (rangeId === "7d" || rangeId === "30d") {
+    const days = rangeId === "7d" ? 7 : 30;
+    const from = new Date(today);
+    from.setDate(today.getDate() - (days - 1));
+    return { from: formatDate(from), to: end };
+  }
+  const month = today.getMonth();
+  const quarterStartMonth = month - (month % 3);
+  const quarterStart = new Date(today.getFullYear(), quarterStartMonth, 1);
+  return { from: formatDate(quarterStart), to: end };
 }
 
 export default function LeadFilters({
@@ -118,17 +142,13 @@ export default function LeadFilters({
     viewerRole === "SALES_ADMIN" ||
     (viewerRole === "" && role === "sales_admin");
   const [quickRange, setQuickRange] =
-    useState<(typeof QUICK_RANGES)[number]["id"]>("7d");
+    useState<(typeof QUICK_RANGES)[number]["id"] | "">("");
 
   const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
   const [salesManagers, setSalesManagers] = useState<HierarchyUser[]>([]);
   const [salesExecs, setSalesExecs] = useState<HierarchyUser[]>([]);
   const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
   const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
-
-  const [stageOptions, setStageOptions] = useState<string[]>([]);
-  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
-  const [substageOptions, setSubstageOptions] = useState<string[]>([]);
 
   const [salesAdminId, setSalesAdminId] = useState("");
   const [salesManagerId, setSalesManagerId] = useState("");
@@ -140,12 +160,20 @@ export default function LeadFilters({
   const [substage, setSubstage] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [viewerMe, setViewerMe] = useState<HierarchyUser | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedRole = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(storedRole));
   }, []);
+
+  /** Sales Manager dashboard: scope pipeline metrics to self + direct reports (matches backend JWT). */
+  useEffect(() => {
+    if (role !== "sales_manager") return;
+    if (!viewerMe?.id) return;
+    setSalesManagerId(String(viewerMe.id));
+  }, [role, viewerMe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,13 +190,15 @@ export default function LeadFilters({
               },
             })
           : null;
-        const meJson =
-          meRes && meRes.ok
-            ? ((await meRes.json()) as { user?: HierarchyUser })
-            : { user: undefined };
-        const me = meJson.user;
+        const meData = meRes && meRes.ok ? ((await meRes.json()) as Record<string, unknown>) : {};
+        const meRecord = unwrapAuthUserPayload(
+          typeof meData === "object" && meData !== null ? meData : {},
+        );
+        const me =
+          Number(meRecord.id ?? 0) > 0 ? (meRecord as HierarchyUser) : undefined;
+        setViewerMe(me ?? null);
 
-        const [sa, sm, se, pm, pe, pipeline] = await Promise.all([
+        const [sa, sm, se, pm, pe] = await Promise.all([
           token ? fetchUsersByRole("SALES_ADMIN", token) : Promise.resolve([]),
           token
             ? fetchUsersByRole("SALES_MANAGER", token)
@@ -182,7 +212,6 @@ export default function LeadFilters({
           token
             ? fetchUsersByRole("PRESALES_EXECUTIVE", token)
             : Promise.resolve([]),
-          fetchCrmPipeline(true),
         ]);
         if (cancelled) return;
 
@@ -196,20 +225,6 @@ export default function LeadFilters({
         setSalesExecs(se.filter((u) => u.active !== false));
         setPresalesManagers(pm.filter((u) => u.active !== false));
         setPresalesExecs(pe.filter((u) => u.active !== false));
-
-        const stages = new Set<string>();
-        const cats = new Set<string>();
-        const subs = new Set<string>();
-        for (const n of pipeline.nested ?? []) {
-          stages.add(n.stage);
-          for (const c of n.categories) {
-            cats.add(c.stageCategory);
-            for (const s of c.subStages) subs.add(s);
-          }
-        }
-        setStageOptions([...stages].sort((a, b) => a.localeCompare(b)));
-        setCategoryOptions([...cats].sort((a, b) => a.localeCompare(b)));
-        setSubstageOptions([...subs].sort((a, b) => a.localeCompare(b)));
       } catch {
         if (!cancelled) {
           setSalesAdmins([]);
@@ -217,9 +232,6 @@ export default function LeadFilters({
           setSalesExecs([]);
           setPresalesManagers([]);
           setPresalesExecs([]);
-          setStageOptions([]);
-          setCategoryOptions([]);
-          setSubstageOptions([]);
         }
       }
     })();
@@ -283,10 +295,13 @@ export default function LeadFilters({
       return { assignee: selectedPresalesExecName, assignees: [] as string[] };
 
     if (salesManagerId) {
-      const teamAssignees = [
+      const mgr = salesManagers.find((u) => String(u.id) === salesManagerId);
+      const mgrLabel = mgr ? userLabel(mgr) : "";
+      const teamExecNames = [
         ...new Set(visibleSalesExecs.map((u) => userLabel(u)).filter(Boolean)),
       ];
-      return { assignee: "", assignees: teamAssignees };
+      const assignees = [...new Set([mgrLabel, ...teamExecNames].filter(Boolean))];
+      return { assignee: "", assignees };
     }
     if (presalesManagerId) {
       const teamAssignees = [
@@ -308,18 +323,16 @@ export default function LeadFilters({
     salesAdminId,
     salesExecId,
     salesManagerId,
+    salesManagers,
     visiblePresalesExecs,
     visibleSalesExecs,
   ]);
 
   useEffect(() => {
-    const today = new Date();
-    const picked = QUICK_RANGES.find((q) => q.id === quickRange);
-    if (!picked) return;
-    const from = new Date(today);
-    from.setDate(today.getDate() - (picked.days - 1));
-    setDateFrom(formatDate(from));
-    setDateTo(formatDate(today));
+    if (!quickRange) return;
+    const { from, to } = computeQuickRangeDates(quickRange);
+    setDateFrom(from);
+    setDateTo(to);
   }, [quickRange]);
 
   useEffect(() => {
@@ -351,12 +364,14 @@ export default function LeadFilters({
     setStage("");
     setStageCategory("");
     setSubstage("");
-    setQuickRange("7d");
+    setDateFrom("");
+    setDateTo("");
+    setQuickRange("");
   };
 
   return (
     <main>
-      <div className="xl:w-263.75 xl:mt-7 xl:ml-6 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-[var(--crm-border)] xl:bg-[var(--crm-surface)] xl:shadow-[var(--crm-shadow-sm)]">
+      <div className="xl:mx-6 xl:mt-7 xl:w-[calc(100%-3rem)] xl:min-w-0 xl:overflow-hidden xl:rounded-2xl xl:border xl:border-[var(--crm-border)] xl:bg-[var(--crm-surface)] xl:shadow-[var(--crm-shadow-sm)]">
         <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -404,83 +419,6 @@ export default function LeadFilters({
                     <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
                       <SelectChevron />
                     </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Stage</span>
-                  <div className="relative">
-                    <select
-                      value={stage}
-                      onChange={(e) => setStage(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {stageOptions.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Stage Category</span>
-                  <div className="relative">
-                    <select
-                      value={stageCategory}
-                      onChange={(e) => setStageCategory(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {categoryOptions.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Substage</span>
-                  <div className="relative">
-                    <select
-                      value={substage}
-                      onChange={(e) => setSubstage(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {substageOptions.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Date range</span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="date"
-                      value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)}
-                      className={selectClass}
-                    />
-                    <input
-                      type="date"
-                      value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)}
-                      className={selectClass}
-                    />
                   </div>
                 </label>
               </>

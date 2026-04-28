@@ -29,6 +29,7 @@ export type CreateAppointmentBody = {
   designerName: string;
   date: string;
   slotId: string;
+  meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   description: string;
   leadType: string;
   leadId: number;
@@ -39,6 +40,7 @@ export type CreateAppointmentResponse = {
   designerName?: string;
   date?: string;
   slotId?: string;
+  meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   slotDisplayName?: string;
   startTime?: string;
   endTime?: string;

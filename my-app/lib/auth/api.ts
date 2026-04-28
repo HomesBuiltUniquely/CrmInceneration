@@ -8,6 +8,14 @@ export function getAuthApiBaseUrl(): string {
   return BASE_URL;
 }
 
+export function canLoadAllUsers(role?: string): boolean {
+  return normalizeRole(role ?? "") === "SUPER_ADMIN";
+}
+
+export function getSalesExecEndpointForVerify(): string {
+  return "/api/auth/active-sales-executives";
+}
+
 export type LoginResult = {
   token: string;
   user: Record<string, unknown>;
@@ -15,7 +23,11 @@ export type LoginResult = {
 
 export function normalizeRole(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  // Backward compatibility: some APIs still emit PRE_SALES.
+  if (normalized === "PRE_SALES") return "PRESALES_EXECUTIVE";
+  if (normalized === "PRE_SALES_MANAGER") return "PRESALES_MANAGER";
+  return normalized;
 }
 
 /** Extract role from common login payload shapes. */
@@ -35,9 +47,9 @@ export function getRoleFromUser(user: Record<string, unknown>): string {
 /** Extract display name from common login payload shapes. */
 export function getNameFromUser(user: Record<string, unknown>): string {
   const candidate =
+    user.fullName ??
     user.name ??
     user.username ??
-    user.fullName ??
     user.displayName ??
     user.firstName;
   return typeof candidate === "string" ? candidate.trim() : "";
@@ -119,6 +131,31 @@ export async function getMe(token: string): Promise<Record<string, unknown>> {
     );
   }
   return data;
+}
+
+/** Unwraps `{ user: {...} }` or flat `/api/auth/me` payloads. */
+export function unwrapAuthUserPayload(data: Record<string, unknown>): Record<string, unknown> {
+  const u = data.user;
+  if (u && typeof u === "object" && !Array.isArray(u)) {
+    return u as Record<string, unknown>;
+  }
+  return data;
+}
+
+/**
+ * GET /api/auth/users-by-role — for SALES_MANAGER JWT, executives are scoped to that manager (backend).
+ */
+export async function fetchSalesExecutivesForManager(
+  token: string,
+): Promise<Array<Record<string, unknown>>> {
+  const auth = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  const res = await fetch(
+    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent("SALES_EXECUTIVE")}`,
+    { cache: "no-store", headers: { Authorization: auth } },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  return Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
 }
 
 export async function logout(token: string): Promise<void> {

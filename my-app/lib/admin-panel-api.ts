@@ -27,6 +27,24 @@ async function list(path: string): Promise<AnyJson[]> {
   return normalizeToArray<AnyJson>(raw);
 }
 
+/**
+ * Legacy CRM hierarchical list: GET /v1/SalesExecutive/all (proxied).
+ * For SALES_MANAGER JWT, backend returns only executives under that manager (typically active only).
+ */
+async function listSalesExecutivesLegacyAll(): Promise<AnyJson[]> {
+  const res = await fetch(`/api/sales-executive/all`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  if (!res.ok) {
+    const msg = (data as AnyJson).message;
+    throw new Error(typeof msg === "string" ? msg : `HTTP ${res.status}`);
+  }
+  return normalizeToArray<AnyJson>(data);
+}
+
 export const adminPanelApi = {
   createManager: (payload: AnyJson) =>
     call<AnyJson>("create-manager", { method: "POST", body: JSON.stringify(payload) }),
@@ -38,11 +56,14 @@ export const adminPanelApi = {
     call<AnyJson>("create-admin", { method: "POST", body: JSON.stringify(payload) }),
   listManagers: () => list("managers"),
   listSalesExecutives: () => list("sales-executives"),
+  /** GET /v1/SalesExecutive/all — use for Sales Manager team table (see API spec). */
+  listSalesExecutivesLegacyAll: () => listSalesExecutivesLegacyAll(),
   listPreSales: () => list("pre-sales"),
   listDesignManagers: () => list("design-managers"),
   listDesigners: () => list("designers"),
   listAdmins: () => list("admins"),
   listAllUsers: () => list("all-users"),
+  listUsersByRole: (role: string) => list(`users-by-role?role=${encodeURIComponent(role)}`),
   branchTransferUsers: () => list("branch-transfer-users"),
   /** Super Admin: optional `userId` filters audit trail (`GET .../branch-transfer-history?userId=`). */
   branchTransferHistory: (userId?: number | string) => {
@@ -76,6 +97,12 @@ export const adminPanelApi = {
   },
   updateSalesExecutive: (id: number | string, payload: AnyJson) =>
     call<AnyJson>(`sales-executives/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
+  /** POST /api/admin/assign-sales-executive-to-manager */
+  assignSalesExecutiveToManager: (payload: { salesExecutiveId: number; managerId: number }) =>
+    call<AnyJson>("assign-sales-executive-to-manager", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   deleteSalesExecutive: (id: number | string) =>
     call<AnyJson>(`sales-executives/${id}`, { method: "DELETE" }),
   updatePreSales: (id: number | string, payload: AnyJson) =>

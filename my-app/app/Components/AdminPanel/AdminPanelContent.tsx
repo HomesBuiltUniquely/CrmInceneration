@@ -13,7 +13,9 @@ import { pickNumber } from "@/lib/api-normalize";
 import { cn } from "@/lib/cn";
 import {
   CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
+  getMe,
   normalizeRole,
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -408,15 +410,22 @@ interface UserForm {
   parentId: string;
 }
 
+function normalizedUserRole(u: Record<string, unknown>): string {
+  const candidate = u.role ?? u.userRole ?? u.authority ?? u.type ?? "";
+  return normalizeRole(String(candidate));
+}
+
 function AdminUserSection() {
+  const { notifySuccess, notifyError } = useGlobalNotifier();
   const [tab, setTab] = useState<"admins" | "createAdmin" | "createUser">(
     "admins",
   );
-  const [viewerRole] = useState(() => {
-    if (typeof window === "undefined") return "";
+  const [viewerRole, setViewerRole] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    return normalizeRole(role);
-  });
+    setViewerRole(normalizeRole(role));
+  }, []);
   const [adminForm, setAdminForm] = useState<AdminForm>({
     username: "",
     password: "",
@@ -487,15 +496,15 @@ function AdminUserSection() {
         pm.filter(
           (u) =>
             String(u.active ?? true) !== "false" &&
-            String(u.role ?? "").toUpperCase() === "PRESALES_MANAGER",
+            normalizedUserRole(u) === "PRESALES_MANAGER",
         ),
       );
       const activeUsers = all.filter((u) => String(u.active ?? true) !== "false");
-      setSalesAdmins(activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "SALES_ADMIN"));
+      setSalesAdmins(activeUsers.filter((u) => normalizedUserRole(u) === "SALES_ADMIN"));
       setTerritoryDesignManagers(
-        activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "TERRITORY_DESIGN_MANAGER"),
+        activeUsers.filter((u) => normalizedUserRole(u) === "TERRITORY_DESIGN_MANAGER"),
       );
-      setDesignManagers(activeUsers.filter((u) => String(u.role ?? "").toUpperCase() === "DESIGN_MANAGER"));
+      setDesignManagers(activeUsers.filter((u) => normalizedUserRole(u) === "DESIGN_MANAGER"));
     });
     return () => {
       cancelled = true;
@@ -521,7 +530,10 @@ function AdminUserSection() {
     SALES_MANAGER: { label: "Sales Admin *", options: salesAdmins },
     SALES_EXECUTIVE: { label: "Sales Manager *", options: salesManagers },
     PRESALES_MANAGER: { label: "Sales Admin *", options: salesAdmins },
-    PRESALES_EXECUTIVE: { label: "Presales Manager *", options: presalesManagers },
+    PRESALES_EXECUTIVE: {
+      label: "Presales Manager *",
+      options: presalesManagers,
+    },
     DESIGN_MANAGER: { label: "Territory Design Manager *", options: territoryDesignManagers },
     DESIGNER: { label: "Design Manager *", options: designManagers },
   };
@@ -685,8 +697,11 @@ function AdminUserSection() {
                   .then(() => {
                     setAdminForm({ username: "", password: "", email: "" });
                     setTab("admins");
+                    notifySuccess("Admin created successfully.");
                   })
-                  .catch(() => {});
+                  .catch((e) => {
+                    notifyError(e instanceof Error ? e.message : "Failed to create admin.");
+                  });
               }}
             >
               Create Admin
@@ -808,8 +823,11 @@ function AdminUserSection() {
                     branch: "",
                     parentId: "",
                   });
+                  notifySuccess("User created successfully.");
                 })
-                .catch(() => {});
+                .catch((e) => {
+                  notifyError(e instanceof Error ? e.message : "Failed to create user.");
+                });
             }}
           >
             Create User
@@ -822,6 +840,7 @@ function AdminUserSection() {
 
 // ─── SECTION 2 : Assign Sales Executive to Manager ────────────────────────────
 function AssignSection() {
+  const { notifySuccess, notifyError } = useGlobalNotifier();
   const [exec, setExec] = useState<string>("");
   const [mgr, setMgr] = useState<string>("");
   const [execs, setExecs] = useState<Array<Record<string, unknown>>>([]);
@@ -912,8 +931,11 @@ function AssignSection() {
                 setExec("");
                 setMgr("");
                 load();
+                notifySuccess("Sales executive assigned successfully.");
               })
-              .catch(() => {});
+              .catch((e) => {
+                notifyError(e instanceof Error ? e.message : "Assignment failed.");
+              });
           }}
         >
           Assign
@@ -925,6 +947,7 @@ function AssignSection() {
 
 // ─── SECTION 3 : Branch Transfer ─────────────────────────────────────────────
 function BranchTransferSection() {
+  const { notifySuccess, notifyError } = useGlobalNotifier();
   const [user, setUser] = useState<string>("");
   const [branchPick, setBranchPick] = useState<string>("");
   const [reason, setReason] = useState<string>("");
@@ -1125,8 +1148,11 @@ function BranchTransferSection() {
                     setReason("");
                     setBranchPick("");
                     loadTransferUsers();
+                    notifySuccess("Branch transfer completed successfully.");
                   })
-                  .catch(() => {});
+                  .catch((e) => {
+                    notifyError(e instanceof Error ? e.message : "Branch transfer failed.");
+                  });
               }}
             >
               ⇄ Transfer Branch
@@ -1266,6 +1292,18 @@ const ALL_ROLES = [
   "Manager",
 ];
 
+const ALL_ROLE_TO_API: Record<string, string> = {
+  "Sales Admin": "SALES_ADMIN",
+  "Sales Manager": "SALES_MANAGER",
+  "Sales Executive": "SALES_EXECUTIVE",
+  "Presales Manager": "PRESALES_MANAGER",
+  "Presales Executive": "PRESALES_EXECUTIVE",
+  "Territory Design Manager": "TERRITORY_DESIGN_MANAGER",
+  "Design Manager": "DESIGN_MANAGER",
+  Designer: "DESIGNER",
+  Manager: "MANAGER",
+};
+
 interface User {
   id: number;
   username: string;
@@ -1279,11 +1317,12 @@ interface User {
 }
 
 function AllUsersSection() {
-  const [viewerRole] = useState(() => {
-    if (typeof window === "undefined") return "";
+  const [viewerRole, setViewerRole] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    return normalizeRole(role);
-  });
+    setViewerRole(normalizeRole(role));
+  }, []);
   const [roleFilter, setRoleFilter] = useState<string>("All");
   const [users, setUsers] = useState<User[]>([]);
 
@@ -1293,16 +1332,22 @@ function AllUsersSection() {
     void Promise.all([
       adminPanelApi.listAllUsers(),
       adminPanelApi.branchTransferUsers().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
     ])
-      .then(([rows, transferList]) => {
+      .then(([rows, transferList, presalesExecRows, preSalesRows]) => {
         if (cancelled) return;
+        const mergedRows = [...rows, ...presalesExecRows, ...preSalesRows];
+        const dedupedRows = Array.from(
+          new Map(mergedRows.map((u, idx) => [Number(u.id ?? idx + 1), u])).values(),
+        );
         const branchById = new Map<number, string>();
         for (const bu of transferList) {
           const bid = Number(bu.id);
           const br = bu.branch;
           if (typeof br === "string" && br.trim()) branchById.set(bid, br.trim());
         }
-        const normalized = rows.map((u, idx) => {
+        const normalized = dedupedRows.map((u, idx) => {
           const id = Number(u.id ?? idx + 1);
           const direct = typeof u.branch === "string" ? u.branch.trim() : "";
           const merged = direct || branchById.get(id) || "";
@@ -1312,7 +1357,7 @@ function AllUsersSection() {
             email: String(u.email ?? ""),
             name: String(u.fullName ?? u.name ?? ""),
             phone: String(u.phone ?? ""),
-            role: String(u.role ?? ""),
+            role: normalizedUserRole(u),
             branch: merged || "—",
             managerId: String(u.managerId ?? "N/A"),
             status: Boolean(u.active ?? true),
@@ -1331,10 +1376,7 @@ function AllUsersSection() {
   const filteredUsers =
     roleFilter === "All"
       ? users
-      : users.filter(
-          (u) =>
-            u.role.replace(/_/g, " ").toLowerCase() === roleFilter.toLowerCase(),
-        );
+      : users.filter((u) => u.role === (ALL_ROLE_TO_API[roleFilter] ?? roleFilter));
   return (
     <Card>
       <SectionTitle icon="🏢">All Users Management</SectionTitle>
@@ -1445,22 +1487,45 @@ interface SalesExecutive {
   phone: string;
   branch: string;
   manager: string;
+  /** Parent sales / presales manager user id — required for manager-scoped rows. */
+  managerId: number;
   status: boolean;
 }
 
 function SalesExecSection() {
   const [execs, setExecs] = useState<SalesExecutive[]>([]);
   const [loading, setLoading] = useState(false);
-  const [viewerRole] = useState(() => {
-    if (typeof window === "undefined") return "";
+  const [viewerRole, setViewerRole] = useState("");
+  const [viewerName, setViewerName] = useState("");
+  const [viewerUserId, setViewerUserId] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    return normalizeRole(role);
-  });
-  const [viewerName] = useState(() => {
-    if (typeof window === "undefined") return "";
     const name = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
-    return name.trim();
-  });
+    setViewerRole(normalizeRole(role));
+    setViewerName(name.trim());
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    let cancelled = false;
+    void getMe(token)
+      .then((res) => {
+        if (cancelled) return;
+        const raw = res as Record<string, unknown>;
+        const u =
+          raw.user && typeof raw.user === "object"
+            ? (raw.user as Record<string, unknown>)
+            : raw;
+        const id = Number(u.id ?? 0);
+        if (Number.isFinite(id) && id > 0) setViewerUserId(id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [allUsers, setAllUsers] = useState<Array<Record<string, unknown>>>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -1489,10 +1554,23 @@ function SalesExecSection() {
     }
   }, [viewerRole]);
 
+  useEffect(() => {
+    if (viewerRole !== "SALES_MANAGER" || !viewerUserId) return;
+    setCreateForm((prev) => ({
+      ...prev,
+      parentId: prev.parentId || String(viewerUserId),
+    }));
+  }, [viewerRole, viewerUserId]);
+
   const isSalesManagerViewer = viewerRole === "SALES_MANAGER";
   const isPresalesManagerViewer = viewerRole === "PRESALES_MANAGER";
   const isTerritoryDesignManagerViewer = viewerRole === "TERRITORY_DESIGN_MANAGER";
   const isDesignManagerViewer = viewerRole === "DESIGN_MANAGER";
+  const canCreateTeamUsers =
+    isSalesManagerViewer ||
+    isPresalesManagerViewer ||
+    isTerritoryDesignManagerViewer ||
+    isDesignManagerViewer;
   const isManagerViewer =
     isSalesManagerViewer ||
     isPresalesManagerViewer ||
@@ -1520,17 +1598,48 @@ function SalesExecSection() {
 
   const load = () => {
     setLoading(true);
+    const loadPresalesUsers = () =>
+      Promise.all([
+        adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
+        adminPanelApi
+          .listUsersByRole("PRESALES_EXECUTIVE")
+          .catch(() => [] as Array<Record<string, unknown>>),
+        adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
+      ]).then(([listPreSalesRows, presalesExecutiveRows, preSalesRows]) => {
+        const merged = [...listPreSalesRows, ...presalesExecutiveRows, ...preSalesRows];
+        const byId = new Map<number, Record<string, unknown>>();
+        for (const row of merged) {
+          const id = Number(row.id ?? 0);
+          if (id > 0 && !byId.has(id)) byId.set(id, row);
+        }
+        return Array.from(byId.values());
+      });
     const listReq = isPresalesManagerViewer
-      ? adminPanelApi.listPreSales()
+      ? loadPresalesUsers()
       : isTerritoryDesignManagerViewer
         ? adminPanelApi.listDesignManagers()
         : isDesignManagerViewer
           ? adminPanelApi.listDesigners()
-          : adminPanelApi.listSalesExecutives();
+          : isSalesManagerViewer
+            ? adminPanelApi
+                .listSalesExecutivesLegacyAll()
+                .catch(() => [] as Array<Record<string, unknown>>)
+            : Promise.all([
+                adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
+                loadPresalesUsers(),
+              ]).then(([sales, presales]) => {
+                const merged = [...sales, ...presales];
+                const byId = new Map<number, Record<string, unknown>>();
+                for (const row of merged) {
+                  const id = Number(row.id ?? 0);
+                  if (id > 0 && !byId.has(id)) byId.set(id, row);
+                }
+                return Array.from(byId.values());
+              });
     const parentReq = !showCreate
       ? Promise.resolve([] as Array<Record<string, unknown>>)
       : isSalesManagerViewer
-        ? adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>)
+        ? Promise.resolve([] as Array<Record<string, unknown>>)
         : isPresalesManagerViewer
           ? adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>)
           : isTerritoryDesignManagerViewer
@@ -1540,18 +1649,29 @@ function SalesExecSection() {
             : adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>);
     void Promise.all([listReq, parentReq])
       .then(([rows, users]) => {
-        const mapped = rows.map((r) => ({
+        const mapped = rows.map((r) => {
+          const mid = Number(r.managerId ?? 0);
+          const managerLabel =
+            isSalesManagerViewer && viewerUserId > 0 && mid === viewerUserId && viewerName.trim()
+              ? viewerName.trim()
+              : String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—");
+          return {
             id: Number(r.id ?? 0),
             name: String(r.fullName ?? r.name ?? r.username ?? ""),
             email: String(r.email ?? ""),
             phone: String(r.phone ?? ""),
             branch: String(r.branch ?? ""),
-            manager: String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—"),
-            status: Boolean(r.active ?? true),
-          }));
-        const filtered = isManagerViewer && viewerName
-          ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
-          : mapped;
+            manager: managerLabel,
+            managerId: mid,
+            status: Boolean(r.active ?? r.enabled ?? true),
+          };
+        });
+        const filtered =
+          isSalesManagerViewer && viewerUserId > 0
+            ? mapped.filter((e) => e.managerId === viewerUserId)
+            : isManagerViewer && viewerName
+              ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
+              : mapped;
         setExecs(filtered);
         setAllUsers(users);
       })
@@ -1570,6 +1690,7 @@ function SalesExecSection() {
     showCreate,
     viewerRole,
     viewerName,
+    viewerUserId,
   ]);
 
   const toggleStatus = (id: number, next: boolean) => {
@@ -1602,15 +1723,17 @@ function SalesExecSection() {
         <SectionTitle icon="💼">
           {managerTitle} Management
         </SectionTitle>
-        <Btn
-          color={C.success}
-          style={{ fontSize: 13, padding: "8px 16px" }}
-          onClick={() => setShowCreate((v) => !v)}
-        >
-          + Create {managerTitle.slice(0, -1)}
-        </Btn>
+        {canCreateTeamUsers ? (
+          <Btn
+            color={C.success}
+            style={{ fontSize: 13, padding: "8px 16px" }}
+            onClick={() => setShowCreate((v) => !v)}
+          >
+            + Create {managerTitle.slice(0, -1)}
+          </Btn>
+        ) : null}
       </div>
-      {showCreate ? (
+      {canCreateTeamUsers && showCreate ? (
         <div style={{ marginBottom: 18, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16 }}>
           <h3 style={{ margin: "0 0 8px 0", fontSize: 20, fontWeight: 700 }}>
             Create {managerTitle.slice(0, -1)}
@@ -1692,29 +1815,45 @@ function SalesExecSection() {
               <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
                 {parentLabel}
               </label>
-              <Select
-                value={createForm.parentId}
-                onChange={(e) => setCreateForm({ ...createForm, parentId: e.target.value })}
-              >
-                <option value="">Select Parent</option>
-                {allUsers
-                  .filter((u) => {
-                    const role = String(u.role ?? "").toUpperCase();
-                    if (isPresalesManagerViewer) return role === "PRESALES_MANAGER";
-                    if (isTerritoryDesignManagerViewer) {
-                      return createForm.role === "DESIGN_MANAGER"
-                        ? role === "TERRITORY_DESIGN_MANAGER"
-                        : role === "DESIGN_MANAGER";
-                    }
-                    if (isDesignManagerViewer) return role === "DESIGN_MANAGER";
-                    return role === "SALES_MANAGER";
-                  })
-                  .map((u) => (
-                    <option key={String(u.id)} value={String(u.id)}>
-                      {String(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`)}
-                    </option>
-                  ))}
-              </Select>
+              {isSalesManagerViewer && viewerUserId > 0 ? (
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    color: C.text,
+                  }}
+                >
+                  You (logged-in Sales Manager) — user ID <strong>{viewerUserId}</strong>. New executives are created
+                  with <code style={{ fontSize: 12 }}>managerId</code> set to this id (legacy CRM rule).
+                </div>
+              ) : (
+                <Select
+                  value={createForm.parentId}
+                  onChange={(e) => setCreateForm({ ...createForm, parentId: e.target.value })}
+                >
+                  <option value="">Select Parent</option>
+                  {allUsers
+                    .filter((u) => {
+                      const role = normalizedUserRole(u);
+                      if (isPresalesManagerViewer) return role === "PRESALES_MANAGER";
+                      if (isTerritoryDesignManagerViewer) {
+                        return createForm.role === "DESIGN_MANAGER"
+                          ? role === "TERRITORY_DESIGN_MANAGER"
+                          : role === "DESIGN_MANAGER";
+                      }
+                      if (isDesignManagerViewer) return role === "DESIGN_MANAGER";
+                      return role === "SALES_MANAGER";
+                    })
+                    .map((u) => (
+                      <option key={String(u.id)} value={String(u.id)}>
+                        {String(u.fullName ?? u.name ?? u.username ?? `User ${u.id}`)}
+                      </option>
+                    ))}
+                </Select>
+              )}
             </div>
             <div>
               <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
@@ -1748,9 +1887,12 @@ function SalesExecSection() {
                 !createForm.branch.trim() ||
                 !createForm.username.trim() ||
                 !createForm.password.trim() ||
-                !createForm.parentId
+                (isSalesManagerViewer ? viewerUserId <= 0 : !createForm.parentId.trim())
               }
               onClick={() => {
+                const resolvedManagerId = isSalesManagerViewer
+                  ? viewerUserId
+                  : Number(createForm.parentId);
                 const payload = {
                   role: createForm.role,
                   fullName: createForm.fullName.trim(),
@@ -1760,7 +1902,7 @@ function SalesExecSection() {
                   branch: createForm.branch,
                   username: createForm.username.trim(),
                   password: createForm.password,
-                  managerId: Number(createForm.parentId),
+                  managerId: resolvedManagerId,
                 };
                 const req = isPresalesManagerViewer
                   ? adminPanelApi.createPreSales(payload)
@@ -1785,7 +1927,8 @@ function SalesExecSection() {
                       branch: "",
                       username: "",
                       password: "",
-                      parentId: "",
+                      parentId:
+                        isSalesManagerViewer && viewerUserId > 0 ? String(viewerUserId) : "",
                     });
                     setShowCreate(false);
                     load();
@@ -1989,7 +2132,7 @@ function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
   return {
     userId,
     name: String(u.fullName ?? u.name ?? u.username ?? `User ${userId}`),
-    role: String(u.role ?? ""),
+    role: normalizedUserRole(u),
     branch: String(u.branch ?? ""),
     current,
     limit,
@@ -1999,14 +2142,15 @@ function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
 }
 
 function LeadLimitSection() {
-  const [viewerRole] = useState(() => {
-    if (typeof window === "undefined") return "";
+  const { notifySuccess, notifyError } = useGlobalNotifier();
+  const [viewerRole, setViewerRole] = useState("");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    return normalizeRole(role);
-  });
+    setViewerRole(normalizeRole(role));
+  }, []);
   const canManageLeadLimits =
     viewerRole === "SUPER_ADMIN" ||
-    viewerRole === "ADMIN" ||
     viewerRole === "SALES_ADMIN";
   const [defaultLimit, setDefaultLimit] = useState<string>("50");
   const [limitTab, setLimitTab] = useState<"users" | "role">("users");
@@ -2023,9 +2167,18 @@ function LeadLimitSection() {
 
   const loadLimits = () => {
     setLimitsLoading(true);
-    void Promise.all([leadLimitsApi.listUsers(), leadLimitsApi.getDefault()])
-      .then(([rows, def]) => {
-        setUsers(rows.map((r, i) => mapLimitUser(r, i)));
+    void Promise.all([
+      leadLimitsApi.listUsers(),
+      leadLimitsApi.getDefault(),
+      adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
+    ])
+      .then(([rows, def, presalesExecRows, preSalesRows]) => {
+        const mergedRows = [...rows, ...presalesExecRows, ...preSalesRows];
+        const dedupedRows = Array.from(
+          new Map(mergedRows.map((u, i) => [Number((u as Record<string, unknown>).userId ?? (u as Record<string, unknown>).id ?? i), u])).values(),
+        );
+        setUsers(dedupedRows.map((r, i) => mapLimitUser(r as Record<string, unknown>, i)));
         const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
         if (d !== undefined) setDefaultLimit(String(d));
       })
@@ -2069,7 +2222,7 @@ function LeadLimitSection() {
         <>
           <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
           <p style={{ fontSize: 13, color: C.muted, marginBottom: 0 }}>
-            Lead limit management is available only for Admin, Sales Admin, and Super Admin.
+            Lead limit management is available only for Sales Admin and Super Admin.
           </p>
         </>
       ) : (
@@ -2150,7 +2303,15 @@ function LeadLimitSection() {
             onClick={() => {
               const n = Number(defaultLimit);
               if (Number.isNaN(n)) return;
-              void leadLimitsApi.setDefault(n).then(() => loadLimits()).catch(() => {});
+              void leadLimitsApi
+                .setDefault(n)
+                .then(() => {
+                  loadLimits();
+                  notifySuccess("Default lead limit updated.");
+                })
+                .catch((e) => {
+                  notifyError(e instanceof Error ? e.message : "Failed to update default limit.");
+                });
             }}
           >
             Update Default
@@ -2649,8 +2810,11 @@ function LeadLimitSection() {
                   .then(() => {
                     setRoleLimit("");
                     loadLimits();
+                    notifySuccess("Role limits updated.");
                   })
-                  .catch(() => {});
+                  .catch((e) => {
+                    notifyError(e instanceof Error ? e.message : "Failed to update role limits.");
+                  });
               }}
             >
               🗓 Set Limit for Roles
@@ -2878,8 +3042,11 @@ function LeadLimitSection() {
                       setCurrentEditingLimit("");
                       setShowModal(false);
                       loadLimits();
+                      notifySuccess("User lead limit updated.");
                     })
-                    .catch(() => {});
+                    .catch((e) => {
+                      notifyError(e instanceof Error ? e.message : "Failed to update user limit.");
+                    });
                 } else {
                   void leadLimitsApi
                     .bulkUsers({ userIds: selectedUserIds, limit: lim })
@@ -2888,8 +3055,11 @@ function LeadLimitSection() {
                       setBulkLimit("");
                       setSelectedUserIds([]);
                       loadLimits();
+                      notifySuccess("Bulk user limits updated.");
                     })
-                    .catch(() => {});
+                    .catch((e) => {
+                      notifyError(e instanceof Error ? e.message : "Failed to update bulk limits.");
+                    });
                 }
               }}
               style={{
@@ -2956,21 +3126,26 @@ const SECTIONS: Section[] = [
 
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
 export default function AdminPanelContent() {
-  const [viewerRole] = useState(() => {
-    if (typeof window === "undefined") return "";
+  const [viewerRole, setViewerRole] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    return normalizeRole(role);
-  });
+    setViewerRole(normalizeRole(role));
+  }, []);
 
   const isAdmin = viewerRole === "ADMIN";
   const isSalesAdmin = viewerRole === "SALES_ADMIN";
   const isSalesManager = viewerRole === "SALES_MANAGER";
   const isPresalesManager = viewerRole === "PRESALES_MANAGER";
+  const isPresalesExecutive = viewerRole === "PRESALES_EXECUTIVE";
   const isTerritoryDesignManager = viewerRole === "TERRITORY_DESIGN_MANAGER";
   const isDesignManager = viewerRole === "DESIGN_MANAGER";
   const isSuperAdmin = viewerRole === "SUPER_ADMIN";
-  const canSeeLeadLimit = isSuperAdmin || isAdmin || isSalesAdmin;
-  const baseSections = isSalesManager || isPresalesManager || isTerritoryDesignManager || isDesignManager
+  const canSeeLeadLimit = isSuperAdmin || isSalesAdmin;
+  const isManagerScopedRole =
+    isSalesManager || isPresalesManager || isTerritoryDesignManager || isDesignManager;
+  const baseSections = isManagerScopedRole || isPresalesExecutive
     ? SECTIONS.filter((section) => section.id === "salesExec")
     : SECTIONS.filter((section) => {
         if (section.id === "allUsers") return isSuperAdmin;
@@ -3016,10 +3191,7 @@ export default function AdminPanelContent() {
 
       {/* Sections */}
       <div className="flex flex-col gap-6">
-        {!isSalesManager &&
-        !isPresalesManager &&
-        !isTerritoryDesignManager &&
-        !isDesignManager ? (
+        {!isManagerScopedRole && !isPresalesExecutive ? (
           <>
             <div id="adminUser">
               <AdminUserSection />
