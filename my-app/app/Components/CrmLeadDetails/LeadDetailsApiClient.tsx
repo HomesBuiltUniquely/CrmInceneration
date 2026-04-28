@@ -191,17 +191,29 @@ async function postExternalIntakeLead(args: {
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
   const city = pickCityForExternalIntake(args.lead, args.baseDetail);
+  const externalLeadId =
+    String(
+      args.baseDetail.externalLeadId ??
+        args.baseDetail.id ??
+        args.baseDetail.leadId ??
+        args.lead.id ??
+        "",
+    ).trim();
   const payload = {
     projectName: args.lead.name?.trim() || "",
     contactNo: args.lead.phone?.trim() || "",
     clientEmail: args.lead.email?.trim() || "",
-    externalLeadId: "",
+    externalLeadId,
     sourceProject: "crm-service",
     allOtherFieldsFromOtherProject: {
       budget: parseBudgetForExternalIntake(args.lead.budget ?? ""),
       city,
     },
   };
+
+  if (!payload.externalLeadId) {
+    throw new Error("External intake failed: lead id is missing.");
+  }
 
   const res = await fetch("/api/crm/external-intake", {
     method: "POST",
