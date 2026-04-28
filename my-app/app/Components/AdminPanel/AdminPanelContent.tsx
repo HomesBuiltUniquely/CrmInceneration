@@ -1194,7 +1194,7 @@ function BranchTransferSection() {
             </div>
           </div>
           <p style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>
-            Audit API: <code>GET /api/admin/branch-transfer-history?userId=</code> (typically Super Admin).
+            Showing branch transfer history for the selected user.
           </p>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>

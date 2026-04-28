@@ -103,9 +103,6 @@ export default function DesignQaPanel({
                 Customer-submitted Design QA answers linked to this lead.
               </p>
             </div>
-            <span className="text-[11px] text-[var(--crm-text-muted)] shrink-0">
-              GET /api/design-qa/lead/{"{id}"}
-            </span>
           </div>
           {loading ? (
             <p className="text-[12px] text-[var(--crm-text-muted)]">Loading design QA…</p>
