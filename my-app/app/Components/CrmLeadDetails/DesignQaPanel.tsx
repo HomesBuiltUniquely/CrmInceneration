@@ -19,21 +19,26 @@ type DesignQaSubmission = {
 
 function asSubmissions(data: unknown): DesignQaSubmission[] {
   if (!Array.isArray(data)) return [];
-  return data as DesignQaSubmission[];
+  const rows = data as DesignQaSubmission[];
+  return [...rows].sort((a, b) => {
+    const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return bt - at;
+  });
 }
 
 function formatSubmissionDate(value?: string): string {
-  if (!value?.trim()) return "Unknown date";
+  if (!value?.trim()) return "Submitted";
   const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return value;
+  if (Number.isNaN(dt.getTime())) return "Submitted";
   return dt.toLocaleString();
 }
 
 export default function DesignQaPanel({
-  leadId,
+  leadIds,
   open,
 }: {
-  leadId: string;
+  leadIds: string[];
   open: boolean;
 }) {
   const [data, setData] = useState<DesignQaSubmission[] | null | undefined>(
@@ -46,22 +51,30 @@ export default function DesignQaPanel({
     setData(undefined);
     setError(null);
     setLoading(false);
-  }, [leadId]);
+  }, [leadIds.join("|")]);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    void fetchDesignQaForLead(leadId)
-      .then((d) => {
+    const normalizedLeadIds = leadIds
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .filter((id, idx, arr) => arr.indexOf(id) === idx);
+
+    void (async () => {
+      for (const id of normalizedLeadIds) {
+        const d = await fetchDesignQaForLead(id);
         if (cancelled) return;
-        if (d === null) {
-          setData(null);
+        const submissions = d === null ? [] : asSubmissions(d);
+        if (submissions.length > 0) {
+          setData(submissions);
           return;
         }
-        setData(asSubmissions(d));
-      })
+      }
+      if (!cancelled) setData([]);
+    })()
       .catch((e) => {
         if (!cancelled) {
           setError(
@@ -77,7 +90,7 @@ export default function DesignQaPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, leadId]);
+  }, [open, leadIds.join("|")]);
 
   return (
     <div className="mb-6 animate-fade-up delay-2">
@@ -85,12 +98,16 @@ export default function DesignQaPanel({
         <section className="rounded-[20px] border border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 py-4 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
           <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Design QA</h2>
+              <h2 className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
+                Design Preferences
+              </h2>
               <p className="mt-0.5 text-[11px] text-[var(--crm-text-muted)]">
-                Second email path after a Connection meeting is fixed (with Google Meet mail). Uses designer / design preference email from Assignments.
+                Customer-submitted Design QA answers linked to this lead.
               </p>
             </div>
-            <span className="text-[11px] text-[var(--crm-text-muted)] shrink-0">GET /api/design-qa/lead/{leadId}</span>
+            <span className="text-[11px] text-[var(--crm-text-muted)] shrink-0">
+              GET /api/design-qa/lead/{"{id}"}
+            </span>
           </div>
           {loading ? (
             <p className="text-[12px] text-[var(--crm-text-muted)]">Loading design QA…</p>
@@ -107,10 +124,20 @@ export default function DesignQaPanel({
                   key={submission.id ?? `design-qa-${index}`}
                   className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3"
                 >
-                  <p className="text-[11px] font-semibold text-[var(--crm-text-secondary)]">
-                    Submission {index + 1} · {formatSubmissionDate(submission.createdAt)}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.6px] text-[var(--crm-text-secondary)]">
+                      Submission {index + 1}
+                    </p>
+                    <p className="text-[11px] text-[var(--crm-text-muted)]">
+                      {formatSubmissionDate(submission.createdAt)}
+                    </p>
+                  </div>
                   <div className="mt-2 space-y-2">
+                    {(submission.answers ?? []).length === 0 ? (
+                      <p className="text-[11px] text-[var(--crm-text-muted)]">
+                        No answers in this submission.
+                      </p>
+                    ) : null}
                     {(submission.answers ?? []).map((answer, answerIdx) => (
                       <div
                         key={`${submission.id ?? index}-${answerIdx}`}

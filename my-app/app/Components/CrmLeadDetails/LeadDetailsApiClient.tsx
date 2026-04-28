@@ -1036,7 +1036,10 @@ export default function LeadDetailsApiClient({
             window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
           }}
         />
-        <DesignQaPanel leadId={leadId} open={designQaOpen} />
+        <DesignQaPanel
+          leadIds={[leadId, lead.customerId ?? ""]}
+          open={designQaOpen}
+        />
         <StatsRow lead={lead} />
         <Tabs active={activeTab} onChange={setActiveTab} />
 
