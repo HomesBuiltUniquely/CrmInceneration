@@ -235,6 +235,7 @@ async function postExternalIntakeLead(args: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "x-external-api-key": "hi"
     },
     body: JSON.stringify(payload),
   });
