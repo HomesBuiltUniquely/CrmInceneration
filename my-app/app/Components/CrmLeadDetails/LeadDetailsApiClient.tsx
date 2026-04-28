@@ -391,21 +391,24 @@ export default function LeadDetailsApiClient({
     setError(null);
     try {
       const lt = leadTypeParam as CrmLeadType;
-      const [detailJson, actJson] = await Promise.all([
-        getLeadDetail(lt, leadId),
-        getLeadActivities(lt, leadId),
-      ]);
+      const detailJson = await getLeadDetail(lt, leadId);
       setBaseDetail(detailJson);
       const mapped = detailJsonToLead(detailJson, lt);
-      const activities = mapActivitiesJson(actJson);
-      setLead({ ...mapped, id: leadId, activities });
+      setLead((prev) => ({ ...mapped, id: leadId, activities: prev.activities }));
+      setLoading(false);
+      void getLeadActivities(lt, leadId)
+        .then((actJson) => {
+          const activities = mapActivitiesJson(actJson);
+          setLead((prev) => ({ ...prev, activities }));
+          return loadCreatedTimeline(detailJson, actJson);
+        })
+        .catch(() => loadCreatedTimeline(detailJson, []));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load lead");
       setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
-    } finally {
       setLoading(false);
     }
-  }, [leadId, leadTypeParam]);
+  }, [leadId, leadTypeParam, loadCreatedTimeline]);
 
   useEffect(() => {
     if (!validLeadType) {
@@ -476,6 +479,8 @@ export default function LeadDetailsApiClient({
       if (!validLeadType) return;
       setCreatedTimelineLoading(true);
       const entries: TimelineEntry[] = [];
+      let fallbackCreatedAt = "";
+      let fallbackName = "Unknown";
       try {
         const currentCreatedAt =
           typeof detailJson.createdAt === "string" &&
@@ -491,8 +496,10 @@ export default function LeadDetailsApiClient({
               ?.customerName as string | undefined
           )?.trim() ||
           "" ||
-          lead.name ||
           "Unknown";
+
+        fallbackCreatedAt = currentCreatedAt;
+        fallbackName = currentName;
 
         if (currentCreatedAt) {
           entries.push({
@@ -562,13 +569,13 @@ export default function LeadDetailsApiClient({
           : [
               {
                 value: `fallback:${leadType}:${leadId}`,
-                fullLabel: `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(
-                  lead.createdAt,
-                )} in ${SOURCE_LABELS[leadType]} as ${lead.name}`,
+                fullLabel: `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(
+                  fallbackCreatedAt,
+                )} in ${SOURCE_LABELS[leadType]} as ${fallbackName}`,
                 label: truncateLabel(
-                  `${relativeDayText(lead.createdAt)} it came on ${formatTimelineDate(lead.createdAt)} in ${
+                  `${relativeDayText(fallbackCreatedAt)} it came on ${formatTimelineDate(fallbackCreatedAt)} in ${
                     SOURCE_LABELS[leadType]
-                  } as ${lead.name}`,
+                  } as ${fallbackName}`,
                 ),
                 leadType,
                 leadId,
@@ -579,17 +586,8 @@ export default function LeadDetailsApiClient({
         setCreatedTimelineLoading(false);
       }
     },
-    [lead.createdAt, lead.name, leadId, leadType, validLeadType],
+    [leadId, leadType, validLeadType],
   );
-
-  useEffect(() => {
-    if (!validLeadType) return;
-    if (Object.keys(baseDetail).length === 0) return;
-    const lt = leadTypeParam as CrmLeadType;
-    void getLeadActivities(lt, leadId)
-      .then((actJson) => loadCreatedTimeline(baseDetail, actJson))
-      .catch(() => loadCreatedTimeline(baseDetail, []));
-  }, [baseDetail, leadId, leadTypeParam, loadCreatedTimeline, validLeadType]);
 
   useEffect(() => {
     if (!rollbackOpen) return;
@@ -939,14 +937,12 @@ export default function LeadDetailsApiClient({
           followUpDate = appt.endTime;
         }
         designerName = args.meetingAppointment.designerName;
-        try {
-          await postExternalIntakeLead({ lead, baseDetail });
-        } catch (e) {
+        void postExternalIntakeLead({ lead, baseDetail }).catch((e) => {
           console.error(
             "External intake API call failed after meeting schedule:",
             e,
           );
-        }
+        });
       }
 
       const nextStage = {
@@ -976,19 +972,20 @@ export default function LeadDetailsApiClient({
         activities: prev.activities,
         stageBlock: nextStage,
       }));
-      await postManualActivity(lt, leadId, "NOTE", args.note);
+      notifySuccess("Saved");
+      void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
+        /* keep save fast even if note activity fails */
+      });
 
       const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
       if (emailPayload) {
-        const emailResult = await sendEmailNotification(emailPayload);
-        if (!emailResult.success) {
-          notifyError(`Email warning: ${emailResult.message}`);
-        }
+        void sendEmailNotification(emailPayload).then((emailResult) => {
+          if (!emailResult.success) {
+            notifyError(`Email warning: ${emailResult.message}`);
+          }
+        });
       }
-
-
-      await refreshActivities();
-      notifySuccess("Saved");
+      void refreshActivities();
     },
     [
       baseDetail,
