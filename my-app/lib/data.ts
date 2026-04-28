@@ -26,6 +26,8 @@ export type LeadStageBlock = {
 
 export interface Lead {
   id: string;
+  /** Business lead identifier used by Design QA APIs (example: GL-2026-00123). */
+  leadId?: string;
   name: string;
   customerId: string;
   status: string;
