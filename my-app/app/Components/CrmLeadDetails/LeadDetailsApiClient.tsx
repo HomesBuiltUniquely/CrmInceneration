@@ -138,10 +138,6 @@ type TimelineEntry = {
   leadType: CrmLeadType;
   leadId: string;
 };
-const hi =
-  "https://api.hubinterior.com/api/leads/external-intake";
-const EXTERNAL_INTAKE_API_KEY = "hi";
-
 function pickCityForExternalIntake(
   lead: Lead,
   baseDetail: Record<string, unknown>,
@@ -190,9 +186,7 @@ async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
-  const normalizeExternalLeadId = (
-    value: unknown,
-  ): number | string | null => {
+  const normalizeExternalLeadId = (value: unknown): number | null => {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -200,13 +194,33 @@ async function postExternalIntakeLead(args: {
     if (/^\d+$/.test(trimmed)) return Number(trimmed);
     const crmNumeric = trimmed.match(/^crm-(\d+)$/i);
     if (crmNumeric?.[1]) return Number(crmNumeric[1]);
-    return trimmed;
+    return null;
   };
+
+  const dynamicFields =
+    args.baseDetail.dynamicFields &&
+    typeof args.baseDetail.dynamicFields === "object" &&
+    !Array.isArray(args.baseDetail.dynamicFields)
+      ? (args.baseDetail.dynamicFields as Record<string, unknown>)
+      : {};
+
+  const idCandidates: unknown[] = [
+    args.baseDetail.externalLeadId,
+    args.baseDetail.id,
+    args.baseDetail.leadId,
+    args.baseDetail.customerId,
+    args.baseDetail.crmId,
+    dynamicFields.externalLeadId,
+    dynamicFields.id,
+    dynamicFields.leadId,
+    dynamicFields.customerId,
+    dynamicFields.crmId,
+    args.lead.id,
+    args.lead.customerId,
+  ];
+
   const externalLeadId =
-    normalizeExternalLeadId(args.baseDetail.externalLeadId) ??
-    normalizeExternalLeadId(args.baseDetail.id) ??
-    normalizeExternalLeadId(args.baseDetail.leadId) ??
-    normalizeExternalLeadId(args.lead.id);
+    idCandidates.map(normalizeExternalLeadId).find((id) => id !== null) ?? null;
   const payload = {
     projectName: args.lead.name?.trim() || "",
     contactNo: args.lead.phone?.trim() || "",
@@ -215,8 +229,12 @@ async function postExternalIntakeLead(args: {
     sourceProject: "crm-inceneration",
   };
 
-  if (payload.externalLeadId === null || payload.externalLeadId === "") {
-    throw new Error("External intake failed: lead id is missing.");
+  if (payload.externalLeadId === null) {
+    console.warn(
+      "Skipping external intake: no numeric externalLeadId found.",
+      idCandidates,
+    );
+    return;
   }
 
   const res = await fetch("/api/crm/external-intake", {
