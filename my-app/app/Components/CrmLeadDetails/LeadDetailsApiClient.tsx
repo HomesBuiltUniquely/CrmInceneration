@@ -190,7 +190,6 @@ async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
-  const city = pickCityForExternalIntake(args.lead, args.baseDetail);
   const normalizeExternalLeadId = (
     value: unknown,
   ): number | string | null => {
@@ -213,11 +212,7 @@ async function postExternalIntakeLead(args: {
     contactNo: args.lead.phone?.trim() || "",
     clientEmail: args.lead.email?.trim() || "",
     externalLeadId,
-    sourceProject: "crm-service",
-    allOtherFieldsFromOtherProject: {
-      budget: parseBudgetForExternalIntake(args.lead.budget ?? ""),
-      city,
-    },
+    sourceProject: "crm-inceneration",
   };
 
   if (payload.externalLeadId === null || payload.externalLeadId === "") {
