@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 const EXTERNAL_INTAKE_URL =
   process.env.EXTERNAL_INTAKE_URL ??
   "http://api.hubinterior.com/api/leads/external-intake";
-const EXTERNAL_INTAKE_API_KEY = process.env.EXTERNAL_INTAKE_API_KEY ?? "hi";
+const EXTERNAL_LEAD_INGEST_API_KEY =
+  process.env.EXTERNAL_LEAD_INGEST_API_KEY ?? "";
 
 export async function POST(req: NextRequest) {
   const bodyText = await req.text();
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-external-api-key": EXTERNAL_INTAKE_API_KEY,
+      "x-external-api-key": EXTERNAL_LEAD_INGEST_API_KEY,
     },
     body: bodyText,
     cache: "no-store",
