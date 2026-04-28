@@ -136,10 +136,6 @@ type TimelineEntry = {
   leadId: string;
 };
 
-const hi =
-  "https://api.hubinterior.com/api/leads/external-intake";
-const EXTERNAL_INTAKE_API_KEY = "hi";
-
 function pickCityForExternalIntake(
   lead: Lead,
   baseDetail: Record<string, unknown>,
@@ -201,11 +197,10 @@ async function postExternalIntakeLead(args: {
     },
   };
 
-  const res = await fetch(hi, {
+  const res = await fetch("/api/crm/external-intake", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-external-api-key": hi,
     },
     body: JSON.stringify(payload),
   });
@@ -1018,13 +1013,6 @@ export default function LeadDetailsApiClient({
               onSendQuote: handleSendQuote,
               quoteSending,
             }}
-          />
-        )}
-        {activeTab === "additional" && (
-          <LeadInfoTab
-            lead={lead}
-            onLeadChange={patchLead}
-            onLogCall={handlePhoneCallLog}
           />
         )}
         {activeTab === "assignments" && (
