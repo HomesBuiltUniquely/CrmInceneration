@@ -186,76 +186,35 @@ async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
 }): Promise<void> {
-  const pickText = (...values: unknown[]): string => {
-    for (const value of values) {
-      if (typeof value === "string" && value.trim()) return value.trim();
-      if (typeof value === "number" && Number.isFinite(value))
-        return String(value);
-    }
+  const pickText = (value: unknown): string => {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
     return "";
   };
+  const normalizeExternalLeadId = (value: string): string => {
+    const compactHyphen = value.replace(/\s*-\s*/g, "-");
+    const noSpaces = compactHyphen.replace(/\s+/g, "");
+    return noSpaces.trim().toUpperCase();
+  };
 
-  const dynamicFields =
-    args.baseDetail.dynamicFields &&
-    typeof args.baseDetail.dynamicFields === "object" &&
-    !Array.isArray(args.baseDetail.dynamicFields)
-      ? (args.baseDetail.dynamicFields as Record<string, unknown>)
-      : {};
-
-  const idCandidates: unknown[] = [
-    args.baseDetail.customerId,
-    args.baseDetail.externalLeadId,
-    args.baseDetail.externalId,
-    args.baseDetail.external_id,
-    args.baseDetail.externalLeadID,
-    dynamicFields.customerId,
-    dynamicFields.externalLeadId,
-    dynamicFields.externalId,
-    dynamicFields.external_id,
-    dynamicFields.externalLeadID,
-  ];
-
-  const externalLeadId =
-    pickText(...idCandidates) || null;
+  const externalLeadIdRaw = pickText(args.baseDetail.customerId);
+  const externalLeadId = externalLeadIdRaw
+    ? normalizeExternalLeadId(externalLeadIdRaw)
+    : null;
   const payload = {
-    projectName: pickText(
-      args.baseDetail.fullName,
-      args.baseDetail.customerName,
-      args.baseDetail.name,
-      dynamicFields.fullName,
-      dynamicFields.customerName,
-      dynamicFields.name,
-      args.lead.name,
-    ),
-    contactNo: pickText(
-      args.baseDetail.phone,
-      args.baseDetail.phoneNumber,
-      args.baseDetail.mobile,
-      dynamicFields.phone,
-      dynamicFields.phoneNumber,
-      dynamicFields.mobile,
-      args.lead.phone,
-    ),
-    clientEmail: pickText(
-      args.baseDetail.email,
-      args.baseDetail.emailAddress,
-      args.baseDetail.mail,
-      dynamicFields.email,
-      dynamicFields.emailAddress,
-      dynamicFields.mail,
-      args.lead.email,
-    ),
+    projectName: pickText(args.baseDetail.fullName),
+    contactNo: pickText(args.baseDetail.phone),
+    clientEmail: pickText(args.baseDetail.email),
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
 
   if (payload.externalLeadId === null) {
     console.warn(
-      "Skipping external intake: no numeric externalLeadId found.",
+      "Skipping external intake: no externalLeadId found.",
       {
-        idCandidates,
+        customerId: args.baseDetail.customerId ?? null,
         baseDetailKeys: Object.keys(args.baseDetail),
-        dynamicFieldKeys: Object.keys(dynamicFields),
       },
     );
     return;
