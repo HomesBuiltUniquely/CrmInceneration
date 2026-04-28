@@ -35,10 +35,10 @@ function formatSubmissionDate(value?: string): string {
 }
 
 export default function DesignQaPanel({
-  leadIds,
+  leadId,
   open,
 }: {
-  leadIds: string[];
+  leadId: string;
   open: boolean;
 }) {
   const [data, setData] = useState<DesignQaSubmission[] | null | undefined>(
@@ -51,30 +51,28 @@ export default function DesignQaPanel({
     setData(undefined);
     setError(null);
     setLoading(false);
-  }, [leadIds.join("|")]);
+  }, [leadId]);
 
   useEffect(() => {
     if (!open) return;
+    if (!leadId.trim()) {
+      setData([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const normalizedLeadIds = leadIds
-      .map((id) => id.trim())
-      .filter(Boolean)
-      .filter((id, idx, arr) => arr.indexOf(id) === idx);
-
-    void (async () => {
-      for (const id of normalizedLeadIds) {
-        const d = await fetchDesignQaForLead(id);
+    void fetchDesignQaForLead(leadId)
+      .then((d) => {
         if (cancelled) return;
-        const submissions = d === null ? [] : asSubmissions(d);
-        if (submissions.length > 0) {
-          setData(submissions);
+        if (d === null) {
+          setData(null);
           return;
         }
-      }
-      if (!cancelled) setData([]);
-    })()
+        setData(asSubmissions(d));
+      })
       .catch((e) => {
         if (!cancelled) {
           setError(
@@ -90,7 +88,7 @@ export default function DesignQaPanel({
     return () => {
       cancelled = true;
     };
-  }, [open, leadIds.join("|")]);
+  }, [open, leadId]);
 
   return (
     <div className="mb-6 animate-fade-up delay-2">

@@ -96,6 +96,7 @@ async function fetchSalesExecutivesForPicker(
 
 const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   id,
+  leadId: "",
   name: "—",
   customerId: "—",
   status: "—",
@@ -1036,10 +1037,7 @@ export default function LeadDetailsApiClient({
             window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
           }}
         />
-        <DesignQaPanel
-          leadIds={[leadId, lead.customerId ?? ""]}
-          open={designQaOpen}
-        />
+        <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} />
         <Tabs active={activeTab} onChange={setActiveTab} />
 
