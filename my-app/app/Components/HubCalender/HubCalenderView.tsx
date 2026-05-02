@@ -268,7 +268,11 @@ export default function HubCalendarPage(): React.ReactElement | null {
   const handleConnect = React.useCallback(async () => {
     setGBusy(true);
     try {
-      const u = await fetchGoogleCalendarConnectUrl();
+      const returnUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}${window.location.pathname}`
+          : undefined;
+      const u = await fetchGoogleCalendarConnectUrl(returnUrl);
       window.location.href = u;
     } catch (e) {
       setGErr(e instanceof Error ? e.message : "Connect failed");

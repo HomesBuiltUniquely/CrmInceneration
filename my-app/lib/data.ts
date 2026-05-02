@@ -1,6 +1,15 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 
-export type ActivityType = "assignment" | "note" | "update" | "status" | "call";
+export type ActivityType =
+  | "assignment"
+  | "note"
+  | "update"
+  | "status"
+  | "call"
+  /** Backend `DesignQA_Link` — invitation email / persisted quiz URL. */
+  | "design_qa_invite"
+  /** Backend `DESIGN_QA_SUBMITTED` — customer submitted external Design QA form. */
+  | "design_qa_submitted";
 
 export interface ActivityItem {
   id: string;
@@ -69,6 +78,11 @@ export interface Lead {
   lostReason?: string;
   /** Quote / proposal link for `POST /v1/quote/send`. */
   quoteLink?: string;
+  /**
+   * Read-only from GET detail (`designQaLink` / `design_qa_quiz_url`). Same URL as the Style Discovery email.
+   * Do not include on PUT bodies — backend owns persistence.
+   */
+  designQaLink?: string | null;
 }
 
 export const LANGUAGE_OPTIONS = [

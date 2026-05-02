@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  CRM_DESIGNER_ID_STORAGE_KEY,
+  CRM_DESIGNER_NAME_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
@@ -28,6 +30,8 @@ export default function LogoutButton({ className = "" }: Props) {
       localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
       localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
       localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      localStorage.removeItem(CRM_DESIGNER_NAME_STORAGE_KEY);
+      localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
       router.replace("/login");
       setBusy(false);
     }

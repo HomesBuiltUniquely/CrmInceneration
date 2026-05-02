@@ -24,6 +24,7 @@ export default function FooterActions({
         icon="💾"
         disabled={saving}
         onClick={() => onSave && void onSave()}
+        className="transition-all duration-150 hover:-translate-y-px hover:shadow-[0_8px_18px_rgba(59,130,246,0.28)]"
       >
         {saving ? "Saving…" : "Save Changes"}
       </Button>

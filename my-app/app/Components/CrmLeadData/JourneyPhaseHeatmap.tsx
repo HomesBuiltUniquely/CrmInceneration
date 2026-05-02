@@ -9,6 +9,11 @@ import {
   filterLeadsForInsightMode,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
+import {
+  filterLeadsCurrentMonthAssignedPool,
+  isLeadVerifiedForPresales,
+  leadAssignedToPresalesExecNameSet,
+} from "@/lib/presales-heatmap-helpers";
 
 type Phase = {
   phaseLabel: string;
@@ -30,6 +35,16 @@ export type JourneyPhaseHeatmapProps = {
   managerTeamNames?: string[];
   /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
   insightTableMode?: InsightTableMode | null;
+  /** Selected stage from heatmap card toggle. */
+  activeStageFilter?: string;
+  /** Toggle stage filter in parent (click same stage again to reset). */
+  onPhaseFilterToggle?: (stageName: string) => void;
+  /** Display names of presales executives under the current manager (for scoping + Team verified). */
+  presalesTeamNames?: string[];
+  /** Active presales summary tab filter driven by the parent toolbar. */
+  presalesSummaryTab?: "total" | "verified" | "teamVerified" | null;
+  /** Toggle Total / Verified / Team verified — parent applies date + verification query params. */
+  onPresalesSummaryTabChange?: (tab: "total" | "verified" | "teamVerified") => void;
 };
 
 function normName(s: string) {
@@ -182,7 +197,17 @@ function StatusLegend() {
   );
 }
 
-function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
+function PhaseCard({
+  p,
+  maxCount,
+  active = false,
+  onClick,
+}: {
+  p: Phase;
+  maxCount: number;
+  active?: boolean;
+  onClick?: () => void;
+}) {
   const bar =
     p.tone === "healthy"
       ? "bg-[var(--crm-success)]"
@@ -204,8 +229,15 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
   const barWidth = maxCount > 0 ? (p.count / maxCount) * 100 : 0;
 
   return (
-    <div
-      className={`relative rounded-2xl border border-[var(--crm-border)] ${bg} px-5 py-4`}
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative w-full rounded-2xl border px-5 py-4 text-left transition-all ${
+        active
+          ? "border-[var(--crm-accent-ring)] ring-2 ring-[var(--crm-accent-ring)]"
+          : "border-[var(--crm-border)]"
+      } ${bg} ${onClick ? "cursor-pointer hover:-translate-y-px" : ""}`}
+      aria-pressed={active}
     >
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
         {p.phaseLabel}
@@ -236,7 +268,7 @@ function PhaseCard({ p, maxCount }: { p: Phase; maxCount: number }) {
       <div
         className={`absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl ${bar}`}
       />
-    </div>
+    </button>
   );
 }
 
@@ -261,6 +293,49 @@ function SummaryCard({ label, total }: { label: string; total: number }) {
       </div>
       <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
     </div>
+  );
+}
+
+function PresalesSummaryCard({
+  label,
+  total,
+  subtitle,
+  selected,
+  onClick,
+}: {
+  label: string;
+  total: number;
+  subtitle: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full text-left transition-transform hover:opacity-[0.97] active:scale-[0.99]"
+      aria-pressed={selected}
+    >
+      <div
+        className={`relative min-h-[132px] rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-4 ${
+          selected ? "ring-2 ring-[var(--crm-text-primary)] ring-offset-2 ring-offset-[var(--crm-surface)]" : ""
+        }`}
+      >
+        <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
+          SUMMARY
+        </div>
+        <div className="mt-2 flex items-start justify-between">
+          <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
+            {label}
+          </div>
+          <div className="text-right">
+            <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">{total}</div>
+            <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">{subtitle}</div>
+          </div>
+        </div>
+        <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
+      </div>
+    </button>
   );
 }
 
@@ -323,13 +398,19 @@ export default function JourneyPhaseHeatmap({
   currentUserAliases = [],
   currentUserId = 0,
   managerTeamNames = [],
+  presalesTeamNames = [],
   insightTableMode = null,
+  activeStageFilter = "",
+  onPhaseFilterToggle,
+  presalesSummaryTab = null,
+  onPresalesSummaryTabChange,
 }: JourneyPhaseHeatmapProps = {}) {
   const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [leadOpen, setLeadOpen] = useState(false);
   const [opportunityOpen, setOpportunityOpen] = useState(false);
+  const [presalesPhasesOpen, setPresalesPhasesOpen] = useState(false);
 
   const insightOpts = useMemo(
     () => ({
@@ -342,14 +423,73 @@ export default function JourneyPhaseHeatmap({
     [currentRole, currentUserName, managerTeamNames, leadView],
   );
 
+  const filteredInsightLeads = useMemo(
+    () =>
+      filterLeadsForInsightMode(poolLeads, insightTableMode ?? null, insightOpts),
+    [poolLeads, insightTableMode, insightOpts],
+  );
+
   const phases = useMemo(() => {
-    const filtered = filterLeadsForInsightMode(
-      poolLeads,
-      insightTableMode ?? null,
-      insightOpts,
+    return mapLeadsToPhases(filteredInsightLeads, DEFAULT_PHASES);
+  }, [filteredInsightLeads]);
+
+  const roleKeyUi = normalizeRole(currentRole);
+  const usePresalesSummaryUi =
+    roleKeyUi === "PRESALES_EXECUTIVE" || roleKeyUi === "PRESALES_MANAGER";
+
+  const presalesIdentity = useMemo(() => {
+    const myAliases = new Set(
+      [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean),
     );
-    return mapLeadsToPhases(filtered, DEFAULT_PHASES);
-  }, [poolLeads, insightTableMode, insightOpts]);
+    const isSelfLeadById = (lead: ApiLead) => {
+      if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
+      const r = lead as Record<string, unknown>;
+      const assigneeObj =
+        r.assignee && typeof r.assignee === "object" && !Array.isArray(r.assignee)
+          ? (r.assignee as Record<string, unknown>)
+          : null;
+      const salesOwnerObj =
+        r.salesOwner && typeof r.salesOwner === "object" && !Array.isArray(r.salesOwner)
+          ? (r.salesOwner as Record<string, unknown>)
+          : null;
+      const idCandidates = [
+        r.assigneeId,
+        r.assignedToId,
+        r.salesExecutiveId,
+        r.salesOwnerId,
+        r.userId,
+        assigneeObj?.id,
+        salesOwnerObj?.id,
+      ];
+      return idCandidates.some((v) => Number(v ?? 0) === Number(currentUserId));
+    };
+    const isSelfLead = (lead: ApiLead) => {
+      if (isSelfLeadById(lead)) return true;
+      const aliases = assigneeAliasNorms(lead);
+      for (const me of myAliases) if (aliases.has(me)) return true;
+      return false;
+    };
+    return { isSelfLead };
+  }, [currentUserName, currentUserAliases, currentUserId]);
+
+  const presalesMonthMetrics = useMemo(() => {
+    const monthPool = filterLeadsCurrentMonthAssignedPool(filteredInsightLeads);
+    const totalMonth = monthPool.length;
+    const verifiedMonth = monthPool.filter((l) => isLeadVerifiedForPresales(l)).length;
+    const execNorms = new Set(
+      presalesTeamNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
+    );
+    const teamVerifiedMonth =
+      roleKeyUi === "PRESALES_MANAGER"
+        ? monthPool.filter(
+            (l) =>
+              isLeadVerifiedForPresales(l) &&
+              !presalesIdentity.isSelfLead(l) &&
+              leadAssignedToPresalesExecNameSet(l, execNorms),
+          ).length
+        : 0;
+    return { totalMonth, verifiedMonth, teamVerifiedMonth };
+  }, [filteredInsightLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
 
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
   const freshLeadPhase = pickPhase(phases, "Fresh Lead");
@@ -452,10 +592,22 @@ export default function JourneyPhaseHeatmap({
           for (const alias of aliases) if (teamSet.has(alias)) return true;
           return false;
         };
+        const presalesTeamSet = new Set(
+          presalesTeamNames.map((v) => v.trim().toLowerCase()).filter(Boolean),
+        );
+        const isPresalesTeamMemberLead = (lead: ApiLead) => {
+          const aliases = assigneeAliasNorms(lead);
+          for (const alias of aliases) if (presalesTeamSet.has(alias)) return true;
+          return false;
+        };
         const scopedLeads = allLeads.filter((lead) => {
           if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
           if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
             return isSelfLead(lead);
+          }
+          if (roleKey === "PRESALES_MANAGER") {
+            if (presalesTeamSet.size === 0) return isSelfLead(lead);
+            return isSelfLead(lead) || isPresalesTeamMemberLead(lead);
           }
           if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
             if (leadView === "my") return isSelfLead(lead);
@@ -483,7 +635,16 @@ export default function JourneyPhaseHeatmap({
     return () => {
       cancelled = true;
     };
-  }, [milestoneFilterQuery, currentRole, leadView, currentUserName, currentUserAliases, currentUserId, managerTeamNames]);
+  }, [
+    milestoneFilterQuery,
+    currentRole,
+    leadView,
+    currentUserName,
+    currentUserAliases,
+    currentUserId,
+    managerTeamNames,
+    presalesTeamNames,
+  ]);
 
   return (
     <section className="mx-auto mt-6 max-w-[1200px] px-6">
@@ -504,64 +665,144 @@ export default function JourneyPhaseHeatmap({
             {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
           </div>
         ) : null}
-        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-          <div
-            className={`self-start rounded-2xl transition-all ${
-              leadOpen
-                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
-                : "border-0 bg-transparent p-0 shadow-none"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => setLeadOpen((v) => !v)}
-              className="w-full text-left"
-              aria-expanded={leadOpen}
+        {usePresalesSummaryUi ? (
+          <div>
+            <div
+              className={`grid grid-cols-1 gap-4 ${roleKeyUi === "PRESALES_MANAGER" ? "md:grid-cols-3" : "md:grid-cols-2"}`}
             >
-              <div className="relative">
-                <SummaryCard label="Lead" total={leadTotal} />
-                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
-                  {leadOpen ? "Hide" : "Open"}
-                </span>
-              </div>
-            </button>
-            {leadOpen ? (
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                {leadPhases.map((p) => (
-                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <div
-            className={`self-start rounded-2xl transition-all ${
-              opportunityOpen
-                ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
-                : "border-0 bg-transparent p-0 shadow-none"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => setOpportunityOpen((v) => !v)}
-              className="w-full text-left"
-              aria-expanded={opportunityOpen}
+              <PresalesSummaryCard
+                label="Total"
+                total={presalesMonthMetrics.totalMonth}
+                subtitle="assigned · this month"
+                selected={presalesSummaryTab === "total"}
+                onClick={() => onPresalesSummaryTabChange?.("total")}
+              />
+              <PresalesSummaryCard
+                label="Verified"
+                total={presalesMonthMetrics.verifiedMonth}
+                subtitle="verified · this month"
+                selected={presalesSummaryTab === "verified"}
+                onClick={() => onPresalesSummaryTabChange?.("verified")}
+              />
+              {roleKeyUi === "PRESALES_MANAGER" ? (
+                <PresalesSummaryCard
+                  label="Team verified"
+                  total={presalesMonthMetrics.teamVerifiedMonth}
+                  subtitle="execs · this month"
+                  selected={presalesSummaryTab === "teamVerified"}
+                  onClick={() => onPresalesSummaryTabChange?.("teamVerified")}
+                />
+              ) : null}
+            </div>
+            <div
+              className={`mt-4 rounded-2xl transition-all ${
+                presalesPhasesOpen
+                  ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                  : "border-0 bg-transparent p-0 shadow-none"
+              }`}
             >
-              <div className="relative">
-                <SummaryCard label="Opportunity" total={opportunityTotal} />
-                <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
-                  {opportunityOpen ? "Hide" : "Open"}
-                </span>
-              </div>
-            </button>
-            {opportunityOpen ? (
-              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                {opportunityPhases.map((p) => (
-                  <PhaseCard key={`${p.phaseLabel}-${p.name}`} p={p} maxCount={maxCount} />
-                ))}
-              </div>
-            ) : null}
+              <button
+                type="button"
+                onClick={() => setPresalesPhasesOpen((v) => !v)}
+                className="w-full text-left"
+                aria-expanded={presalesPhasesOpen}
+              >
+                <div className="relative flex min-h-[48px] items-center justify-between rounded-xl border border-dashed border-[var(--crm-border)] px-4 py-3">
+                  <span className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
+                    Journey phases
+                  </span>
+                  <span className="text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                    {presalesPhasesOpen ? "Hide" : "Open"}
+                  </span>
+                </div>
+              </button>
+              {presalesPhasesOpen ? (
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {phases.map((p) => (
+                    <PhaseCard
+                      key={`${p.phaseLabel}-${p.name}`}
+                      p={p}
+                      maxCount={maxCount}
+                      active={normName(activeStageFilter) === normName(p.name)}
+                      onClick={() => onPhaseFilterToggle?.(p.name)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+            <div
+              className={`self-start rounded-2xl transition-all ${
+                leadOpen
+                  ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                  : "border-0 bg-transparent p-0 shadow-none"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setLeadOpen((v) => !v)}
+                className="w-full text-left"
+                aria-expanded={leadOpen}
+              >
+                <div className="relative">
+                  <SummaryCard label="Lead" total={leadTotal} />
+                  <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                    {leadOpen ? "Hide" : "Open"}
+                  </span>
+                </div>
+              </button>
+              {leadOpen ? (
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {leadPhases.map((p) => (
+                    <PhaseCard
+                      key={`${p.phaseLabel}-${p.name}`}
+                      p={p}
+                      maxCount={maxCount}
+                      active={normName(activeStageFilter) === normName(p.name)}
+                      onClick={() => onPhaseFilterToggle?.(p.name)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div
+              className={`self-start rounded-2xl transition-all ${
+                opportunityOpen
+                  ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
+                  : "border-0 bg-transparent p-0 shadow-none"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setOpportunityOpen((v) => !v)}
+                className="w-full text-left"
+                aria-expanded={opportunityOpen}
+              >
+                <div className="relative">
+                  <SummaryCard label="Opportunity" total={opportunityTotal} />
+                  <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                    {opportunityOpen ? "Hide" : "Open"}
+                  </span>
+                </div>
+              </button>
+              {opportunityOpen ? (
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {opportunityPhases.map((p) => (
+                    <PhaseCard
+                      key={`${p.phaseLabel}-${p.name}`}
+                      p={p}
+                      maxCount={maxCount}
+                      active={normName(activeStageFilter) === normName(p.name)}
+                      onClick={() => onPhaseFilterToggle?.(p.name)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -33,10 +33,8 @@ import CompleteTaskModal, {
 } from "./CompleteTaskModal";
 import { createAppointment } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
-import {
-  normalizeMilestoneSubStageForApi,
-
-} from "@/lib/milestone-substage-map";
+import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
+import { normalizeMilestoneSubStageForApi } from "@/lib/milestone-substage-map";
 import {
   buildSalesClosureUrl,
   isCloserStageBookingDone,
@@ -48,8 +46,10 @@ import {
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
+  getMe,
   getSalesExecEndpointForVerify,
   normalizeRole,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import {
   buildEmailRequest,
@@ -316,6 +316,49 @@ function truncateLabel(label: string, max = 80): string {
   return `${label.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
 }
 
+function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boolean {
+  return (
+    (stageBlock?.milestoneStage ?? "").trim() === "Closed" &&
+    (stageBlock?.milestoneStageCategory ?? "").trim() === "Closed Won" &&
+    (stageBlock?.milestoneSubStage ?? "").trim() === "Booking Done (Booking)"
+  );
+}
+
+function readTextValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function readNumberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function mapMilestoneValidationError(error: unknown): string {
+  const fallback = "Booking Done is allowed only under Closed Won.";
+  const text = error instanceof Error ? error.message.trim() : "";
+  if (!text) return fallback;
+  const lower = text.toLowerCase();
+  if (!lower.includes("400") && !lower.includes("bad request")) return text;
+  if (lower.includes("booking") || lower.includes("closed won")) {
+    return "Please choose Closed -> Closed Won before selecting Booking Done.";
+  }
+  return fallback;
+}
+
+const SALES_CLOSURE_PENDING_KEY = "crm_sales_closure_pending_booking_done";
+
+type PendingSalesClosureState = {
+  leadId: string;
+  leadType: CrmLeadType;
+  previousStage: Lead["stageBlock"];
+};
+
 export default function LeadDetailsApiClient({
   leadType: leadTypeParam,
   leadId,
@@ -381,7 +424,8 @@ export default function LeadDetailsApiClient({
     emptyLead(leadId, validLeadType ? leadType : "formlead"),
   );
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown>>({});
-  const { notifySuccess, notifyError } = useGlobalNotifier();
+  const [closureReturnHandled, setClosureReturnHandled] = useState(false);
+  const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
 
   const loadCreatedTimeline = useCallback(
     async (detailJson: Record<string, unknown>, activitiesJson: unknown) => {
@@ -433,6 +477,31 @@ export default function LeadDetailsApiClient({
         : "";
     setIsSuperAdmin(role === "SUPER_ADMIN");
   }, []);
+
+  const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
+    Record<string, unknown> | null
+  >(null);
+
+  useEffect(() => {
+    if (!validLeadType || typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
+    const token = raw.trim();
+    if (!token) {
+      setSalesClosureAuthUser(null);
+      return;
+    }
+    let cancelled = false;
+    void getMe(token.startsWith("Bearer ") ? token : `Bearer ${token}`)
+      .then((data) => {
+        if (!cancelled) setSalesClosureAuthUser(unwrapAuthUserPayload(data));
+      })
+      .catch(() => {
+        if (!cancelled) setSalesClosureAuthUser(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [validLeadType]);
 
   useEffect(() => {
     if (!verifyModalOpen) return;
@@ -669,11 +738,157 @@ export default function LeadDetailsApiClient({
       leadId,
       leadTypeLabel: crmLeadTypeToApiLabel(leadType),
       returnUrl: window.location.href,
+      lead,
+      authUser: salesClosureAuthUser,
     });
-  }, [lead, leadId, leadType]);
+  }, [lead, leadId, leadType, salesClosureAuthUser]);
+
+  const buildStrictSalesClosureUrl = useCallback(() => {
+    const currentLeadId = lead.leadId?.trim() || leadId;
+    const returnUrl = new URL(window.location.href);
+    returnUrl.searchParams.set("salesClosureReturned", "1");
+    return buildSalesClosureUrl({
+      leadId: currentLeadId,
+      leadTypeLabel: crmLeadTypeToApiLabel(leadType),
+      returnUrl: returnUrl.toString(),
+      lead,
+      authUser: salesClosureAuthUser,
+    });
+  }, [lead, leadId, leadType, salesClosureAuthUser]);
+
+  const redirectToStrictSalesClosure = useCallback(
+    (previousStage: Lead["stageBlock"]) => {
+      const payload: PendingSalesClosureState = {
+        leadId,
+        leadType,
+        previousStage,
+      };
+      window.sessionStorage.setItem(SALES_CLOSURE_PENDING_KEY, JSON.stringify(payload));
+      window.location.href = buildStrictSalesClosureUrl();
+    },
+    [buildStrictSalesClosureUrl, leadId, leadType],
+  );
+
+  useEffect(() => {
+    if (!validLeadType || loading || closureReturnHandled) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const returned = params.get("salesClosureReturned") === "1";
+    if (!returned) return;
+    setClosureReturnHandled(true);
+
+    const completedRaw = (params.get("salesClosureCompleted") ?? "").toLowerCase();
+    const completed =
+      completedRaw === "1" || completedRaw === "true" || completedRaw === "yes";
+    const pendingRaw = window.sessionStorage.getItem(SALES_CLOSURE_PENDING_KEY);
+    const clearReturnParams = () => {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("salesClosureReturned");
+      cleanUrl.searchParams.delete("salesClosureCompleted");
+      window.history.replaceState({}, "", cleanUrl.toString());
+    };
+    if (!pendingRaw) {
+      clearReturnParams();
+      return;
+    }
+
+    let pending: PendingSalesClosureState | null = null;
+    try {
+      pending = JSON.parse(pendingRaw) as PendingSalesClosureState;
+    } catch {
+      window.sessionStorage.removeItem(SALES_CLOSURE_PENDING_KEY);
+      clearReturnParams();
+      return;
+    }
+    if (!pending || pending.leadId !== leadId || pending.leadType !== leadType) {
+      clearReturnParams();
+      return;
+    }
+
+    if (completed) {
+      window.sessionStorage.removeItem(SALES_CLOSURE_PENDING_KEY);
+      notifySuccess("Sales Closure completed. Lead remains in Booking Done.");
+      clearReturnParams();
+      return;
+    }
+
+    const previousStage = pending.previousStage;
+    if (!previousStage) {
+      window.sessionStorage.removeItem(SALES_CLOSURE_PENDING_KEY);
+      notifyError("Lead moved back because Sales Closure is pending.");
+      clearReturnParams();
+      return;
+    }
+
+    const lt = leadTypeParam as CrmLeadType;
+    const revertedLead: Lead = {
+      ...lead,
+      stageBlock: previousStage,
+      status: previousStage.milestoneSubStage?.trim() || lead.status,
+    };
+    const revertBody = mergeLeadIntoDetail(baseDetail, revertedLead);
+    void putLeadDetail(lt, leadId, revertBody)
+      .then((updated) => {
+        setBaseDetail(updated);
+        setLead((prev) => ({
+          ...detailJsonToLead(updated, lt),
+          id: leadId,
+          activities: prev.activities,
+        }));
+        notifyError("Lead moved back because Sales Closure is pending.");
+      })
+      .catch(() => {
+        notifyError("Please complete Sales Closure form to keep this lead in Booking Done.");
+      })
+      .finally(() => {
+        window.sessionStorage.removeItem(SALES_CLOSURE_PENDING_KEY);
+        clearReturnParams();
+      });
+  }, [
+    baseDetail,
+    closureReturnHandled,
+    lead,
+    leadId,
+    leadType,
+    leadTypeParam,
+    loading,
+    notifyError,
+    notifySuccess,
+    validLeadType,
+  ]);
 
   const handleSave = useCallback(async () => {
     if (!validLeadType) return;
+    if (!leadId.trim()) {
+      setSaveError("Lead ID is required.");
+      return;
+    }
+    if (!lead.stageBlock?.milestoneStage?.trim()) {
+      setSaveError("Please select a milestone stage.");
+      return;
+    }
+    if (!lead.stageBlock?.milestoneStageCategory?.trim()) {
+      setSaveError("Please select a milestone category.");
+      return;
+    }
+    if (!lead.stageBlock?.milestoneSubStage?.trim()) {
+      setSaveError("Please select a milestone sub-stage.");
+      return;
+    }
+    const bookingAmountCandidate = readNumberValue(
+      baseDetail.bookingAmount ?? baseDetail.booking_value,
+    );
+    if (bookingAmountCandidate !== null && bookingAmountCandidate <= 0) {
+      setSaveError("Booking amount must be greater than 0.");
+      return;
+    }
+
+    const previousLead = lead;
+    if (isClosedWonBookingDone(previousLead.stageBlock)) {
+      notifyError("Please complete Sales Closure form to keep this lead in Booking Done.");
+      redirectToStrictSalesClosure(previousLead.stageBlock);
+      return;
+    }
     const lt = leadTypeParam as CrmLeadType;
     setSaving(true);
     setSaveError(null);
@@ -688,11 +903,20 @@ export default function LeadDetailsApiClient({
         activities: prev.activities,
       }));
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "Save failed");
+      setLead(previousLead);
+      setSaveError(mapMilestoneValidationError(e));
     } finally {
       setSaving(false);
     }
-  }, [baseDetail, lead, leadId, leadTypeParam, validLeadType]);
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    notifyError,
+    redirectToStrictSalesClosure,
+    validLeadType,
+  ]);
 
   const handleOpenVerify = useCallback(() => {
     setVerifyPincode((lead.pincode ?? "").trim());
@@ -905,101 +1129,154 @@ export default function LeadDetailsApiClient({
     await refreshActivities();
   }, [lead.phone, leadId, leadTypeParam, refreshActivities, validLeadType]);
 
-  const handleCompleteTaskApi = useCallback(
-    async (args: CompleteTaskApiPayload) => {
+  const handleDesignQaLinkCopied = useCallback(
+    async (link: string) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
-      const isFreshLeadStage =
-        args.milestoneStage.trim().toLowerCase() === "fresh lead";
-      const persistedSubstage = isFreshLeadStage
-        ? ""
-        : normalizeMilestoneSubStageForApi(args.feedback);
-      const persistedCategory = isFreshLeadStage
-        ? ""
-        : args.milestoneStageCategory;
-
-      let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
-      let designerName = lead.designerName;
-      let meetingDate = lead.meetingDate;
-
-      if (args.meetingAppointment) {
-        const leadIdNum = Number(leadId);
-        const appt = await createAppointment({
-          designerName: args.meetingAppointment.designerName,
-          date: args.meetingAppointment.date,
-          slotId: args.meetingAppointment.slotId,
-          meetingType: args.meetingAppointment.meetingType,
-          description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
-          leadType: crmLeadTypeToApiLabel(lt),
-          leadId: leadIdNum,
-        });
-        if (typeof appt.startTime === "string" && appt.startTime.trim()) {
-          followUpDate = appt.startTime;
-        } else if (typeof appt.endTime === "string" && appt.endTime.trim()) {
-          followUpDate = appt.endTime;
-        }
-        designerName = args.meetingAppointment.designerName;
-        void postExternalIntakeLead({ lead, baseDetail }).catch((e) => {
-          console.error(
-            "External intake API call failed after meeting schedule:",
-            e,
-          );
-        });
-      }
-
-      const nextStage = {
-        milestoneStage: args.milestoneStage,
-        milestoneStageCategory: persistedCategory,
-        milestoneSubStage: persistedSubstage,
-        stage: lead.stageBlock?.stage ?? "Initial Stage",
-        substage: { substage: persistedSubstage || null },
-      };
-      const leadForSave: Lead = {
-        ...lead,
-        followUpDate,
-        designerName,
-        meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
-        status: persistedSubstage,
-        stageBlock: nextStage,
-        lostReason: args.lostReason?.trim()
-          ? args.lostReason.trim()
-          : lead.lostReason,
-      };
-      const body = mergeLeadIntoDetail(baseDetail, leadForSave);
-      const updated = await putLeadDetail(lt, leadId, body);
-      setBaseDetail(updated);
-      setLead((prev) => ({
-        ...detailJsonToLead(updated, lt),
-        id: leadId,
-        activities: prev.activities,
-        stageBlock: nextStage,
-      }));
-      notifySuccess("Saved");
-      void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
-        /* keep save fast even if note activity fails */
-      });
-
-      const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
-      if (emailPayload) {
-        void sendEmailNotification(emailPayload).then((emailResult) => {
-          if (!emailResult.success) {
-            notifyError(`Email warning: ${emailResult.message}`);
-          }
-        });
-      }
-      void refreshActivities();
+      await postManualActivity(lt, leadId, "NOTE", `Design QA Link copied: ${link}`);
+      await refreshActivities();
     },
-    [
-      baseDetail,
-      lead,
-      leadId,
-      leadTypeParam,
-      refreshActivities,
-      validLeadType,
-      notifySuccess,
-      notifyError,
-    ],
+    [leadId, leadTypeParam, refreshActivities, validLeadType],
   );
+
+  const handleCompleteTaskApi = async (args: CompleteTaskApiPayload) => {
+      if (!validLeadType) return;
+      if (!leadId.trim()) {
+        throw new Error("Lead ID is required.");
+      }
+      if (!args.milestoneStage.trim()) {
+        throw new Error("Please select a milestone stage.");
+      }
+      if (!args.milestoneStageCategory.trim()) {
+        throw new Error("Please select a milestone category.");
+      }
+      if (!args.feedback.trim()) {
+        throw new Error("Please select a milestone sub-stage.");
+      }
+      const discoveryGate = validateDiscoveryToConnectionTransition(lead, {
+        milestoneStage: args.milestoneStage.trim(),
+        milestoneStageCategory: args.milestoneStageCategory.trim(),
+        feedback: args.feedback.trim(),
+      });
+      if (!discoveryGate.valid) {
+        throw new Error(discoveryGate.message);
+      }
+      const bookingAmountCandidate = readNumberValue(
+        baseDetail.bookingAmount ?? baseDetail.booking_value,
+      );
+      if (bookingAmountCandidate !== null && bookingAmountCandidate <= 0) {
+        throw new Error("Booking amount must be greater than 0.");
+      }
+      try {
+        const lt = leadTypeParam as CrmLeadType;
+        const isFreshLeadStage =
+          args.milestoneStage.trim().toLowerCase() === "fresh lead";
+        const persistedSubstage = isFreshLeadStage
+          ? ""
+          : normalizeMilestoneSubStageForApi(args.feedback);
+        const persistedCategory = isFreshLeadStage
+          ? ""
+          : args.milestoneStageCategory;
+
+        let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
+        let designerName = lead.designerName;
+        let meetingDate = lead.meetingDate;
+
+        if (args.meetingAppointment) {
+          const leadIdNum = Number(leadId);
+          const appt = await createAppointment({
+            designerName: args.meetingAppointment.designerName,
+            date: args.meetingAppointment.date,
+            slotId: args.meetingAppointment.slotId,
+            meetingType: args.meetingAppointment.meetingType,
+            description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
+            leadType: crmLeadTypeToApiLabel(lt),
+            leadId: leadIdNum,
+          });
+          if (typeof appt.startTime === "string" && appt.startTime.trim()) {
+            followUpDate = appt.startTime;
+          } else if (typeof appt.endTime === "string" && appt.endTime.trim()) {
+            followUpDate = appt.endTime;
+          }
+          designerName = args.meetingAppointment.designerName;
+          void postExternalIntakeLead({ lead, baseDetail }).catch((e) => {
+            console.error(
+              "External intake API call failed after meeting schedule:",
+              e,
+            );
+          });
+        }
+
+        const nextStage = {
+          milestoneStage: args.milestoneStage,
+          milestoneStageCategory: persistedCategory,
+          milestoneSubStage: persistedSubstage,
+          stage: lead.stageBlock?.stage ?? "Initial Stage",
+          substage: { substage: persistedSubstage || null },
+        };
+        if (isClosedWonBookingDone(nextStage)) {
+          const activityText =
+            args.note.trim() ||
+            "Milestone: Closed → Closed Won → Booking Done (pending Sales Closure).";
+          void postManualActivity(lt, leadId, "NOTE", activityText).catch(() => {
+            /* non-blocking before redirect */
+          });
+          notifyInfo("Opening Sales Closure — complete the form to confirm Booking Done.");
+          redirectToStrictSalesClosure(lead.stageBlock);
+          return;
+        }
+        const leadForSave: Lead = {
+          ...lead,
+          followUpDate,
+          designerName,
+          meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
+          status: persistedSubstage,
+          stageBlock: nextStage,
+          lostReason: args.lostReason?.trim()
+            ? args.lostReason.trim()
+            : lead.lostReason,
+        };
+        const body = mergeLeadIntoDetail(baseDetail, leadForSave);
+        const updated = await putLeadDetail(lt, leadId, body);
+        setBaseDetail(updated);
+        setLead((prev) => ({
+          ...detailJsonToLead(updated, lt),
+          id: leadId,
+          activities: prev.activities,
+          stageBlock: nextStage,
+        }));
+        notifySuccess("Saved");
+        void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
+          /* keep save fast even if note activity fails */
+        });
+
+        const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
+        if (emailPayload) {
+          void sendEmailNotification(emailPayload).then((emailResult) => {
+            if (!emailResult.success) {
+              notifyError(`Email warning: ${emailResult.message}`);
+            }
+          });
+        }
+        void refreshActivities();
+      } catch (e) {
+        throw new Error(mapMilestoneValidationError(e));
+      }
+  };
+
+  const handleCallClosed = () => {
+    void handleCompleteTaskApi({
+      feedback: "Booking Done (Booking)",
+      milestoneStage: "Closed",
+      milestoneStageCategory: "Closed Won",
+      note: "Closed (Won) — quick path to Booking Done / Sales Closure (same as Complete Task).",
+      nextCallDateLocal: (lead.followUpDate ?? "").trim(),
+    }).catch((e) => {
+      notifyError(
+        e instanceof Error ? e.message : "Closed (Won) could not continue.",
+      );
+    });
+  };
 
   if (!validLeadType) {
     return (
@@ -1038,6 +1315,8 @@ export default function LeadDetailsApiClient({
         <LeadHeader
           lead={lead}
           onCompleteTask={() => setCompleteTaskOpen(true)}
+          onCallClosed={handleCallClosed}
+          showCallClosed={!isClosedWonBookingDone(lead.stageBlock)}
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}
           salesClosureHref={salesClosureHref}
@@ -1064,7 +1343,9 @@ export default function LeadDetailsApiClient({
           <LeadInfoTab
             lead={lead}
             onLeadChange={patchLead}
+            onAdditionalInfoSave={handleSaveSecondBox}
             onLogCall={handlePhoneCallLog}
+            onDesignQaLinkCopied={handleDesignQaLinkCopied}
             quoteExtras={{
               subject: quoteSubject,
               body: quoteBody,

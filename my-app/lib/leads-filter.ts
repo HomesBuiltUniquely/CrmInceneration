@@ -40,7 +40,12 @@ export type ApiLead = {
   createdOn?: string;
   firstCallAt?: string | null;
   verified?: boolean | null;
+  /**
+   * Backend truth for New CRM list/detail and `verificationStatus=verified` filters.
+   * Optional: `presalesTrackingReadOnly` (when API sends it) — detail UX only; does not redefine “verified”.
+   */
   verificationStatus?: string | null;
+  presalesTrackingReadOnly?: boolean | null;
   /** Next follow-up (string in API; parse client-side for “today” / overdue). */
   followUpDate?: string | null;
   additionalLeadSources?: string | string[] | null;
@@ -80,6 +85,14 @@ function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | un
   if (vs === "unverified") return "unverified";
   if (typeof lead.verified === "boolean") return lead.verified ? "verified" : "unverified";
   return undefined;
+}
+
+/**
+ * Whether this lead counts as verified — same rule as the grid tag, heatmap “Verified” card,
+ * and `GET .../leads?verificationStatus=verified` (backend fields only; not editable client-side).
+ */
+export function isCrmLeadVerified(lead: ApiLead): boolean {
+  return normalizeVerificationTag(lead) === "verified";
 }
 
 function hasReinquiry(lead: ApiLead): boolean {

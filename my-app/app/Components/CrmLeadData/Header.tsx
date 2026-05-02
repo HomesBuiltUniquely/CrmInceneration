@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
@@ -20,6 +20,7 @@ import {
 } from "@/lib/auth/api";
 import { readStoredCrmToken } from "@/lib/crm-client-auth";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
+import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 
 export default function Header() {
   const [currentRole, setCurrentRole] = useState(() => {
@@ -49,6 +50,12 @@ export default function Header() {
   const [heatmapToolbarAssignee, setHeatmapToolbarAssignee] = useState("");
   /** Insight tile filter (Team Leads, Follow ups today, etc.) — heatmap uses same subset as the grid. */
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
+  const [presalesSummaryTab, setPresalesSummaryTab] = useState<
+    "total" | "verified" | "teamVerified" | null
+  >(null);
+  const [presalesTeamNames, setPresalesTeamNames] = useState<string[]>([]);
+  const presalesSummaryTabRef = useRef(presalesSummaryTab);
+  presalesSummaryTabRef.current = presalesSummaryTab;
 
   useEffect(() => {
     let cancelled = false;
@@ -155,19 +162,48 @@ export default function Header() {
     };
   }, [isSalesManager, currentUserId]);
 
-  const milestoneFilterQuery = useMemo(() => {
+  const isPresalesManager = normalizeRole(currentRole) === "PRESALES_MANAGER";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isPresalesManager || !currentUserId) {
+      setPresalesTeamNames([]);
+      return;
+    }
+    void fetchPresalesExecutiveNamesForManager(currentUserId)
+      .then((names) => {
+        if (!cancelled) setPresalesTeamNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setPresalesTeamNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isPresalesManager, currentUserId]);
+
+  const presalesVerificationStatus = useMemo(() => {
+    if (!isPresalesRole(currentRole)) return "";
+    if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") return "verified";
+    return "";
+  }, [currentRole, presalesSummaryTab]);
+
+  const heatmapFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
     if (search.trim()) q.set("search", search.trim());
     if (forcedLeadType && forcedLeadType !== "all") q.set("leadType", forcedLeadType);
     const assigneeForHeatmap =
       heatmapToolbarAssignee.trim() || forcedAssignee.trim();
     if (assigneeForHeatmap) q.set("assignee", assigneeForHeatmap);
-    if (dateFrom.trim()) q.set("dateFrom", dateFrom.trim());
-    if (dateTo.trim()) q.set("dateTo", dateTo.trim());
-    if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
-    if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
-    if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
+    const presalesMonthCards =
+      isPresalesRole(currentRole) && presalesSummaryTab !== null;
+    if (presalesMonthCards) q.set("crmMonthWindow", "current");
+    else {
+      if (dateFrom.trim()) q.set("dateFrom", dateFrom.trim());
+      if (dateTo.trim()) q.set("dateTo", dateTo.trim());
+    }
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
+    if (presalesVerificationStatus.trim()) q.set("verificationStatus", presalesVerificationStatus.trim());
     return q.toString();
   }, [
     search,
@@ -176,11 +212,44 @@ export default function Header() {
     forcedAssignee,
     forcedLeadType,
     heatmapToolbarAssignee,
-    milestoneStage,
-    milestoneStageCategory,
-    milestoneSubStage,
     reinquiry,
+    presalesVerificationStatus,
+    currentRole,
+    presalesSummaryTab,
   ]);
+
+  const handlePhaseFilterToggle = (stageName: string) => {
+    const sameStage =
+      milestoneStage.trim().toLowerCase() === stageName.trim().toLowerCase();
+    if (sameStage) {
+      setMilestoneStage("");
+      setMilestoneStageCategory("");
+      setMilestoneSubStage("");
+      return;
+    }
+    setMilestoneStage(stageName);
+    setMilestoneStageCategory("");
+    setMilestoneSubStage("");
+  };
+
+  const handlePresalesSummaryTabChange = useCallback((tab: "total" | "verified" | "teamVerified") => {
+    const prev = presalesSummaryTabRef.current;
+    if (prev === tab) {
+      setPresalesSummaryTab(null);
+      return;
+    }
+    setPresalesSummaryTab(tab);
+  }, []);
+
+  const handleToolbarDateFromChange = useCallback((v: string) => {
+    setPresalesSummaryTab(null);
+    setDateFrom(v);
+  }, []);
+
+  const handleToolbarDateToChange = useCallback((v: string) => {
+    setPresalesSummaryTab(null);
+    setDateTo(v);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
@@ -209,14 +278,19 @@ export default function Header() {
           ) : (
             <>
               <JourneyPhaseHeatmap
-                milestoneFilterQuery={milestoneFilterQuery}
+                milestoneFilterQuery={heatmapFilterQuery}
                 currentRole={currentRole}
                 leadView="default"
                 currentUserName={currentUserName}
                 currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}
                 managerTeamNames={managerTeamNames}
+                presalesTeamNames={presalesTeamNames}
                 insightTableMode={insightTableMode}
+                activeStageFilter={milestoneStage}
+                onPhaseFilterToggle={handlePhaseFilterToggle}
+                presalesSummaryTab={presalesSummaryTab}
+                onPresalesSummaryTabChange={handlePresalesSummaryTabChange}
               />
               <LeadsDataSection
                 search={search}
@@ -235,6 +309,15 @@ export default function Header() {
                 milestoneStageCategory={milestoneStageCategory}
                 milestoneSubStage={milestoneSubStage}
                 reinquiry={reinquiry}
+                verificationStatus={presalesVerificationStatus}
+                crmMonthWindow={
+                  isPresalesRole(currentRole) && presalesSummaryTab ? "current" : ""
+                }
+                onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
+                presalesTeamExecutivesOnly={
+                  isPresalesManager && presalesSummaryTab === "teamVerified"
+                }
+                presalesTeamExecDisplayNames={presalesTeamNames}
                 onLeadTypeChange={(next) => {
                   if (isPresalesRole(currentRole)) {
                     setLeadType(sanitizeLeadTypeForRole(currentRole, next));
@@ -253,8 +336,8 @@ export default function Header() {
                   }
                   setAssignee(next);
                 }}
-                onDateFromChange={setDateFrom}
-                onDateToChange={setDateTo}
+                onDateFromChange={handleToolbarDateFromChange}
+                onDateToChange={handleToolbarDateToChange}
                 onMilestoneStageChange={setMilestoneStage}
                 onMilestoneStageCategoryChange={setMilestoneStageCategory}
                 onMilestoneSubStageChange={setMilestoneSubStage}

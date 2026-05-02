@@ -159,6 +159,10 @@ type LeadsToolbarProps = {
   onDeleteAllClick?: () => void;
   insightActive?: InsightTableMode;
   onInsightNavigate?: (mode: Exclude<InsightTableMode, null>) => void;
+  /** Presales heatmap uses Total / Verified cards — hide duplicate total pill. */
+  hideTotalLeadsPill?: boolean;
+  /** Clear presales month summary when user resets filters from the toolbar. */
+  onResetPresalesSummary?: () => void;
 };
 
 export default function LeadsToolbar({
@@ -210,6 +214,8 @@ export default function LeadsToolbar({
   onDeleteAllClick,
   insightActive = null,
   onInsightNavigate,
+  hideTotalLeadsPill = false,
+  onResetPresalesSummary,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
@@ -307,6 +313,7 @@ export default function LeadsToolbar({
     onDateFromChange("");
     onDateToChange("");
     onReinquiryChange("");
+    onResetPresalesSummary?.();
   };
 
   const resetSort = () => {
@@ -359,7 +366,7 @@ export default function LeadsToolbar({
               <span className="text-[13px]">#</span>
               <span>Lead Types</span>
             </button>
-            <Pill label="Total Leads" value={countLabel} active />
+            {hideTotalLeadsPill ? null : <Pill label="Total Leads" value={countLabel} active />}
             {showDeleteAllButton ? (
               <button
                 type="button"

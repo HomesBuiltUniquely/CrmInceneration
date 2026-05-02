@@ -4,6 +4,26 @@ import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
+import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
+
+/** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
+function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
+  const rawFrom = (url.searchParams.get("dateFrom") ?? "").trim();
+  const rawTo = (url.searchParams.get("dateTo") ?? "").trim();
+  const win = (url.searchParams.get("crmMonthWindow") ?? "").trim().toLowerCase();
+  if (rawFrom || rawTo) return { from: rawFrom, to: rawTo };
+  if (win === "current") {
+    const { from, to } = getLocalMonthRangeIsoDates();
+    return { from, to };
+  }
+  return { from: "", to: "" };
+}
+
+function extraParamValue(url: URL, key: string, eff: { from: string; to: string }): string {
+  if (key === "dateFrom") return eff.from;
+  if (key === "dateTo") return eff.to;
+  return (url.searchParams.get(key) ?? "").trim();
+}
 
 const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
   "SUPER_ADMIN",
@@ -63,6 +83,7 @@ async function resolveViewerRole(req: NextRequest): Promise<string> {
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
+  const effDates = effectiveDateRangeFromRequest(url);
   const mergeAll = url.searchParams.get("mergeAll") === "1";
   const roleView = (url.searchParams.get("roleView") ?? "").trim().toLowerCase();
   const page = url.searchParams.get("page") ?? "0";
@@ -117,7 +138,7 @@ export async function GET(req: NextRequest) {
       upstream.searchParams.set("newCrmGlobalSearch", "true");
     }
     for (const key of extraParams) {
-      const v = (url.searchParams.get(key) ?? "").trim();
+      const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
 
@@ -152,7 +173,7 @@ export async function GET(req: NextRequest) {
     if (mStage) upstream.searchParams.set("stage", mStage);
     if (mSub) upstream.searchParams.set("substage", mSub);
     for (const key of extraParams) {
-      const v = (url.searchParams.get(key) ?? "").trim();
+      const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
 
@@ -193,7 +214,7 @@ export async function GET(req: NextRequest) {
     upstream.searchParams.set("sort", sort);
     if (search) upstream.searchParams.set("search", search);
     for (const key of extraParams) {
-      const v = (url.searchParams.get(key) ?? "").trim();
+      const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
     try {
@@ -223,8 +244,8 @@ export async function GET(req: NextRequest) {
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
-  const dateFrom = (url.searchParams.get("dateFrom") ?? "").trim();
-  const dateTo = (url.searchParams.get("dateTo") ?? "").trim();
+  const dateFrom = effDates.from;
+  const dateTo = effDates.to;
 
   const merged = [...byId.values()]
     .filter((lead) => {

@@ -5,6 +5,8 @@ import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Chip, Button } fr
 import type { Lead } from "@/lib/data";
 import { LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
+import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 function meetingTypeDisplay(value: string): string {
   const raw = value.trim();
@@ -16,12 +18,41 @@ function meetingTypeDisplay(value: string): string {
   return raw;
 }
 
+const DESIGN_QA_BASE_URL = "https://design.hubinterior.com/DesignQA?id=";
+const DESIGN_QA_STATE_KEY_PREFIX = "crm_designqa_state_";
+
+type DesignQaState = {
+  active: boolean;
+  version: number;
+  lastTrigger: string;
+};
+
+function isDiscoveryStage(lead: Lead): boolean {
+  const normalizeLabel = (value: string) =>
+    value.trim().toLowerCase().replace(/\s+/g, " ");
+  const milestoneStage = normalizeLabel(lead.stageBlock?.milestoneStage ?? "");
+  const legacyStage = normalizeLabel(lead.stageBlock?.stage ?? "");
+  return milestoneStage.includes("discovery") || legacyStage.includes("discovery");
+}
+
+function buildDesignQaLink(lead: Lead, version: number): string | null {
+  const businessLeadId = (lead.leadId ?? "").trim();
+  if (!businessLeadId) return null;
+  const base = `${DESIGN_QA_BASE_URL}${encodeURIComponent(businessLeadId)}`;
+  if (version <= 0) return base;
+  return `${base}&v=${version}`;
+}
+
 type Props = {
   lead: Lead;
   /** When set, fields are controlled and edits merge into parent state (API detail page). */
   onLeadChange?: (patch: Partial<Lead>) => void;
+  /** Save callback for Additional Information section when user clicks Done. */
+  onAdditionalInfoSave?: () => void | Promise<void>;
   /** Logs `POST …/activity` with CALL then opens dialer — API lead details only. */
   onLogCall?: () => void | Promise<void>;
+  /** Optional activity hook for Design QA link copy tracking. */
+  onDesignQaLinkCopied?: (link: string) => void | Promise<void>;
   /** Quote email (`POST /v1/quote/send`) — only on API-backed lead details. */
   quoteExtras?: {
     subject: string;
@@ -33,10 +64,24 @@ type Props = {
   };
 };
 
-export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras }: Props) {
+export default function LeadInfoTab({
+  lead,
+  onLeadChange,
+  onAdditionalInfoSave,
+  onLogCall,
+  onDesignQaLinkCopied,
+  quoteExtras,
+}: Props) {
   const c = onLeadChange;
+  const { notifySuccess, notifyError } = useGlobalNotifier();
+  const [additionalInfoEditable, setAdditionalInfoEditable] = useState(false);
   const quoteEligible =
     Boolean(c && quoteExtras && isExperienceDesignQuoteSentStage(lead));
+  const [designQaState, setDesignQaState] = useState<DesignQaState>({
+    active: false,
+    version: 0,
+    lastTrigger: "",
+  });
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [lockedIdentityFields, setLockedIdentityFields] = useState({
     name: false,
@@ -58,6 +103,88 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
       pincode: Boolean((lead.pincode ?? "").trim()),
     });
   }, [lead.id]);
+
+  useEffect(() => {
+    const storageKey = `${DESIGN_QA_STATE_KEY_PREFIX}${lead.id}`;
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      setDesignQaState({ active: false, version: 0, lastTrigger: "" });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Partial<DesignQaState>;
+      setDesignQaState({
+        active: Boolean(parsed.active),
+        version:
+          typeof parsed.version === "number" && Number.isFinite(parsed.version)
+            ? parsed.version
+            : 0,
+        lastTrigger: typeof parsed.lastTrigger === "string" ? parsed.lastTrigger : "",
+      });
+    } catch {
+      setDesignQaState({ active: false, version: 0, lastTrigger: "" });
+    }
+  }, [lead.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storageKey = `${DESIGN_QA_STATE_KEY_PREFIX}${lead.id}`;
+    if (isDiscoveryStage(lead)) {
+      const next = { active: false, version: 0, lastTrigger: "" };
+      setDesignQaState(next);
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+      return;
+    }
+    const meetingNow = shouldShowDesignQaLink(lead);
+    if (!meetingNow) return;
+    const trigger = [
+      lead.stageBlock?.milestoneStage ?? "",
+      lead.stageBlock?.milestoneSubStage ?? "",
+      lead.status ?? "",
+    ]
+      .map((s) => s.trim())
+      .join("|");
+    setDesignQaState((prev) => {
+      const shouldBumpVersion = !prev.active || prev.lastTrigger !== trigger;
+      const next: DesignQaState = {
+        active: true,
+        version: shouldBumpVersion ? prev.version + 1 : prev.version,
+        lastTrigger: trigger,
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  }, [lead]);
+
+  /** Backend `designQaLink` when persisted / computed on GET; else client fallback while Meeting Scheduled + leadId. */
+  const apiDesignQaLink = (lead.designQaLink ?? "").trim();
+  const computedDesignQaLink =
+    !apiDesignQaLink && shouldShowDesignQaLink(lead) && !isDiscoveryStage(lead)
+      ? buildDesignQaLink(lead, designQaState.version)
+      : null;
+  const designQaLink = apiDesignQaLink || computedDesignQaLink;
+  const [additionalInfoSaving, setAdditionalInfoSaving] = useState(false);
+
+  const handleAdditionalInfoToggle = async () => {
+    if (!additionalInfoEditable) {
+      setAdditionalInfoEditable(true);
+      return;
+    }
+    if (!onAdditionalInfoSave) {
+      setAdditionalInfoEditable(false);
+      return;
+    }
+    try {
+      setAdditionalInfoSaving(true);
+      await onAdditionalInfoSave();
+      setAdditionalInfoEditable(false);
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save additional info.");
+    } finally {
+      setAdditionalInfoSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5 animate-fade-up delay-3">
@@ -101,11 +228,11 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
           </div>
 
           <div className="grid grid-cols-2 gap-3.5">
-            <div className={c && onLogCall ? "col-span-2 sm:col-span-1" : ""}>
+            <div>
               <FieldLabel>Phone</FieldLabel>
-              <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2">
+              <div className="mt-1.5">
                 <Input
-                  className="min-w-0 flex-1"
+                  className="min-w-0"
                   {...(c
                     ? {
                         value: lead.phone,
@@ -114,37 +241,6 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                       }
                     : { defaultValue: lead.phone, readOnly: lockedIdentityFields.phone })}
                 />
-                {c && onLogCall ? (
-                  <button
-                    type="button"
-                    disabled={!lead.phone?.trim()}
-                    onClick={() => {
-                      void (async () => {
-                        try {
-                          await onLogCall();
-                        } catch {
-                          /* still dial */
-                        }
-                        const n = lead.phone.replace(/\s+/g, "");
-                        if (n) window.location.href = `tel:${n}`;
-                      })();
-                    }}
-                    className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl border border-[#5e933f] bg-[#e5efd8] px-4 text-[13px] font-semibold text-[#2d6b2e] transition hover:bg-[#ddeac9] disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4 shrink-0 fill-none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.78.63 2.63a2 2 0 0 1-.45 2.11L8 9.91a16 16 0 0 0 6.09 6.09l1.45-1.29a2 2 0 0 1 2.11-.45c.85.3 1.73.51 2.63.63A2 2 0 0 1 22 16.92Z" />
-                    </svg>
-                    Call
-                  </button>
-                ) : null}
               </div>
             </div>
             <div>
@@ -223,7 +319,20 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
           <CardTitle
             icon="📋"
             color="green"
-            action={<Button variant="ghost" className="!py-1 !px-3 !text-[11px]">✎ Update</Button>}
+            action={
+              <Button
+                variant="ghost"
+                className="!py-1 !px-3 !text-[11px]"
+                onClick={() => void handleAdditionalInfoToggle()}
+                disabled={additionalInfoSaving}
+              >
+                {additionalInfoSaving
+                  ? "Saving..."
+                  : additionalInfoEditable
+                    ? "Done"
+                    : "✎ Update"}
+              </Button>
+            }
           >
             Additional Information
           </CardTitle>
@@ -236,6 +345,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 {...(c
                   ? { value: lead.budget, onChange: (e) => c({ budget: e.target.value }) }
                   : { defaultValue: lead.budget })}
+                readOnly={!additionalInfoEditable}
               />
             </div>
             <div>
@@ -244,6 +354,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 {...(c
                   ? { value: lead.language, onChange: (e) => c({ language: e.target.value }) }
                   : { defaultValue: lead.language })}
+                disabled={!additionalInfoEditable}
               >
                 {LANGUAGE_OPTIONS.map((language) => (
                   <option key={language} value={language}>
@@ -261,6 +372,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                 {...(c
                   ? { value: lead.leadSource, onChange: (e) => c({ leadSource: e.target.value }) }
                   : { defaultValue: lead.leadSource })}
+                disabled={!additionalInfoEditable}
               >
                 {LEAD_SOURCES.map((s) => (
                   <option key={s} value={s}>
@@ -285,6 +397,7 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
                     onChange: (e) => c({ propertyNotes: e.target.value }),
                   }
                 : { defaultValue: lead.propertyNotes })}
+              readOnly={!additionalInfoEditable}
             />
           </div>
 
@@ -409,6 +522,55 @@ export default function LeadInfoTab({ lead, onLeadChange, onLogCall, quoteExtras
               />
             </div>
           </div>
+
+          {designQaLink ? (
+            <div className="mt-3.5">
+              <FieldLabel>
+                Design QA Link
+                {apiDesignQaLink ? (
+                  <span className="ml-1.5 font-normal normal-case text-[var(--crm-text-muted)]">
+                    (read-only, from CRM)
+                  </span>
+                ) : null}
+              </FieldLabel>
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <Input
+                  value={designQaLink}
+                  readOnly
+                  className="h-[34px] min-w-0 flex-1 px-2.5 text-[11px]"
+                />
+                <button
+                  type="button"
+                  aria-label="Copy Design QA Link"
+                  className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-primary)] transition hover:bg-[var(--crm-surface)]"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await navigator.clipboard.writeText(designQaLink);
+                        notifySuccess("Design QA Link copied");
+                        await onDesignQaLinkCopied?.(designQaLink);
+                      } catch {
+                        notifyError("Unable to copy link. Please copy manually.");
+                      }
+                    })();
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5 fill-none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                    <rect x="4" y="4" width="11" height="11" rx="2" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          ) : null}
         </Card>
       </div>
     </div>

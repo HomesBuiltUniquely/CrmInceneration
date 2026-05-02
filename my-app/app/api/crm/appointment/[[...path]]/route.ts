@@ -3,7 +3,8 @@ import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 function targetUrl(req: NextRequest, segments: string[] | undefined): string {
-  const suffix = segments?.length ? `/${segments.join("/")}` : "";
+  const suffix =
+    segments?.length ? `/${segments.map((s) => encodeURIComponent(s)).join("/")}` : "";
   const url = new URL(`${BASE_URL}/v1/Appointment${suffix}`);
   req.nextUrl.searchParams.forEach((value, key) => {
     url.searchParams.set(key, value);

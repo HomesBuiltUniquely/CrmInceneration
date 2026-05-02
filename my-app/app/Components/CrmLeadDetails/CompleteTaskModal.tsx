@@ -9,11 +9,18 @@ import {
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import {
+  isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
   isMeetingScheduleSubstage,
+  meetingSchedulePanelTitle,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import { shouldOpenQuoteSentPanelInCompleteTask } from "@/lib/quote-email-stage";
+import {
+  leadPropertyGateErrorMessage,
+  missingLeadPropertyGateFields,
+  requiresLeadPropertyGateForCompleteTask,
+} from "@/lib/milestone-advance-gates";
 import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
 
 function isValidEmail(value: string): boolean {
@@ -55,6 +62,14 @@ function toDateTimeLocalValue(value: string) {
   const minutes = String(parsedDate.getMinutes()).padStart(2, "0");
 
   return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function getTodayStartDateTimeLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T00:00`;
 }
 
 export type CompleteTaskApiPayload = {
@@ -132,6 +147,7 @@ export default function CompleteTaskModal({
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
   const [quotePopupDismissed, setQuotePopupDismissed] = useState(false);
+  const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -143,6 +159,12 @@ export default function CompleteTaskModal({
   );
   const cancelMode = Boolean(
     onApiComplete && isMeetingCancelledSubstage(feedback),
+  );
+
+  /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
+  const showLeadPropertyGateFooterHint = useMemo(
+    () => missingLeadPropertyGateFields(lead).length > 0,
+    [lead.budget, lead.propertyNotes, lead.configuration],
   );
 
   const quotePopupOpen = Boolean(
@@ -413,6 +435,20 @@ export default function CompleteTaskModal({
       return;
     }
 
+    const needsLeadPropertyGate = requiresLeadPropertyGateForCompleteTask({
+      currentMilestoneStage: lead.stageBlock?.milestoneStage,
+      newMilestoneStage: status,
+      newStageCategory: path,
+      cancelMode,
+    });
+    if (needsLeadPropertyGate) {
+      const missing = missingLeadPropertyGateFields(lead);
+      if (missing.length > 0) {
+        setApiError(leadPropertyGateErrorMessage(missing));
+        return;
+      }
+    }
+
     if (resoneMissing) {
       setApiError(
         "Reason (resone) is required for LOST or this closure substage.",
@@ -591,6 +627,7 @@ export default function CompleteTaskModal({
 
                 <Input
                   type="datetime-local"
+                  min={minNextCallDate}
                   value={nextCallDate}
                   onChange={(e) => setNextCallDate(e.target.value)}
                   onClick={(event) => {
@@ -605,7 +642,9 @@ export default function CompleteTaskModal({
 
                 <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                   {scheduleMode
-                    ? "For Meeting Scheduled / Rescheduled, the Hub appointment time will be used as follow-up."
+                    ? isDesignRefinementSchedulingSubstage(feedback)
+                      ? "For refinement meetings, the Hub appointment time will be used as follow-up."
+                      : "For Meeting Scheduled / Rescheduled (and fix-appointment scheduling), the Hub appointment time will be used as follow-up."
                     : "Click the field to open calendar and time picker."}
                 </p>
                 {showErrors && nextCallDateMissing && (
@@ -691,27 +730,31 @@ export default function CompleteTaskModal({
               {scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
-                    Hub meeting (Connection)
+                    {meetingSchedulePanelTitle(feedback)}
                   </p>
                   <p className="text-[11px] text-[var(--crm-text-muted)]">
-                    Pick designer, date, and slot. Hub creates the booking;
-                    description uses: Meeting with [Lead type] - Lead ID: [id].
+                    Pick designer, date, and slot. Hub creates the booking; description uses:
+                    Meeting with [Lead type] - Lead ID: [id].
                   </p>
-                  <p className="text-[11px] text-[var(--crm-text-muted)]">
-                    After the meeting is fixed, Hub typically sends{" "}
-                    <strong className="font-medium text-[var(--crm-text-secondary)]">
-                      two
-                    </strong>{" "}
-                    emails:{" "}
-                    <span className="text-[var(--crm-text-secondary)]">
-                      (1) Google Calendar / Meet
-                    </span>{" "}
-                    to the customer (lead email) and participants, and{" "}
-                    <span className="text-[var(--crm-text-secondary)]">
-                      (2) Design QA
-                    </span>{" "}
-                    to the designer channel configured by Hub.
-                  </p>
+                  {isDesignRefinementSchedulingSubstage(feedback) ? (
+                    <p className="text-[11px] text-[var(--crm-text-muted)]">
+                      Same flow as the first meeting. The server does{" "}
+                      <strong className="font-medium text-[var(--crm-text-secondary)]">not</strong>{" "}
+                      send a second Style Discovery (Design QA) invitation to the customer.
+                      Calendar sync and internal participant emails may still apply when the
+                      appointment is created or updated.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-[var(--crm-text-muted)]">
+                      When you move into{" "}
+                      <strong className="font-medium text-[var(--crm-text-secondary)]">
+                        Meeting Scheduled
+                      </strong>
+                      , the server may email the customer the Style Discovery link if their email
+                      is set. Creating the appointment can also notify sales/designer participants and
+                      sync Google Calendar when configured.
+                    </p>
+                  )}
                   <div>
                     <FieldLabel required>Designer</FieldLabel>
                     <Select
@@ -830,10 +873,9 @@ export default function CompleteTaskModal({
                     Cancel meeting
                   </p>
                   <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
-                    This updates the lead to the cancellation milestone. The
-                    backend may email the customer and remove the Hub
-                    appointment when the substage is saved as &quot;Meeting
-                    Cancelled&quot;.
+                    This updates the lead to the cancellation milestone. The backend may email the
+                    customer and remove the Hub appointment when the substage is saved as{" "}
+                    &quot;Meeting Cancelled&quot; or &quot;Meeting Cancelled/Paused&quot;.
                   </p>
                   <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12px] text-[var(--crm-text-primary)]">
                     <input
@@ -872,6 +914,19 @@ export default function CompleteTaskModal({
             </div>
           </div>
 
+          {onApiComplete && showLeadPropertyGateFooterHint ? (
+            <p className="border-t border-[var(--crm-border)] px-4 py-2 text-[11px] leading-snug text-[var(--crm-text-muted)] md:px-5">
+              For{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong> or{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Experience &amp; Design</strong>{" "}
+              milestone moves, fill{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>, and{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required).
+            </p>
+          ) : null}
+
           {apiError ? (
             <p className="border-t border-[var(--crm-border)] bg-[var(--crm-danger-bg)] px-4 py-2 text-[12px] text-[var(--crm-danger-text)] md:px-5">
               {apiError}
@@ -890,7 +945,7 @@ export default function CompleteTaskModal({
               variant="primary"
               onClick={() => void handleSave()}
               disabled={apiBusy}
-              className="h-[40px] rounded-[12px] border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-5 text-[13px] font-medium text-[var(--crm-accent)] shadow-none hover:translate-y-0"
+              className="h-[40px] rounded-[12px] border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-5 text-[13px] font-medium text-[var(--crm-accent)] shadow-none transition-all duration-150 hover:-translate-y-px hover:brightness-105"
               icon={
                 <svg
                   viewBox="0 0 24 24"
@@ -907,7 +962,7 @@ export default function CompleteTaskModal({
                 </svg>
               }
             >
-              Save note
+              {apiBusy ? "Saving..." : "Save note"}
             </Button>
           </div>
         </div>
