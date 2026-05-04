@@ -71,6 +71,15 @@ export async function postManualActivity(
   return text;
 }
 
+function verifyPayloadMessage(parsed: Record<string, unknown> | null): string | null {
+  if (!parsed) return null;
+  const m = parsed.message;
+  if (typeof m === "string" && m.trim()) return m.trim();
+  const e = parsed.error;
+  if (typeof e === "string" && e.trim()) return e.trim();
+  return null;
+}
+
 /** `POST .../verify/{id}` — body shape depends on Hub (e.g. sales executive id). */
 export async function postVerifyLead(
   leadType: CrmLeadType,
@@ -85,17 +94,29 @@ export async function postVerifyLead(
     cache: "no-store",
   });
   const text = await res.text();
-  if (!res.ok) {
-    if (res.status === 403) {
-      throw new Error("You don't have permission to verify this lead.");
-    }
-    throw new Error(text || `Verify failed (${res.status})`);
-  }
+  let parsed: Record<string, unknown> | null = null;
   try {
-    return text ? JSON.parse(text) : {};
+    parsed = text.trim() ? (JSON.parse(text) as Record<string, unknown>) : null;
   } catch {
-    return text;
+    parsed = null;
   }
+
+  if (!res.ok) {
+    const fromJson = verifyPayloadMessage(parsed);
+    const msg =
+      fromJson ??
+      (res.status === 401 ? "Session expired. Please log in again." : null) ??
+      (res.status === 403 ? "You don't have permission to verify this lead." : null) ??
+      (text.trim() ? text.trim() : null) ??
+      `Verify failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  if (parsed && parsed.success === false) {
+    throw new Error(verifyPayloadMessage(parsed) ?? "Verify failed.");
+  }
+
+  return parsed ?? {};
 }
 
 export async function postStageRollback(

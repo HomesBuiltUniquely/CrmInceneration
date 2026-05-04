@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { getLeadTypeFilterOptions, isPresalesRole } from "@/lib/crm-role-access";
+import {
+  getLeadTypeFilterOptions,
+  isPresalesRole,
+  toRoleKey,
+} from "@/lib/crm-role-access";
 import {
   milestoneCategoryOptionsForStage,
   milestoneStageOptionsFromNested,
@@ -239,7 +243,7 @@ export default function LeadsToolbar({
   const isSalesManager = role === "SALES_MANAGER";
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
-  const isPresalesExecutive = role === "PRESALES_EXECUTIVE" || role === "PRE_SALES";
+  const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
   const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
 
@@ -426,6 +430,8 @@ export default function LeadsToolbar({
                   : isPresalesRole(role)
                     ? [
                         ["External Lead", leadTypeCounts.formlead ?? 0],
+                        ["Google Ads", leadTypeCounts.glead ?? 0],
+                        ["Meta Ads", leadTypeCounts.mlead ?? 0],
                         ["Add Lead", leadTypeCounts.addlead ?? 0],
                         ["Website Lead", leadTypeCounts.websitelead ?? 0],
                       ]

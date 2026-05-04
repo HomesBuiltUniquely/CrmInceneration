@@ -40,6 +40,11 @@ export async function POST(req: NextRequest) {
     outboundUrl: EXTERNAL_INTAKE_URL,
     externalLeadId: parsed?.externalLeadId ?? null,
     sourceProject: parsed?.sourceProject ?? null,
+    appointmentDate: parsed?.appointmentDate ?? null,
+    hasAppointmentSlot: Boolean(
+      typeof parsed?.appointmentSlot === "string" && parsed.appointmentSlot.trim(),
+    ),
+    scheduleTimezone: parsed?.scheduleTimezone ?? null,
     contactNoMasked: maskValue(parsed?.contactNo),
     clientEmailMasked: maskValue(parsed?.clientEmail),
   });

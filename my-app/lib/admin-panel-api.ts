@@ -1,5 +1,6 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
+import { normalizeRole } from "@/lib/auth/api";
 
 type AnyJson = Record<string, unknown>;
 
@@ -25,6 +26,49 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 async function list(path: string): Promise<AnyJson[]> {
   const raw = await call<unknown>(path);
   return normalizeToArray<AnyJson>(raw);
+}
+
+function userRecordRole(u: AnyJson): string {
+  const candidate = u.role ?? u.userRole ?? u.authority ?? u.type ?? "";
+  return normalizeRole(String(candidate));
+}
+
+function isActiveUserRecord(u: AnyJson): boolean {
+  return String(u.active ?? true) !== "false";
+}
+
+function mergeUsersById(primary: AnyJson[], secondary: AnyJson[]): AnyJson[] {
+  const map = new Map<string, AnyJson>();
+  const keyOf = (u: AnyJson): string | null => {
+    const id = u.id ?? u.userId;
+    if (id == null || String(id).trim() === "") return null;
+    return String(id);
+  };
+  for (const u of primary) {
+    const k = keyOf(u);
+    if (k) map.set(k, u);
+  }
+  for (const u of secondary) {
+    const k = keyOf(u);
+    if (k && !map.has(k)) map.set(k, u);
+  }
+  return [...map.values()];
+}
+
+/**
+ * Sales managers for admin UI: combines GET managers + users-by-role(SALES_MANAGER).
+ * Production backends sometimes return an empty managers list; the role query is a reliable fallback.
+ */
+async function listSalesManagersMerged(): Promise<AnyJson[]> {
+  const [fromManagers, fromRole] = await Promise.all([
+    list("managers").catch(() => [] as AnyJson[]),
+    list(`users-by-role?role=${encodeURIComponent("SALES_MANAGER")}`).catch(() => [] as AnyJson[]),
+  ]);
+  const a = fromManagers.filter(isActiveUserRecord);
+  const b = fromRole
+    .filter(isActiveUserRecord)
+    .filter((u) => userRecordRole(u) === "SALES_MANAGER");
+  return mergeUsersById(a, b);
 }
 
 /**
@@ -55,6 +99,8 @@ export const adminPanelApi = {
   createAdmin: (payload: AnyJson) =>
     call<AnyJson>("create-admin", { method: "POST", body: JSON.stringify(payload) }),
   listManagers: () => list("managers"),
+  /** Merged managers list for dropdowns (see {@link listSalesManagersMerged}). */
+  listSalesManagersMerged: () => listSalesManagersMerged(),
   listSalesExecutives: () => list("sales-executives"),
   /** GET /v1/SalesExecutive/all — use for Sales Manager team table (see API spec). */
   listSalesExecutivesLegacyAll: () => listSalesExecutivesLegacyAll(),

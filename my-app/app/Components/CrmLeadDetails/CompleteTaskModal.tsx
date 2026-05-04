@@ -437,6 +437,8 @@ export default function CompleteTaskModal({
 
     const needsLeadPropertyGate = requiresLeadPropertyGateForCompleteTask({
       currentMilestoneStage: lead.stageBlock?.milestoneStage,
+      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
+      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
       newMilestoneStage: status,
       newStageCategory: path,
       cancelMode,

@@ -31,15 +31,18 @@ import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
 } from "./CompleteTaskModal";
-import { createAppointment } from "@/lib/appointment-client";
+import {
+  createAppointment,
+  type CreateAppointmentResponse,
+} from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
 import { normalizeMilestoneSubStageForApi } from "@/lib/milestone-substage-map";
 import {
   buildSalesClosureUrl,
+  canAccessClosedLeadHeaderActions,
   isCloserStageBookingDone,
 } from "@/lib/sales-closure";
-import { canPresalesVerifyLead } from "@/lib/lead-verify-role";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import {
@@ -47,6 +50,7 @@ import {
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
   getMe,
+  getRoleFromUser,
   getSalesExecEndpointForVerify,
   normalizeRole,
   unwrapAuthUserPayload,
@@ -183,9 +187,82 @@ function parseBudgetForExternalIntake(rawBudget: string): number | string {
   return cleaned;
 }
 
+/** Hub `external-intake` schedule fields — IANA tz per API contract. */
+const EXTERNAL_INTAKE_DEFAULT_TZ =
+  (typeof process !== "undefined" &&
+    process.env.NEXT_PUBLIC_EXTERNAL_INTAKE_SCHEDULE_TIMEZONE?.trim()) ||
+  "Asia/Kolkata";
+
+function normalizeExternalIntakeAppointmentDate(
+  raw: string,
+  timeZone: string,
+): string {
+  const t = raw.trim();
+  if (!t) return "";
+  const ymd = t.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymd) return ymd[1]!;
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-CA", { timeZone });
+}
+
+function formatExternalIntakeSlotRange(
+  startIso: string | undefined,
+  endIso: string | undefined,
+  timeZone: string,
+): string {
+  const sIn = startIso?.trim();
+  const eIn = endIso?.trim();
+  if (!sIn || !eIn) return "";
+  const s = new Date(sIn);
+  const e = new Date(eIn);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return "";
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return `${fmt.format(s)} – ${fmt.format(e)}`;
+}
+
+function buildExternalIntakeScheduleFromAppointment(args: {
+  meetingDate: string;
+  appt: CreateAppointmentResponse;
+}): {
+  appointmentDate: string;
+  appointmentSlot: string;
+  scheduleTimezone: string;
+} {
+  const scheduleTimezone = EXTERNAL_INTAKE_DEFAULT_TZ;
+  const appointmentDate =
+    normalizeExternalIntakeAppointmentDate(
+      args.meetingDate,
+      scheduleTimezone,
+    ) ||
+    normalizeExternalIntakeAppointmentDate(
+      args.appt.startTime ?? args.appt.date ?? "",
+      scheduleTimezone,
+    );
+  const appointmentSlot =
+    args.appt.slotDisplayName?.trim() ||
+    formatExternalIntakeSlotRange(
+      args.appt.startTime,
+      args.appt.endTime,
+      scheduleTimezone,
+    );
+  return { appointmentDate, appointmentSlot, scheduleTimezone };
+}
+
 async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
+  /** When set (e.g. after scheduling), forwarded to Hub external-intake. */
+  schedule?: {
+    appointmentDate: string;
+    appointmentSlot: string;
+    scheduleTimezone: string;
+  };
 }): Promise<void> {
   const pickText = (value: unknown): string => {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -206,7 +283,7 @@ async function postExternalIntakeLead(args: {
   ];
   const chosen = idCandidates.find((c) => c.value);
   const externalLeadId = chosen ? normalizeExternalLeadId(chosen.value) : "";
-  const payload = {
+  const payload: Record<string, unknown> = {
     projectName:
       pickText(args.baseDetail.fullName) ||
       pickText(args.baseDetail.customerName) ||
@@ -222,6 +299,13 @@ async function postExternalIntakeLead(args: {
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
+
+  if (args.schedule) {
+    const { appointmentDate, appointmentSlot, scheduleTimezone } = args.schedule;
+    if (appointmentDate) payload.appointmentDate = appointmentDate;
+    if (appointmentSlot) payload.appointmentSlot = appointmentSlot;
+    if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
+  }
 
   if (!payload.externalLeadId) {
     console.warn(
@@ -244,7 +328,6 @@ async function postExternalIntakeLead(args: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-external-api-key": "hi"
     },
     body: JSON.stringify(payload),
   });
@@ -469,18 +552,25 @@ export default function LeadDetailsApiClient({
     void load();
   }, [load, validLeadType]);
 
-  useEffect(() => {
-    setCanVerifyRole(canPresalesVerifyLead());
-    const role =
-      typeof window !== "undefined"
-        ? normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "")
-        : "";
-    setIsSuperAdmin(role === "SUPER_ADMIN");
-  }, []);
-
   const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
     Record<string, unknown> | null
   >(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const roleKey = normalizeRole(
+      window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "",
+    );
+    setCanVerifyRole(roleKey === "PRESALES_EXECUTIVE");
+    setIsSuperAdmin(roleKey === "SUPER_ADMIN");
+  }, []);
+
+  useEffect(() => {
+    if (!salesClosureAuthUser) return;
+    const roleKey = normalizeRole(getRoleFromUser(salesClosureAuthUser));
+    setCanVerifyRole(roleKey === "PRESALES_EXECUTIVE");
+    setIsSuperAdmin(roleKey === "SUPER_ADMIN");
+  }, [salesClosureAuthUser]);
 
   useEffect(() => {
     if (!validLeadType || typeof window === "undefined") return;
@@ -731,7 +821,25 @@ export default function LeadDetailsApiClient({
     }
   }, [rollbackCategory, rollbackSubStage, rollbackSubStages]);
 
+  const viewerRoleKey = useMemo(() => {
+    if (salesClosureAuthUser) {
+      return normalizeRole(getRoleFromUser(salesClosureAuthUser));
+    }
+    if (typeof window !== "undefined") {
+      return normalizeRole(
+        window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "",
+      );
+    }
+    return "";
+  }, [salesClosureAuthUser]);
+
+  const canClosedLeadHeader = useMemo(
+    () => canAccessClosedLeadHeaderActions(viewerRoleKey),
+    [viewerRoleKey],
+  );
+
   const salesClosureHref = useMemo(() => {
+    if (!canClosedLeadHeader) return undefined;
     if (typeof window === "undefined") return undefined;
     if (!isCloserStageBookingDone(lead)) return undefined;
     return buildSalesClosureUrl({
@@ -741,7 +849,7 @@ export default function LeadDetailsApiClient({
       lead,
       authUser: salesClosureAuthUser,
     });
-  }, [lead, leadId, leadType, salesClosureAuthUser]);
+  }, [canClosedLeadHeader, lead, leadId, leadType, salesClosureAuthUser]);
 
   const buildStrictSalesClosureUrl = useCallback(() => {
     const currentLeadId = lead.leadId?.trim() || leadId;
@@ -758,6 +866,12 @@ export default function LeadDetailsApiClient({
 
   const redirectToStrictSalesClosure = useCallback(
     (previousStage: Lead["stageBlock"]) => {
+      if (!canClosedLeadHeader) {
+        notifyError(
+          "Sales closure is not available for Admin or Sales Admin. Use a sales role to complete closure.",
+        );
+        return;
+      }
       const payload: PendingSalesClosureState = {
         leadId,
         leadType,
@@ -766,7 +880,7 @@ export default function LeadDetailsApiClient({
       window.sessionStorage.setItem(SALES_CLOSURE_PENDING_KEY, JSON.stringify(payload));
       window.location.href = buildStrictSalesClosureUrl();
     },
-    [buildStrictSalesClosureUrl, leadId, leadType],
+    [buildStrictSalesClosureUrl, canClosedLeadHeader, leadId, leadType, notifyError],
   );
 
   useEffect(() => {
@@ -885,6 +999,12 @@ export default function LeadDetailsApiClient({
 
     const previousLead = lead;
     if (isClosedWonBookingDone(previousLead.stageBlock)) {
+      if (!canClosedLeadHeader) {
+        notifyError(
+          "Sales closure is not available for Admin or Sales Admin accounts.",
+        );
+        return;
+      }
       notifyError("Please complete Sales Closure form to keep this lead in Booking Done.");
       redirectToStrictSalesClosure(previousLead.stageBlock);
       return;
@@ -913,6 +1033,7 @@ export default function LeadDetailsApiClient({
     lead,
     leadId,
     leadTypeParam,
+    canClosedLeadHeader,
     notifyError,
     redirectToStrictSalesClosure,
     validLeadType,
@@ -964,8 +1085,20 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     setVerifying(true);
     try {
-      await postVerifyLead(lt, leadId, payload);
-      notifySuccess("Verification request sent.");
+      const raw = await postVerifyLead(lt, leadId, payload);
+      const resObj =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>)
+          : null;
+      const baseMsg =
+        resObj && typeof resObj.message === "string" && resObj.message.trim()
+          ? resObj.message.trim()
+          : "Lead verified successfully.";
+      const assigned =
+        resObj && typeof resObj.assignedTo === "string" && resObj.assignedTo.trim()
+          ? ` Assigned to ${String(resObj.assignedTo).trim()}.`
+          : "";
+      notifySuccess(`${baseMsg}${assigned}`);
       setVerifyModalOpen(false);
       await load();
     } catch (e) {
@@ -1199,7 +1332,18 @@ export default function LeadDetailsApiClient({
             followUpDate = appt.endTime;
           }
           designerName = args.meetingAppointment.designerName;
-          void postExternalIntakeLead({ lead, baseDetail }).catch((e) => {
+          const schedule = buildExternalIntakeScheduleFromAppointment({
+            meetingDate: args.meetingAppointment.date,
+            appt,
+          });
+          void postExternalIntakeLead({
+            lead,
+            baseDetail,
+            schedule:
+              schedule.appointmentDate || schedule.appointmentSlot
+                ? schedule
+                : undefined,
+          }).catch((e) => {
             console.error(
               "External intake API call failed after meeting schedule:",
               e,
@@ -1215,6 +1359,11 @@ export default function LeadDetailsApiClient({
           substage: { substage: persistedSubstage || null },
         };
         if (isClosedWonBookingDone(nextStage)) {
+          if (!canClosedLeadHeader) {
+            throw new Error(
+              "Admin and Sales Admin cannot move a lead to Booking Done under Closed Won (sales closure is restricted).",
+            );
+          }
           const activityText =
             args.note.trim() ||
             "Milestone: Closed → Closed Won → Booking Done (pending Sales Closure).";
@@ -1265,6 +1414,7 @@ export default function LeadDetailsApiClient({
   };
 
   const handleCallClosed = () => {
+    if (!canClosedLeadHeader) return;
     void handleCompleteTaskApi({
       feedback: "Booking Done (Booking)",
       milestoneStage: "Closed",
@@ -1315,11 +1465,13 @@ export default function LeadDetailsApiClient({
         <LeadHeader
           lead={lead}
           onCompleteTask={() => setCompleteTaskOpen(true)}
-          onCallClosed={handleCallClosed}
-          showCallClosed={!isClosedWonBookingDone(lead.stageBlock)}
+          onCallClosed={canClosedLeadHeader ? handleCallClosed : undefined}
+          showCallClosed={
+            canClosedLeadHeader && !isClosedWonBookingDone(lead.stageBlock)
+          }
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}
-          salesClosureHref={salesClosureHref}
+          salesClosureHref={canClosedLeadHeader ? salesClosureHref : null}
           createdTimelineOptions={createdTimelineOptions}
           createdTimelineLoading={createdTimelineLoading}
           createdTimelineValue={selectedTimelineValue}

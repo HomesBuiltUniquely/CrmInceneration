@@ -3,7 +3,6 @@ import type { CrmLeadType } from "@/lib/leads-filter";
 
 export type LeadTypeFilterKey = "all" | CrmLeadType | "verified";
 
-const PRESALES_ALLOWED_LEAD_TYPES: CrmLeadType[] = ["formlead", "addlead", "websitelead"];
 const ALL_LEAD_TYPES: CrmLeadType[] = ["formlead", "glead", "mlead", "addlead", "websitelead"];
 
 export function toRoleKey(role: string): string {
@@ -15,8 +14,9 @@ export function isPresalesRole(role: string): boolean {
   return roleKey === "PRESALES_MANAGER" || roleKey === "PRESALES_EXECUTIVE";
 }
 
-export function getAllowedLeadTypesForRole(role: string): CrmLeadType[] {
-  return isPresalesRole(role) ? [...PRESALES_ALLOWED_LEAD_TYPES] : [...ALL_LEAD_TYPES];
+/** All CRM lead sources allowed in `/v1/leads/filter` proxy (visibility still enforced upstream). */
+export function getAllowedLeadTypesForRole(_role: string): CrmLeadType[] {
+  return [...ALL_LEAD_TYPES];
 }
 
 export function isLeadTypeAllowedForRole(role: string, leadType: string): boolean {
@@ -43,6 +43,8 @@ export function getLeadTypeFilterOptions(
     return [
       { value: "all", label: "All Types" },
       { value: "formlead", label: "External Lead" },
+      { value: "glead", label: "Google Ads" },
+      { value: "mlead", label: "Meta Ads" },
       { value: "addlead", label: "Add Lead" },
       { value: "websitelead", label: "Website Lead" },
     ];

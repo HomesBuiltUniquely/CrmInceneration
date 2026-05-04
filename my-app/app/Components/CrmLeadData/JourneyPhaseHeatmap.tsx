@@ -14,6 +14,7 @@ import {
   isLeadVerifiedForPresales,
   leadAssignedToPresalesExecNameSet,
 } from "@/lib/presales-heatmap-helpers";
+import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
 
 type Phase = {
   phaseLabel: string;
@@ -291,7 +292,6 @@ function SummaryCard({ label, total }: { label: string; total: number }) {
           </div>
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
     </div>
   );
 }
@@ -333,7 +333,6 @@ function PresalesSummaryCard({
             <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">{subtitle}</div>
           </div>
         </div>
-        <div className="absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl bg-[var(--crm-warning-text)]" />
       </div>
     </button>
   );
@@ -473,7 +472,8 @@ export default function JourneyPhaseHeatmap({
   }, [currentUserName, currentUserAliases, currentUserId]);
 
   const presalesMonthMetrics = useMemo(() => {
-    const monthPool = filterLeadsCurrentMonthAssignedPool(filteredInsightLeads);
+    // Summary counts must reflect full presales pool, not an insight-tile drill-down subset.
+    const monthPool = filterLeadsCurrentMonthAssignedPool(poolLeads);
     const totalMonth = monthPool.length;
     const verifiedMonth = monthPool.filter((l) => isLeadVerifiedForPresales(l)).length;
     const execNorms = new Set(
@@ -489,7 +489,7 @@ export default function JourneyPhaseHeatmap({
           ).length
         : 0;
     return { totalMonth, verifiedMonth, teamVerifiedMonth };
-  }, [filteredInsightLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
+  }, [poolLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
 
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
   const freshLeadPhase = pickPhase(phases, "Fresh Lead");
@@ -517,6 +517,10 @@ export default function JourneyPhaseHeatmap({
 
         const filtered = milestoneFilterQuery?.trim();
         const query = new URLSearchParams(filtered ?? "");
+        const verificationStatusFromQuery = (query.get("verificationStatus") ?? "").trim();
+        // Heatmap pool drives presales Total + Verified counts; never shrink the fetch with
+        // verificationStatus (table below uses its own filtered request).
+        query.delete("verificationStatus");
         query.set("mergeAll", "1");
         query.set("page", "0");
         query.set("size", "100");
@@ -602,8 +606,15 @@ export default function JourneyPhaseHeatmap({
         };
         const scopedLeads = allLeads.filter((lead) => {
           if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
-          if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+          if (roleKey === "SALES_EXECUTIVE") {
             return isSelfLead(lead);
+          }
+          if (roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+            return shouldPresalesExecutiveSeeLeadInCrmPool(lead, {
+              currentUserId,
+              verificationStatusFilter: verificationStatusFromQuery,
+              isSelfLead,
+            });
           }
           if (roleKey === "PRESALES_MANAGER") {
             if (presalesTeamSet.size === 0) return isSelfLead(lead);

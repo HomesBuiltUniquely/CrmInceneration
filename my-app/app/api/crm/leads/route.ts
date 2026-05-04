@@ -4,6 +4,7 @@ import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
+import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
@@ -74,8 +75,8 @@ async function resolveViewerRole(req: NextRequest): Promise<string> {
     });
     if (!res.ok) return "";
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    const role = json.role ?? json.userRole ?? json.authority ?? "";
-    return typeof role === "string" ? role.trim().toUpperCase() : "";
+    const user = unwrapAuthUserPayload(json);
+    return normalizeRole(getRoleFromUser(user));
   } catch {
     return "";
   }
@@ -94,13 +95,14 @@ export async function GET(req: NextRequest) {
   const viewerRole = await resolveViewerRole(req);
   const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
   const newCrmGlobalSearch = (url.searchParams.get("newCrmGlobalSearch") ?? "").trim().toLowerCase() === "true";
+  const viewerRoleKey = normalizeRole(viewerRole);
   const isNewCrmGlobalSearchMode =
     milestoneScope === "crm" &&
     newCrmGlobalSearch &&
-    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRole);
+    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRoleKey);
   const allowedLeadTypes = isNewCrmGlobalSearchMode
     ? [...CRM_LEAD_TYPES]
-    : getAllowedLeadTypesForRole(viewerRole);
+    : getAllowedLeadTypesForRole(viewerRoleKey);
 
   const extraParams = [
     "stage",
@@ -123,7 +125,7 @@ export async function GET(req: NextRequest) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
-        { error: `${viewerRole || "Current role"} cannot access ${leadType} in this view.` },
+        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
         { status: 403 }
       );
     }
@@ -154,7 +156,7 @@ export async function GET(req: NextRequest) {
     const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
-        { error: `${viewerRole || "Current role"} cannot access ${leadType} in filter flow.` },
+        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
         { status: 403 }
       );
     }
@@ -196,7 +198,7 @@ export async function GET(req: NextRequest) {
 
   if (selectedTypes.length === 0) {
     return NextResponse.json(
-      { error: `${viewerRole || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
       { status: 403 }
     );
   }
