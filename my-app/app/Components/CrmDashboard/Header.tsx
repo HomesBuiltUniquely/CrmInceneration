@@ -35,6 +35,7 @@ export default function Header({ role = "sales_admin" }: Props) {
     milestoneSubStage: "",
     dateFrom: "",
     dateTo: "",
+    teamFilter: "all",
   });
 
   const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
@@ -51,7 +52,8 @@ export default function Header({ role = "sales_admin" }: Props) {
         prev.milestoneStageCategory === next.milestoneStageCategory &&
         prev.milestoneSubStage === next.milestoneSubStage &&
         prev.dateFrom === next.dateFrom &&
-        prev.dateTo === next.dateTo
+        prev.dateTo === next.dateTo &&
+        prev.teamFilter === next.teamFilter
       ) {
         return prev;
       }

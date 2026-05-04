@@ -28,6 +28,7 @@ export type DashboardFilterState = {
   milestoneSubStage: string;
   dateFrom: string;
   dateTo: string;
+  teamFilter?: string;
 };
 
 type Props = {
@@ -132,10 +133,19 @@ function computeQuickRangeDates(
   return { from: formatDate(quarterStart), to: end };
 }
 
+const TEAM_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "sales", label: "Sales" },
+  { id: "presales", label: "Pre-Sales" },
+] as const;
+
+type TeamFilter = (typeof TEAM_FILTERS)[number]["id"];
+
 export default function LeadFilters({
   role = "sales_admin",
   onFiltersChange,
 }: Props) {
+  const [teamFilter, setTeamFilter] = useState<TeamFilter>("all");
   const isManager = role === "sales_manager";
   const [viewerRole, setViewerRole] = useState("");
   const isSalesAdmin =
@@ -344,6 +354,7 @@ export default function LeadFilters({
       milestoneSubStage: substage.trim(),
       dateFrom,
       dateTo,
+      teamFilter,
     });
   }, [
     dateFrom,
@@ -353,6 +364,7 @@ export default function LeadFilters({
     stage,
     stageCategory,
     substage,
+    teamFilter,
   ]);
 
   const resetAll = () => {
@@ -367,6 +379,19 @@ export default function LeadFilters({
     setDateFrom("");
     setDateTo("");
     setQuickRange("");
+    setTeamFilter("all");
+  };
+
+  const handleTeamFilter = (next: TeamFilter) => {
+    setTeamFilter(next);
+    if (next === "sales") {
+      setPresalesManagerId("");
+      setPresalesExecId("");
+    } else if (next === "presales") {
+      setSalesAdminId("");
+      setSalesManagerId("");
+      setSalesExecId("");
+    }
   };
 
   return (
@@ -385,19 +410,51 @@ export default function LeadFilters({
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={resetAll}
-              className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-2 text-xs font-semibold text-[var(--crm-text-secondary)] shadow-[var(--crm-shadow-sm)] transition hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface-subtle)] hover:text-[var(--crm-text-primary)] active:scale-[0.98]"
-            >
-              Reset all
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Team filter pill toggle */}
+              <div className="flex items-center gap-1.5 rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-1 shadow-inner">
+                {TEAM_FILTERS.map((tf) => {
+                  const active = teamFilter === tf.id;
+                  return (
+                    <button
+                      key={tf.id}
+                      type="button"
+                      onClick={() => handleTeamFilter(tf.id)}
+                      className={`rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition-all duration-200 ${
+                        active
+                          ? "bg-[var(--crm-surface)] text-[var(--crm-accent)] shadow-sm ring-1 ring-[var(--crm-accent-ring)]"
+                          : "text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface)] hover:text-[var(--crm-text-primary)]"
+                      }`}
+                    >
+                      {tf.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={resetAll}
+                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-2 text-xs font-semibold text-[var(--crm-text-secondary)] shadow-[var(--crm-shadow-sm)] transition hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface-subtle)] hover:text-[var(--crm-text-primary)] active:scale-[0.98]"
+              >
+                Reset all
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="px-6 pb-5 pt-5">
           <div
-            className={`grid gap-x-4 gap-y-4 ${isManager ? "grid-cols-5" : "grid-cols-5"}`}
+            className={`grid gap-x-4 gap-y-4 ${
+              isManager
+                ? "grid-cols-1"
+                : teamFilter === "sales"
+                ? isSalesAdmin
+                  ? "grid-cols-3"
+                  : "grid-cols-3"
+                : teamFilter === "presales"
+                ? "grid-cols-2"
+                : "grid-cols-5"
+            }`}
           >
             {isManager ? (
               <>
@@ -424,118 +481,128 @@ export default function LeadFilters({
               </>
             ) : (
               <>
-                {!isSalesAdmin ? (
-                  <label className="col-span-1 min-w-0">
-                    <span className={labelClass}>Sales Admin</span>
-                    <div className="relative">
-                      <select
-                        value={salesAdminId}
-                        onChange={(e) => {
-                          setSalesAdminId(e.target.value);
-                          setSalesManagerId("");
-                          setSalesExecId("");
-                        }}
-                        className={selectClass}
-                      >
-                        <option value="">All</option>
-                        {salesAdmins.map((u) => (
-                          <option key={u.id} value={String(u.id)}>
-                            {userLabel(u)}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                        <SelectChevron />
+                {/* Sales columns — hidden when presales filter is active */}
+                {teamFilter !== "presales" && (
+                  <>
+                    {!isSalesAdmin ? (
+                      <label className="col-span-1 min-w-0">
+                        <span className={labelClass}>Sales Admin</span>
+                        <div className="relative">
+                          <select
+                            value={salesAdminId}
+                            onChange={(e) => {
+                              setSalesAdminId(e.target.value);
+                              setSalesManagerId("");
+                              setSalesExecId("");
+                            }}
+                            className={selectClass}
+                          >
+                            <option value="">All</option>
+                            {salesAdmins.map((u) => (
+                              <option key={u.id} value={String(u.id)}>
+                                {userLabel(u)}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                            <SelectChevron />
+                          </div>
+                        </div>
+                      </label>
+                    ) : null}
+                    <label className="col-span-1 min-w-0">
+                      <span className={labelClass}>Sales Mgr</span>
+                      <div className="relative">
+                        <select
+                          value={salesManagerId}
+                          onChange={(e) => {
+                            setSalesManagerId(e.target.value);
+                            setSalesExecId("");
+                          }}
+                          className={selectClass}
+                        >
+                          <option value="">All</option>
+                          {visibleSalesManagers.map((u) => (
+                            <option key={u.id} value={String(u.id)}>
+                              {userLabel(u)}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                          <SelectChevron />
+                        </div>
                       </div>
-                    </div>
-                  </label>
-                ) : null}
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Sales Mgr</span>
-                  <div className="relative">
-                    <select
-                      value={salesManagerId}
-                      onChange={(e) => {
-                        setSalesManagerId(e.target.value);
-                        setSalesExecId("");
-                      }}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {visibleSalesManagers.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Sales Exec</span>
-                  <div className="relative">
-                    <select
-                      value={salesExecId}
-                      onChange={(e) => setSalesExecId(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {visibleSalesExecs.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Presales Mgr</span>
-                  <div className="relative">
-                    <select
-                      value={presalesManagerId}
-                      onChange={(e) => {
-                        setPresalesManagerId(e.target.value);
-                        setPresalesExecId("");
-                      }}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {presalesManagers.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Presales Exec</span>
-                  <div className="relative">
-                    <select
-                      value={presalesExecId}
-                      onChange={(e) => setPresalesExecId(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {visiblePresalesExecs.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
+                    </label>
+                    <label className="col-span-1 min-w-0">
+                      <span className={labelClass}>Sales Exec</span>
+                      <div className="relative">
+                        <select
+                          value={salesExecId}
+                          onChange={(e) => setSalesExecId(e.target.value)}
+                          className={selectClass}
+                        >
+                          <option value="">All</option>
+                          {visibleSalesExecs.map((u) => (
+                            <option key={u.id} value={String(u.id)}>
+                              {userLabel(u)}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                          <SelectChevron />
+                        </div>
+                      </div>
+                    </label>
+                  </>
+                )}
+                {/* Pre-Sales columns — hidden when sales filter is active */}
+                {teamFilter !== "sales" && (
+                  <>
+                    <label className="col-span-1 min-w-0">
+                      <span className={labelClass}>Presales Mgr</span>
+                      <div className="relative">
+                        <select
+                          value={presalesManagerId}
+                          onChange={(e) => {
+                            setPresalesManagerId(e.target.value);
+                            setPresalesExecId("");
+                          }}
+                          className={selectClass}
+                        >
+                          <option value="">All</option>
+                          {presalesManagers.map((u) => (
+                            <option key={u.id} value={String(u.id)}>
+                              {userLabel(u)}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                          <SelectChevron />
+                        </div>
+                      </div>
+                    </label>
+                    <label className="col-span-1 min-w-0">
+                      <span className={labelClass}>Presales Exec</span>
+                      <div className="relative">
+                        <select
+                          value={presalesExecId}
+                          onChange={(e) => setPresalesExecId(e.target.value)}
+                          className={selectClass}
+                        >
+                          <option value="">All</option>
+                          {visiblePresalesExecs.map((u) => (
+                            <option key={u.id} value={String(u.id)}>
+                              {userLabel(u)}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                          <SelectChevron />
+                        </div>
+                      </div>
+                    </label>
+                  </>
+                )}
               </>
             )}
           </div>

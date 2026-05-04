@@ -102,7 +102,7 @@ function buildLeadsQuery(search: URLSearchParams, assignee?: string): URLSearchP
   q.set("leadType", "all");
   const assigneeValue = (assignee ?? search.get("assignee") ?? "").trim();
   if (assigneeValue) q.set("assignee", assigneeValue);
-  for (const key of ["dateFrom", "dateTo", "milestoneStage", "milestoneStageCategory", "milestoneSubStage"] as const) {
+  for (const key of ["dateFrom", "dateTo", "milestoneStage", "milestoneStageCategory", "milestoneSubStage", "teamFilter"] as const) {
     const value = (search.get(key) ?? "").trim();
     if (value) q.set(key, value);
   }

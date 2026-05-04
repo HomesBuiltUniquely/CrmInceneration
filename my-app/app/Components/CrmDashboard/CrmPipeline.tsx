@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import type { DashboardFilterState } from "./LeadFilters";
 import {
@@ -53,7 +53,7 @@ function subStageFromLead(lead: ApiLead): string {
   return String(lead.stage?.milestoneSubStage ?? "").trim();
 }
 
-function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
+function buildLeadsQuery(filters: DashboardFilterState, assignee?: string, omitStage = false) {
   const q = new URLSearchParams();
   q.set("mergeAll", "1");
   q.set("page", "0");
@@ -64,9 +64,12 @@ function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
   if (effectiveAssignee) q.set("assignee", effectiveAssignee);
   if (filters.dateFrom) q.set("dateFrom", filters.dateFrom);
   if (filters.dateTo) q.set("dateTo", filters.dateTo);
-  if (filters.milestoneStage) q.set("milestoneStage", filters.milestoneStage);
-  if (filters.milestoneStageCategory) q.set("milestoneStageCategory", filters.milestoneStageCategory);
-  if (filters.milestoneSubStage) q.set("milestoneSubStage", filters.milestoneSubStage);
+  if (!omitStage) {
+    if (filters.milestoneStage) q.set("milestoneStage", filters.milestoneStage);
+    if (filters.milestoneStageCategory) q.set("milestoneStageCategory", filters.milestoneStageCategory);
+    if (filters.milestoneSubStage) q.set("milestoneSubStage", filters.milestoneSubStage);
+  }
+  if (filters.teamFilter) q.set("teamFilter", filters.teamFilter);
   return q;
 }
 
@@ -100,6 +103,11 @@ export default function CrmPipeline({ filters }: Props) {
   const [data, setData] = useState<CrmPipelineResponse | null>(null);
   const [filteredLeads, setFilteredLeads] = useState<ApiLead[]>([]);
   const [subMappings, setSubMappings] = useState<SubStatusMappingsResp["mappings"]>([]);
+  const [milestoneCounts, setMilestoneCounts] = useState<{
+    totalCrmLeads?: number;
+    countsByMilestoneStage?: Array<{ key: string; count: number }>;
+    countsByMilestoneSubStage?: Array<{ key: string; count: number }>;
+  } | null>(null);
   const [pathData, setPathData] = useState<{
     stageTitle: string;
     stageSubtitle: string;
@@ -112,7 +120,7 @@ export default function CrmPipeline({ filters }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
 
-  const sharedFilters = filters ?? {
+  const sharedFilters = useMemo(() => filters ?? {
     assignee: "",
     assignees: [],
     milestoneStage: "",
@@ -120,16 +128,22 @@ export default function CrmPipeline({ filters }: Props) {
     milestoneSubStage: "",
     dateFrom: "",
     dateTo: "",
-  };
+  }, [filters]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [pipeline, leads, subMapRes] = await Promise.all([
+        const q = buildLeadsQuery(sharedFilters);
+        const [pipeline, leads, subMapRes, countsRes] = await Promise.all([
           fetchCrmPipeline(true),
           fetchDashboardLeads(sharedFilters),
           fetch("/api/milestone-count?resource=sub-status", {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders(),
+          }),
+          fetch(`/api/crm/crm-milestone-counts-filtered?${buildLeadsQuery(sharedFilters, undefined, true).toString()}`, {
             cache: "no-store",
             credentials: "include",
             headers: getCrmAuthHeaders(),
@@ -146,10 +160,15 @@ export default function CrmPipeline({ filters }: Props) {
           setSubMappings([]);
         }
 
-        const stages = buildMilestoneStages(pipeline.entries, pipeline.nested);
-        const first = stages[0]?.stage ?? null;
+        if (countsRes.ok) {
+          const countsJson = await countsRes.json();
+          setMilestoneCounts(countsJson);
+        }
+
+        const stgs = buildMilestoneStages(pipeline.entries, pipeline.nested);
+        const first = stgs[0]?.stage ?? null;
         setSelectedStage((prev) => {
-          if (prev && stages.some((s) => s.stage === prev)) return prev;
+          if (prev && stgs.some((s) => s.stage === prev)) return prev;
           return first;
         });
       } catch (e) {
@@ -159,45 +178,39 @@ export default function CrmPipeline({ filters }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [
-    sharedFilters.assignee,
-    (sharedFilters.assignees ?? []).join("|"),
-    sharedFilters.dateFrom,
-    sharedFilters.dateTo,
-    sharedFilters.milestoneStage,
-    sharedFilters.milestoneStageCategory,
-    sharedFilters.milestoneSubStage,
-  ]);
+  }, [sharedFilters]);
 
-  const stageCounts = filteredLeads.reduce<Record<string, number>>((acc, lead) => {
-    const stage = stageFromLead(lead);
-    if (!stage) return acc;
-    acc[stage] = (acc[stage] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  const stages: MilestoneStage[] = (data ? buildMilestoneStages(data.entries, data.nested) : []).map((s) => ({
-    ...s,
-    count: stageCounts[s.stage] ?? stageCounts[s.label] ?? 0,
-  }));
+  const stages: MilestoneStage[] = useMemo(() => {
+    return (data ? buildMilestoneStages(data.entries, data.nested) : []).map((s) => {
+      const stageKey = s.stage.trim().toLowerCase();
+      const countRow = milestoneCounts?.countsByMilestoneStage?.find(
+        (row) => row.key.trim().toLowerCase() === stageKey
+      );
+      return {
+        ...s,
+        count: countRow ? countRow.count : 0,
+      };
+    });
+  }, [data, milestoneCounts]);
 
   const onSelectStage = useCallback((stage: string) => {
     setSelectedStage(stage);
   }, []);
 
   useEffect(() => {
-    if (!selectedStage) {
+    if (!selectedStage || !milestoneCounts) {
       setPathData(null);
       return;
     }
-    const scopedLeads = filteredLeads.filter((lead) => norm(stageFromLead(lead)) === norm(selectedStage));
-    const bySub = scopedLeads.reduce<Map<string, number>>((acc, lead) => {
-      const sub = subStageFromLead(lead);
-      if (!sub) return acc;
-      const key = norm(sub);
-      acc.set(key, (acc.get(key) ?? 0) + 1);
-      return acc;
-    }, new Map());
+    
+    // Sub-stage counts from API
+    const bySub = new Map(
+      (milestoneCounts.countsByMilestoneSubStage ?? []).map((row) => [
+        row.key.trim().toLowerCase(),
+        row.count,
+      ])
+    );
+
     const wonItems: MilestonePathItem[] = [];
     const lostItems: MilestonePathItem[] = [];
     let wi = 0;
@@ -218,7 +231,7 @@ export default function CrmPipeline({ filters }: Props) {
     setPathData({
       stageTitle: selectedStage,
       stageSubtitle: subtitleForStage(selectedStage),
-      totalActiveLeads: scopedLeads.length,
+      totalActiveLeads: stages.find(s => s.stage === selectedStage)?.count ?? 0,
       wonTotal,
       lostTotal,
       wonItems,
@@ -226,8 +239,9 @@ export default function CrmPipeline({ filters }: Props) {
     });
   }, [
     selectedStage,
-    filteredLeads,
+    milestoneCounts,
     subMappings,
+    stages,
   ]);
 
   if (error) {

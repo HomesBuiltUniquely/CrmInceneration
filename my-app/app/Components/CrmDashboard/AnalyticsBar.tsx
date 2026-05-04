@@ -13,11 +13,11 @@ function toQueryString(filters?: DashboardFilterState): string {
   if (!filters) return q.toString();
   if (filters.assignee.trim()) q.set("assignee", filters.assignee.trim());
   if ((filters.assignees ?? []).length > 0) q.set("assignees", (filters.assignees ?? []).join(","));
-  if (filters.milestoneStage.trim()) q.set("milestoneStage", filters.milestoneStage.trim());
-  if (filters.milestoneStageCategory.trim()) q.set("milestoneStageCategory", filters.milestoneStageCategory.trim());
-  if (filters.milestoneSubStage.trim()) q.set("milestoneSubStage", filters.milestoneSubStage.trim());
+  // We explicitly OMIT milestoneStage filters here because AnalyticsBar needs to show 
+  // overall conversion across all stages for the selected team/assignees.
   if (filters.dateFrom.trim()) q.set("dateFrom", filters.dateFrom.trim());
   if (filters.dateTo.trim()) q.set("dateTo", filters.dateTo.trim());
+  if (filters.teamFilter) q.set("teamFilter", filters.teamFilter);
   return q.toString();
 }
 

@@ -116,6 +116,7 @@ export async function GET(req: NextRequest) {
     "milestoneSubStage",
     "verificationStatus",
     "reinquiry",
+    "teamFilter",
   ] as const;
 
   const managerEndpoint =
