@@ -1,25 +1,24 @@
 "use client";
 
 import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 
 type Props = {
   children: React.ReactNode;
 };
 
 export default function RequireAuth({ children }: Props) {
-  const router = useRouter();
   const [allowed, setAllowed] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
     if (!token) {
-      router.replace("/login");
+      // Hard navigation — client router-only redirects can leave the gate stuck on “Loading…” in automation.
+      window.location.replace(`${window.location.origin}/login`);
       return;
     }
     setAllowed(true);
-  }, [router]);
+  }, []);
 
   if (!allowed) {
     return (

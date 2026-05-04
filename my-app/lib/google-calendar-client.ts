@@ -21,8 +21,12 @@ export async function fetchGoogleCalendarStatus(): Promise<GStatus> {
   return readJson<GStatus>(res);
 }
 
-export async function fetchGoogleCalendarConnectUrl(): Promise<string> {
-  const res = await fetch("/api/google-calendar/connect-url", {
+/** Optional `returnUrl` is forwarded to Hub OAuth (`GET …/connect-url?returnUrl=`). */
+export async function fetchGoogleCalendarConnectUrl(returnUrl?: string): Promise<string> {
+  const qs = new URLSearchParams();
+  if (returnUrl?.trim()) qs.set("returnUrl", returnUrl.trim());
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const res = await fetch(`/api/google-calendar/connect-url${suffix}`, {
     cache: "no-store",
     credentials: "include",
     headers: getCrmAuthHeaders({ Accept: "application/json" }),

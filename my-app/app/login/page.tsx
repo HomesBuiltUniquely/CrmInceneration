@@ -5,9 +5,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BASE_URL } from "@/lib/base-url";
 import {
+  CRM_DESIGNER_ID_STORAGE_KEY,
+  CRM_DESIGNER_NAME_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
+  getDesignerIdFromUser,
+  getDesignerNameFromUser,
   getNameFromUser,
   getRoleFromUser,
   landingPathByRole,
@@ -49,6 +53,18 @@ export default function LoginPage() {
         localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
       } else {
         localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      }
+      const designerName = getDesignerNameFromUser(user);
+      const designerId = getDesignerIdFromUser(user);
+      if (designerName) {
+        localStorage.setItem(CRM_DESIGNER_NAME_STORAGE_KEY, designerName);
+      } else {
+        localStorage.removeItem(CRM_DESIGNER_NAME_STORAGE_KEY);
+      }
+      if (designerId) {
+        localStorage.setItem(CRM_DESIGNER_ID_STORAGE_KEY, designerId);
+      } else {
+        localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
       }
       router.replace(landingPathByRole(role));
     } catch (err) {

@@ -3,7 +3,8 @@ import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 function targetUrl(req: NextRequest, path: string[] | undefined): string {
-  const suffix = path?.length ? `/${path.join("/")}` : "";
+  const suffix =
+    path?.length ? `/${path.map((p) => encodeURIComponent(p)).join("/")}` : "";
   const url = new URL(`${BASE_URL}/api/google-calendar${suffix}`);
   req.nextUrl.searchParams.forEach((value, key) => {
     url.searchParams.set(key, value);

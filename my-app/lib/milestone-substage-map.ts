@@ -40,9 +40,30 @@ export function normalizeMilestoneSubStageForApi(pipelineLabel: string): string 
   return t;
 }
 
+/**
+ * Sub-stages that use the same slot-based `POST /v1/Appointment` flow in Complete Task
+ * (first design meeting, fix-appointment queue, or design refinement revisit — see E2E guide).
+ */
 export function isMeetingScheduleSubstage(subStageName: string): boolean {
   const s = subStageName.trim();
-  return s === "Meeting Scheduled" || s === "Meeting Rescheduled";
+  return (
+    s === "Meeting Scheduled" ||
+    s === "Meeting Rescheduled" ||
+    s === "Design Refinement Round (Revisit)" ||
+    s === "Fix Appointment"
+  );
+}
+
+export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {
+  return subStageName.trim() === "Design Refinement Round (Revisit)";
+}
+
+/** Short heading for the scheduling panel in Complete Task. */
+export function meetingSchedulePanelTitle(subStageName: string): string {
+  const s = subStageName.trim();
+  if (s === "Design Refinement Round (Revisit)") return "Hub meeting (Design refinement)";
+  if (s === "Fix Appointment") return "Hub meeting (Fix appointment)";
+  return "Hub meeting (Connection)";
 }
 
 export function isMeetingCancelledSubstage(subStageName: string): boolean {

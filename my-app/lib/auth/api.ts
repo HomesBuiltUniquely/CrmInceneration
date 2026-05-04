@@ -3,6 +3,9 @@ import { BASE_URL } from "@/lib/base-url";
 export const CRM_TOKEN_STORAGE_KEY = "crm_token";
 export const CRM_ROLE_STORAGE_KEY = "crm_role";
 export const CRM_USER_NAME_STORAGE_KEY = "crm_user_name";
+/** Linked `Designer.name` from login / `GET /api/auth/me` — used for designer dashboard APIs. */
+export const CRM_DESIGNER_NAME_STORAGE_KEY = "crm_designer_name";
+export const CRM_DESIGNER_ID_STORAGE_KEY = "crm_designer_id";
 
 export function getAuthApiBaseUrl(): string {
   return BASE_URL;
@@ -55,6 +58,18 @@ export function getNameFromUser(user: Record<string, unknown>): string {
   return typeof candidate === "string" ? candidate.trim() : "";
 }
 
+/** `Designer.name` for `/v1/Appointment/designer/{designerName}/...` (may be absent for non-designers). */
+export function getDesignerNameFromUser(user: Record<string, unknown>): string {
+  const v = user.designerName ?? user.designer_name;
+  return typeof v === "string" ? v.trim() : "";
+}
+
+export function getDesignerIdFromUser(user: Record<string, unknown>): string | null {
+  const v = user.designerId ?? user.designer_id;
+  if (v == null) return null;
+  return String(v);
+}
+
 export function dashboardPathByRole(role: string): string {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN") return "/super-admin";
@@ -66,6 +81,17 @@ export function dashboardPathByRole(role: string): string {
 export function hasDashboardByRole(role: string): boolean {
   const r = normalizeRole(role);
   return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+}
+
+/** Legacy parity: roles that may open the designer dashboard (`showDesignerDashboard`). */
+export function canAccessDesignerDashboard(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    r === "DESIGNER" ||
+    r === "DESIGN_MANAGER" ||
+    r === "TERRITORY_DESIGN_MANAGER" ||
+    r === "SUPER_ADMIN"
+  );
 }
 
 /** First page after login by role. */

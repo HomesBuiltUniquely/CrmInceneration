@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiLead, LeadRowModel, SpringPage } from "@/lib/leads-filter";
-import { asCrmLeadType, mapApiLeadToRow } from "@/lib/leads-filter";
+import { asCrmLeadType, isCrmLeadVerified, mapApiLeadToRow } from "@/lib/leads-filter";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
@@ -16,6 +16,7 @@ import {
   getAuthApiBaseUrl,
   normalizeRole,
 } from "@/lib/auth/api";
+import { isPresalesRole } from "@/lib/crm-role-access";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -30,6 +31,7 @@ import {
   countSalesManagerMineVsTeam,
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
+import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 
 type Props = {
   search: string;
@@ -49,6 +51,15 @@ type Props = {
   managerTeamNamesFromHeader?: string[];
   /** From layout; avoids empty-role first paint so filter badge does not count forced exec assignee. */
   authRole?: string;
+  /** Optional CRM filter; forwarded to `/api/crm/leads` as `verificationStatus`. */
+  verificationStatus?: string;
+  /** Resolved server-side to calendar month (`crmMonthWindow=current`) — do not set toolbar dates. */
+  crmMonthWindow?: string;
+  /** Clear parent presales tab when toolbar reset runs (optional). */
+  onPresalesSummaryClear?: () => void;
+  /** Presales manager “Team verified” tab — list only executives under the manager, not the manager’s own leads. */
+  presalesTeamExecutivesOnly?: boolean;
+  presalesTeamExecDisplayNames?: string[];
   onLeadTypeChange: (next: string) => void;
   onSortChange: (next: string) => void;
   onAssigneeChange: (next: string) => void;
@@ -186,8 +197,7 @@ function computePrimarySourceCounts(leads: ApiLead[]): Record<string, number> {
     const type = normalizeLeadTypeKey(primary.leadType);
     counts.all += 1;
     counts[type] += 1;
-    const verification = String(primary.verificationStatus ?? "").trim().toLowerCase();
-    if (verification === "verified" || primary.verified === true) counts.verified += 1;
+    if (isCrmLeadVerified(primary)) counts.verified += 1;
   }
   return counts;
 }
@@ -205,7 +215,9 @@ async function fetchMergedPage(
   milestoneStageCategory: string,
   milestoneSubStage: string,
   reinquiry: string,
-  leadView: "default" | "my" | "team" | "combined" = "default"
+  leadView: "default" | "my" | "team" | "combined" = "default",
+  verificationStatus = "",
+  crmMonthWindow = ""
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   const normalizedLeadType = leadType.trim().toLowerCase();
@@ -222,13 +234,17 @@ async function fetchMergedPage(
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
   if (assignee.trim()) qs.set("assignee", assignee.trim());
-  if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-  if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
+  if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
+  else {
+    if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
+    if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
+  }
   if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
   if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
   if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
   if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
   if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
+  else if (verificationStatus.trim()) qs.set("verificationStatus", verificationStatus.trim());
   if (usesRoleEndpoint) qs.set("roleView", leadView);
 
   const res = await fetch(
@@ -388,6 +404,11 @@ export default function LeadsDataSection({
   currentUserId = 0,
   managerTeamNamesFromHeader = [],
   authRole: authRoleProp,
+  verificationStatus: verificationStatusProp = "",
+  crmMonthWindow: crmMonthWindowProp = "",
+  onPresalesSummaryClear,
+  presalesTeamExecutivesOnly = false,
+  presalesTeamExecDisplayNames = [],
   onLeadTypeChange,
   onSortChange,
   onAssigneeChange,
@@ -966,7 +987,9 @@ export default function LeadsDataSection({
           milestoneStageCategory,
           milestoneSubStage,
           reinquiry,
-          leadViewKey
+          leadViewKey,
+          verificationStatusProp,
+          crmMonthWindowProp
         );
         if (cancelled) return;
         const raw = page.content ?? [];
@@ -1023,6 +1046,8 @@ export default function LeadsDataSection({
     salesManagerFilter,
     leadViewKey,
     isNewCrmGlobalSearchMode,
+    verificationStatusProp,
+    crmMonthWindowProp,
   ]);
 
   const load = useCallback(async () => {
@@ -1042,7 +1067,9 @@ export default function LeadsDataSection({
         milestoneStageCategory,
         milestoneSubStage,
       reinquiry,
-        leadViewKey
+        leadViewKey,
+        verificationStatusProp,
+        crmMonthWindowProp
       );
       setData(json);
     } catch (e) {
@@ -1070,6 +1097,8 @@ export default function LeadsDataSection({
     size,
     sort,
     leadViewKey,
+    verificationStatusProp,
+    crmMonthWindowProp,
   ]);
 
   useEffect(() => {
@@ -1080,9 +1109,25 @@ export default function LeadsDataSection({
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const scopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const presalesExecNormSet = useMemo(
+    () =>
+      new Set(
+        presalesTeamExecDisplayNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
+      ),
+    [presalesTeamExecDisplayNames],
+  );
+
   const content = isNewCrmGlobalSearchMode
     ? contentFromApi
-    : contentFromApi.filter((lead) => canViewLeadByRole(lead, scopeRoleKey));
+    : contentFromApi.filter((lead) => {
+        if (!canViewLeadByRole(lead, scopeRoleKey)) return false;
+        if (presalesTeamExecutivesOnly && scopeRoleKey === "PRESALES_MANAGER") {
+          if (presalesExecNormSet.size === 0) return false;
+          if (leadAssignedToSelf(lead)) return false;
+          if (!leadAssignedToPresalesExecNameSet(lead, presalesExecNormSet)) return false;
+        }
+        return true;
+      });
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -1247,7 +1292,8 @@ export default function LeadsDataSection({
       setIsDeleting(true);
       await deleteLeadRowsByType(row.leadType, [Number(row.id)]);
       await load();
-      notifySuccess(`Lead #${row.id} deleted successfully.`);
+      const displayName = row.name.trim() || `Lead #${row.id}`;
+      notifySuccess(`${displayName} deleted successfully.`);
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -1535,6 +1581,8 @@ export default function LeadsDataSection({
         onInsightNavigate={(mode) =>
           setInsightTableMode((prev) => (prev === mode ? null : mode))
         }
+        hideTotalLeadsPill={isPresalesRole(authRoleProp ?? currentRole)}
+        onResetPresalesSummary={onPresalesSummaryClear}
         showDeleteAllButton={showDeleteAll}
         deleteAllLabel={leadType === "all" ? "Delete All" : `Delete All (${toAssignmentLeadType(leadType)})`}
         deleteAllDisabled={isDeleting || !canDeleteAll}

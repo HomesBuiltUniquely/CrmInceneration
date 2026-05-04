@@ -38,6 +38,18 @@ const typeConfig: Record<
     dotClass: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
     labelClass: "text-emerald-300",
   },
+  design_qa_invite: {
+    label: "Design QA — invitation",
+    icon: "✉️",
+    dotClass: "border-sky-400/30 bg-sky-500/10 text-sky-300",
+    labelClass: "text-sky-300",
+  },
+  design_qa_submitted: {
+    label: "Design QA — submitted",
+    icon: "✅",
+    dotClass: "border-teal-400/30 bg-teal-500/10 text-teal-300",
+    labelClass: "text-teal-300",
+  },
 };
 
 function ActivityCard({ item, isLast, delay }: { item: ActivityItem; isLast: boolean; delay: string }) {

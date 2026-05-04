@@ -5,11 +5,50 @@ import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 
+function WonTrophyIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path
+        d="M6 4h12v2a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V4Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 14v4M15 14v4M8 22h8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 6H2v1a3 3 0 0 0 3 3h1M20 6h2v1a3 3 0 0 1-3 3h-1"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M12 4v3"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export default function LeadHeader({
   lead,
   onCompleteTask,
   onOpenStageRollback,
   canStageRollback = false,
+  onCallClosed,
+  showCallClosed = false,
   salesClosureHref,
   createdTimelineOptions = [],
   createdTimelineLoading = false,
@@ -20,6 +59,8 @@ export default function LeadHeader({
   onCompleteTask: () => void;
   onOpenStageRollback?: () => void;
   canStageRollback?: boolean;
+  onCallClosed?: () => void;
+  showCallClosed?: boolean;
   /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
   salesClosureHref?: string | null;
   createdTimelineOptions?: Array<{ value: string; label: string; fullLabel?: string }>;
@@ -75,24 +116,36 @@ export default function LeadHeader({
             {lead.name}
           </h1>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2.5">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold text-sky-800">
+          <span className="inline-flex h-6 items-center rounded-full border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-800">
             <span>🕐</span>
             <span>Created {lead.createdAt}</span>
           </span>
           {firstCallAt ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold text-violet-800">
+            <span className="inline-flex h-6 items-center rounded-full border border-violet-200 bg-violet-50 px-3 text-[11px] font-semibold text-violet-800">
               <span>📞</span>
               <span>First Call {firstCallAt}</span>
             </span>
           ) : null}
         </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2.5">
+          <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
+            <span>
+              Stage: {lead.stageBlock?.milestoneStage?.trim() || "—"}
+            </span>
+          </span>
+          <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
+            <span>
+              Sub-stage: {lead.stageBlock?.milestoneSubStage?.trim() || "—"}
+            </span>
+          </span>
+        </div>
         <div className="mt-2" ref={timelineWrapRef}>
           <button
             type="button"
-            className="inline-flex w-full max-w-[420px] items-center justify-between gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[12px] font-medium text-[var(--crm-text-secondary)] outline-none transition focus:border-[var(--crm-accent)] focus:ring-2 focus:ring-[var(--crm-accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex w-full max-w-[420px] items-center justify-between gap-2 rounded-xl border border-black/20 bg-slate-100 px-3 py-2 text-[12px] font-medium text-black/75 outline-none transition hover:bg-slate-200 focus:border-black/30 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={createdTimelineLoading || createdTimelineOptions.length === 0}
             aria-haspopup="listbox"
             aria-expanded={timelineOpen}
@@ -173,6 +226,18 @@ export default function LeadHeader({
           >
             <span aria-hidden>↩</span>
             Stage Rollback
+          </button>
+        ) : null}
+
+        {showCallClosed && onCallClosed ? (
+          <button
+            type="button"
+            onClick={onCallClosed}
+            aria-label="Closed — Won / Booking Done and Sales Closure"
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-[13px] font-semibold text-slate-700 shadow-sm transition duration-200 hover:border-emerald-200/80 hover:bg-emerald-50/60 hover:text-emerald-900 hover:shadow-[0_8px_22px_rgba(16,185,129,0.12)] active:scale-[0.99]"
+          >
+            <WonTrophyIcon className="h-[18px] w-[18px] shrink-0 text-amber-600" />
+            Closed
           </button>
         ) : null}
 

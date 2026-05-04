@@ -1,4 +1,4 @@
-import type { CrmLeadType } from "@/lib/leads-filter";
+import { asCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
 import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
 import {
@@ -121,6 +121,134 @@ function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
   return String(v);
 }
 
+/** When backend nests interior/config under `propertyDetails` (object). */
+function asPropertyDetailsObject(
+  detail: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const pd = detail.propertyDetails;
+  if (pd && typeof pd === "object" && !Array.isArray(pd)) {
+    return pd as Record<string, unknown>;
+  }
+  return null;
+}
+
+function pickConfigurationFromDetail(
+  detail: Record<string, unknown>,
+  leadType: CrmLeadType,
+): string {
+  /** Add Lead API stores configuration in `propertyType` (not `interior_setup`). */
+  if (leadType === "addlead") {
+    const fromRoot = pickStr(detail, "propertyType", "property_type");
+    if (fromRoot) return fromRoot;
+    const fromBag = asPropertyDetailsObject(detail);
+    if (fromBag) {
+      const fromNested = pickStr(fromBag, "propertyType", "property_type");
+      if (fromNested) return fromNested;
+    }
+  }
+
+  const flat = pickStr(
+    detail,
+    "interior_setup",
+    "interiorSetup",
+    "configuration",
+    "bhk",
+    "propertyType",
+    "unitType",
+  );
+  if (flat) return flat;
+
+  const fromBag = asPropertyDetailsObject(detail);
+  if (fromBag) {
+    const nested = pickStr(
+      fromBag,
+      "interior_setup",
+      "interiorSetup",
+      "configuration",
+      "bhk",
+      "propertyType",
+      "unitType",
+    );
+    if (nested) return nested;
+  }
+
+  const df = detail.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const dfo = df as Record<string, unknown>;
+    const pdInDf = dfo.propertyDetails;
+    if (pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)) {
+      const inner = pickStr(
+        pdInDf as Record<string, unknown>,
+        "interior_setup",
+        "interiorSetup",
+        "configuration",
+      );
+      if (inner) return inner;
+    }
+    const directDf = pickStr(dfo, "interior_setup", "interiorSetup", "configuration");
+    if (directDf) return directDf;
+  }
+
+  return "";
+}
+
+/** Property notes: never treat `propertyDetails` object as the notes string. */
+function pickPropertyNotesFromDetail(detail: Record<string, unknown>): string {
+  const direct = pickStr(
+    detail,
+    "propertyNotes",
+    "property_detail",
+    "notes",
+  );
+  if (direct) return direct;
+
+  const pd = detail.propertyDetails;
+  if (typeof pd === "string" && pd.trim()) return pd.trim();
+  if (pd && typeof pd === "object" && !Array.isArray(pd)) {
+    const o = pd as Record<string, unknown>;
+    return (
+      pickStr(
+        o,
+        "propertyNotes",
+        "property_detail",
+        "notes",
+        "description",
+        "details",
+      ) || ""
+    );
+  }
+  return "";
+}
+
+/**
+ * Merge Lead configuration + notes into backend `propertyDetails` (object) for non–Add Lead entities.
+ * Add Lead (`addlead`) uses `propertyDetails` as a **string** in Java; that path does not call this.
+ */
+function mergePropertyDetailsBlock(
+  base: Record<string, unknown>,
+  lead: Lead,
+): Record<string, unknown> {
+  const prev = base.propertyDetails;
+  let bag: Record<string, unknown> = {};
+
+  if (prev && typeof prev === "object" && !Array.isArray(prev)) {
+    bag = { ...(prev as Record<string, unknown>) };
+  } else if (typeof prev === "string" && prev.trim()) {
+    bag.propertyNotes = prev.trim();
+    bag.property_detail = prev.trim();
+  }
+
+  const cfg = lead.configuration.trim();
+  bag.interiorSetup = cfg;
+  bag.interior_setup = cfg;
+
+  const notes = lead.propertyNotes.trim();
+  bag.propertyNotes = notes;
+  bag.property_detail = notes;
+
+  return bag;
+}
+
 export function extractStage(detail: Record<string, unknown>) {
   const st = stageObj(detail);
   const substage =
@@ -189,7 +317,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       pickScalar(detail, "altPhoneNumber", "altPhone", "alternatePhone", "phone2", "secondaryPhone") ||
       "",
     pincode: getLeadDisplayPincode(detail),
-    configuration: pickStr(detail, "configuration", "bhk", "propertyType", "unitType") || "",
+    configuration: pickConfigurationFromDetail(detail, leadType),
     floorPlan: pickStr(detail, "floorPlan", "floorplan") || "",
     possessionDate: pickStr(detail, "possessionDate", "possession", "possessionTime") || "",
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
@@ -197,11 +325,13 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
     lostReason: readLostReasonFromDetail(detail) || "",
     quoteLink: pickStr(detail, "quoteLink", "quoteURL", "proposalLink") || "",
+    designQaLink:
+      pickStr(detail, "designQaLink", "design_qa_quiz_url", "designQaQuizUrl") || undefined,
     leadSource: getLeadDisplaySource({ ...detail, leadType }),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     meetingType: pickStr(detail, "meetingType", "meeting") || "",
-    propertyNotes: pickStr(detail, "propertyNotes", "propertyDetails", "notes") || "",
+    propertyNotes: pickPropertyNotesFromDetail(detail),
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",
     meetingVenue: pickStr(detail, "meetingVenue", "venue") || "",
@@ -274,13 +404,28 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
     next.additionalLeadSources = lead.additionalLeadSources;
   }
   next.propertyNotes = lead.propertyNotes;
-  next.propertyDetails = lead.propertyNotes;
+  next.property_detail = lead.propertyNotes;
+  const mergedLt = asCrmLeadType(lead.leadType, "formlead");
+  if (mergedLt === "addlead") {
+    next.propertyDetails = lead.propertyNotes.trim();
+  } else {
+    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+  }
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  next.configuration = lead.configuration;
+  if (mergedLt === "addlead") {
+    next.propertyType = lead.configuration;
+    next.property_type = lead.configuration;
+    delete next.interiorSetup;
+    delete next.interior_setup;
+  } else {
+    next.configuration = lead.configuration;
+    next.interiorSetup = lead.configuration;
+    next.interior_setup = lead.configuration;
+  }
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
@@ -322,7 +467,13 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
     next.additionalLeadSources = lead.additionalLeadSources;
   }
   next.propertyNotes = lead.propertyNotes;
-  next.propertyDetails = lead.propertyNotes;
+  next.property_detail = lead.propertyNotes;
+  const boxLt = asCrmLeadType(lead.leadType, "formlead");
+  if (boxLt === "addlead") {
+    next.propertyDetails = lead.propertyNotes.trim();
+  } else {
+    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+  }
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
@@ -337,7 +488,16 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
-  next.configuration = lead.configuration;
+  if (boxLt === "addlead") {
+    next.propertyType = lead.configuration;
+    next.property_type = lead.configuration;
+    delete next.interiorSetup;
+    delete next.interior_setup;
+  } else {
+    next.configuration = lead.configuration;
+    next.interiorSetup = lead.configuration;
+    next.interior_setup = lead.configuration;
+  }
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
@@ -350,11 +510,15 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 }
 
 function mapBackendActivityType(raw: string): ActivityType {
-  const u = raw.toUpperCase();
+  const u = raw.toUpperCase().replace(/\s+/g, "_");
+  if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
+    return "design_qa_submitted";
+  if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";
   if (u.includes("ASSIGN")) return "assignment";
   if (u.includes("NOTE")) return "note";
   if (u.includes("CALL")) return "call";
   if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD")) return "status";
+  if (u.includes("DESIGNQA") || u.includes("DESIGN_QA")) return "note";
   return "update";
 }
 
@@ -365,11 +529,23 @@ function formatActivityTime(iso: string | undefined): string {
 }
 
 export function mapActivitiesJson(rows: unknown): ActivityItem[] {
-  if (!Array.isArray(rows)) return [];
-  return rows.map((row, i) => {
+  const activityRows = Array.isArray(rows)
+    ? rows
+    : Array.isArray((rows as { content?: unknown[] } | null)?.content)
+      ? ((rows as { content?: unknown[] }).content ?? [])
+      : Array.isArray((rows as { data?: unknown[] } | null)?.data)
+        ? ((rows as { data?: unknown[] }).data ?? [])
+        : Array.isArray((rows as { items?: unknown[] } | null)?.items)
+          ? ((rows as { items?: unknown[] }).items ?? [])
+          : [];
+  if (!activityRows.length) return [];
+
+  const mapped = activityRows.map((row, i) => {
     const r = row as Record<string, unknown>;
     const id = r.id !== undefined && r.id !== null ? String(r.id) : `act-${i}`;
-    const activityType = String(r.activityType ?? r.type ?? "update");
+    const activityType = String(
+      r.activityType ?? r.type ?? r.action ?? "update",
+    );
     const description =
       pickStr(r, "description") ||
       [r.fieldName, r.oldValue, r.newValue]
@@ -393,5 +569,10 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
       note: pickStr(r, "note", "comments") || undefined,
       change,
     };
+  });
+  return mapped.sort((a, b) => {
+    const bt = b.createdAtIso ? new Date(b.createdAtIso).getTime() : 0;
+    const at = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
+    return bt - at;
   });
 }
