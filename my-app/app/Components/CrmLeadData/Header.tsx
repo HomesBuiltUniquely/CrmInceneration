@@ -12,6 +12,7 @@ import {
   CRM_ROLE_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   fetchSalesExecutivesForManager,
+  GetMeError,
   getMe,
   getNameFromUser,
   getRoleFromUser,
@@ -34,7 +35,13 @@ export default function Header() {
   });
   const [currentUserAliases, setCurrentUserAliases] = useState<string[]>([]);
   const [currentUserId, setCurrentUserId] = useState(0);
-  const [authResolved, setAuthResolved] = useState(false);
+  /** When token + role exist in storage, show CRM immediately; getMe still refreshes identity in the background. */
+  const [authResolved, setAuthResolved] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const token = readStoredCrmToken()?.trim();
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY)?.trim();
+    return Boolean(token && role);
+  });
   const [search, setSearch] = useState("");
   const [leadType, setLeadType] = useState("all");
   const [sort, setSort] = useState("updatedAt,desc");
@@ -52,7 +59,14 @@ export default function Header() {
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
   const [presalesSummaryTab, setPresalesSummaryTab] = useState<
     "total" | "verified" | "teamVerified" | null
-  >(null);
+  >(() => {
+    if (typeof window === "undefined") return null;
+    return isPresalesRole(
+      normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""),
+    )
+      ? "total"
+      : null;
+  });
   const [presalesTeamNames, setPresalesTeamNames] = useState<string[]>([]);
   const presalesSummaryTabRef = useRef(presalesSummaryTab);
   presalesSummaryTabRef.current = presalesSummaryTab;
@@ -94,6 +108,19 @@ export default function Header() {
           .map((v) => v.trim().toLowerCase())
           .filter(Boolean);
         setCurrentUserAliases(Array.from(new Set(aliases)));
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        const status = e instanceof GetMeError ? e.status : 0;
+        const msg = e instanceof Error ? e.message : "";
+        const invalidateSession =
+          status === 401 ||
+          status === 403 ||
+          status === 404 ||
+          /user not found/i.test(msg);
+        if (invalidateSession && typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("crm:auth-expired"));
+        }
       })
       .finally(() => {
         if (!cancelled) setAuthResolved(true);
@@ -181,6 +208,11 @@ export default function Header() {
       cancelled = true;
     };
   }, [isPresalesManager, currentUserId]);
+
+  useEffect(() => {
+    if (!authResolved || !isPresalesRole(currentRole)) return;
+    setPresalesSummaryTab((prev) => (prev === null ? "total" : prev));
+  }, [authResolved, currentRole]);
 
   const presalesVerificationStatus = useMemo(() => {
     if (!isPresalesRole(currentRole)) return "";
@@ -329,8 +361,7 @@ export default function Header() {
                 onAssigneeChange={(next) => {
                   if (
                     currentRole === "SALES_EXECUTIVE" ||
-                    currentRole === "PRESALES_EXECUTIVE" ||
-                    currentRole === "PRE_SALES"
+                    currentRole === "PRESALES_EXECUTIVE"
                   ) {
                     return;
                   }

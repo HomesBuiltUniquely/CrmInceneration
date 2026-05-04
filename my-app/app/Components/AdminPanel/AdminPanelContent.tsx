@@ -486,12 +486,12 @@ function AdminUserSection() {
       ? adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>)
       : Promise.resolve([] as Array<Record<string, unknown>>);
     void Promise.all([
-      adminPanelApi.listManagers().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listSalesManagersMerged().catch(() => [] as Array<Record<string, unknown>>),
       adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
       allUsersReq,
     ]).then(([sm, pm, all]) => {
       if (cancelled) return;
-      setSalesManagers(sm.filter((u) => String(u.active ?? true) !== "false"));
+      setSalesManagers(sm);
       setPresalesManagers(
         pm.filter(
           (u) =>
@@ -509,7 +509,7 @@ function AdminUserSection() {
     return () => {
       cancelled = true;
     };
-  }, [canManageAdmins, viewerRole]);
+  }, [canManageAdmins, viewerRole, tab]);
 
   const ROLES = [
     {
@@ -849,7 +849,10 @@ function AssignSection() {
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminPanelApi.listSalesExecutives(), adminPanelApi.listManagers()])
+    void Promise.all([
+      adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listSalesManagersMerged().catch(() => [] as Array<Record<string, unknown>>),
+    ])
       .then(([se, sm]) => {
         setExecs(se);
         setManagers(sm);

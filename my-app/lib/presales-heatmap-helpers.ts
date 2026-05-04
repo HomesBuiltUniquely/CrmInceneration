@@ -19,22 +19,48 @@ export function isLeadVerifiedForPresales(lead: ApiLead): boolean {
   return isCrmLeadVerified(lead);
 }
 
-/** Prefer assignment date when present so “this month” aligns with assignment; falls back to created / updated. */
+function parseLeadTs(v: unknown): number {
+  const s = String(v ?? "").trim();
+  if (!s) return 0;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/**
+ * Latest meaningful activity (verify, assign, update, create) so “this month” matches
+ * presales work even when `assignedAt` is old but verify/update happened this month.
+ */
 export function leadTimestampForPresalesMonthWindow(lead: ApiLead): number {
   const r = lead as Record<string, unknown>;
-  const raw = String(
-    r.assignedAt ??
-      r.assignmentDate ??
-      r.assignDate ??
-      r.createdAt ??
-      lead.createdDate ??
-      lead.leadDate ??
-      r.createdDate ??
-      lead.updatedAt ??
-      ""
-  ).trim();
-  const ts = raw ? Date.parse(raw) : Number.NaN;
-  return Number.isNaN(ts) ? 0 : ts;
+  const df =
+    lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+      ? (lead.dynamicFields as Record<string, unknown>)
+      : null;
+  const keys = [
+    "verifiedAt",
+    "verificationDate",
+    "lastVerifiedAt",
+    "presalesVerifiedAt",
+    "verifiedOn",
+    "assignedAt",
+    "assignmentDate",
+    "assignDate",
+    "updatedAt",
+    "modifiedAt",
+    "createdAt",
+    "createdDate",
+    "leadDate",
+  ];
+  let max = 0;
+  for (const k of keys) {
+    max = Math.max(max, parseLeadTs(r[k]));
+    if (df) max = Math.max(max, parseLeadTs(df[k]));
+  }
+  max = Math.max(max, parseLeadTs(lead.updatedAt));
+  max = Math.max(max, parseLeadTs(lead.createdAt));
+  max = Math.max(max, parseLeadTs(lead.createdDate));
+  max = Math.max(max, parseLeadTs(lead.leadDate));
+  return max;
 }
 
 export function isTimestampInCurrentMonth(ts: number, now = new Date()): boolean {

@@ -40,10 +40,11 @@ export function getRoleFromUser(user: Record<string, unknown>): string {
     user.userRole ??
     user.authority ??
     user.type;
-  if (typeof direct === "string" && direct.trim()) return direct;
+  if (typeof direct === "string" && direct.trim()) return normalizeRole(direct);
 
   const roles = user.roles;
-  if (Array.isArray(roles) && typeof roles[0] === "string") return roles[0];
+  if (Array.isArray(roles) && typeof roles[0] === "string")
+    return normalizeRole(roles[0]);
   return "";
 }
 
@@ -141,6 +142,17 @@ export async function login(
   return { token, user: user as Record<string, unknown> };
 }
 
+/** Thrown when `GET /api/auth/me` fails; includes HTTP status for callers. */
+export class GetMeError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GetMeError";
+    this.status = status;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 export async function getMe(token: string): Promise<Record<string, unknown>> {
   const res = await fetch(`${getAuthApiBaseUrl()}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -150,11 +162,11 @@ export async function getMe(token: string): Promise<Record<string, unknown>> {
     unknown
   >;
   if (!res.ok) {
-    throw new Error(
-      typeof data.message === "string"
-        ? data.message
-        : "Failed to load current user"
-    );
+    const message =
+      typeof data.message === "string" && data.message.trim()
+        ? data.message.trim()
+        : "Failed to load current user";
+    throw new GetMeError(message, res.status);
   }
   return data;
 }

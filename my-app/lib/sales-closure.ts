@@ -1,4 +1,5 @@
 import type { Lead } from "@/lib/data";
+import { normalizeRole } from "@/lib/auth/api";
 
 export const SALES_CLOSURE_ORIGIN = "https://design.hubinterior.com";
 
@@ -119,4 +120,10 @@ export function isCloserStageBookingDone(lead: Lead): boolean {
   const closer = stage.includes("closer");
   const bookingDone = /booking\s*done/.test(sub) || /booking\s*done/.test(legacy);
   return closer && bookingDone;
+}
+
+/** Hub “Closed” / Sales Closure entry from the lead header — not for Admin or Sales Admin. */
+export function canAccessClosedLeadHeaderActions(role: string): boolean {
+  const r = normalizeRole(role);
+  return r !== "ADMIN" && r !== "SALES_ADMIN";
 }

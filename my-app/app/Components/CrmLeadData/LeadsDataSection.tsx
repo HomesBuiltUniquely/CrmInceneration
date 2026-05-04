@@ -17,6 +17,7 @@ import {
   normalizeRole,
 } from "@/lib/auth/api";
 import { isPresalesRole } from "@/lib/crm-role-access";
+import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -521,7 +522,20 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     setPage(0);
-  }, [assignee, dateFrom, dateTo, leadType, milestoneStage, milestoneStageCategory, milestoneSubStage, sort, debouncedSearch]);
+  }, [
+    assignee,
+    dateFrom,
+    dateTo,
+    leadType,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    sort,
+    debouncedSearch,
+    verificationStatusProp,
+    crmMonthWindowProp,
+    presalesTeamExecutivesOnly,
+  ]);
 
   useEffect(() => {
     setPage(0);
@@ -854,8 +868,16 @@ export default function LeadsDataSection({
       const leadAliases = assigneeAliasNorms(lead);
       const isSelf = leadAssignedToSelf(lead);
 
-      if (roleKey === "SALES_EXECUTIVE" || roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+      if (roleKey === "SALES_EXECUTIVE") {
         return isSelf;
+      }
+
+      if (roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
+        return shouldPresalesExecutiveSeeLeadInCrmPool(lead, {
+          currentUserId,
+          verificationStatusFilter: verificationStatusProp,
+          isSelfLead: leadAssignedToSelf,
+        });
       }
 
       if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
@@ -882,7 +904,15 @@ export default function LeadsDataSection({
 
       return false;
     },
-    [managerTeamNames, managerTeamNamesFromHeader, meNorm, presalesExecs]
+    [
+      managerTeamNames,
+      managerTeamNamesFromHeader,
+      meNorm,
+      presalesExecs,
+      currentUserId,
+      verificationStatusProp,
+      leadAssignedToSelf,
+    ]
   );
   const leadViewKey: "default" | "my" | "team" | "combined" =
     leadView === "my" || leadView === "team" || leadView === "combined" ? leadView : "default";
@@ -1029,6 +1059,8 @@ export default function LeadsDataSection({
     authRoleProp,
     currentRole,
     currentUserName,
+    currentUserId,
+    currentUserAliases,
     managerTeamNames,
     managerTeamNamesFromHeader,
     effectiveAssignee,
@@ -1048,6 +1080,7 @@ export default function LeadsDataSection({
     isNewCrmGlobalSearchMode,
     verificationStatusProp,
     crmMonthWindowProp,
+    presalesExecs,
   ]);
 
   const load = useCallback(async () => {

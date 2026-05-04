@@ -24,6 +24,8 @@ export function validateDiscoveryToConnectionTransition(
 
   const gate = requiresLeadPropertyGateForCompleteTask({
     currentMilestoneStage: lead.stageBlock?.milestoneStage,
+    currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
+    currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
     newMilestoneStage: payload.milestoneStage.trim(),
     newStageCategory: payload.milestoneStageCategory.trim(),
     cancelMode,

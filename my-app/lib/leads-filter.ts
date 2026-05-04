@@ -79,10 +79,61 @@ export type LeadRowModel = {
   actionIcon?: "bolt" | "alert";
 };
 
+function pickLeadScalar(lead: ApiLead, keys: string[]): unknown {
+  const r = lead as Record<string, unknown>;
+  for (const k of keys) {
+    if (!(k in r)) continue;
+    const v = r[k];
+    if (v !== undefined && v !== null && v !== "") return v;
+  }
+  const df = lead.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const d = df as Record<string, unknown>;
+    for (const k of keys) {
+      if (!(k in d)) continue;
+      const v = d[k];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+  }
+  return undefined;
+}
+
 function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | undefined {
-  const vs = String(lead.verificationStatus ?? "").trim().toLowerCase();
-  if (vs === "verified") return "verified";
-  if (vs === "unverified") return "unverified";
+  const rawVs = pickLeadScalar(lead, [
+    "verificationStatus",
+    "verification_status",
+    "verifyStatus",
+    "leadVerificationStatus",
+  ]);
+  const vs = String(rawVs ?? lead.verificationStatus ?? "").trim().toLowerCase();
+  if (
+    vs === "verified" ||
+    vs === "true" ||
+    vs === "1" ||
+    vs === "yes" ||
+    vs === "complete" ||
+    vs === "done"
+  ) {
+    return "verified";
+  }
+  if (vs === "unverified" || vs === "false" || vs === "0" || vs === "no" || vs === "pending") {
+    return "unverified";
+  }
+
+  const boolKeys = ["verified", "isVerified", "is_verified", "leadVerified", "presalesVerified"];
+  for (const k of boolKeys) {
+    const v = pickLeadScalar(lead, [k]);
+    if (typeof v === "boolean") return v ? "verified" : "unverified";
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (s === "true" || s === "yes" || s === "1" || s === "verified") return "verified";
+      if (s === "false" || s === "no" || s === "0" || s === "unverified") return "unverified";
+    }
+    if (typeof v === "number") {
+      if (v === 1) return "verified";
+      if (v === 0) return "unverified";
+    }
+  }
   if (typeof lead.verified === "boolean") return lead.verified ? "verified" : "unverified";
   return undefined;
 }

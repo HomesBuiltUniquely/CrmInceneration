@@ -6,6 +6,23 @@ const DISCOVERY_STAGE = "Discovery";
 const CONNECTION_STAGE = "Connection";
 const EXPERIENCE_DESIGN_STAGE = "Experience & Design";
 
+/** True when the lead is still in the Fresh Lead intake phase (own stage or Discovery + fresh substage/category). */
+export function isFreshLeadMilestonePosition(
+  milestoneStage: string | null | undefined,
+  milestoneSubStage: string | null | undefined,
+  milestoneStageCategory: string | null | undefined,
+): boolean {
+  const st = normalizeStageKey(milestoneStage ?? "");
+  const sub = normalizeStageKey(milestoneSubStage ?? "");
+  const cat = normalizeStageKey(milestoneStageCategory ?? "");
+  const isFreshToken = (s: string) =>
+    s === "fresh lead" || s === "fresh leads" || /^fresh\s+leads?$/.test(s);
+  if (isFreshToken(st)) return true;
+  if (isFreshToken(sub)) return true;
+  if (isFreshToken(cat)) return true;
+  return false;
+}
+
 export function matchesMilestoneStage(
   label: string | null | undefined,
   canonical: string
@@ -43,9 +60,12 @@ export function leadPropertyGateErrorMessage(
  * - Moving **Discovery** → **Connection**, or
  * - The milestone move involves **Experience & Design** (entering, leaving, or changing substage there).
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
+ * Skipped while the lead is still in **Fresh Lead** (top-level stage, or substage/category named Fresh Lead / Fresh Leads).
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {
   currentMilestoneStage: string | null | undefined;
+  currentMilestoneSubStage?: string | null | undefined;
+  currentMilestoneStageCategory?: string | null | undefined;
   newMilestoneStage: string | null | undefined;
   newStageCategory: string | null | undefined;
   cancelMode: boolean;
@@ -56,6 +76,16 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
 
   const cur = args.currentMilestoneStage ?? "";
   const next = args.newMilestoneStage ?? "";
+
+  if (
+    isFreshLeadMilestonePosition(
+      args.currentMilestoneStage,
+      args.currentMilestoneSubStage,
+      args.currentMilestoneStageCategory,
+    )
+  ) {
+    return false;
+  }
 
   const discoveryToConnection =
     matchesMilestoneStage(cur, DISCOVERY_STAGE) &&

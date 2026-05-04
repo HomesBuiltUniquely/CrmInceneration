@@ -12,10 +12,12 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   getDesignerIdFromUser,
   getDesignerNameFromUser,
+  getMe,
   getNameFromUser,
   getRoleFromUser,
   landingPathByRole,
   login,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 
 export default function LoginPage() {
@@ -42,8 +44,15 @@ export default function LoginPage() {
     try {
       const { token, user } = await login(username, password);
       localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
-      const role = getRoleFromUser(user);
-      const name = getNameFromUser(user);
+      let sessionUser: Record<string, unknown> = user;
+      try {
+        const me = await getMe(token);
+        sessionUser = unwrapAuthUserPayload(me as Record<string, unknown>);
+      } catch {
+        /* use login payload if /api/auth/me is unavailable */
+      }
+      const role = getRoleFromUser(sessionUser);
+      const name = getNameFromUser(sessionUser);
       if (role) {
         localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
       } else {
@@ -54,8 +63,8 @@ export default function LoginPage() {
       } else {
         localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
       }
-      const designerName = getDesignerNameFromUser(user);
-      const designerId = getDesignerIdFromUser(user);
+      const designerName = getDesignerNameFromUser(sessionUser);
+      const designerId = getDesignerIdFromUser(sessionUser);
       if (designerName) {
         localStorage.setItem(CRM_DESIGNER_NAME_STORAGE_KEY, designerName);
       } else {
