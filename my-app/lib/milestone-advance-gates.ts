@@ -4,7 +4,6 @@ import { normalizeStageKey } from "@/lib/milestone-progress";
 /** Pipeline top-level stage names from `crm-pipeline` `nested[].stage` (case-insensitive). */
 const DISCOVERY_STAGE = "Discovery";
 const CONNECTION_STAGE = "Connection";
-const EXPERIENCE_DESIGN_STAGE = "Experience & Design";
 
 /** True when the lead is still in the Fresh Lead intake phase (own stage or Discovery + fresh substage/category). */
 export function isFreshLeadMilestonePosition(
@@ -52,15 +51,14 @@ export function leadPropertyGateErrorMessage(
   missing: Array<"Budget" | "Property notes" | "Configuration">,
 ): string {
   if (missing.length === 0) return "";
-  return `Fill ${missing.join(", ")} on the Lead tab (required for Discovery → Connection and Experience & Design; cannot be empty).`;
+  return `Fill ${missing.join(", ")} on the Lead tab (required for Fresh Lead → Connection or Discovery → Connection; cannot be empty).`;
 }
 
 /**
  * Budget, Property notes, and Configuration are required when:
- * - Moving **Discovery** → **Connection**, or
- * - The milestone move involves **Experience & Design** (entering, leaving, or changing substage there).
+ * - Moving **Fresh Lead** → **Connection**, or
+ * - Moving **Discovery** → **Connection**.
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
- * Skipped while the lead is still in **Fresh Lead** (top-level stage, or substage/category named Fresh Lead / Fresh Leads).
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {
   currentMilestoneStage: string | null | undefined;
@@ -77,35 +75,24 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
   const cur = args.currentMilestoneStage ?? "";
   const next = args.newMilestoneStage ?? "";
 
-  if (
-    isFreshLeadMilestonePosition(
-      args.currentMilestoneStage,
-      args.currentMilestoneSubStage,
-      args.currentMilestoneStageCategory,
-    )
-  ) {
-    return false;
-  }
+  const isFresh = isFreshLeadMilestonePosition(
+    args.currentMilestoneStage,
+    args.currentMilestoneSubStage,
+    args.currentMilestoneStageCategory,
+  );
+  const freshLeadToConnection =
+    isFresh && matchesMilestoneStage(next, CONNECTION_STAGE);
+  if (freshLeadToConnection) return true;
 
   const discoveryToConnection =
     matchesMilestoneStage(cur, DISCOVERY_STAGE) &&
     matchesMilestoneStage(next, CONNECTION_STAGE);
   if (discoveryToConnection) return true;
 
-  const newIsExperienceDesign = matchesMilestoneStage(
-    next,
-    EXPERIENCE_DESIGN_STAGE,
-  );
-  const currentIsExperienceDesign = matchesMilestoneStage(
-    cur,
-    EXPERIENCE_DESIGN_STAGE,
-  );
-  if (newIsExperienceDesign || currentIsExperienceDesign) return true;
-
   return false;
 }
 
-/** @deprecated Use {@link requiresLeadPropertyGateForCompleteTask} — gate now includes Experience & Design. */
+/** @deprecated Use {@link requiresLeadPropertyGateForCompleteTask}. */
 export function requiresLeadFieldsForDiscoveryToConnection(args: {
   currentMilestoneStage: string | null | undefined;
   newMilestoneStage: string | null | undefined;

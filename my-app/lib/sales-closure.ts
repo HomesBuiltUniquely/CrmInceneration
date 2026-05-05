@@ -1,5 +1,5 @@
 import type { Lead } from "@/lib/data";
-import { normalizeRole } from "@/lib/auth/api";
+import { getRoleFromUser, normalizeRole } from "@/lib/auth/api";
 
 export const SALES_CLOSURE_ORIGIN = "https://design.hubinterior.com";
 
@@ -126,4 +126,44 @@ export function isCloserStageBookingDone(lead: Lead): boolean {
 export function canAccessClosedLeadHeaderActions(role: string): boolean {
   const r = normalizeRole(role);
   return r !== "ADMIN" && r !== "SALES_ADMIN";
+}
+
+function normalizeWonCandidate(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[-\s]+/g, "_");
+}
+
+export function maybeOpenSalesClosureOnWon(args: {
+  statusCandidates?: unknown[];
+  currentUser?: Record<string, unknown> | null;
+  openUrl: string;
+  onReturnRefresh?: () => void;
+}): void {
+  try {
+    const role = normalizeRole(getRoleFromUser(args.currentUser ?? {}));
+    if (role !== "SALES_EXECUTIVE") return;
+    const isWon = (args.statusCandidates ?? []).some((value) => {
+      const normalized = normalizeWonCandidate(value);
+      return normalized === "WON" || normalized === "CLOSED_WON";
+    });
+    if (!isWon) return;
+    if (typeof window === "undefined") return;
+
+    window.addEventListener(
+      "focus",
+      () => {
+        try {
+          args.onReturnRefresh?.();
+        } catch (e) {
+          console.warn("Refresh after Sales Closure failed:", e);
+        }
+      },
+      { once: true },
+    );
+    window.open(args.openUrl, "_blank");
+  } catch (e) {
+    console.error("WON -> Sales Closure handling failed:", e);
+  }
 }

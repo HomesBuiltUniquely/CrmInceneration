@@ -42,6 +42,7 @@ import {
   buildSalesClosureUrl,
   canAccessClosedLeadHeaderActions,
   isCloserStageBookingDone,
+  maybeOpenSalesClosureOnWon,
 } from "@/lib/sales-closure";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
@@ -229,10 +230,12 @@ function formatExternalIntakeSlotRange(
 function buildExternalIntakeScheduleFromAppointment(args: {
   meetingDate: string;
   appt: CreateAppointmentResponse;
+  designerName?: string;
 }): {
   appointmentDate: string;
   appointmentSlot: string;
   scheduleTimezone: string;
+  designerName: string;
 } {
   const scheduleTimezone = EXTERNAL_INTAKE_DEFAULT_TZ;
   const appointmentDate =
@@ -251,7 +254,8 @@ function buildExternalIntakeScheduleFromAppointment(args: {
       args.appt.endTime,
       scheduleTimezone,
     );
-  return { appointmentDate, appointmentSlot, scheduleTimezone };
+  const designerName = args.designerName?.trim() ?? "";
+  return { appointmentDate, appointmentSlot, scheduleTimezone, designerName };
 }
 
 async function postExternalIntakeLead(args: {
@@ -262,6 +266,7 @@ async function postExternalIntakeLead(args: {
     appointmentDate: string;
     appointmentSlot: string;
     scheduleTimezone: string;
+    designerName?: string;
   };
 }): Promise<void> {
   const pickText = (value: unknown): string => {
@@ -301,10 +306,16 @@ async function postExternalIntakeLead(args: {
   };
 
   if (args.schedule) {
-    const { appointmentDate, appointmentSlot, scheduleTimezone } = args.schedule;
+    const {
+      appointmentDate,
+      appointmentSlot,
+      scheduleTimezone,
+      designerName,
+    } = args.schedule;
     if (appointmentDate) payload.appointmentDate = appointmentDate;
     if (appointmentSlot) payload.appointmentSlot = appointmentSlot;
     if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
+    if (designerName?.trim()) payload.designerName = designerName.trim();
   }
 
   if (!payload.externalLeadId) {
@@ -971,6 +982,48 @@ export default function LeadDetailsApiClient({
     validLeadType,
   ]);
 
+  const refreshActivities = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    try {
+      const actJson = await getLeadActivities(lt, leadId);
+      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
+    } catch {
+      /* ignore */
+    }
+  }, [leadId, leadTypeParam, validLeadType]);
+
+  const refreshLeadAfterSalesClosure = useCallback(() => {
+    notifyInfo("Refreshing latest lead updates...");
+    void load();
+    void refreshActivities();
+  }, [load, notifyInfo, refreshActivities]);
+
+  const maybeOpenSalesClosureAfterWon = useCallback(
+    (statusCandidates: unknown[]) => {
+      if (typeof window === "undefined") return;
+      maybeOpenSalesClosureOnWon({
+        statusCandidates,
+        currentUser: salesClosureAuthUser,
+        openUrl: buildSalesClosureUrl({
+          leadId: lead.leadId?.trim() || leadId,
+          leadTypeLabel: crmLeadTypeToApiLabel(leadType),
+          returnUrl: window.location.href,
+          lead,
+          authUser: salesClosureAuthUser,
+        }),
+        onReturnRefresh: refreshLeadAfterSalesClosure,
+      });
+    },
+    [
+      lead,
+      leadId,
+      leadType,
+      refreshLeadAfterSalesClosure,
+      salesClosureAuthUser,
+    ],
+  );
+
   const handleSave = useCallback(async () => {
     if (!validLeadType) return;
     if (!leadId.trim()) {
@@ -1022,6 +1075,17 @@ export default function LeadDetailsApiClient({
         id: leadId,
         activities: prev.activities,
       }));
+      maybeOpenSalesClosureAfterWon([
+        lead.status,
+        lead.stageBlock?.milestoneStage,
+        lead.stageBlock?.milestoneSubStage,
+        body.status,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+        updated.status,
+        updated.milestoneStage,
+        updated.milestoneSubStage,
+      ]);
     } catch (e) {
       setLead(previousLead);
       setSaveError(mapMilestoneValidationError(e));
@@ -1033,6 +1097,7 @@ export default function LeadDetailsApiClient({
     lead,
     leadId,
     leadTypeParam,
+    maybeOpenSalesClosureAfterWon,
     canClosedLeadHeader,
     notifyError,
     redirectToStrictSalesClosure,
@@ -1061,12 +1126,31 @@ export default function LeadDetailsApiClient({
         activities: prev.activities,
       }));
       notifySuccess("Additional info saved.");
+      maybeOpenSalesClosureAfterWon([
+        lead.status,
+        lead.stageBlock?.milestoneStage,
+        lead.stageBlock?.milestoneSubStage,
+        body.status,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+        updated.status,
+        updated.milestoneStage,
+        updated.milestoneSubStage,
+      ]);
     } catch (e) {
       setSecondBoxError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSavingSecondBox(false);
     }
-  }, [baseDetail, lead, leadId, leadTypeParam, validLeadType, notifySuccess]);
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    maybeOpenSalesClosureAfterWon,
+    validLeadType,
+    notifySuccess,
+  ]);
 
   const handleVerify = useCallback(async () => {
     if (!validLeadType) return;
@@ -1170,17 +1254,6 @@ export default function LeadDetailsApiClient({
     quoteSubject,
     validLeadType,
   ]);
-
-  const refreshActivities = useCallback(async () => {
-    if (!validLeadType) return;
-    const lt = leadTypeParam as CrmLeadType;
-    try {
-      const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
-    } catch {
-      /* ignore */
-    }
-  }, [leadId, leadTypeParam, validLeadType]);
 
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
@@ -1335,6 +1408,7 @@ export default function LeadDetailsApiClient({
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
+            designerName: args.meetingAppointment.designerName,
           });
           void postExternalIntakeLead({
             lead,
@@ -1395,6 +1469,20 @@ export default function LeadDetailsApiClient({
           stageBlock: nextStage,
         }));
         notifySuccess("Saved");
+        maybeOpenSalesClosureAfterWon([
+          args.feedback,
+          args.milestoneStage,
+          args.milestoneStageCategory,
+          persistedSubstage,
+          nextStage.milestoneStage,
+          nextStage.milestoneSubStage,
+          body.status,
+          (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+          (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+          updated.status,
+          updated.milestoneStage,
+          updated.milestoneSubStage,
+        ]);
         void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
           /* keep save fast even if note activity fails */
         });

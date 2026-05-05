@@ -14,7 +14,8 @@ export type DiscoveryToConnectionPayload = {
 
 /**
  * Server-safe guard for `handleCompleteTaskApi` — same rules as Complete Task modal:
- * Budget, Property notes, and Configuration for Discovery→Connection and Experience & Design moves.
+ * Budget, Property notes, and Configuration for Fresh Lead→Connection and Discovery→Connection
+ * (see `requiresLeadPropertyGateForCompleteTask`).
  */
 export function validateDiscoveryToConnectionTransition(
   lead: Lead,
