@@ -261,6 +261,7 @@ function buildExternalIntakeScheduleFromAppointment(args: {
 async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
+  authUser?: Record<string, unknown> | null;
   /** When set (e.g. after scheduling), forwarded to Hub external-intake. */
   schedule?: {
     appointmentDate: string;
@@ -274,6 +275,28 @@ async function postExternalIntakeLead(args: {
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
     return "";
   };
+  const pickUserLikeName = (value: unknown): string => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    const row = value as Record<string, unknown>;
+    return (
+      pickText(row.fullName) ||
+      pickText(row.name) ||
+      pickText(row.displayName) ||
+      pickText(row.username)
+    );
+  };
+  const pickUserLikeEmail = (value: unknown): string => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+    const row = value as Record<string, unknown>;
+    return (
+      pickText(row.email) ||
+      pickText(row.mail) ||
+      pickText(row.emailAddress) ||
+      pickText(row.workEmail)
+    );
+  };
+  const isLikelyEmail = (value: string): boolean =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
   const normalizeExternalLeadId = (value: string): string => {
     const compactHyphen = value.replace(/\s*-\s*/g, "-");
     const noSpaces = compactHyphen.replace(/\s+/g, "");
@@ -304,6 +327,40 @@ async function postExternalIntakeLead(args: {
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
+  const salesExecutive =
+    pickText(args.lead.assignee) ||
+    pickText(args.baseDetail.assignedTo) ||
+    pickText(args.baseDetail.assignee) ||
+    pickText(args.baseDetail.salesOwnerName) ||
+    pickText(args.baseDetail.ownerName) ||
+    pickUserLikeName(args.baseDetail.assignee) ||
+    pickUserLikeName(args.baseDetail.assignedTo) ||
+    pickUserLikeName(args.baseDetail.salesOwner) ||
+    pickUserLikeName(args.baseDetail.owner) ||
+    pickUserLikeName(args.baseDetail.salesExecutive) ||
+    pickText(args.authUser?.fullName) ||
+    pickText(args.authUser?.name) ||
+    pickText(args.authUser?.username);
+  if (salesExecutive) {
+    payload.salesExecutive = salesExecutive;
+  }
+  const salesExecutiveEmailCandidate =
+    pickText((args.baseDetail.assignee as Record<string, unknown> | undefined)?.email) ||
+    pickText((args.baseDetail.assignedTo as Record<string, unknown> | undefined)?.email) ||
+    pickText((args.baseDetail.salesOwner as Record<string, unknown> | undefined)?.email) ||
+    pickText((args.baseDetail.owner as Record<string, unknown> | undefined)?.email) ||
+    pickUserLikeEmail(args.baseDetail.assignee) ||
+    pickUserLikeEmail(args.baseDetail.assignedTo) ||
+    pickUserLikeEmail(args.baseDetail.salesOwner) ||
+    pickUserLikeEmail(args.baseDetail.owner) ||
+    pickUserLikeEmail(args.baseDetail.salesExecutive) ||
+    pickText(args.authUser?.email) ||
+    pickText(args.authUser?.mail) ||
+    pickText(args.authUser?.emailAddress) ||
+    pickText(args.authUser?.workEmail);
+  if (salesExecutiveEmailCandidate && isLikelyEmail(salesExecutiveEmailCandidate)) {
+    payload.salesExecutiveEmail = salesExecutiveEmailCandidate;
+  }
 
   if (args.schedule) {
     const {
@@ -1413,6 +1470,7 @@ export default function LeadDetailsApiClient({
           void postExternalIntakeLead({
             lead,
             baseDetail,
+            authUser: salesClosureAuthUser,
             schedule:
               schedule.appointmentDate ||
               schedule.appointmentSlot ||
