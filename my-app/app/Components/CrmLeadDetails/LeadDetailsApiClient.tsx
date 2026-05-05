@@ -341,6 +341,9 @@ async function postExternalIntakeLead(args: {
       pickText(args.baseDetail.mail),
     externalLeadId,
     sourceProject: "crm-inceneration",
+    designerName: "",
+    salesExecutive: "",
+    salesExecutiveEmail: "",
   };
   const salesExecutive = normalizeOptionalPersonField(
     pickText(args.lead.assignee) ||
@@ -357,9 +360,7 @@ async function postExternalIntakeLead(args: {
     pickText(args.authUser?.name) ||
     pickText(args.authUser?.username),
   );
-  if (salesExecutive) {
-    payload.salesExecutive = salesExecutive;
-  }
+  payload.salesExecutive = salesExecutive;
   const salesExecutiveEmailCandidate = normalizeOptionalPersonField(
     pickText((args.baseDetail.assignee as Record<string, unknown> | undefined)?.email) ||
     pickText((args.baseDetail.assignedTo as Record<string, unknown> | undefined)?.email) ||
@@ -375,9 +376,10 @@ async function postExternalIntakeLead(args: {
     pickText(args.authUser?.emailAddress) ||
     pickText(args.authUser?.workEmail),
   );
-  if (salesExecutiveEmailCandidate && isLikelyEmail(salesExecutiveEmailCandidate)) {
-    payload.salesExecutiveEmail = salesExecutiveEmailCandidate;
-  }
+  payload.salesExecutiveEmail =
+    salesExecutiveEmailCandidate && isLikelyEmail(salesExecutiveEmailCandidate)
+      ? salesExecutiveEmailCandidate
+      : "";
 
   if (args.schedule) {
     const {
@@ -397,7 +399,7 @@ async function postExternalIntakeLead(args: {
         pickUserLikeName(args.baseDetail.designer) ||
         pickUserLikeName(args.baseDetail.interiorDesigner),
     );
-    if (resolvedDesignerName) payload.designerName = resolvedDesignerName;
+    payload.designerName = resolvedDesignerName;
   }
 
   if (!payload.externalLeadId) {
