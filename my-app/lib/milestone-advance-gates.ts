@@ -37,13 +37,26 @@ export type LeadPropertyGateFields = {
   configuration: string | null | undefined;
 };
 
+function isEffectivelyEmptyField(value: string | null | undefined): boolean {
+  const v = String(value ?? "").trim();
+  if (!v) return true;
+  const normalized = v.toLowerCase().replace(/[\s._\-–—/]+/g, "");
+  if (!normalized) return true;
+  return (
+    normalized === "na" ||
+    normalized === "none" ||
+    normalized === "null" ||
+    normalized === "undefined"
+  );
+}
+
 export function missingLeadPropertyGateFields(
   lead: LeadPropertyGateFields
 ): Array<"Budget" | "Property notes" | "Configuration"> {
   const missing: Array<"Budget" | "Property notes" | "Configuration"> = [];
-  if (!(lead.budget ?? "").trim()) missing.push("Budget");
-  if (!(lead.propertyNotes ?? "").trim()) missing.push("Property notes");
-  if (!(lead.configuration ?? "").trim()) missing.push("Configuration");
+  if (isEffectivelyEmptyField(lead.budget)) missing.push("Budget");
+  if (isEffectivelyEmptyField(lead.propertyNotes)) missing.push("Property notes");
+  if (isEffectivelyEmptyField(lead.configuration)) missing.push("Configuration");
   return missing;
 }
 

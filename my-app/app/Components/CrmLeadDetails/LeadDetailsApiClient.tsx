@@ -1414,7 +1414,9 @@ export default function LeadDetailsApiClient({
             lead,
             baseDetail,
             schedule:
-              schedule.appointmentDate || schedule.appointmentSlot
+              schedule.appointmentDate ||
+              schedule.appointmentSlot ||
+              schedule.designerName
                 ? schedule
                 : undefined,
           }).catch((e) => {
