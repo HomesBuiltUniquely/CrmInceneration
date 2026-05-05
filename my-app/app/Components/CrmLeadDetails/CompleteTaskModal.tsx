@@ -136,6 +136,7 @@ export default function CompleteTaskModal({
   const [showErrors, setShowErrors] = useState(false);
   const [apiBusy, setApiBusy] = useState(false);
   const [apiError, setApiError] = useState("");
+  const [gatePopupMessage, setGatePopupMessage] = useState("");
   const [meetingDesigner, setMeetingDesigner] = useState("");
   const [appointmentDate, setAppointmentDate] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
@@ -183,6 +184,7 @@ export default function CompleteTaskModal({
   useEffect(() => {
     if (!open) {
       setQuotePopupDismissed(false);
+      setGatePopupMessage("");
       return;
     }
 
@@ -200,6 +202,7 @@ export default function CompleteTaskModal({
     setAvailableSlots([]);
     setCancelConfirmed(false);
     setApiError("");
+    setGatePopupMessage("");
     setLostReason(lead.lostReason?.trim() ?? "");
   }, [defaultNextCallDate, lead.lostReason, lead.status, open]);
 
@@ -447,7 +450,12 @@ export default function CompleteTaskModal({
     if (needsLeadPropertyGate) {
       const missing = missingLeadPropertyGateFields(lead);
       if (missing.length > 0) {
-        setApiError(leadPropertyGateErrorMessage(missing));
+        const toConnection = status.trim().toLowerCase() === "connection";
+        const popupMessage = toConnection
+          ? "Fill all the details (Budget, Property notes, Configuration) before you update the milestone to Connection."
+          : leadPropertyGateErrorMessage(missing);
+        setApiError(popupMessage);
+        setGatePopupMessage(popupMessage);
         return;
       }
     }
@@ -923,7 +931,9 @@ export default function CompleteTaskModal({
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Fresh Lead</strong> →{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong> or{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>, fill{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong> or{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Experience &amp; Design</strong>{" "}
+              milestone moves, fill{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>, and{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required).
@@ -1049,6 +1059,40 @@ export default function CompleteTaskModal({
                   {quoteInline.sending ? "Sending…" : "Send quote email"}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {gatePopupMessage ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="milestone-gate-popup-title"
+          onClick={() => setGatePopupMessage("")}
+        >
+          <div
+            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="milestone-gate-popup-title"
+              className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
+            >
+              Required details missing
+            </h3>
+            <p className="mt-2 text-[13px] text-[var(--crm-text-secondary)]">
+              {gatePopupMessage}
+            </p>
+            <div className="mt-4 flex justify-end">
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => setGatePopupMessage("")}
+              >
+                OK
+              </Button>
             </div>
           </div>
         </div>
