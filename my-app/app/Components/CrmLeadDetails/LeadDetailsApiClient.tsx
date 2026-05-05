@@ -275,6 +275,21 @@ async function postExternalIntakeLead(args: {
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
     return "";
   };
+  const normalizeOptionalPersonField = (value: string): string => {
+    const v = value.trim();
+    if (!v) return "";
+    const token = v.toLowerCase().replace(/[\s._\-–—/]+/g, "");
+    if (
+      !token ||
+      token === "na" ||
+      token === "none" ||
+      token === "null" ||
+      token === "undefined"
+    ) {
+      return "";
+    }
+    return v;
+  };
   const pickUserLikeName = (value: unknown): string => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return "";
     const row = value as Record<string, unknown>;
@@ -327,7 +342,7 @@ async function postExternalIntakeLead(args: {
     externalLeadId,
     sourceProject: "crm-inceneration",
   };
-  const salesExecutive =
+  const salesExecutive = normalizeOptionalPersonField(
     pickText(args.lead.assignee) ||
     pickText(args.baseDetail.assignedTo) ||
     pickText(args.baseDetail.assignee) ||
@@ -340,11 +355,12 @@ async function postExternalIntakeLead(args: {
     pickUserLikeName(args.baseDetail.salesExecutive) ||
     pickText(args.authUser?.fullName) ||
     pickText(args.authUser?.name) ||
-    pickText(args.authUser?.username);
+    pickText(args.authUser?.username),
+  );
   if (salesExecutive) {
     payload.salesExecutive = salesExecutive;
   }
-  const salesExecutiveEmailCandidate =
+  const salesExecutiveEmailCandidate = normalizeOptionalPersonField(
     pickText((args.baseDetail.assignee as Record<string, unknown> | undefined)?.email) ||
     pickText((args.baseDetail.assignedTo as Record<string, unknown> | undefined)?.email) ||
     pickText((args.baseDetail.salesOwner as Record<string, unknown> | undefined)?.email) ||
@@ -357,7 +373,8 @@ async function postExternalIntakeLead(args: {
     pickText(args.authUser?.email) ||
     pickText(args.authUser?.mail) ||
     pickText(args.authUser?.emailAddress) ||
-    pickText(args.authUser?.workEmail);
+    pickText(args.authUser?.workEmail),
+  );
   if (salesExecutiveEmailCandidate && isLikelyEmail(salesExecutiveEmailCandidate)) {
     payload.salesExecutiveEmail = salesExecutiveEmailCandidate;
   }
@@ -372,7 +389,15 @@ async function postExternalIntakeLead(args: {
     if (appointmentDate) payload.appointmentDate = appointmentDate;
     if (appointmentSlot) payload.appointmentSlot = appointmentSlot;
     if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
-    if (designerName?.trim()) payload.designerName = designerName.trim();
+    const resolvedDesignerName = normalizeOptionalPersonField(
+      designerName?.trim() ||
+        pickText(args.lead.designerName) ||
+        pickText(args.baseDetail.designerName) ||
+        pickText(args.baseDetail.designer) ||
+        pickUserLikeName(args.baseDetail.designer) ||
+        pickUserLikeName(args.baseDetail.interiorDesigner),
+    );
+    if (resolvedDesignerName) payload.designerName = resolvedDesignerName;
   }
 
   if (!payload.externalLeadId) {
@@ -390,6 +415,16 @@ async function postExternalIntakeLead(args: {
   console.info("External intake id mapping", {
     selectedSource: chosen?.source ?? null,
     externalLeadId: payload.externalLeadId,
+    hasDesignerName: Boolean(
+      typeof payload.designerName === "string" && payload.designerName.trim(),
+    ),
+    hasSalesExecutive: Boolean(
+      typeof payload.salesExecutive === "string" && payload.salesExecutive.trim(),
+    ),
+    hasSalesExecutiveEmail: Boolean(
+      typeof payload.salesExecutiveEmail === "string" &&
+        payload.salesExecutiveEmail.trim(),
+    ),
   });
 
   const res = await fetch("/api/crm/external-intake", {

@@ -77,6 +77,7 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
   currentMilestoneStage: string | null | undefined;
   currentMilestoneSubStage?: string | null | undefined;
   currentMilestoneStageCategory?: string | null | undefined;
+  currentStatus?: string | null | undefined;
   newMilestoneStage: string | null | undefined;
   newStageCategory: string | null | undefined;
   cancelMode: boolean;
@@ -92,7 +93,7 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
     args.currentMilestoneStage,
     args.currentMilestoneSubStage,
     args.currentMilestoneStageCategory,
-  );
+  ) || isFreshLeadMilestonePosition(args.currentStatus, "", "");
   const freshLeadToConnection =
     isFresh && matchesMilestoneStage(next, CONNECTION_STAGE);
   if (freshLeadToConnection) return true;

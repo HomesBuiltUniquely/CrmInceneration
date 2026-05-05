@@ -27,6 +27,7 @@ export function validateDiscoveryToConnectionTransition(
     currentMilestoneStage: lead.stageBlock?.milestoneStage,
     currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
     currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+    currentStatus: lead.status,
     newMilestoneStage: payload.milestoneStage.trim(),
     newStageCategory: payload.milestoneStageCategory.trim(),
     cancelMode,

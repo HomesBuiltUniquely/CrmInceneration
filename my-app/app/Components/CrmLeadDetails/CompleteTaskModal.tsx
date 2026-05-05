@@ -439,6 +439,7 @@ export default function CompleteTaskModal({
       currentMilestoneStage: lead.stageBlock?.milestoneStage,
       currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
       currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+      currentStatus: lead.status,
       newMilestoneStage: status,
       newStageCategory: path,
       cancelMode,
