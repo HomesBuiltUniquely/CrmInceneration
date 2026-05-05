@@ -52,15 +52,15 @@ export function leadPropertyGateErrorMessage(
   missing: Array<"Budget" | "Property notes" | "Configuration">,
 ): string {
   if (missing.length === 0) return "";
-  return `Fill ${missing.join(", ")} on the Lead tab (required for Discovery → Connection and Experience & Design; cannot be empty).`;
+  return `Fill ${missing.join(", ")} on the Lead tab (required for Fresh → Connection, Discovery → Connection, and Experience & Design; cannot be empty).`;
 }
 
 /**
  * Budget, Property notes, and Configuration are required when:
+ * - Moving **Fresh** → **Connection**,
  * - Moving **Discovery** → **Connection**, or
  * - The milestone move involves **Experience & Design** (entering, leaving, or changing substage there).
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
- * Skipped while the lead is still in **Fresh Lead** (top-level stage, or substage/category named Fresh Lead / Fresh Leads).
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {
   currentMilestoneStage: string | null | undefined;
@@ -77,15 +77,17 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
   const cur = args.currentMilestoneStage ?? "";
   const next = args.newMilestoneStage ?? "";
 
-  if (
-    isFreshLeadMilestonePosition(
-      args.currentMilestoneStage,
-      args.currentMilestoneSubStage,
-      args.currentMilestoneStageCategory,
-    )
-  ) {
-    return false;
-  }
+  const currentIsFresh = isFreshLeadMilestonePosition(
+    args.currentMilestoneStage,
+    args.currentMilestoneSubStage,
+    args.currentMilestoneStageCategory,
+  );
+
+  const freshToConnection =
+    currentIsFresh && matchesMilestoneStage(next, CONNECTION_STAGE);
+  if (freshToConnection) return true;
+
+  if (currentIsFresh) return false;
 
   const discoveryToConnection =
     matchesMilestoneStage(cur, DISCOVERY_STAGE) &&
