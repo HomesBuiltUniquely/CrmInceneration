@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BASE_URL } from "@/lib/base-url";
+import { BASE_URLs } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 function buildProxyHeaders(req: NextRequest): HeadersInit {
@@ -31,7 +31,7 @@ export async function GET(
   }
 
   const res = await fetch(
-    `${BASE_URL}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+    `${BASE_URLs}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
     {
       method: "GET",
       headers: buildProxyHeaders(req),
