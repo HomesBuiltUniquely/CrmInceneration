@@ -1,8 +1,8 @@
 /**
  * CRM backend origin without a trailing slash.
- * Hardcoded to production Hub API as requested.
+ * Hardcoded to production HOWS backend as requested.
  */
-export const CRM_API_BASE_URL = "https://api.hubinterior.com".replace(
+export const CRM_API_BASE_URL = "https://hows.hubinterior.com".replace(
   /\/$/,
   "",
 );
