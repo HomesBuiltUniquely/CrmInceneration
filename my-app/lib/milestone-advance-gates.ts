@@ -4,7 +4,6 @@ import { normalizeStageKey } from "@/lib/milestone-progress";
 /** Pipeline top-level stage names from `crm-pipeline` `nested[].stage` (case-insensitive). */
 const DISCOVERY_STAGE = "Discovery";
 const CONNECTION_STAGE = "Connection";
-const EXPERIENCE_DESIGN_STAGE = "Experience & Design";
 
 /** True when the lead is still in the Fresh Lead intake phase (own stage or Discovery + fresh substage/category). */
 export function isFreshLeadMilestonePosition(
@@ -65,14 +64,12 @@ export function leadPropertyGateErrorMessage(
   missing: Array<"Budget" | "Property notes" | "Configuration">,
 ): string {
   if (missing.length === 0) return "";
-  return `Fill ${missing.join(", ")} on the Lead tab (required for Fresh Lead → Connection, Discovery → Connection, and Experience & Design; cannot be empty).`;
+  return `Fill ${missing.join(", ")} on the Lead tab (required for Discovery → Connection; cannot be empty).`;
 }
 
 /**
  * Budget, Property notes, and Configuration are required when:
- * - Moving **Fresh Lead** → **Connection**,
- * - Moving **Discovery** → **Connection**, or
- * - The milestone move involves **Experience & Design** (entering, leaving, or changing substage there).
+ * - Moving **Discovery** → **Connection**.
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {
@@ -91,32 +88,10 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
   const cur = args.currentMilestoneStage ?? "";
   const next = args.newMilestoneStage ?? "";
 
-  const currentIsFresh = isFreshLeadMilestonePosition(
-    args.currentMilestoneStage,
-    args.currentMilestoneSubStage,
-    args.currentMilestoneStageCategory,
-  ) || isFreshLeadMilestonePosition(args.currentStatus, "", "");
-
-  const freshLeadToConnection =
-    currentIsFresh && matchesMilestoneStage(next, CONNECTION_STAGE);
-  if (freshLeadToConnection) return true;
-
-  if (currentIsFresh) return false;
-
   const discoveryToConnection =
     matchesMilestoneStage(cur, DISCOVERY_STAGE) &&
     matchesMilestoneStage(next, CONNECTION_STAGE);
   if (discoveryToConnection) return true;
-
-  const newIsExperienceDesign = matchesMilestoneStage(
-    next,
-    EXPERIENCE_DESIGN_STAGE,
-  );
-  const currentIsExperienceDesign = matchesMilestoneStage(
-    cur,
-    EXPERIENCE_DESIGN_STAGE,
-  );
-  if (newIsExperienceDesign || currentIsExperienceDesign) return true;
 
   return false;
 }

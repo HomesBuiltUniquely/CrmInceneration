@@ -278,13 +278,17 @@ async function postExternalIntakeLead(args: {
   const normalizeOptionalPersonField = (value: string): string => {
     const v = value.trim();
     if (!v) return "";
+    if (/^[-–—]+$/.test(v)) return "";
     const token = v.toLowerCase().replace(/[\s._\-–—/]+/g, "");
     if (
       !token ||
       token === "na" ||
       token === "none" ||
       token === "null" ||
-      token === "undefined"
+      token === "undefined" ||
+      token === "notassigned" ||
+      token === "unassigned" ||
+      token === "unknown"
     ) {
       return "";
     }
@@ -345,6 +349,15 @@ async function postExternalIntakeLead(args: {
     salesExecutive: "",
     salesExecutiveEmail: "",
   };
+  const resolvedDesignerName = normalizeOptionalPersonField(
+    pickText(args.schedule?.designerName) ||
+      pickText(args.lead.designerName) ||
+      pickText(args.baseDetail.designerName) ||
+      pickText(args.baseDetail.designer) ||
+      pickUserLikeName(args.baseDetail.designer) ||
+      pickUserLikeName(args.baseDetail.interiorDesigner),
+  );
+  payload.designerName = resolvedDesignerName;
   const salesExecutive = normalizeOptionalPersonField(
     pickText(args.lead.assignee) ||
     pickText(args.baseDetail.assignedTo) ||
@@ -391,15 +404,8 @@ async function postExternalIntakeLead(args: {
     if (appointmentDate) payload.appointmentDate = appointmentDate;
     if (appointmentSlot) payload.appointmentSlot = appointmentSlot;
     if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
-    const resolvedDesignerName = normalizeOptionalPersonField(
-      designerName?.trim() ||
-        pickText(args.lead.designerName) ||
-        pickText(args.baseDetail.designerName) ||
-        pickText(args.baseDetail.designer) ||
-        pickUserLikeName(args.baseDetail.designer) ||
-        pickUserLikeName(args.baseDetail.interiorDesigner),
-    );
-    payload.designerName = resolvedDesignerName;
+    const scheduleDesignerName = normalizeOptionalPersonField(designerName?.trim() || "");
+    if (scheduleDesignerName) payload.designerName = scheduleDesignerName;
   }
 
   if (!payload.externalLeadId) {
