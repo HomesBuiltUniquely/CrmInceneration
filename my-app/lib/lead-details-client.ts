@@ -183,6 +183,16 @@ type NewCrmQuoteResponse = {
   error?: string;
 };
 
+function isHtmlLikePayload(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    t.startsWith("<!doctype html") ||
+    t.startsWith("<html") ||
+    t.includes("<head") ||
+    t.includes("<body")
+  );
+}
+
 /** `GET /api/new-crm/quotes/internal-link/by-lead/{leadId}` via CRM backend proxy. */
 export async function getNewCrmQuoteInternalLinkByLead(
   leadId: string,
@@ -206,11 +216,13 @@ export async function getNewCrmQuoteInternalLinkByLead(
     parsed = null;
   }
   if (!res.ok) {
-    const message =
+    const rawMessage =
       (parsed?.message && parsed.message.trim()) ||
       (parsed?.error && parsed.error.trim()) ||
-      text.trim() ||
-      `Get quote failed (${res.status})`;
+      text.trim();
+    const message = isHtmlLikePayload(rawMessage)
+      ? `Get quote failed (${res.status}). Upstream service returned an invalid response.`
+      : rawMessage || `Get quote failed (${res.status})`;
     throw new Error(message);
   }
   return parsed ?? {};
