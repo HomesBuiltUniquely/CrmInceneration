@@ -414,6 +414,7 @@ export default function CompleteTaskModal({
       currentMilestoneStage: lead.stageBlock?.milestoneStage,
       currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
       currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+      currentStatus: lead.status,
       newMilestoneStage: status,
       newStageCategory: path,
       cancelMode,
@@ -899,12 +900,8 @@ export default function CompleteTaskModal({
           {onApiComplete && showLeadPropertyGateFooterHint ? (
             <p className="border-t border-[var(--crm-border)] px-4 py-2 text-[11px] leading-snug text-[var(--crm-text-muted)] md:px-5">
               For{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Fresh</strong> →{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>,{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong> or{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Experience &amp; Design</strong>{" "}
-              milestone moves, fill{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>, fill{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>, and{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required).

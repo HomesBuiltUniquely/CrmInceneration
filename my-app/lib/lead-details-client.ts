@@ -5,13 +5,50 @@ function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
 }
 
-async function buildApiError(res: Response, fallback: string): Promise<Error> {
-  const text = (await res.text()).trim();
-  if (res.status === 401) return new Error("Session expired. Please login again.");
-  if (res.status === 403) {
-    return new Error("You don't have permission to perform this action.");
+type ParsedApiError = {
+  status: number;
+  message: string;
+  payload: Record<string, unknown> | null;
+};
+
+async function parseApiError(response: Response): Promise<ParsedApiError> {
+  let payload: Record<string, unknown> | null = null;
+  let text = "";
+  try {
+    payload = (await response.clone().json()) as Record<string, unknown>;
+  } catch {
+    payload = null;
+    try {
+      text = await response.clone().text();
+    } catch {
+      text = "";
+    }
   }
-  return new Error(text || fallback);
+  const payloadMessage =
+    (typeof payload?.message === "string" && payload.message.trim()) ||
+    (typeof payload?.error === "string" && payload.error.trim()) ||
+    "";
+  const fallbackByStatus =
+    response.status === 401
+      ? "Session expired. Please login again."
+      : response.status === 403
+        ? "You do not have permission to update this lead."
+        : response.status === 404
+          ? "Lead not found."
+          : response.status === 500
+            ? "Server error. Please try again."
+            : `Request failed with status ${response.status}`;
+
+  return {
+    status: response.status,
+    message: payloadMessage || text.trim() || fallbackByStatus,
+    payload,
+  };
+}
+
+async function buildApiError(res: Response, fallback: string): Promise<Error> {
+  const parsed = await parseApiError(res);
+  return new Error(parsed.message || fallback);
 }
 
 export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<Record<string, unknown>> {
