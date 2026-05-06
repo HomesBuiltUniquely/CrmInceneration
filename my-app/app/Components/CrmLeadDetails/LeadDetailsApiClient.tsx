@@ -1535,7 +1535,6 @@ export default function LeadDetailsApiClient({
 
         let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
         let designerName = lead.designerName;
-        let meetingDate = lead.meetingDate;
 
         if (args.meetingAppointment) {
           const leadIdNum = Number(leadId);
