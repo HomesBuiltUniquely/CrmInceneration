@@ -5,6 +5,7 @@ import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
   getLeadDetail,
+  getNewCrmQuoteInternalLinkByLead,
   postManualActivity,
   postQuoteSend,
   postStageRollback,
@@ -63,6 +64,7 @@ import {
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
+import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 
 type SalesExecutiveOption = {
   id: number;
@@ -599,10 +601,13 @@ export default function LeadDetailsApiClient({
   const [rollbackSubStage, setRollbackSubStage] = useState("");
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
+  const [quoteFetching, setQuoteFetching] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
-    "Your quote from Hub Interior",
+    "Your Hub Interior Quote",
   );
-  const [quoteBody, setQuoteBody] = useState("");
+  const [quoteBody, setQuoteBody] = useState(
+    "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
+  );
   const [createdTimelineOptions, setCreatedTimelineOptions] = useState<
     Array<{
       value: string;
@@ -947,6 +952,10 @@ export default function LeadDetailsApiClient({
   const canClosedLeadHeader = useMemo(
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
     [viewerRoleKey],
+  );
+  const canShowGetQuote = useMemo(
+    () => isExperienceDesignQuoteSentStage(lead),
+    [lead],
   );
 
   const salesClosureHref = useMemo(() => {
@@ -1321,7 +1330,8 @@ export default function LeadDetailsApiClient({
       fd.append("subject", quoteSubject.trim() || "Quote");
       fd.append(
         "body",
-        quoteBody.trim() || "Please find your quote linked below.",
+        quoteBody.trim() ||
+          "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
       );
       fd.append("leadId", String(leadId));
       fd.append("leadType", crmLeadTypeToApiLabel(lt));
@@ -1354,6 +1364,45 @@ export default function LeadDetailsApiClient({
     quoteSubject,
     validLeadType,
   ]);
+
+  const handleGetQuote = useCallback(async () => {
+    if (!validLeadType) return;
+    const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
+    if (!leadIdentifier) {
+      notifyError("Lead ID is required to fetch quote.");
+      return;
+    }
+    setQuoteFetching(true);
+    try {
+      const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+      const link =
+        (res.internalQuoteUrl ?? "").trim() || (res.customerQuoteUrl ?? "").trim();
+      if (!link) {
+        notifyError("Quote link is not available for this lead yet.");
+        return;
+      }
+      patchLead({ quoteLink: link });
+      notifySuccess("Quote fetched successfully.");
+      if (typeof window !== "undefined") {
+        window.open(link, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Get quote failed");
+    } finally {
+      setQuoteFetching(false);
+    }
+  }, [lead.leadId, leadId, notifyError, notifySuccess, patchLead, validLeadType]);
+
+  const refreshActivities = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    try {
+      const actJson = await getLeadActivities(lt, leadId);
+      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
+    } catch {
+      /* ignore */
+    }
+  }, [leadId, leadTypeParam, validLeadType]);
 
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
@@ -1656,6 +1705,9 @@ export default function LeadDetailsApiClient({
         <LeadHeader
           lead={lead}
           onCompleteTask={() => setCompleteTaskOpen(true)}
+          onGetQuote={() => void handleGetQuote()}
+          quoteFetching={quoteFetching}
+          showGetQuote={canShowGetQuote}
           onCallClosed={canClosedLeadHeader ? handleCallClosed : undefined}
           showCallClosed={
             canClosedLeadHeader && !isClosedWonBookingDone(lead.stageBlock)
@@ -1724,16 +1776,6 @@ export default function LeadDetailsApiClient({
         onClose={() => setCompleteTaskOpen(false)}
         onApiComplete={handleCompleteTaskApi}
         onPhoneCall={handlePhoneCallLog}
-        quoteInline={{
-          quoteLink: lead.quoteLink ?? "",
-          onQuoteLinkChange: (v) => patchLead({ quoteLink: v }),
-          subject: quoteSubject,
-          onSubjectChange: setQuoteSubject,
-          body: quoteBody,
-          onBodyChange: setQuoteBody,
-          onSend: handleSendQuote,
-          sending: quoteSending,
-        }}
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">

@@ -24,6 +24,17 @@ function isLikelyEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
+function formatNowForSalesClosure(): string {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, "0");
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(now.getFullYear());
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const sec = String(now.getSeconds()).padStart(2, "0");
+  return `${dd}/${mm}/${yyyy}, ${hh}:${min}:${sec}`;
+}
+
 /**
  * CRM → Hub Sales Closure: lead tab fields as query params (Hub reads on load and prefills the form).
  * See `docs/sales-closure-prefill.md` for the contract.
@@ -34,14 +45,30 @@ export function appendSalesClosurePrefillFromLead(u: URL, lead: Lead): void {
     if (!raw) return;
     u.searchParams.set(key, trimForQuery(raw));
   };
+  const setAliases = (keys: string[], val: string | undefined) => {
+    const raw = val?.trim();
+    if (!raw) return;
+    for (const key of keys) {
+      u.searchParams.set(key, trimForQuery(raw));
+    }
+  };
   set("customerName", lead.name);
-  set("clientEmail", lead.email);
-  set("contactNo", lead.phone);
-  set("leadSource", lead.leadSource);
+  setAliases(["customerName", "customer_name"], lead.name);
+  setAliases(["clientEmail", "email", "customerEmail"], lead.email);
+  setAliases(["contactNo", "contactNumber", "phone"], lead.phone);
+  setAliases(["leadSource", "lead_source"], lead.leadSource);
   /** Property notes (CRM) → "Property Name" on Hub form */
-  set("propertyName", lead.propertyNotes);
+  setAliases(
+    ["propertyName", "property_name"],
+    lead.propertyLocation || lead.propertyNotes,
+  );
   /** Configuration (CRM; Add Lead uses propertyType on API — same UI field) → "Property Configuration" */
-  set("propertyConfiguration", lead.configuration);
+  setAliases(
+    ["propertyConfiguration", "property_configuration"],
+    lead.configuration,
+  );
+  setAliases(["possession", "possessionDate"], lead.possessionDate);
+  setAliases(["dateTime", "date_time"], formatNowForSalesClosure());
 }
 
 /**
@@ -61,10 +88,12 @@ export function appendSalesClosurePrefillFromAuthUser(
   );
   if (mail && isLikelyEmail(mail)) {
     u.searchParams.set("salesMail", mail);
+    u.searchParams.set("salesEmail", mail);
   } else {
-    const uName = pickUserStr(user, "username");
+    const uName = pickUserStr(user, "username", "userName", "login");
     if (uName && isLikelyEmail(uName)) {
       u.searchParams.set("salesMail", uName);
+      u.searchParams.set("salesEmail", uName);
     }
   }
 

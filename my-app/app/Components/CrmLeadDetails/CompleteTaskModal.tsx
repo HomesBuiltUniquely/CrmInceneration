@@ -15,7 +15,6 @@ import {
   meetingSchedulePanelTitle,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
-import { shouldOpenQuoteSentPanelInCompleteTask } from "@/lib/quote-email-stage";
 import {
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
@@ -96,7 +95,6 @@ export default function CompleteTaskModal({
   onSave,
   onApiComplete,
   onPhoneCall,
-  quoteInline,
 }: {
   lead: Lead;
   open: boolean;
@@ -107,17 +105,6 @@ export default function CompleteTaskModal({
   onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
-  /** Quote popup when Status = Experience & Design + Feedback = MEETING SUCCESSFUL. */
-  quoteInline?: {
-    quoteLink: string;
-    onQuoteLinkChange: (v: string) => void;
-    subject: string;
-    onSubjectChange: (v: string) => void;
-    body: string;
-    onBodyChange: (v: string) => void;
-    onSend: () => void | Promise<void>;
-    sending: boolean;
-  };
 }) {
   const defaultNextCallDate = useMemo(() => {
     return toDateTimeLocalValue(lead.followUpDate);
@@ -147,7 +134,6 @@ export default function CompleteTaskModal({
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
-  const [quotePopupDismissed, setQuotePopupDismissed] = useState(false);
   const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
@@ -168,22 +154,8 @@ export default function CompleteTaskModal({
     [lead.budget, lead.propertyNotes, lead.configuration],
   );
 
-  const quotePopupOpen = Boolean(
-    quoteInline &&
-    onApiComplete &&
-    shouldOpenQuoteSentPanelInCompleteTask(status, feedback) &&
-    !quotePopupDismissed,
-  );
-
-  useEffect(() => {
-    if (!shouldOpenQuoteSentPanelInCompleteTask(status, feedback)) {
-      setQuotePopupDismissed(false);
-    }
-  }, [status, feedback]);
-
   useEffect(() => {
     if (!open) {
-      setQuotePopupDismissed(false);
       setGatePopupMessage("");
       return;
     }
@@ -976,89 +948,6 @@ export default function CompleteTaskModal({
           </div>
         </div>
       </div>
-
-      {quotePopupOpen && quoteInline ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="quote-sent-popup-title"
-          onClick={() => setQuotePopupDismissed(true)}
-        >
-          <div
-            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h3
-                  id="quote-sent-popup-title"
-                  className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
-                >
-                  Meeting Successful
-                </h3>
-                <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
-                  Experience &amp; Design — add link and send quote email, or
-                  close and continue your note.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setQuotePopupDismissed(true)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)] hover:text-[var(--crm-text-primary)]"
-                aria-label="Close quote panel"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <FieldLabel>Quote link</FieldLabel>
-                <Input
-                  value={quoteInline.quoteLink}
-                  onChange={(e) =>
-                    quoteInline.onQuoteLinkChange(e.target.value)
-                  }
-                  placeholder="https://… (PDF or proposal URL)"
-                  className="mt-1.5"
-                />
-              </div>
-              <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
-                <p className="text-[12px] font-semibold text-[var(--crm-text-primary)]">
-                  Send quote email
-                </p>
-                <div>
-                  <FieldLabel>Email subject</FieldLabel>
-                  <Input
-                    value={quoteInline.subject}
-                    onChange={(e) =>
-                      quoteInline.onSubjectChange(e.target.value)
-                    }
-                    className="mt-1.5"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Email body</FieldLabel>
-                  <Textarea
-                    value={quoteInline.body}
-                    onChange={(e) => quoteInline.onBodyChange(e.target.value)}
-                    className="mt-1.5 min-h-[72px]"
-                    placeholder="Message shown in the email…"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="primary"
-                  disabled={quoteInline.sending}
-                  onClick={() => void quoteInline.onSend()}
-                >
-                  {quoteInline.sending ? "Sending…" : "Send quote email"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {gatePopupMessage ? (
         <div
