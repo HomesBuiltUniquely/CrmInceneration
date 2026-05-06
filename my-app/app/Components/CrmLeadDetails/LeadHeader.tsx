@@ -54,6 +54,9 @@ export default function LeadHeader({
   createdTimelineLoading = false,
   createdTimelineValue = "",
   onCreatedTimelineChange,
+  onGetQuote,
+  quoteFetching = false,
+  showGetQuote = false,
 }: {
   lead: Lead;
   onCompleteTask: () => void;
@@ -67,6 +70,9 @@ export default function LeadHeader({
   createdTimelineLoading?: boolean;
   createdTimelineValue?: string;
   onCreatedTimelineChange?: (value: string) => void;
+  onGetQuote?: () => void;
+  quoteFetching?: boolean;
+  showGetQuote?: boolean;
 }) {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const timelineWrapRef = useRef<HTMLDivElement | null>(null);
@@ -238,6 +244,18 @@ export default function LeadHeader({
           >
             <WonTrophyIcon className="h-[18px] w-[18px] shrink-0 text-amber-600" />
             Closed
+          </button>
+        ) : null}
+
+        {showGetQuote && onGetQuote ? (
+          <button
+            type="button"
+            onClick={onGetQuote}
+            disabled={quoteFetching}
+            className="inline-flex items-center gap-2 rounded-2xl border border-violet-300 bg-violet-50 px-4 py-2.5 text-[13px] font-semibold text-violet-900 shadow-sm transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span aria-hidden>🔎</span>
+            {quoteFetching ? "Getting Quote..." : "Get Quote"}
           </button>
         ) : null}
 

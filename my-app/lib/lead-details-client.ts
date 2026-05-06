@@ -171,3 +171,47 @@ export async function postQuoteSend(formData: FormData): Promise<unknown> {
     return text;
   }
 }
+
+type NewCrmQuoteResponse = {
+  ok?: boolean;
+  externalLeadId?: string;
+  leadId?: string | number;
+  quoteId?: string | number;
+  internalQuoteUrl?: string;
+  customerQuoteUrl?: string;
+  message?: string;
+  error?: string;
+};
+
+/** `GET /api/new-crm/quotes/internal-link/by-lead/{leadId}` via CRM backend proxy. */
+export async function getNewCrmQuoteInternalLinkByLead(
+  leadId: string,
+): Promise<NewCrmQuoteResponse> {
+  const id = leadId.trim();
+  if (!id) throw new Error("Lead ID is required to fetch quote.");
+  const res = await fetch(
+    `/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: authHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  let parsed: NewCrmQuoteResponse | null = null;
+  try {
+    parsed = text ? (JSON.parse(text) as NewCrmQuoteResponse) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!res.ok) {
+    const message =
+      (parsed?.message && parsed.message.trim()) ||
+      (parsed?.error && parsed.error.trim()) ||
+      text.trim() ||
+      `Get quote failed (${res.status})`;
+    throw new Error(message);
+  }
+  return parsed ?? {};
+}

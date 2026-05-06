@@ -5,6 +5,7 @@ import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
   getLeadDetail,
+  getNewCrmQuoteInternalLinkByLead,
   postManualActivity,
   postQuoteSend,
   postStageRollback,
@@ -62,6 +63,7 @@ import {
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
+import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 
 type SalesExecutiveOption = {
   id: number;
@@ -488,6 +490,7 @@ export default function LeadDetailsApiClient({
   const [rollbackSubStage, setRollbackSubStage] = useState("");
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
+  const [quoteFetching, setQuoteFetching] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
     "Your quote from Hub Interior",
   );
@@ -837,6 +840,10 @@ export default function LeadDetailsApiClient({
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
     [viewerRoleKey],
   );
+  const canShowGetQuote = useMemo(
+    () => isExperienceDesignQuoteSentStage(lead),
+    [lead],
+  );
 
   const salesClosureHref = useMemo(() => {
     if (!canClosedLeadHeader) return undefined;
@@ -1171,6 +1178,34 @@ export default function LeadDetailsApiClient({
     validLeadType,
   ]);
 
+  const handleGetQuote = useCallback(async () => {
+    if (!validLeadType) return;
+    const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
+    if (!leadIdentifier) {
+      notifyError("Lead ID is required to fetch quote.");
+      return;
+    }
+    setQuoteFetching(true);
+    try {
+      const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+      const link =
+        (res.internalQuoteUrl ?? "").trim() || (res.customerQuoteUrl ?? "").trim();
+      if (!link) {
+        notifyError("Quote link is not available for this lead yet.");
+        return;
+      }
+      patchLead({ quoteLink: link });
+      notifySuccess("Quote fetched successfully.");
+      if (typeof window !== "undefined") {
+        window.open(link, "_blank", "noopener,noreferrer");
+      }
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Get quote failed");
+    } finally {
+      setQuoteFetching(false);
+    }
+  }, [lead.leadId, leadId, notifyError, notifySuccess, patchLead, validLeadType]);
+
   const refreshActivities = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
@@ -1465,6 +1500,9 @@ export default function LeadDetailsApiClient({
         <LeadHeader
           lead={lead}
           onCompleteTask={() => setCompleteTaskOpen(true)}
+          onGetQuote={() => void handleGetQuote()}
+          quoteFetching={quoteFetching}
+          showGetQuote={canShowGetQuote}
           onCallClosed={canClosedLeadHeader ? handleCallClosed : undefined}
           showCallClosed={
             canClosedLeadHeader && !isClosedWonBookingDone(lead.stageBlock)
