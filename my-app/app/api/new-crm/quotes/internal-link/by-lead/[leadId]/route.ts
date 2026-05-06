@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BASE_URLs } from "@/lib/base-url";
+import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 function buildProxyHeaders(req: NextRequest): HeadersInit {
@@ -10,7 +10,7 @@ function buildProxyHeaders(req: NextRequest): HeadersInit {
       : Array.isArray(upstream)
         ? Object.fromEntries(upstream)
         : { ...upstream };
-  const apiKey = "hi";
+  const apiKey = process.env.EXTERNAL_LEAD_INGEST_API_KEY?.trim();
   if (apiKey) {
     headers["x-external-api-key"] = apiKey;
   }
@@ -31,7 +31,7 @@ export async function GET(
   }
 
   const res = await fetch(
-    `${BASE_URLs}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+    `${BASE_URL}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
     {
       method: "GET",
       headers: buildProxyHeaders(req),
@@ -46,4 +46,4 @@ export async function GET(
     },
   });
 }
-// fuck u
+
