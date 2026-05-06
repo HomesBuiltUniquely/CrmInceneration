@@ -455,7 +455,9 @@ export default function LeadInfoTab({
                     <Button
                       type="button"
                       variant="primary"
-                      disabled={quoteExtras.quoteSending}
+                      disabled={
+                        quoteExtras.quoteSending || !(lead.quoteLink ?? "").trim()
+                      }
                       onClick={() => void quoteExtras.onSendQuote()}
                     >
                       {quoteExtras.quoteSending ? "Sending…" : "Send quote email"}

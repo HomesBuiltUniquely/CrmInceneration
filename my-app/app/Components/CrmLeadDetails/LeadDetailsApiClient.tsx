@@ -492,9 +492,11 @@ export default function LeadDetailsApiClient({
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteFetching, setQuoteFetching] = useState(false);
   const [quoteSubject, setQuoteSubject] = useState(
-    "Your quote from Hub Interior",
+    "Your Hub Interior Quote",
   );
-  const [quoteBody, setQuoteBody] = useState("");
+  const [quoteBody, setQuoteBody] = useState(
+    "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
+  );
   const [createdTimelineOptions, setCreatedTimelineOptions] = useState<
     Array<{
       value: string;
@@ -1144,7 +1146,8 @@ export default function LeadDetailsApiClient({
       fd.append("subject", quoteSubject.trim() || "Quote");
       fd.append(
         "body",
-        quoteBody.trim() || "Please find your quote linked below.",
+        quoteBody.trim() ||
+          "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
       );
       fd.append("leadId", String(leadId));
       fd.append("leadType", crmLeadTypeToApiLabel(lt));
@@ -1571,16 +1574,6 @@ export default function LeadDetailsApiClient({
         onClose={() => setCompleteTaskOpen(false)}
         onApiComplete={handleCompleteTaskApi}
         onPhoneCall={handlePhoneCallLog}
-        quoteInline={{
-          quoteLink: lead.quoteLink ?? "",
-          onQuoteLinkChange: (v) => patchLead({ quoteLink: v }),
-          subject: quoteSubject,
-          onSubjectChange: setQuoteSubject,
-          body: quoteBody,
-          onBodyChange: setQuoteBody,
-          onSend: handleSendQuote,
-          sending: quoteSending,
-        }}
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
