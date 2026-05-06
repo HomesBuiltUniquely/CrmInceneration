@@ -1393,17 +1393,6 @@ export default function LeadDetailsApiClient({
     }
   }, [lead.leadId, leadId, notifyError, notifySuccess, patchLead, validLeadType]);
 
-  const refreshActivities = useCallback(async () => {
-    if (!validLeadType) return;
-    const lt = leadTypeParam as CrmLeadType;
-    try {
-      const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
-    } catch {
-      /* ignore */
-    }
-  }, [leadId, leadTypeParam, validLeadType]);
-
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
     const toMilestoneStage = rollbackStage.trim();
