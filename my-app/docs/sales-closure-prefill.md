@@ -25,6 +25,7 @@ The Hub app should read these on initial load (same names as below). All values 
 
 Long text may be truncated (~1800 chars) for URL safety.
 
+
 ## Auth user prefill (`GET /api/auth/me` — logged-in sales user)
 
 | Query param | Typical backend user fields | Suggested Hub field |

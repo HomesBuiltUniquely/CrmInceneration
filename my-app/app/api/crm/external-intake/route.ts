@@ -45,6 +45,16 @@ export async function POST(req: NextRequest) {
       typeof parsed?.appointmentSlot === "string" && parsed.appointmentSlot.trim(),
     ),
     scheduleTimezone: parsed?.scheduleTimezone ?? null,
+    hasDesignerName: Boolean(
+      typeof parsed?.designerName === "string" && parsed.designerName.trim(),
+    ),
+    hasSalesExecutive: Boolean(
+      typeof parsed?.salesExecutive === "string" && parsed.salesExecutive.trim(),
+    ),
+    hasSalesExecutiveEmail: Boolean(
+      typeof parsed?.salesExecutiveEmail === "string" &&
+        parsed.salesExecutiveEmail.trim(),
+    ),
     contactNoMasked: maskValue(parsed?.contactNo),
     clientEmailMasked: maskValue(parsed?.clientEmail),
   });

@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import type { Lead } from "@/lib/data";
+import { BUDGET_OPTIONS } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
@@ -538,13 +539,19 @@ export default function CreateLeadClient() {
                         </div>
                         <div>
                           <CreateLeadFieldLabel>Budget</CreateLeadFieldLabel>
-                          <Input
+                          <SelectField
                             value={form.budget}
                             onChange={(e) =>
                               updateField("budget", e.target.value)
                             }
-                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
-                          />
+                          >
+                            <option value="">Select Budget</option>
+                            {BUDGET_OPTIONS.map((budget) => (
+                              <option key={budget} value={budget}>
+                                {budget}
+                              </option>
+                            ))}
+                          </SelectField>
                         </div>
                         <div>
                           <CreateLeadFieldLabel>

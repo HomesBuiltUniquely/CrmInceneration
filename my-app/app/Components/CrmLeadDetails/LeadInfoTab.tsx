@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Chip, Button } from "./ui";
 import type { Lead } from "@/lib/data";
-import { LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
+import { BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -165,6 +165,10 @@ export default function LeadInfoTab({
       : null;
   const designQaLink = apiDesignQaLink || computedDesignQaLink;
   const [additionalInfoSaving, setAdditionalInfoSaving] = useState(false);
+  const normalizedBudget = lead.budget?.trim() ?? "";
+  const budgetOptions = normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
+    ? [normalizedBudget, ...BUDGET_OPTIONS]
+    : BUDGET_OPTIONS;
 
   const handleAdditionalInfoToggle = async () => {
     if (!additionalInfoEditable) {
@@ -340,13 +344,19 @@ export default function LeadInfoTab({
           <div className="grid grid-cols-2 gap-3.5 mb-4">
             <div>
               <FieldLabel>Budget</FieldLabel>
-              <Input
-                placeholder="e.g. 45L"
+              <Select
                 {...(c
                   ? { value: lead.budget, onChange: (e) => c({ budget: e.target.value }) }
                   : { defaultValue: lead.budget })}
-                readOnly={!additionalInfoEditable}
-              />
+                disabled={!additionalInfoEditable}
+              >
+                <option value="">Select Budget</option>
+                {budgetOptions.map((budget) => (
+                  <option key={budget} value={budget}>
+                    {budget}
+                  </option>
+                ))}
+              </Select>
             </div>
             <div>
               <FieldLabel>Language Preferred</FieldLabel>

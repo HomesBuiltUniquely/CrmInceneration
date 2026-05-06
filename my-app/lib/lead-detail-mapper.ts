@@ -203,7 +203,29 @@ function pickPropertyNotesFromDetail(detail: Record<string, unknown>): string {
   if (direct) return direct;
 
   const pd = detail.propertyDetails;
-  if (typeof pd === "string" && pd.trim()) return pd.trim();
+  if (typeof pd === "string" && pd.trim()) {
+    const raw = pd.trim();
+    // Some APIs send `propertyDetails` as a JSON string object
+    // like {"propertyNotes":"...","interiorSetup":"..."}.
+    // In that case, read only note-like keys instead of showing the full JSON blob.
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const extracted = pickStr(
+          parsed,
+          "propertyNotes",
+          "property_detail",
+          "notes",
+          "description",
+          "details",
+        );
+        return extracted || "";
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  }
   if (pd && typeof pd === "object" && !Array.isArray(pd)) {
     const o = pd as Record<string, unknown>;
     return (
