@@ -1,5 +1,8 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import {
+  sanitizeErrorMessage,
+} from "@/lib/friendly-api-error";
 
 function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
@@ -25,8 +28,9 @@ async function parseApiError(response: Response): Promise<ParsedApiError> {
     }
   }
   const payloadMessage =
-    (typeof payload?.message === "string" && payload.message.trim()) ||
+    (typeof payload?.userMessage === "string" && payload.userMessage.trim()) ||
     (typeof payload?.error === "string" && payload.error.trim()) ||
+    (typeof payload?.message === "string" && payload.message.trim()) ||
     "";
   const fallbackByStatus =
     response.status === 401
@@ -41,7 +45,7 @@ async function parseApiError(response: Response): Promise<ParsedApiError> {
 
   return {
     status: response.status,
-    message: payloadMessage || text.trim() || fallbackByStatus,
+    message: sanitizeErrorMessage(payloadMessage || text.trim(), fallbackByStatus),
     payload,
   };
 }
@@ -102,14 +106,22 @@ export async function postManualActivity(
   });
   const text = await res.text();
   if (!res.ok) {
-    if (res.status === 403) throw new Error("You don't have permission to add activity.");
-    throw new Error(text || `Activity update failed (${res.status})`);
+    if (res.status === 403)
+      throw new Error("You don't have permission to add activity.");
+    throw new Error(
+      sanitizeErrorMessage(
+        text,
+        `Unable to save activity right now. Please try again.`,
+      ),
+    );
   }
   return text;
 }
 
 function verifyPayloadMessage(parsed: Record<string, unknown> | null): string | null {
   if (!parsed) return null;
+  const um = parsed.userMessage;
+  if (typeof um === "string" && um.trim()) return um.trim();
   const m = parsed.message;
   if (typeof m === "string" && m.trim()) return m.trim();
   const e = parsed.error;
@@ -181,7 +193,12 @@ export async function postStageRollback(
     if (res.status === 403) {
       throw new Error("Only Super Admin can rollback stage.");
     }
-    throw new Error(text || `Stage rollback failed (${res.status})`);
+    throw new Error(
+      sanitizeErrorMessage(
+        text,
+        `Unable to rollback stage right now. Please try again.`,
+      ),
+    );
   }
   try {
     return text ? JSON.parse(text) : {};
@@ -201,7 +218,11 @@ export async function postQuoteSend(formData: FormData): Promise<unknown> {
     cache: "no-store",
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text || `Quote send failed (${res.status})`);
+  if (!res.ok) {
+    throw new Error(
+      sanitizeErrorMessage(text, "Unable to send quote right now. Please try again."),
+    );
+  }
   try {
     return text ? JSON.parse(text) : {};
   } catch {
@@ -259,7 +280,10 @@ export async function getNewCrmQuoteInternalLinkByLead(
       text.trim();
     const message = isHtmlLikePayload(rawMessage)
       ? `Get quote failed (${res.status}). Upstream service returned an invalid response.`
-      : rawMessage || `Get quote failed (${res.status})`;
+      : sanitizeErrorMessage(
+          rawMessage,
+          "Unable to fetch quote link right now. Please try again.",
+        );
     throw new Error(message);
   }
   return parsed ?? {};
