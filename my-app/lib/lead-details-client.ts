@@ -80,11 +80,20 @@ export async function putLeadDetail(
   id: string,
   body: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  const normalizedBody: Record<string, unknown> = { ...body };
+  const propertyDetails = normalizedBody.propertyDetails;
+  if (
+    propertyDetails !== undefined &&
+    propertyDetails !== null &&
+    typeof propertyDetails !== "string"
+  ) {
+    normalizedBody.propertyDetails = JSON.stringify(propertyDetails);
+  }
   const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
     method: "PUT",
     credentials: "include",
     headers: authHeaders(),
-    body: JSON.stringify(body),
+    body: JSON.stringify(normalizedBody),
     cache: "no-store",
   });
   if (!res.ok) throw await buildApiError(res, `Save failed (${res.status})`);

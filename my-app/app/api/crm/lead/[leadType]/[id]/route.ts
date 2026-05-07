@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import { detailsUrl, isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
 export async function GET(
   req: NextRequest,
@@ -13,10 +14,17 @@ export async function GET(
   }
   const url = `${BASE_URL}${detailsUrl(leadType, id)}`;
   const res = await fetch(url, { headers: upstreamAuthHeaders(req), cache: "no-store" });
-  const text = await res.text();
-  return new NextResponse(text, {
+  const payload = await readUpstreamPayload(res);
+  if (!res.ok) {
+    return proxyJsonError(
+      res.status,
+      payload,
+      "Unable to load lead details. Please try again.",
+    );
+  }
+  return new NextResponse(payload.text, {
     status: res.status,
-    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    headers: { "Content-Type": payload.contentType },
   });
 }
 
@@ -39,10 +47,17 @@ export async function PUT(
     body,
     cache: "no-store",
   });
-  const text = await res.text();
-  return new NextResponse(text, {
+  const payload = await readUpstreamPayload(res);
+  if (!res.ok) {
+    return proxyJsonError(
+      res.status,
+      payload,
+      "Unable to save lead details. Please try again.",
+    );
+  }
+  return new NextResponse(payload.text, {
     status: res.status,
-    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    headers: { "Content-Type": payload.contentType },
   });
 }
 
@@ -60,9 +75,16 @@ export async function DELETE(
     headers: upstreamAuthHeaders(req),
     cache: "no-store",
   });
-  const text = await res.text();
-  return new NextResponse(text, {
+  const payload = await readUpstreamPayload(res);
+  if (!res.ok) {
+    return proxyJsonError(
+      res.status,
+      payload,
+      "Unable to delete lead right now. Please try again.",
+    );
+  }
+  return new NextResponse(payload.text, {
     status: res.status,
-    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    headers: { "Content-Type": payload.contentType },
   });
 }
