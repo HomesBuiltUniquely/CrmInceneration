@@ -152,6 +152,8 @@ function pickConfigurationFromDetail(
     "interior_setup",
     "interiorSetup",
     "configuration",
+    "propertyConfiguration",
+    "property_configuration",
     "bhk",
     "propertyType",
     "unitType",
@@ -165,6 +167,8 @@ function pickConfigurationFromDetail(
       "interior_setup",
       "interiorSetup",
       "configuration",
+      "propertyConfiguration",
+      "property_configuration",
       "bhk",
       "propertyType",
       "unitType",
@@ -182,10 +186,19 @@ function pickConfigurationFromDetail(
         "interior_setup",
         "interiorSetup",
         "configuration",
+        "propertyConfiguration",
+        "property_configuration",
       );
       if (inner) return inner;
     }
-    const directDf = pickStr(dfo, "interior_setup", "interiorSetup", "configuration");
+    const directDf = pickStr(
+      dfo,
+      "interior_setup",
+      "interiorSetup",
+      "configuration",
+      "propertyConfiguration",
+      "property_configuration",
+    );
     if (directDf) return directDf;
   }
 
@@ -447,6 +460,8 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
     next.configuration = lead.configuration;
     next.interiorSetup = lead.configuration;
     next.interior_setup = lead.configuration;
+    next.propertyConfiguration = lead.configuration;
+    next.property_configuration = lead.configuration;
   }
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
@@ -519,6 +534,8 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
     next.configuration = lead.configuration;
     next.interiorSetup = lead.configuration;
     next.interior_setup = lead.configuration;
+    next.propertyConfiguration = lead.configuration;
+    next.property_configuration = lead.configuration;
   }
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
