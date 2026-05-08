@@ -152,6 +152,8 @@ function pickConfigurationFromDetail(
     "interior_setup",
     "interiorSetup",
     "configuration",
+    "propertyConfiguration",
+    "property_configuration",
     "bhk",
     "propertyType",
     "unitType",
@@ -165,6 +167,8 @@ function pickConfigurationFromDetail(
       "interior_setup",
       "interiorSetup",
       "configuration",
+      "propertyConfiguration",
+      "property_configuration",
       "bhk",
       "propertyType",
       "unitType",
@@ -182,10 +186,19 @@ function pickConfigurationFromDetail(
         "interior_setup",
         "interiorSetup",
         "configuration",
+        "propertyConfiguration",
+        "property_configuration",
       );
       if (inner) return inner;
     }
-    const directDf = pickStr(dfo, "interior_setup", "interiorSetup", "configuration");
+    const directDf = pickStr(
+      dfo,
+      "interior_setup",
+      "interiorSetup",
+      "configuration",
+      "propertyConfiguration",
+      "property_configuration",
+    );
     if (directDf) return directDf;
   }
 
@@ -428,7 +441,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   const mergedLt = asCrmLeadType(lead.leadType, "formlead");
-  if (mergedLt === "addlead") {
+  if (mergedLt === "addlead" || mergedLt === "mlead") {
     next.propertyDetails = lead.propertyNotes.trim();
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
@@ -438,16 +451,10 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  if (mergedLt === "addlead") {
-    next.propertyType = lead.configuration;
-    next.property_type = lead.configuration;
-    delete next.interiorSetup;
-    delete next.interior_setup;
-  } else {
-    next.configuration = lead.configuration;
-    next.interiorSetup = lead.configuration;
-    next.interior_setup = lead.configuration;
-  }
+  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  next.propertyType = lead.configuration;
+  next.interiorSetup = lead.configuration;
+  if (mergedLt === "addlead") next.property_type = lead.configuration;
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
@@ -491,7 +498,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   const boxLt = asCrmLeadType(lead.leadType, "formlead");
-  if (boxLt === "addlead") {
+  if (boxLt === "addlead" || boxLt === "mlead") {
     next.propertyDetails = lead.propertyNotes.trim();
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
@@ -501,6 +508,9 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
+  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  next.propertyType = lead.configuration;
+  next.interiorSetup = lead.configuration;
   next.language = lead.language;
   next.languagePrefered = lead.language;
   next.languagePreferred = lead.language;
@@ -511,14 +521,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
     next.requirements = lead.requirements;
   }
   if (boxLt === "addlead") {
-    next.propertyType = lead.configuration;
     next.property_type = lead.configuration;
-    delete next.interiorSetup;
-    delete next.interior_setup;
-  } else {
-    next.configuration = lead.configuration;
-    next.interiorSetup = lead.configuration;
-    next.interior_setup = lead.configuration;
   }
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
