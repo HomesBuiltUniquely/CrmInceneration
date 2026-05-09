@@ -241,6 +241,7 @@ export default function LeadsToolbar({
       : leadTypeCounts.callDelayed ?? 0;
   const role = normalizeRole(authRole || viewerRole);
   const isSalesManager = role === "SALES_MANAGER";
+  const isSalesAdmin = role === "SALES_ADMIN";
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
@@ -427,6 +428,19 @@ export default function LeadsToolbar({
                       ["Add Lead", leadTypeCounts.addlead ?? 0],
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]
+                  : isSalesAdmin
+                    ? [
+                        [callsTileLabel, callsTileValue],
+                        ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
+                        ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                        ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
+                        ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
+                        ["External Lead", leadTypeCounts.formlead ?? 0],
+                        ["Google Ads", leadTypeCounts.glead ?? 0],
+                        ["Meta Ads", leadTypeCounts.mlead ?? 0],
+                        ["Add Lead", leadTypeCounts.addlead ?? 0],
+                        ["Website Lead", leadTypeCounts.websitelead ?? 0],
+                      ]
                   : isPresalesRole(role)
                     ? [
                         ["External Lead", leadTypeCounts.formlead ?? 0],

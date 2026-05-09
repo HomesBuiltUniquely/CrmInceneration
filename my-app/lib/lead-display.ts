@@ -49,6 +49,25 @@ function firstMatchingValueByKeyPart(
   return "";
 }
 
+function normalizeSourceToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isPlaceholderSource(value: string): boolean {
+  const token = normalizeSourceToken(value);
+  return (
+    !token ||
+    token === "-" ||
+    token === "na" ||
+    token === "none" ||
+    token === "null" ||
+    token === "undefined" ||
+    token === "unknown" ||
+    token === "selectsource" ||
+    token === "source"
+  );
+}
+
 export function getLeadDisplayName(lead: AnyLead): string {
   const dynamic = obj(lead.dynamicFields);
   const top =
@@ -116,16 +135,21 @@ export function getLeadDisplayPincode(lead: AnyLead): string {
 
 export function getLeadDisplaySource(lead: AnyLead): string {
   const dynamic = obj(lead.dynamicFields);
-  const resolved = pick(
+  const resolvedRaw = pick(
     lead.leadSource,
     lead.LeadSource,
     lead.leadsource,
     lead.source,
     lead.primaryLeadSource,
+    lead.leadTypeLabel,
+    lead.typeLabel,
+    lead.sourceType,
     dynamic.leadSource,
     dynamic.LeadSource,
     dynamic.leadsource,
     dynamic.source,
+    dynamic.sourceType,
+    dynamic.leadTypeLabel,
     dynamic.custom_Lead_Source,
     dynamic.custom_LeadSource,
     dynamic.customSource,
@@ -136,5 +160,15 @@ export function getLeadDisplaySource(lead: AnyLead): string {
     firstMatchingValueByKeyPart(dynamic, ["source"]),
     lead.leadType,
   );
-  return normalizeLeadTypeLabel(resolved || lead.leadType || "formlead");
+  const fallback = pick(
+    lead.leadType,
+    lead.lead_type,
+    lead.type,
+    dynamic.leadType,
+    dynamic.lead_type,
+    dynamic.type,
+    "formlead",
+  );
+  const effective = isPlaceholderSource(resolvedRaw) ? fallback : resolvedRaw;
+  return normalizeLeadTypeLabel(effective || fallback || "formlead");
 }

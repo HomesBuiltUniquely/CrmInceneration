@@ -94,6 +94,31 @@ type AssigneeUser = {
   role: string;
 };
 
+const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
+
+type LeadsViewPersistedState = {
+  page?: number;
+  size?: number;
+  salesAdminFilter?: string;
+  salesManagerFilter?: string;
+  salesExecFilter?: string;
+  presalesManagerFilter?: string;
+  presalesExecFilter?: string;
+  insightTableMode?: InsightTableMode;
+};
+
+function readLeadsViewPersistedState(): LeadsViewPersistedState {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as LeadsViewPersistedState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function getAllowedRoleQueries(role?: string): string[] {
   switch (normalizeRole(role ?? "")) {
     case "SUPER_ADMIN":
@@ -125,6 +150,84 @@ type RowAssignLead = {
   leadType: string;
   currentAssignee: string;
 };
+
+const EMPTY_ASSIGNEE_SCOPE: string[] = [];
+
+function normText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function buildHierarchyScopedAssignees(args: {
+  salesManagerFilter: string;
+  salesExecFilter: string;
+  presalesManagerFilter: string;
+  presalesExecFilter: string;
+  salesManagers: HierarchyUser[];
+  salesExecs: HierarchyUser[];
+  presalesManagers: HierarchyUser[];
+  presalesExecs: HierarchyUser[];
+}): string[] {
+  if (args.salesExecFilter.trim() || args.presalesExecFilter.trim()) return [];
+  const salesManagerName = args.salesManagerFilter.trim();
+  const presalesManagerName = args.presalesManagerFilter.trim();
+  if (!salesManagerName && !presalesManagerName) return [];
+
+  let salesExecUnderManager: HierarchyUser[] = [];
+  let presalesMgrUnderManager: HierarchyUser[] = [];
+  let presalesExecUnderManager: HierarchyUser[] = [];
+  const managerNames: string[] = [];
+
+  if (salesManagerName) {
+    const selectedManagerNorm = normText(salesManagerName);
+    const selectedManager = args.salesManagers.find((u) => {
+      const n = normText(String(u.fullName ?? u.username ?? ""));
+      return n === selectedManagerNorm;
+    });
+    if (selectedManager && Number(selectedManager.id ?? 0) > 0) {
+      const managerId = Number(selectedManager.id);
+      managerNames.push(String(selectedManager.fullName ?? selectedManager.username ?? "").trim());
+      salesExecUnderManager = args.salesExecs.filter(
+        (u) => Number(u.managerId ?? 0) === managerId,
+      );
+      presalesMgrUnderManager = args.presalesManagers.filter(
+        (u) => Number(u.managerId ?? 0) === managerId,
+      );
+      const presalesMgrIds = new Set(
+        presalesMgrUnderManager.map((u) => Number(u.id)).filter((id) => id > 0),
+      );
+      presalesExecUnderManager = args.presalesExecs.filter((u) => {
+        const mid = Number(u.managerId ?? 0);
+        return mid > 0 && presalesMgrIds.has(mid);
+      });
+    }
+  } else if (presalesManagerName) {
+    const selectedPresalesManagerNorm = normText(presalesManagerName);
+    const selectedPresalesManager = args.presalesManagers.find((u) => {
+      const n = normText(String(u.fullName ?? u.username ?? ""));
+      return n === selectedPresalesManagerNorm;
+    });
+    if (selectedPresalesManager && Number(selectedPresalesManager.id ?? 0) > 0) {
+      const presalesManagerId = Number(selectedPresalesManager.id);
+      managerNames.push(
+        String(selectedPresalesManager.fullName ?? selectedPresalesManager.username ?? "").trim(),
+      );
+      presalesExecUnderManager = args.presalesExecs.filter(
+        (u) => Number(u.managerId ?? 0) === presalesManagerId,
+      );
+    }
+  }
+
+  return Array.from(
+    new Set(
+      [
+        ...managerNames,
+        ...salesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
+        ...presalesMgrUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
+        ...presalesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
+      ].filter(Boolean),
+    ),
+  );
+}
 
 function normalizeLeadTypeKey(raw: unknown): "formlead" | "glead" | "mlead" | "addlead" | "websitelead" {
   const compact = String(raw ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -422,8 +525,15 @@ export default function LeadsDataSection({
   onHeatmapAssigneeSync,
   onInsightTableModeChange,
 }: Props) {
-  const [page, setPage] = useState(0);
-  const [size, setSize] = useState(20);
+  const persistedView = readLeadsViewPersistedState();
+  const [page, setPage] = useState(
+    Number.isFinite(Number(persistedView.page)) ? Math.max(0, Number(persistedView.page)) : 0,
+  );
+  const [size, setSize] = useState(
+    Number.isFinite(Number(persistedView.size)) && Number(persistedView.size) > 0
+      ? Number(persistedView.size)
+      : 20,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SpringPage<ApiLead> | null>(null);
@@ -432,7 +542,10 @@ export default function LeadsDataSection({
   const [assigneeOptions, setAssigneeOptions] = useState<string[]>([]);
   const [pipelineNested, setPipelineNested] = useState<CrmNestedStage[]>([]);
   const [leadTypeCounts, setLeadTypeCounts] = useState<Record<string, number>>({});
-  const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
+  const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(() => {
+    const mode = persistedView.insightTableMode;
+    return mode ?? null;
+  });
 
   useEffect(() => {
     onInsightTableModeChange?.(insightTableMode);
@@ -442,11 +555,21 @@ export default function LeadsDataSection({
       ? ""
       : normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""),
   );
-  const [salesAdminFilter, setSalesAdminFilter] = useState("");
-  const [salesManagerFilter, setSalesManagerFilter] = useState("");
-  const [salesExecFilter, setSalesExecFilter] = useState("");
-  const [presalesManagerFilter, setPresalesManagerFilter] = useState("");
-  const [presalesExecFilter, setPresalesExecFilter] = useState("");
+  const [salesAdminFilter, setSalesAdminFilter] = useState(
+    persistedView.salesAdminFilter ?? "",
+  );
+  const [salesManagerFilter, setSalesManagerFilter] = useState(
+    persistedView.salesManagerFilter ?? "",
+  );
+  const [salesExecFilter, setSalesExecFilter] = useState(
+    persistedView.salesExecFilter ?? "",
+  );
+  const [presalesManagerFilter, setPresalesManagerFilter] = useState(
+    persistedView.presalesManagerFilter ?? "",
+  );
+  const [presalesExecFilter, setPresalesExecFilter] = useState(
+    persistedView.presalesExecFilter ?? "",
+  );
   const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
   const [salesManagers, setSalesManagers] = useState<HierarchyUser[]>([]);
   const [salesExecs, setSalesExecs] = useState<HierarchyUser[]>([]);
@@ -927,11 +1050,68 @@ export default function LeadsDataSection({
     presalesManagerFilter ||
     salesAdminFilter ||
     assignee;
-  const isNewCrmGlobalSearchMode = debouncedSearch.trim().length > 0;
+  const hierarchyScopedAssignees = useMemo(
+    () =>
+      buildHierarchyScopedAssignees({
+        salesManagerFilter,
+        salesExecFilter,
+        presalesManagerFilter,
+        presalesExecFilter,
+        salesManagers,
+        salesExecs,
+        presalesManagers,
+        presalesExecs,
+      }),
+    [
+      salesManagerFilter,
+      salesExecFilter,
+      presalesManagerFilter,
+      presalesExecFilter,
+      salesManagers,
+      salesExecs,
+      presalesManagers,
+      presalesExecs,
+    ],
+  );
+  const effectiveAssigneeScope = useMemo(
+    () =>
+      hierarchyScopedAssignees.length > 0
+        ? hierarchyScopedAssignees
+        : EMPTY_ASSIGNEE_SCOPE,
+    [hierarchyScopedAssignees],
+  );
 
   useEffect(() => {
     onHeatmapAssigneeSync?.(effectiveAssignee);
   }, [effectiveAssignee, onHeatmapAssigneeSync]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload: LeadsViewPersistedState = {
+      page,
+      size,
+      salesAdminFilter,
+      salesManagerFilter,
+      salesExecFilter,
+      presalesManagerFilter,
+      presalesExecFilter,
+      insightTableMode,
+    };
+    try {
+      window.sessionStorage.setItem(LEADS_VIEW_PERSIST_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [
+    page,
+    size,
+    salesAdminFilter,
+    salesManagerFilter,
+    salesExecFilter,
+    presalesManagerFilter,
+    presalesExecFilter,
+    insightTableMode,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -999,18 +1179,21 @@ export default function LeadsDataSection({
     onMilestoneSubStageChange,
   ]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        // Count tabs from one merged set, deduped by person; count only primary source.
-        const page = await fetchMergedPage(
-          0,
-          500,
-          "all",
-          "updatedAt,desc",
+  const fetchScopedMergedPage = useCallback(
+    async (
+      targetPage: number,
+      targetSize: number,
+      targetLeadType: string,
+      targetSort: string,
+    ): Promise<SpringPage<ApiLead>> => {
+      if (effectiveAssigneeScope.length <= 1) {
+        return fetchMergedPage(
+          targetPage,
+          targetSize,
+          targetLeadType,
+          targetSort,
           debouncedSearch,
-          effectiveAssignee,
+          effectiveAssigneeScope[0] ?? effectiveAssignee,
           dateFrom,
           dateTo,
           milestoneStage,
@@ -1019,26 +1202,131 @@ export default function LeadsDataSection({
           reinquiry,
           leadViewKey,
           verificationStatusProp,
-          crmMonthWindowProp
+          crmMonthWindowProp,
         );
+      }
+      const pages = await Promise.all(
+        effectiveAssigneeScope.map((assigneeName) =>
+          fetchMergedPage(
+            0,
+            500,
+            targetLeadType,
+            targetSort,
+            debouncedSearch,
+            assigneeName,
+            dateFrom,
+            dateTo,
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
+            reinquiry,
+            leadViewKey,
+            verificationStatusProp,
+            crmMonthWindowProp,
+          ),
+        ),
+      );
+      const byId = new Map<string, ApiLead>();
+      for (const pg of pages) {
+        for (const lead of pg.content ?? []) {
+          const id = String(lead.id ?? "").trim();
+          if (!id || byId.has(id)) continue;
+          byId.set(id, lead);
+        }
+      }
+      const merged = [...byId.values()].sort((a, b) => {
+        const at = Date.parse(a.updatedAt ?? "");
+        const bt = Date.parse(b.updatedAt ?? "");
+        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+      });
+      const start = targetPage * targetSize;
+      return {
+        content: merged.slice(start, start + targetSize),
+        totalElements: merged.length,
+        totalPages: Math.max(1, Math.ceil(merged.length / Math.max(1, targetSize))),
+        number: targetPage,
+        size: targetSize,
+      };
+    },
+    [
+      effectiveAssigneeScope,
+      debouncedSearch,
+      effectiveAssignee,
+      dateFrom,
+      dateTo,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+      leadViewKey,
+      verificationStatusProp,
+      crmMonthWindowProp,
+    ],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const roleKey = normalizeRole(authRoleProp ?? currentRole);
+        const fetchCount = async (type: string): Promise<number> => {
+          const page = await fetchScopedMergedPage(0, 1, type, "updatedAt,desc");
+          return Number(page.totalElements ?? 0);
+        };
+
+        // Presales tabs should use server pagination metadata only (no client-side visibility re-filter).
+        if (isPresalesRole(roleKey)) {
+          const [all, formlead, glead, mlead, addlead, websitelead] = await Promise.all([
+            fetchCount("all"),
+            fetchCount("formlead"),
+            fetchCount("glead"),
+            fetchCount("mlead"),
+            fetchCount("addlead"),
+            fetchCount("websitelead"),
+          ]);
+          if (cancelled) return;
+          setLeadTypeCounts({
+            all,
+            formlead,
+            glead,
+            mlead,
+            addlead,
+            websitelead,
+            verified: 0,
+          });
+          return;
+        }
+
+        // Non-presales insight tiles still need row-level data.
+        const page = await fetchScopedMergedPage(0, 500, "all", "updatedAt,desc");
         if (cancelled) return;
         const raw = page.content ?? [];
+        const managerScopedTeam = effectiveAssigneeScope;
         const scopedTeam =
-          managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
-        const roleKey = normalizeRole(authRoleProp ?? currentRole);
-        const scoped = isNewCrmGlobalSearchMode
-          ? raw
-          : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+          managerScopedTeam.length > 0
+            ? managerScopedTeam
+            : managerTeamNamesFromHeader.length > 0
+              ? managerTeamNamesFromHeader
+              : managerTeamNames;
+        const scoped = raw;
         const base = computePrimarySourceCounts(scoped);
         const smMineTeam =
           roleKey === "SALES_MANAGER"
-            ? countSalesManagerMineVsTeam(scoped, currentUserName ?? "", scopedTeam)
+            ? countSalesManagerMineVsTeam(
+                scoped,
+                currentUserName ?? "",
+                scopedTeam,
+              )
             : { managerMine: 0, teamLeads: 0 };
+        const insightViewerRole =
+          roleKey === "SALES_ADMIN" ? "SALES_MANAGER" : roleKey;
+        const insightLeadViewForRole: "default" | "my" | "team" =
+          roleKey === "SALES_ADMIN" ? "default" : insightLeadView;
         const insights = computeFollowUpInsightCounts(scoped, {
-          viewerRole: roleKey,
+          viewerRole: insightViewerRole,
           currentUserName: currentUserName ?? "",
           managerTeamNames: scopedTeam,
-          leadView: insightLeadView,
+          leadView: insightLeadViewForRole,
           dateFrom,
           dateTo,
         });
@@ -1059,28 +1347,13 @@ export default function LeadsDataSection({
     authRoleProp,
     currentRole,
     currentUserName,
-    currentUserId,
-    currentUserAliases,
     managerTeamNames,
     managerTeamNamesFromHeader,
-    effectiveAssignee,
+    fetchScopedMergedPage,
     dateFrom,
     dateTo,
-    debouncedSearch,
-    milestoneStage,
-    milestoneStageCategory,
-    milestoneSubStage,
-    reinquiry,
-    presalesExecFilter,
-    presalesManagerFilter,
-    salesAdminFilter,
-    salesExecFilter,
-    salesManagerFilter,
-    leadViewKey,
-    isNewCrmGlobalSearchMode,
-    verificationStatusProp,
-    crmMonthWindowProp,
-    presalesExecs,
+    insightLeadView,
+    effectiveAssignee,
   ]);
 
   const load = useCallback(async () => {
@@ -1088,55 +1361,37 @@ export default function LeadsDataSection({
     setError(null);
     setData(null);
     try {
+      const insightModeActive = insightTableMode !== null;
+      const requestPage = insightModeActive ? 0 : page;
+      const requestSize = insightModeActive ? 500 : size;
+      const requestLeadType = insightModeActive ? "all" : leadType;
       const requested = {
-        page,
-        size,
-        leadType,
+        page: requestPage,
+        size: requestSize,
+        leadType: requestLeadType,
         milestoneStage,
       };
       console.info("[crm:leads] request", requested);
-      const json = await fetchMergedPage(
-        page,
-        size,
-        leadType,
+      const json = await fetchScopedMergedPage(
+        requestPage,
+        requestSize,
+        requestLeadType,
         sort,
-        debouncedSearch,
-        effectiveAssignee,
-        dateFrom,
-        dateTo,
-        milestoneStage,
-        milestoneStageCategory,
-        milestoneSubStage,
-      reinquiry,
-        leadViewKey,
-        verificationStatusProp,
-        crmMonthWindowProp
       );
       console.info("[crm:leads] response", {
         ...requested,
         contentLength: (json.content ?? []).length,
         totalElements: json.totalElements ?? 0,
       });
-      if ((json.content?.length ?? 0) === 0 && page > 0) {
+      if (!insightModeActive && (json.content?.length ?? 0) === 0 && page > 0) {
         const fallbackPage = page - 1;
         const fallbackRequested = { ...requested, page: fallbackPage };
         console.info("[crm:leads] empty page fallback", fallbackRequested);
-        const fallbackJson = await fetchMergedPage(
+        const fallbackJson = await fetchScopedMergedPage(
           fallbackPage,
           size,
           leadType,
           sort,
-          debouncedSearch,
-          effectiveAssignee,
-          dateFrom,
-          dateTo,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          reinquiry,
-          leadViewKey,
-          verificationStatusProp,
-          crmMonthWindowProp
         );
         console.info("[crm:leads] fallback response", {
           ...fallbackRequested,
@@ -1163,12 +1418,13 @@ export default function LeadsDataSection({
     dateFrom,
     dateTo,
     debouncedSearch,
-    effectiveAssignee,
+    fetchScopedMergedPage,
     leadType,
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
     reinquiry,
+    insightTableMode,
     page,
     size,
     sort,
@@ -1230,15 +1486,20 @@ export default function LeadsDataSection({
       role === "PRE_SALES"
     );
   })();
-  const visibleRows = rows;
+  const visibleRows =
+    insightTableMode !== null
+      ? rows.slice(page * size, page * size + size)
+      : rows;
   const total =
     insightTableMode !== null
       ? rows.length
       : (data?.totalElements ?? rows.length);
   const totalPages =
-    data?.totalPages && data.totalPages > 0
-      ? data.totalPages
-      : Math.max(1, Math.ceil(total / Math.max(1, size)));
+    insightTableMode !== null
+      ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+      : data?.totalPages && data.totalPages > 0
+        ? data.totalPages
+        : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(visibleRows.map((row) => [row.id, row]));

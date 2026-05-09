@@ -521,9 +521,12 @@ export default function JourneyPhaseHeatmap({
         // Heatmap pool drives presales Total + Verified counts; never shrink the fetch with
         // verificationStatus (table below uses its own filtered request).
         query.delete("verificationStatus");
+        // Presales month cards derive "this month" from assignment timestamps in client helper.
+        // Avoid server-side updatedAt month filtering here, otherwise assignment-month counts can drift.
+        query.delete("crmMonthWindow");
         query.set("mergeAll", "1");
         query.set("page", "0");
-        query.set("size", "100");
+        query.set("size", "250");
         query.set("sort", "updatedAt,desc");
         const firstRes = await fetch(`/api/crm/leads?${query.toString()}`, {
           cache: "no-store",
@@ -539,7 +542,7 @@ export default function JourneyPhaseHeatmap({
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
         if (totalPages > 1) {
           const followUps = [];
-          for (let p = 1; p < Math.min(totalPages, 20); p++) {
+          for (let p = 1; p < totalPages; p++) {
             const nextQuery = new URLSearchParams(query);
             nextQuery.set("page", String(p));
             followUps.push(

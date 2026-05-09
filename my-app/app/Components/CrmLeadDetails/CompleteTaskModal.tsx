@@ -197,17 +197,62 @@ export default function CompleteTaskModal({
           ""
         ).trim();
 
+        const mergeUniqueMappings = (
+          primary: SubStatusMapping[],
+          secondary: SubStatusMapping[],
+        ): SubStatusMapping[] => {
+          const out: SubStatusMapping[] = [];
+          const seen = new Set<string>();
+          for (const row of [...primary, ...secondary]) {
+            const stage = String(row.stage ?? "").trim();
+            const stageCategory = String(row.stageCategory ?? "").trim();
+            const subStageName = String(row.subStageName ?? "").trim();
+            if (!stage) continue;
+            const key = `${stage}||${stageCategory}||${subStageName}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ stage, stageCategory, subStageName });
+          }
+          return out;
+        };
+
         try {
-          const pipeline = await fetchCrmPipeline({
-            nested: true,
-            forCompleteTask: true,
-            currentStage,
-          });
-          mappings = pipeline.entries.map((e) => ({
+          const [completeTaskPipeline, fullPipeline] = await Promise.all([
+            fetchCrmPipeline({
+              nested: true,
+              forCompleteTask: true,
+              currentStage,
+            }),
+            fetchCrmPipeline({ nested: true }),
+          ]);
+          const completeTaskMappings = completeTaskPipeline.entries.map((e) => ({
             stage: e.stage,
             stageCategory: e.stageCategory,
             subStageName: e.subStageName,
           }));
+          const currentStageMappings = fullPipeline.entries
+            .filter((e) => {
+              const stage = String(e.stage ?? "").trim().toLowerCase();
+              return stage && stage === currentStage.trim().toLowerCase();
+            })
+            .map((e) => ({
+              stage: e.stage,
+              stageCategory: e.stageCategory,
+              subStageName: e.subStageName,
+            }));
+          mappings = mergeUniqueMappings(
+            currentStageMappings,
+            completeTaskMappings,
+          );
+          if (mappings.length === 0) {
+            // Keep prior behavior if both endpoints return no rows.
+            const fallback = completeTaskPipeline.entries.map((e) => ({
+              stage: e.stage,
+              stageCategory: e.stageCategory,
+              subStageName: e.subStageName,
+            }));
+            mappings = fallback;
+          }
         } catch (pipelineError) {
           // Fallback to existing milestone endpoint only if complete-task
           // filtered endpoint is not reachable.
