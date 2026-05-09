@@ -1308,7 +1308,7 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const scoped = raw;
+        const scoped = raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computePrimarySourceCounts(scoped);
         const smMineTeam =
           roleKey === "SALES_MANAGER"
@@ -1349,6 +1349,7 @@ export default function LeadsDataSection({
     currentUserName,
     managerTeamNames,
     managerTeamNamesFromHeader,
+    canViewLeadByRole,
     fetchScopedMergedPage,
     dateFrom,
     dateTo,
@@ -1449,7 +1450,22 @@ export default function LeadsDataSection({
     [presalesTeamExecDisplayNames],
   );
 
-  const content = contentFromApi;
+  const isClientScopedRole = (() => {
+    const role = normalizeRole(authRoleProp ?? currentRole);
+    return (
+      role === "SALES_MANAGER" ||
+      role === "MANAGER" ||
+      role === "SALES_EXECUTIVE" ||
+      role === "PRESALES_MANAGER" ||
+      role === "PRESALES_EXECUTIVE" ||
+      role === "PRE_SALES"
+    );
+  })();
+  const content = isClientScopedRole
+    ? contentFromApi.filter((lead) =>
+        canViewLeadByRole(lead, normalizeRole(authRoleProp ?? currentRole)),
+      )
+    : contentFromApi;
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -1475,17 +1491,6 @@ export default function LeadsDataSection({
   const managerScopedView =
     currentRole === "SALES_MANAGER" &&
     (leadView === "my" || leadView === "team" || leadView === "combined");
-  const isClientScopedRole = (() => {
-    const role = normalizeRole(authRoleProp ?? currentRole);
-    return (
-      role === "SALES_MANAGER" ||
-      role === "MANAGER" ||
-      role === "SALES_EXECUTIVE" ||
-      role === "PRESALES_MANAGER" ||
-      role === "PRESALES_EXECUTIVE" ||
-      role === "PRE_SALES"
-    );
-  })();
   const visibleRows =
     insightTableMode !== null
       ? rows.slice(page * size, page * size + size)
