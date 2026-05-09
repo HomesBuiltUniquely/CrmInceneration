@@ -23,7 +23,35 @@ import { readStoredCrmToken } from "@/lib/crm-client-auth";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 
+const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
+
+type HeaderPersistedState = {
+  search?: string;
+  leadType?: string;
+  sort?: string;
+  assignee?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  milestoneStage?: string;
+  milestoneStageCategory?: string;
+  milestoneSubStage?: string;
+  reinquiry?: string;
+};
+
+function readHeaderPersistedState(): HeaderPersistedState {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as HeaderPersistedState;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function Header() {
+  const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
     if (typeof window === "undefined") return "SUPER_ADMIN";
     const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
@@ -42,16 +70,22 @@ export default function Header() {
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY)?.trim();
     return Boolean(token && role);
   });
-  const [search, setSearch] = useState("");
-  const [leadType, setLeadType] = useState("all");
-  const [sort, setSort] = useState("updatedAt,desc");
-  const [assignee, setAssignee] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [milestoneStage, setMilestoneStage] = useState("");
-  const [milestoneStageCategory, setMilestoneStageCategory] = useState("");
-  const [milestoneSubStage, setMilestoneSubStage] = useState("");
-  const [reinquiry, setReinquiry] = useState("");
+  const [search, setSearch] = useState(persistedHeaderState.search ?? "");
+  const [leadType, setLeadType] = useState(persistedHeaderState.leadType ?? "all");
+  const [sort, setSort] = useState(persistedHeaderState.sort ?? "updatedAt,desc");
+  const [assignee, setAssignee] = useState(persistedHeaderState.assignee ?? "");
+  const [dateFrom, setDateFrom] = useState(persistedHeaderState.dateFrom ?? "");
+  const [dateTo, setDateTo] = useState(persistedHeaderState.dateTo ?? "");
+  const [milestoneStage, setMilestoneStage] = useState(
+    persistedHeaderState.milestoneStage ?? "",
+  );
+  const [milestoneStageCategory, setMilestoneStageCategory] = useState(
+    persistedHeaderState.milestoneStageCategory ?? "",
+  );
+  const [milestoneSubStage, setMilestoneSubStage] = useState(
+    persistedHeaderState.milestoneSubStage ?? "",
+  );
+  const [reinquiry, setReinquiry] = useState(persistedHeaderState.reinquiry ?? "");
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
   /** Toolbar Sales Exec / hierarchy filters — same effective assignee as the lead table. */
   const [heatmapToolbarAssignee, setHeatmapToolbarAssignee] = useState("");
@@ -282,6 +316,38 @@ export default function Header() {
     setPresalesSummaryTab(null);
     setDateTo(v);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload: HeaderPersistedState = {
+      search,
+      leadType,
+      sort,
+      assignee,
+      dateFrom,
+      dateTo,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+    };
+    try {
+      window.sessionStorage.setItem(HEADER_PERSIST_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [
+    search,
+    leadType,
+    sort,
+    assignee,
+    dateFrom,
+    dateTo,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    reinquiry,
+  ]);
 
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">

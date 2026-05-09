@@ -61,6 +61,9 @@ type Props = {
     onBodyChange: (v: string) => void;
     onSendQuote: () => void | Promise<void>;
     quoteSending: boolean;
+    quotePersisting?: boolean;
+    quoteLinkPersistError?: string;
+    onRetrySaveQuoteLink?: () => void | Promise<void>;
   };
 };
 
@@ -437,22 +440,38 @@ export default function LeadInfoTab({
                       <Input
                         placeholder="https://… (PDF or proposal URL)"
                         value={lead.quoteLink ?? ""}
-                        onChange={(e) => c?.({ quoteLink: e.target.value })}
+                        readOnly
                         className="flex-1"
                       />
                       <Button
                         type="button"
                         variant="primary"
-                        disabled={
-                          quoteExtras.quoteSending || !(lead.quoteLink ?? "").trim()
-                        }
+                        disabled={quoteExtras.quoteSending || quoteExtras.quotePersisting}
                         onClick={() => void quoteExtras.onSendQuote()}
                       >
                         {quoteExtras.quoteSending ? "Sending…" : "Send"}
                       </Button>
                     </div>
+                    {quoteExtras.quoteLinkPersistError ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <p className="text-[11px] text-amber-600">
+                          Quote generated, but saving quote link failed. Please retry.
+                        </p>
+                        {quoteExtras.onRetrySaveQuoteLink ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="!h-7 !px-2.5 !py-0 text-[11px]"
+                            disabled={quoteExtras.quotePersisting}
+                            onClick={() => void quoteExtras.onRetrySaveQuoteLink?.()}
+                          >
+                            {quoteExtras.quotePersisting ? "Retrying..." : "Retry Save Quote Link"}
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
-                      Save other lead fields with Save Changes if needed, then send.
+                      Auto-mapped quote link (read-only). Use Send to email quote.
                     </p>
                   </div>
                 </div>

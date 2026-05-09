@@ -77,6 +77,60 @@ function salesExecutiveLabel(u: SalesExecutiveOption): string {
   return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
 }
 
+function pickPersistedQuoteLink(
+  updatedDetail: Record<string, unknown>,
+  fallbackLead: Lead,
+): string {
+  const fromUpdated = [
+    updatedDetail.quoteLink,
+    updatedDetail.quoteURL,
+    updatedDetail.proposalLink,
+  ]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .find(Boolean);
+  if (fromUpdated) return fromUpdated;
+  return (fallbackLead.quoteLink ?? "").trim();
+}
+
+function withStickyQuoteInDetail(
+  updatedDetail: Record<string, unknown>,
+  quoteLink: string,
+): Record<string, unknown> {
+  if (!quoteLink.trim()) return updatedDetail;
+  return {
+    ...updatedDetail,
+    quoteLink: quoteLink.trim(),
+    quoteURL: quoteLink.trim(),
+    proposalLink: quoteLink.trim(),
+  };
+}
+
+function extractCustomerQuoteLink(resp: unknown): string {
+  if (!resp || typeof resp !== "object" || Array.isArray(resp)) return "";
+  const row = resp as Record<string, unknown>;
+  const candidates = [
+    row.customerLink,
+    row.customerQuoteUrl,
+    row.quoteLink,
+    row.link,
+    row.publicUrl,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function extractInternalQuoteLink(resp: unknown): string {
+  if (!resp || typeof resp !== "object" || Array.isArray(resp)) return "";
+  const row = resp as Record<string, unknown>;
+  const candidates = [row.internalQuoteUrl, row.internalLink];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 async function fetchSalesExecutivesForPicker(
   token: string,
 ): Promise<SalesExecutiveOption[]> {
@@ -602,6 +656,8 @@ export default function LeadDetailsApiClient({
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteFetching, setQuoteFetching] = useState(false);
+  const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
+  const [quoteLinkPersistError, setQuoteLinkPersistError] = useState("");
   const [quoteSubject, setQuoteSubject] = useState(
     "Your Hub Interior Quote",
   );
@@ -1063,11 +1119,14 @@ export default function LeadDetailsApiClient({
     const revertBody = mergeLeadIntoDetail(baseDetail, revertedLead);
     void putLeadDetail(lt, leadId, revertBody)
       .then((updated) => {
-        setBaseDetail(updated);
+        const stickyQuote = pickPersistedQuoteLink(updated, lead);
+        const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+        setBaseDetail(stickyDetail);
         setLead((prev) => ({
-          ...detailJsonToLead(updated, lt),
+          ...detailJsonToLead(stickyDetail, lt),
           id: leadId,
           activities: prev.activities,
+          quoteLink: stickyQuote || prev.quoteLink || "",
         }));
         notifyError("Lead moved back because Sales Closure is pending.");
       })
@@ -1177,12 +1236,15 @@ export default function LeadDetailsApiClient({
     try {
       const body = mergeLeadIntoDetail(baseDetail, lead);
       const updated = await putLeadDetail(lt, leadId, body);
-      setBaseDetail(updated);
-      const mapped = detailJsonToLead(updated, lt);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
       setLead((prev) => ({
         ...mapped,
         id: leadId,
         activities: prev.activities,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
       }));
       maybeOpenSalesClosureAfterWon([
         lead.status,
@@ -1227,12 +1289,15 @@ export default function LeadDetailsApiClient({
     try {
       const body = mergeLeadIntoDetail(baseDetail, lead);
       const updated = await putLeadDetail(lt, leadId, body);
-      setBaseDetail(updated);
-      const mapped = detailJsonToLead(updated, lt);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
       setLead((prev) => ({
         ...mapped,
         id: leadId,
         activities: prev.activities,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
       }));
       notifySuccess("Additional info saved.");
       maybeOpenSalesClosureAfterWon([
@@ -1313,9 +1378,31 @@ export default function LeadDetailsApiClient({
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
-    const link = lead.quoteLink?.trim();
+    let link = lead.quoteLink?.trim() ?? "";
     if (!link) {
-      notifyError("Add a quote link on the lead before sending.");
+      const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
+      if (leadIdentifier) {
+        try {
+          const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+          link =
+            (res.internalQuoteUrl ?? "").trim() ||
+            (res.customerQuoteUrl ?? "").trim();
+          if (link) {
+            patchLead({ quoteLink: link });
+            setBaseDetail((prev) => ({
+              ...prev,
+              quoteLink: link,
+              quoteURL: link,
+              proposalLink: link,
+            }));
+          }
+        } catch {
+          // ignore fetch-link error and keep user-facing validation below
+        }
+      }
+    }
+    if (!link) {
+      notifyError("Quote link is not available yet. Please fetch quote first.");
       return;
     }
     if (!lead.email?.trim()) {
@@ -1357,13 +1444,67 @@ export default function LeadDetailsApiClient({
     }
   }, [
     lead.email,
+    lead.leadId,
     lead.quoteLink,
     leadId,
     leadTypeParam,
+    patchLead,
     quoteBody,
     quoteSubject,
     validLeadType,
   ]);
+
+  const persistQuoteLinkOnly = useCallback(
+    async (nextQuoteLink: string) => {
+      if (!validLeadType) return;
+      const link = nextQuoteLink.trim();
+      if (!link) throw new Error("Quote link is empty.");
+      const lt = leadTypeParam as CrmLeadType;
+      setQuoteLinkPersisting(true);
+      setQuoteLinkPersistError("");
+      try {
+        const updated = await putLeadDetail(lt, leadId, { quoteLink: link });
+        const stickyDetail = withStickyQuoteInDetail(updated, link);
+        setBaseDetail(stickyDetail);
+        setLead((prev) => ({
+          ...detailJsonToLead(stickyDetail, lt),
+          id: leadId,
+          activities: prev.activities,
+          quoteLink: link,
+        }));
+      } catch (e) {
+        const msg =
+          e instanceof Error
+            ? e.message
+            : "Quote generated, but quote link auto-save failed.";
+        setQuoteLinkPersistError(msg);
+        throw e instanceof Error
+          ? e
+          : new Error("Quote generated, but quote link auto-save failed.");
+      } finally {
+        setQuoteLinkPersisting(false);
+      }
+    },
+    [leadId, leadTypeParam, validLeadType],
+  );
+
+  const handleRetryQuoteLinkSave = useCallback(async () => {
+    const link = lead.quoteLink?.trim() ?? "";
+    if (!link) {
+      notifyError("No generated quote link to save.");
+      return;
+    }
+    try {
+      await persistQuoteLinkOnly(link);
+      notifySuccess("Quote link saved successfully.");
+    } catch (e) {
+      notifyError(
+        e instanceof Error
+          ? `Quote sent, but quote link auto-save failed (${e.message})`
+          : "Quote sent, but quote link auto-save failed.",
+      );
+    }
+  }, [lead.quoteLink, notifyError, notifySuccess, persistQuoteLinkOnly]);
 
   const handleGetQuote = useCallback(async () => {
     if (!validLeadType) return;
@@ -1373,25 +1514,51 @@ export default function LeadDetailsApiClient({
       return;
     }
     setQuoteFetching(true);
+    setQuoteLinkPersistError("");
     try {
       const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
-      const link =
-        (res.internalQuoteUrl ?? "").trim() || (res.customerQuoteUrl ?? "").trim();
-      if (!link) {
-        notifyError("Quote link is not available for this lead yet.");
+      const customerLink = extractCustomerQuoteLink(res);
+      const internalLink = extractInternalQuoteLink(res);
+      if (!customerLink) {
+        notifyError("Quote generated response missing customer link.");
         return;
       }
-      patchLead({ quoteLink: link });
-      notifySuccess("Quote fetched successfully.");
-      if (typeof window !== "undefined") {
-        window.open(link, "_blank", "noopener,noreferrer");
+      patchLead({ quoteLink: customerLink });
+      setBaseDetail((prev) => ({
+        ...prev,
+        quoteLink: customerLink,
+        quoteURL: customerLink,
+        proposalLink: customerLink,
+      }));
+      try {
+        await persistQuoteLinkOnly(customerLink);
+        notifySuccess("Quote generated and saved successfully.");
+      } catch (e) {
+        notifyError(
+          e instanceof Error
+            ? `Quote generated, but saving quote link failed. Please retry. (${e.message})`
+            : "Quote generated, but saving quote link failed. Please retry.",
+        );
+      }
+      if (internalLink && typeof window !== "undefined") {
+        window.open(internalLink, "_blank", "noopener,noreferrer");
+      } else {
+        notifyError("Internal quote link is not available to open.");
       }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Get quote failed");
     } finally {
       setQuoteFetching(false);
     }
-  }, [lead.leadId, leadId, notifyError, notifySuccess, patchLead, validLeadType]);
+  }, [
+    lead.leadId,
+    leadId,
+    notifyError,
+    notifySuccess,
+    patchLead,
+    persistQuoteLinkOnly,
+    validLeadType,
+  ]);
 
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
@@ -1601,12 +1768,15 @@ export default function LeadDetailsApiClient({
         };
         const body = mergeLeadIntoDetail(baseDetail, leadForSave);
         const updated = await putLeadDetail(lt, leadId, body);
-        setBaseDetail(updated);
+        const stickyQuote = pickPersistedQuoteLink(updated, leadForSave);
+        const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+        setBaseDetail(stickyDetail);
         setLead((prev) => ({
-          ...detailJsonToLead(updated, lt),
+          ...detailJsonToLead(stickyDetail, lt),
           id: leadId,
           activities: prev.activities,
           stageBlock: nextStage,
+          quoteLink: stickyQuote || prev.quoteLink || "",
         }));
         notifySuccess("Saved");
         maybeOpenSalesClosureAfterWon([
@@ -1736,6 +1906,9 @@ export default function LeadDetailsApiClient({
               onBodyChange: setQuoteBody,
               onSendQuote: handleSendQuote,
               quoteSending,
+              quotePersisting: quoteLinkPersisting,
+              quoteLinkPersistError,
+              onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
             }}
           />
         )}
