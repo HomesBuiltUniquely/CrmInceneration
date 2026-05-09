@@ -88,3 +88,103 @@ Frontend expects either:
 
 If `firstCallAt` is available, frontend should prefer it over inference.
 
+---
+
+## New CRM Error Handling Update (User-Friendly Messages)
+
+This note explains the recent fix for New CRM save errors where technical backend exceptions were shown to end users.
+
+## Problem
+
+Users were seeing technical messages like:
+
+- `Cannot deserialize value of type java.lang.String from Object value`
+- `HttpMessageNotReadableException`
+
+These are backend/debug messages and are not understandable for most users.
+
+## Root Cause
+
+- Some requests sent `propertyDetails` in object format (`{...}`) while backend expected a string.
+- Raw backend error text was passed directly to UI in some New CRM flows (Add Note / Save lead data).
+
+## Backend changes completed
+
+### 1) `Mlead.propertyDetails` made compatible with object or string input
+
+File:
+
+- `src/main/java/com/ProjectERP/HUB/HUB/proj/Pojoclasses/Mlead.java`
+
+Change:
+
+- Added `@JsonDeserialize(using = StringOrJsonValueDeserializer.class)` on `setPropertyDetails(...)`.
+- Now backend accepts string/object/array values and stores normalized string JSON safely.
+
+### 2) User-friendly API error payload
+
+File:
+
+- `src/main/java/com/ProjectERP/HUB/HUB/proj/Controlers/GlobalExceptionHandler.java`
+
+Change:
+
+- For `HttpMessageNotReadableException` and `DataIntegrityViolationException`, backend now returns:
+  - `error`: safe user-friendly message
+  - `userMessage`: same friendly message (preferred by frontend)
+  - `debugMessage`: technical detail for logs/debugging
+
+Example response:
+
+```json
+{
+  "success": false,
+  "type": "HttpMessageNotReadableException",
+  "error": "Property details format is invalid. Please enter property details as plain text and try again.",
+  "userMessage": "Property details format is invalid. Please enter property details as plain text and try again.",
+  "debugMessage": "Cannot deserialize value of type ..."
+}
+```
+
+## Frontend changes completed (New CRM)
+
+File:
+
+- `src/main/resources/static/lead-details.html`
+
+Changes:
+
+- Added helper: `getFriendlyApiErrorMessage(responseText, fallbackMessage)`
+  - Reads JSON and prefers `userMessage`, then `error`, then `message`
+  - Hides long/technical text and shows clean fallback
+- Updated Add Note flows to use friendly message parsing:
+  - lead data save failure
+  - note activity save failure
+
+## What users see now
+
+Instead of technical backend errors, users now see clear messages like:
+
+- `Unable to save lead details. Please check the values and try again.`
+- `Property details format is invalid. Please enter property details as plain text and try again.`
+- `Unable to save note activity. Please try again.`
+
+## Frontend integration rule (recommended)
+
+In all New CRM API error handling, use this priority:
+
+1. `response.userMessage`
+2. `response.error`
+3. `response.message`
+4. generic fallback (friendly)
+
+Do not show `debugMessage` to end users.
+
+## Deployment / verification checklist
+
+- [ ] Deploy backend with `Mlead` + `GlobalExceptionHandler` updates.
+- [ ] Ensure New CRM `lead-details.html` is updated in deployed build.
+- [ ] Test Add Note save with valid payload (success path).
+- [ ] Test invalid payload (`propertyDetails` as object) and confirm user-friendly message.
+- [ ] Confirm no raw Jackson exception text appears in user modal/toast.
+

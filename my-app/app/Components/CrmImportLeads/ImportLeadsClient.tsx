@@ -17,6 +17,7 @@ import {
   CRM_TOKEN_STORAGE_KEY,
   normalizeRole,
 } from "@/lib/auth/api";
+import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
 
 const IMPORT_BASE = `${BASE_URL}/v1/import`;
 
@@ -266,15 +267,15 @@ export default function ImportLeadsClient() {
         body: formData,
       });
 
-      const data = await response.json().catch(() => ({}));
-
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Failed to process file",
+          await getFriendlyApiErrorMessage(
+            response,
+            "Unable to process the file. Please try again.",
+          ),
         );
       }
+      const data = await response.json().catch(() => ({}));
 
       const sheets = Array.isArray(data?.sheets)
         ? (data.sheets as SheetInfo[])
@@ -325,15 +326,15 @@ export default function ImportLeadsClient() {
         body: formData,
       });
 
-      const data = await response.json().catch(() => ({}));
-
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string"
-            ? data.error
-            : "Failed to read sheet headers",
+          await getFriendlyApiErrorMessage(
+            response,
+            "Unable to read sheet headers. Please try again.",
+          ),
         );
       }
+      const data = await response.json().catch(() => ({}));
 
       const headers = Array.isArray(data?.headers)
         ? (data.headers as string[])
@@ -425,16 +426,18 @@ export default function ImportLeadsClient() {
         body: formData,
       });
 
-      const data = await response.json().catch(() => ({}));
-
       setProgressPercent(100);
       setProgressText("Complete!");
 
       if (!response.ok) {
         throw new Error(
-          typeof data?.error === "string" ? data.error : "Import failed",
+          await getFriendlyApiErrorMessage(
+            response,
+            "Unable to import leads right now. Please try again.",
+          ),
         );
       }
+      const data = await response.json().catch(() => ({}));
 
       setImportResult({
         imported: typeof data?.imported === "number" ? data.imported : 0,

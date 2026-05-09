@@ -1,5 +1,8 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import {
+  sanitizeErrorMessage,
+} from "@/lib/friendly-api-error";
 
 function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
@@ -10,6 +13,81 @@ type ParsedApiError = {
   message: string;
   payload: Record<string, unknown> | null;
 };
+
+function normalizePropertyDetails(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  try {
+    return JSON.stringify(value).trim();
+  } catch {
+    return String(value).trim();
+  }
+}
+
+function normalizeLeadUpdatePayload(
+  leadType: CrmLeadType,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalizedBody: Record<string, unknown> = { ...input };
+  if (normalizedBody.PropertyDetails !== undefined) {
+    // Canonicalize to one top-level key.
+    normalizedBody.propertyDetails = normalizedBody.PropertyDetails;
+    delete normalizedBody.PropertyDetails;
+  }
+  normalizedBody.propertyDetails = normalizePropertyDetails(
+    normalizedBody.propertyDetails,
+  );
+  const dynamicFields = normalizedBody.dynamicFields;
+  if (
+    dynamicFields &&
+    typeof dynamicFields === "object" &&
+    !Array.isArray(dynamicFields)
+  ) {
+    const normalizedDynamicFields = {
+      ...(dynamicFields as Record<string, unknown>),
+    };
+    const incomingPropertyDetails =
+      normalizedDynamicFields.PropertyDetails ??
+      normalizedDynamicFields.propertyDetails;
+    normalizedDynamicFields.PropertyDetails = normalizePropertyDetails(
+      incomingPropertyDetails,
+    );
+    delete normalizedDynamicFields.propertyDetails;
+    normalizedBody.dynamicFields = normalizedDynamicFields;
+  }
+
+  // Keep GLead update payload closer to old CRM contract.
+  if (leadType === "glead") {
+    const rawPhone =
+      typeof normalizedBody.phoneNumber === "string"
+        ? normalizedBody.phoneNumber
+        : typeof normalizedBody.phone === "string"
+          ? normalizedBody.phone
+          : typeof normalizedBody.mobile === "string"
+            ? normalizedBody.mobile
+            : "";
+    const rawPin =
+      typeof normalizedBody.propertyPin === "string"
+        ? normalizedBody.propertyPin
+        : typeof normalizedBody.propertyPincode === "string"
+          ? normalizedBody.propertyPincode
+          : typeof normalizedBody.pincode === "string"
+            ? normalizedBody.pincode
+            : "";
+
+    normalizedBody.phoneNumber = rawPhone.trim();
+    normalizedBody.propertyPin = rawPin.trim();
+
+    delete normalizedBody.phone;
+    delete normalizedBody.mobile;
+    delete normalizedBody.propertyPincode;
+    delete normalizedBody.pincode;
+    delete normalizedBody.pinCode;
+    delete normalizedBody.zip;
+  }
+
+  return normalizedBody;
+}
 
 async function parseApiError(response: Response): Promise<ParsedApiError> {
   let payload: Record<string, unknown> | null = null;
@@ -25,8 +103,9 @@ async function parseApiError(response: Response): Promise<ParsedApiError> {
     }
   }
   const payloadMessage =
-    (typeof payload?.message === "string" && payload.message.trim()) ||
+    (typeof payload?.userMessage === "string" && payload.userMessage.trim()) ||
     (typeof payload?.error === "string" && payload.error.trim()) ||
+    (typeof payload?.message === "string" && payload.message.trim()) ||
     "";
   const fallbackByStatus =
     response.status === 401
@@ -41,7 +120,7 @@ async function parseApiError(response: Response): Promise<ParsedApiError> {
 
   return {
     status: response.status,
-    message: payloadMessage || text.trim() || fallbackByStatus,
+    message: sanitizeErrorMessage(payloadMessage || text.trim(), fallbackByStatus),
     payload,
   };
 }
@@ -76,14 +155,29 @@ export async function putLeadDetail(
   id: string,
   body: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
+  const normalizedBody = normalizeLeadUpdatePayload(leadType, body);
+  const requestBody = JSON.stringify(normalizedBody);
+  if (typeof window !== "undefined") {
+    console.info("[lead:update] PUT endpoint:", `/api/crm/lead/${leadType}/${id}`);
+    console.info("[lead:update] payload bytes:", new Blob([requestBody]).size);
+    console.info(
+      "[lead:update] propertyDetails length:",
+      (normalizedBody.propertyDetails as string).length,
+    );
+  }
   const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
     method: "PUT",
     credentials: "include",
     headers: authHeaders(),
-    body: JSON.stringify(body),
+    body: requestBody,
     cache: "no-store",
   });
-  if (!res.ok) throw await buildApiError(res, `Save failed (${res.status})`);
+  if (!res.ok) {
+    throw await buildApiError(
+      res,
+      "Failed to update lead. Please check values and try again.",
+    );
+  }
   return res.json() as Promise<Record<string, unknown>>;
 }
 
@@ -102,14 +196,22 @@ export async function postManualActivity(
   });
   const text = await res.text();
   if (!res.ok) {
-    if (res.status === 403) throw new Error("You don't have permission to add activity.");
-    throw new Error(text || `Activity update failed (${res.status})`);
+    if (res.status === 403)
+      throw new Error("You don't have permission to add activity.");
+    throw new Error(
+      sanitizeErrorMessage(
+        text,
+        `Unable to save activity right now. Please try again.`,
+      ),
+    );
   }
   return text;
 }
 
 function verifyPayloadMessage(parsed: Record<string, unknown> | null): string | null {
   if (!parsed) return null;
+  const um = parsed.userMessage;
+  if (typeof um === "string" && um.trim()) return um.trim();
   const m = parsed.message;
   if (typeof m === "string" && m.trim()) return m.trim();
   const e = parsed.error;
@@ -181,7 +283,12 @@ export async function postStageRollback(
     if (res.status === 403) {
       throw new Error("Only Super Admin can rollback stage.");
     }
-    throw new Error(text || `Stage rollback failed (${res.status})`);
+    throw new Error(
+      sanitizeErrorMessage(
+        text,
+        `Unable to rollback stage right now. Please try again.`,
+      ),
+    );
   }
   try {
     return text ? JSON.parse(text) : {};
@@ -201,7 +308,11 @@ export async function postQuoteSend(formData: FormData): Promise<unknown> {
     cache: "no-store",
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(text || `Quote send failed (${res.status})`);
+  if (!res.ok) {
+    throw new Error(
+      sanitizeErrorMessage(text, "Unable to send quote right now. Please try again."),
+    );
+  }
   try {
     return text ? JSON.parse(text) : {};
   } catch {
@@ -259,7 +370,10 @@ export async function getNewCrmQuoteInternalLinkByLead(
       text.trim();
     const message = isHtmlLikePayload(rawMessage)
       ? `Get quote failed (${res.status}). Upstream service returned an invalid response.`
-      : rawMessage || `Get quote failed (${res.status})`;
+      : sanitizeErrorMessage(
+          rawMessage,
+          "Unable to fetch quote link right now. Please try again.",
+        );
     throw new Error(message);
   }
   return parsed ?? {};

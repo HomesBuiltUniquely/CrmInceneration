@@ -1,11 +1,10 @@
 /**
  * CRM backend origin without a trailing slash.
- * Hardcoded to production HOWS backend as requested.
+ * Uses BASE_URL from environment with production fallback.
  */
-export const CRM_API_BASE_URL = "https://hows.hubinterior.com".replace(
-  /\/$/,
-  "",
-);
+export const CRM_API_BASE_URL = (
+  process.env.BASE_URL?.trim() || "https://hows.hubinterior.com"
+).replace(/\/+$/, "");
 
 /** Backward-compatible alias for existing imports. */
 export const BASE_URL = CRM_API_BASE_URL;

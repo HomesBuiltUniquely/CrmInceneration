@@ -10,6 +10,7 @@ import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import { BASE_URL } from "@/lib/base-url";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
 
 const LEAD_SOURCES = [
   "Website",
@@ -336,15 +337,14 @@ export default function CreateLeadClient() {
           body: JSON.stringify(payload),
         });
 
-        const result = await response.json().catch(() => ({}));
-
         if (!response.ok) {
-          throw new Error(
-            typeof result?.error === "string"
-              ? result.error
-              : `Create lead failed with status ${response.status}`,
+          const friendlyMessage = await getFriendlyApiErrorMessage(
+            response,
+            "Unable to save lead details. Please check the values and try again.",
           );
+          throw new Error(friendlyMessage);
         }
+        const result = await response.json().catch(() => ({}));
 
         setSuccess(
           typeof result?.message === "string"
