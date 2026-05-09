@@ -1086,7 +1086,15 @@ export default function LeadsDataSection({
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setData(null);
     try {
+      const requested = {
+        page,
+        size,
+        leadType,
+        milestoneStage,
+      };
+      console.info("[crm:leads] request", requested);
       const json = await fetchMergedPage(
         page,
         size,
@@ -1104,6 +1112,41 @@ export default function LeadsDataSection({
         verificationStatusProp,
         crmMonthWindowProp
       );
+      console.info("[crm:leads] response", {
+        ...requested,
+        contentLength: (json.content ?? []).length,
+        totalElements: json.totalElements ?? 0,
+      });
+      if ((json.content?.length ?? 0) === 0 && page > 0) {
+        const fallbackPage = page - 1;
+        const fallbackRequested = { ...requested, page: fallbackPage };
+        console.info("[crm:leads] empty page fallback", fallbackRequested);
+        const fallbackJson = await fetchMergedPage(
+          fallbackPage,
+          size,
+          leadType,
+          sort,
+          debouncedSearch,
+          effectiveAssignee,
+          dateFrom,
+          dateTo,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          reinquiry,
+          leadViewKey,
+          verificationStatusProp,
+          crmMonthWindowProp
+        );
+        console.info("[crm:leads] fallback response", {
+          ...fallbackRequested,
+          contentLength: (fallbackJson.content ?? []).length,
+          totalElements: fallbackJson.totalElements ?? 0,
+        });
+        setPage(fallbackPage);
+        setData(fallbackJson);
+        return;
+      }
       setData(json);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load leads";
@@ -1150,17 +1193,7 @@ export default function LeadsDataSection({
     [presalesTeamExecDisplayNames],
   );
 
-  const content = isNewCrmGlobalSearchMode
-    ? contentFromApi
-    : contentFromApi.filter((lead) => {
-        if (!canViewLeadByRole(lead, scopeRoleKey)) return false;
-        if (presalesTeamExecutivesOnly && scopeRoleKey === "PRESALES_MANAGER") {
-          if (presalesExecNormSet.size === 0) return false;
-          if (leadAssignedToSelf(lead)) return false;
-          if (!leadAssignedToPresalesExecNameSet(lead, presalesExecNormSet)) return false;
-        }
-        return true;
-      });
+  const content = contentFromApi;
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -1182,14 +1215,7 @@ export default function LeadsDataSection({
   const myName = norm(currentUserName);
   const scopedTeamNames = managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const teamSet = new Set(scopedTeamNames.map(norm));
-  const rows =
-    currentRole === "SALES_MANAGER" && leadView === "my"
-      ? baseRows.filter((row) => norm(row.owner.name) === myName)
-      : currentRole === "SALES_MANAGER" && leadView === "team"
-        ? scopedTeamNames.length > 0
-          ? baseRows.filter((row) => teamSet.has(norm(row.owner.name)))
-          : baseRows.filter((row) => row.owner.name.trim() !== "")
-        : baseRows;
+  const rows = baseRows;
   const managerScopedView =
     currentRole === "SALES_MANAGER" &&
     (leadView === "my" || leadView === "team" || leadView === "combined");
@@ -1204,16 +1230,15 @@ export default function LeadsDataSection({
       role === "PRE_SALES"
     );
   })();
-  const visibleRows = managerScopedView ? rows.slice(page * size, page * size + size) : rows;
+  const visibleRows = rows;
   const total =
     insightTableMode !== null
       ? rows.length
-      : isClientScopedRole
-        ? rows.length
-      : managerScopedView
-        ? rows.length
-        : (data?.totalElements ?? rows.length);
-  const totalPages = managerScopedView ? Math.max(1, Math.ceil(total / size)) : (data?.totalPages ?? 1);
+      : (data?.totalElements ?? rows.length);
+  const totalPages =
+    data?.totalPages && data.totalPages > 0
+      ? data.totalPages
+      : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(visibleRows.map((row) => [row.id, row]));

@@ -205,8 +205,58 @@ function pickConfigurationFromDetail(
   return "";
 }
 
-/** Property notes: never treat `propertyDetails` object as the notes string. */
-function pickPropertyNotesFromDetail(detail: Record<string, unknown>): string {
+function normalizeCompareValue(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function isConfigurationLikePropertyDetails(
+  noteLike: string,
+  detail: Record<string, unknown>,
+): boolean {
+  const candidate = normalizeCompareValue(noteLike);
+  if (!candidate) return false;
+  const cfgCandidates = [
+    pickStr(
+      detail,
+      "interior_setup",
+      "interiorSetup",
+      "configuration",
+      "propertyConfiguration",
+      "property_configuration",
+      "bhk",
+      "propertyType",
+      "unitType",
+      "property_type",
+    ),
+    (() => {
+      const pd = detail.propertyDetails;
+      if (pd && typeof pd === "object" && !Array.isArray(pd)) {
+        return pickStr(
+          pd as Record<string, unknown>,
+          "interior_setup",
+          "interiorSetup",
+          "configuration",
+          "propertyConfiguration",
+          "property_configuration",
+          "bhk",
+          "propertyType",
+          "unitType",
+          "property_type",
+        );
+      }
+      return "";
+    })(),
+  ]
+    .map((v) => normalizeCompareValue(v))
+    .filter(Boolean);
+  return cfgCandidates.includes(candidate);
+}
+
+/** Property notes: never treat config/interior values as notes. */
+function pickPropertyNotesFromDetail(
+  detail: Record<string, unknown>,
+  leadType: CrmLeadType,
+): string {
   const direct = pickStr(
     detail,
     "propertyNotes",
@@ -232,16 +282,23 @@ function pickPropertyNotesFromDetail(detail: Record<string, unknown>): string {
           "description",
           "details",
         );
-        return extracted || "";
+        if (!extracted) return "";
+        return isConfigurationLikePropertyDetails(extracted, detail)
+          ? ""
+          : extracted;
       } catch {
-        return raw;
+        return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
       }
     }
-    return raw;
+    // For non-JSON strings, keep this fallback only for legacy lead types.
+    if (leadType === "addlead" || leadType === "mlead") {
+      return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
+    }
+    return "";
   }
   if (pd && typeof pd === "object" && !Array.isArray(pd)) {
     const o = pd as Record<string, unknown>;
-    return (
+    const picked =
       pickStr(
         o,
         "propertyNotes",
@@ -249,8 +306,8 @@ function pickPropertyNotesFromDetail(detail: Record<string, unknown>): string {
         "notes",
         "description",
         "details",
-      ) || ""
-    );
+      ) || "";
+    return isConfigurationLikePropertyDetails(picked, detail) ? "" : picked;
   }
   return "";
 }
@@ -268,9 +325,6 @@ function mergePropertyDetailsBlock(
 
   if (prev && typeof prev === "object" && !Array.isArray(prev)) {
     bag = { ...(prev as Record<string, unknown>) };
-  } else if (typeof prev === "string" && prev.trim()) {
-    bag.propertyNotes = prev.trim();
-    bag.property_detail = prev.trim();
   }
 
   const cfg = lead.configuration.trim();
@@ -366,7 +420,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     meetingType: pickStr(detail, "meetingType", "meeting") || "",
-    propertyNotes: pickPropertyNotesFromDetail(detail),
+    propertyNotes: pickPropertyNotesFromDetail(detail, leadType),
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",
     meetingVenue: pickStr(detail, "meetingVenue", "venue") || "",

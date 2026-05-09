@@ -65,6 +65,12 @@ export async function PUT(
     });
     const payload = await readUpstreamPayload(res);
     if (!res.ok) {
+      if (payload.text.trim()) {
+        return new NextResponse(payload.text, {
+          status: res.status,
+          headers: { "Content-Type": payload.contentType },
+        });
+      }
       return proxyJsonError(
         res.status,
         payload,

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
+const EXTERNAL_API_BASE = (
+  process.env.NEXT_PUBLIC_API?.trim() || "https://api.hubinterior.com"
+).replace(/\/+$/, "");
+
 function buildProxyHeaders(req: NextRequest): HeadersInit {
   const upstream = upstreamAuthHeaders(req);
   const headers: Record<string, string> =
@@ -30,7 +34,7 @@ export async function GET(
   }
 
   const res = await fetch(
-    `https://api.hubinterior.com/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+    `${EXTERNAL_API_BASE}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
     {
       method: "GET",
       headers: buildProxyHeaders(req),
@@ -45,4 +49,3 @@ export async function GET(
     },
   });
 }
-// fuck u
