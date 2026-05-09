@@ -430,48 +430,30 @@ export default function LeadInfoTab({
               </p>
 
               {quoteOpen && quoteExtras ? (
-                <div className="mt-4 space-y-4">
+                <div className="mt-4">
                   <div>
                     <FieldLabel>Quote link</FieldLabel>
-                    <Input
-                      placeholder="https://… (PDF or proposal URL)"
-                      value={lead.quoteLink ?? ""}
-                      onChange={(e) => c?.({ quoteLink: e.target.value })}
-                      className="mt-1.5"
-                    />
+                    <div className="mt-1.5 flex gap-2">
+                      <Input
+                        placeholder="https://… (PDF or proposal URL)"
+                        value={lead.quoteLink ?? ""}
+                        onChange={(e) => c?.({ quoteLink: e.target.value })}
+                        className="flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        disabled={
+                          quoteExtras.quoteSending || !(lead.quoteLink ?? "").trim()
+                        }
+                        onClick={() => void quoteExtras.onSendQuote()}
+                      >
+                        {quoteExtras.quoteSending ? "Sending…" : "Send"}
+                      </Button>
+                    </div>
                     <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
                       Save other lead fields with Save Changes if needed, then send.
                     </p>
-                  </div>
-                  <div className="space-y-3 rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5">
-                    <p className="text-[12px] font-semibold text-[var(--crm-text-primary)]">Send quote email</p>
-                    <div>
-                      <FieldLabel>Email subject</FieldLabel>
-                      <Input
-                        value={quoteExtras.subject}
-                        onChange={(e) => quoteExtras.onSubjectChange(e.target.value)}
-                        className="mt-1.5"
-                      />
-                    </div>
-                    <div>
-                      <FieldLabel>Email body</FieldLabel>
-                      <Textarea
-                        value={quoteExtras.body}
-                        onChange={(e) => quoteExtras.onBodyChange(e.target.value)}
-                        className="mt-1.5 min-h-[72px]"
-                        placeholder="Message shown in the email…"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="primary"
-                      disabled={
-                        quoteExtras.quoteSending || !(lead.quoteLink ?? "").trim()
-                      }
-                      onClick={() => void quoteExtras.onSendQuote()}
-                    >
-                      {quoteExtras.quoteSending ? "Sending…" : "Send quote email"}
-                    </Button>
                   </div>
                 </div>
               ) : null}
