@@ -14,6 +14,19 @@ type ParsedApiError = {
   payload: Record<string, unknown> | null;
 };
 
+function isRateLimitMessage(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    t.includes("ratelimiter") ||
+    t.includes("rate limit") ||
+    t.includes("too many requests")
+  );
+}
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function normalizePropertyDetails(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "string") return value.trim();
@@ -131,13 +144,33 @@ async function buildApiError(res: Response, fallback: string): Promise<Error> {
 }
 
 export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
-    cache: "no-store",
-    credentials: "include",
-    headers: authHeaders(),
-  });
-  if (!res.ok) throw await buildApiError(res, `Failed to load lead details (${res.status})`);
-  return res.json() as Promise<Record<string, unknown>>;
+  const maxAttempts = 3;
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: authHeaders(),
+    });
+    if (res.ok) return res.json() as Promise<Record<string, unknown>>;
+    const parsed = await parseApiError(res);
+    const limiterHit =
+      res.status === 429 || res.status === 503 || isRateLimitMessage(parsed.message);
+    if (limiterHit && attempt < maxAttempts) {
+      await waitMs(400 * attempt);
+      continue;
+    }
+    const fallback = limiterHit
+      ? "Too many requests right now. Please retry in a few seconds."
+      : `Failed to load lead details (${res.status})`;
+    if (limiterHit) {
+      lastError = new Error(fallback);
+    } else {
+      lastError = new Error(parsed.message || fallback);
+    }
+    break;
+  }
+  throw lastError ?? new Error("Failed to load lead details.");
 }
 
 export async function getLeadActivities(leadType: CrmLeadType, id: string): Promise<unknown> {

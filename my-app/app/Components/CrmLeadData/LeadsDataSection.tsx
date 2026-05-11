@@ -110,6 +110,13 @@ type LeadsViewPersistedState = {
 function readLeadsViewPersistedState(): LeadsViewPersistedState {
   if (typeof window === "undefined") return {};
   try {
+    const nav = window.performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (nav?.type === "reload") {
+      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
+      return {};
+    }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as LeadsViewPersistedState;
@@ -485,10 +492,36 @@ async function deleteLeadRowsByType(leadType: string, ids: number[]) {
     body: JSON.stringify({ ids }),
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok || body.success === false) {
-    throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
+  if (res.ok && body.success !== false) {
+    return body;
   }
-  return body;
+  // Fallback for unstable bulk-delete backend endpoints (observed on addlead in production):
+  // retry selected IDs one-by-one through the proven lead DELETE route.
+  if (ids.length > 0) {
+    const failedIds: number[] = [];
+    await Promise.all(
+      ids.map(async (id) => {
+        const single = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: getCrmAuthHeaders(),
+          cache: "no-store",
+        });
+        if (!single.ok) failedIds.push(id);
+      }),
+    );
+    if (failedIds.length === 0) {
+      return {
+        success: true,
+        message:
+          "Bulk delete endpoint failed; deleted selected leads using safe fallback.",
+      } as Record<string, unknown>;
+    }
+    throw new Error(
+      `Delete failed for lead IDs: ${failedIds.join(", ")}.`,
+    );
+  }
+  throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
 }
 
 export default function LeadsDataSection({

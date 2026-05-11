@@ -24,6 +24,7 @@ import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } fro
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
+const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
 
 type HeaderPersistedState = {
   search?: string;
@@ -41,6 +42,14 @@ type HeaderPersistedState = {
 function readHeaderPersistedState(): HeaderPersistedState {
   if (typeof window === "undefined") return {};
   try {
+    const nav = window.performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (nav?.type === "reload") {
+      window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
+      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
+      return {};
+    }
     const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as HeaderPersistedState;
@@ -110,6 +119,10 @@ export default function Header() {
     const token = readStoredCrmToken();
     if (!token) {
       if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
+        window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
+      }
+      if (typeof window !== "undefined") {
         window.location.replace("/login");
       }
       setAuthResolved(true);
@@ -170,6 +183,8 @@ export default function Header() {
         window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
         window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
         window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+        window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
+        window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
       } finally {
         window.location.replace("/login");
       }
