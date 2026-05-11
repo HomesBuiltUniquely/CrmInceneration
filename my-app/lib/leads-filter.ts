@@ -1,11 +1,18 @@
 /** CRM `/v1/leads/filter` + merged list helpers (Project-ERP contract). */
 
-import { computeMilestoneProgress } from "@/lib/milestone-progress";
+import { computeMilestoneProgress, normalizeStageKey } from "@/lib/milestone-progress";
 import { getLeadDisplayName } from "@/lib/lead-display";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
 export type CrmLeadType = (typeof CRM_LEAD_TYPES)[number];
+
+export type LeadSourceCounts = Record<"all" | CrmLeadType, number>;
+
+export type LeadSummaryTotals = {
+  lead: number;
+  opportunity: number;
+};
 
 export type SpringPage<T> = {
   content: T[];
@@ -13,6 +20,8 @@ export type SpringPage<T> = {
   totalPages: number;
   number: number;
   size: number;
+  sourceCounts?: LeadSourceCounts;
+  summaryTotals?: LeadSummaryTotals;
 };
 
 /** Minimal lead fields from backend; extend as entity stabilizes. */
@@ -62,6 +71,7 @@ export type LeadRowModel = {
   id: string;
   /** Required for detail URL `/Leads/[leadType]/[id]` */
   leadType: CrmLeadType;
+  enquiryDate: string;
   name: string;
   company: string;
   statusLabel?: string;
@@ -173,6 +183,41 @@ function companyFallback(lead: ApiLead): string {
   return lead.companyName ?? "—";
 }
 
+export function crmLeadTopLevelStage(lead: ApiLead): string {
+  const stage = String(lead.stage?.milestoneStage ?? "").trim();
+  const stageCategory = String(lead.stage?.milestoneStageCategory ?? "").trim();
+  const subStage = String(lead.stage?.milestoneSubStage ?? lead.stage?.substage?.substage ?? "").trim();
+  const looksFreshLead = [stage, stageCategory, subStage].some((value) => {
+    const normalized = normalizeStageKey(value);
+    return normalized === "fresh lead" || normalized === "fresh leads" || /^fresh\s+leads?$/.test(normalized);
+  });
+
+  if (looksFreshLead) return "Fresh Lead";
+  if (stage) return stage;
+  return "Fresh Lead";
+}
+
+function leadCreatedAtRaw(lead: ApiLead): string {
+  return String(
+    lead.createdAt ??
+      lead.createdDate ??
+      lead.leadDate ??
+      lead.createdOn ??
+      "",
+  ).trim();
+}
+
+function formatEnquiryDate(raw?: string): string {
+  if (!raw) return "—";
+  const ts = Date.parse(raw);
+  if (Number.isNaN(ts)) return "—";
+  return new Date(ts).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function formatRelativeTime(iso?: string): string {
   if (!iso) return "—";
   const t = Date.parse(iso);
@@ -209,16 +254,17 @@ export function mapApiLeadToRow(
     st?.substage?.substage?.trim() ||
     undefined;
 
-  const ms = st?.milestoneStage?.trim();
+  const ms = crmLeadTopLevelStage(lead);
   const prog = computeMilestoneProgress(ms, orderedPipelineStages);
   const fallbackJourney =
-    (st?.milestoneStageCategory ?? st?.milestoneStage ?? "PIPELINE").trim() || "PIPELINE";
+    (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
   const journeyStage =
     orderedPipelineStages.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
 
   return {
     id: String(lead.id ?? ""),
     leadType: asCrmLeadType(lead.leadType, sourceLeadType),
+    enquiryDate: formatEnquiryDate(leadCreatedAtRaw(lead)),
     name: leadDisplayName(lead),
     company: companyFallback(lead),
     statusLabel,

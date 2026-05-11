@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import { crmLeadTopLevelStage } from "@/lib/leads-filter";
 import {
   assigneeAliasNorms,
   filterLeadsForInsightMode,
@@ -15,6 +16,10 @@ import {
   leadAssignedToPresalesExecNameSet,
 } from "@/lib/presales-heatmap-helpers";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
+import {
+  applyNewCrmCutoff,
+  setEffectiveNewCrmDateRange,
+} from "@/lib/new-crm-cutoff";
 
 type Phase = {
   phaseLabel: string;
@@ -34,6 +39,8 @@ export type JourneyPhaseHeatmapProps = {
   currentUserAliases?: string[];
   currentUserId?: number;
   managerTeamNames?: string[];
+  /** Optional assignee alias scope from the lead table (used for manager hierarchy filters). */
+  assigneeScope?: string[];
   /** When set (e.g. Team Leads), phase counts use the same subset as the leads table insight filter. */
   insightTableMode?: InsightTableMode | null;
   /** Selected stage from heatmap card toggle. */
@@ -46,6 +53,8 @@ export type JourneyPhaseHeatmapProps = {
   presalesSummaryTab?: "total" | "verified" | "teamVerified" | null;
   /** Toggle Total / Verified / Team verified — parent applies date + verification query params. */
   onPresalesSummaryTabChange?: (tab: "total" | "verified" | "teamVerified") => void;
+  /** Fast top summary totals from the lead table dataset. */
+  summaryTotalsOverride?: { lead: number; opportunity: number } | null;
 };
 
 function normName(s: string) {
@@ -63,7 +72,7 @@ function toneByCount(count: number, max: number): Phase["tone"] {
 function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
   const counts = new Map<string, number>();
   for (const lead of leads) {
-    const stage = (lead.stage?.milestoneStage ?? "").trim();
+    const stage = crmLeadTopLevelStage(lead).trim();
     if (!stage) continue;
     counts.set(stage, (counts.get(stage) ?? 0) + 1);
   }
@@ -397,12 +406,14 @@ export default function JourneyPhaseHeatmap({
   currentUserAliases = [],
   currentUserId = 0,
   managerTeamNames = [],
+  assigneeScope = [],
   presalesTeamNames = [],
   insightTableMode = null,
   activeStageFilter = "",
   onPhaseFilterToggle,
   presalesSummaryTab = null,
   onPresalesSummaryTabChange,
+  summaryTotalsOverride = null,
 }: JourneyPhaseHeatmapProps = {}) {
   const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,6 +431,10 @@ export default function JourneyPhaseHeatmap({
         leadView === "my" || leadView === "team" ? leadView : ("default" as const),
     }),
     [currentRole, currentUserName, managerTeamNames, leadView],
+  );
+  const assigneeScopeSet = useMemo(
+    () => new Set(assigneeScope.map((v) => v.trim().toLowerCase()).filter(Boolean)),
+    [assigneeScope],
   );
 
   const filteredInsightLeads = useMemo(
@@ -506,6 +521,8 @@ export default function JourneyPhaseHeatmap({
   );
   const leadTotal = leadPhases.reduce((sum, p) => sum + p.count, 0);
   const opportunityTotal = opportunityPhases.reduce((sum, p) => sum + p.count, 0);
+  const summaryLeadTotal = summaryTotalsOverride?.lead ?? leadTotal;
+  const summaryOpportunityTotal = summaryTotalsOverride?.opportunity ?? opportunityTotal;
 
   useEffect(() => {
     let cancelled = false;
@@ -524,6 +541,7 @@ export default function JourneyPhaseHeatmap({
         // Presales month cards derive "this month" from assignment timestamps in client helper.
         // Avoid server-side updatedAt month filtering here, otherwise assignment-month counts can drift.
         query.delete("crmMonthWindow");
+        setEffectiveNewCrmDateRange(query, query.get("dateFrom"), query.get("dateTo"));
         query.set("mergeAll", "1");
         query.set("page", "0");
         query.set("size", "250");
@@ -560,6 +578,7 @@ export default function JourneyPhaseHeatmap({
           const rest = await Promise.all(followUps);
           for (const chunk of rest) allLeads.push(...chunk);
         }
+        const visibleLeads = applyNewCrmCutoff(allLeads, true);
 
         const roleKey = normalizeRole(currentRole);
         const myAliases = new Set(
@@ -607,7 +626,7 @@ export default function JourneyPhaseHeatmap({
           for (const alias of aliases) if (presalesTeamSet.has(alias)) return true;
           return false;
         };
-        const scopedLeads = allLeads.filter((lead) => {
+        const roleScopedLeads = visibleLeads.filter((lead) => {
           if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
           if (roleKey === "SALES_EXECUTIVE") {
             return isSelfLead(lead);
@@ -630,6 +649,14 @@ export default function JourneyPhaseHeatmap({
           }
           return false;
         });
+        const scopedLeads =
+          assigneeScopeSet.size === 0
+            ? roleScopedLeads
+            : roleScopedLeads.filter((lead) => {
+                const aliases = assigneeAliasNorms(lead);
+                for (const alias of aliases) if (assigneeScopeSet.has(alias)) return true;
+                return false;
+              });
         if (!cancelled) {
           setPoolLeads(scopedLeads);
         }
@@ -657,6 +684,7 @@ export default function JourneyPhaseHeatmap({
     currentUserAliases,
     currentUserId,
     managerTeamNames,
+    assigneeScopeSet,
     presalesTeamNames,
   ]);
 
@@ -761,7 +789,7 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={leadOpen}
               >
                 <div className="relative">
-                  <SummaryCard label="Lead" total={leadTotal} />
+                  <SummaryCard label="Lead" total={summaryLeadTotal} />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {leadOpen ? "Hide" : "Open"}
                   </span>
@@ -795,7 +823,7 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={opportunityOpen}
               >
                 <div className="relative">
-                  <SummaryCard label="Opportunity" total={opportunityTotal} />
+                  <SummaryCard label="Opportunity" total={summaryOpportunityTotal} />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {opportunityOpen ? "Hide" : "Open"}
                   </span>

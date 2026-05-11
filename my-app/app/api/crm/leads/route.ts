@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
-import type { ApiLead, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
+import type { ApiLead, LeadSourceCounts, LeadSummaryTotals, SpringPage } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES, crmLeadTopLevelStage } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
+import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -47,13 +48,51 @@ function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
 }
 
+function emptySourceCounts(): LeadSourceCounts {
+  return {
+    all: 0,
+    formlead: 0,
+    glead: 0,
+    mlead: 0,
+    addlead: 0,
+    websitelead: 0,
+  };
+}
+
+function computeSourceCounts(leads: ApiLead[]): LeadSourceCounts {
+  const counts = emptySourceCounts();
+  for (const lead of leads) {
+    const leadType = String(lead.leadType ?? "").trim().toLowerCase();
+    if (!CRM_LEAD_TYPES.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) continue;
+    counts[leadType as keyof LeadSourceCounts] += 1;
+    counts.all += 1;
+  }
+  return counts;
+}
+
+function computeSummaryTotals(leads: ApiLead[]): LeadSummaryTotals {
+  let lead = 0;
+  let opportunity = 0;
+  for (const item of leads) {
+    const stage = crmLeadTopLevelStage(item).trim().toLowerCase();
+    if (stage === "fresh lead" || stage === "discovery" || stage === "connection") {
+      lead += 1;
+      continue;
+    }
+    if (stage === "experience & design" || stage === "decision" || stage === "closed") {
+      opportunity += 1;
+    }
+  }
+  return { lead, opportunity };
+}
+
 function inDateRange(
-  updatedAt: string | null | undefined,
+  leadDateRaw: string | null | undefined,
   from: string,
   to: string
 ): boolean {
   if (!from && !to) return true;
-  const ts = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+  const ts = leadDateRaw ? Date.parse(leadDateRaw) : Number.NaN;
   if (Number.isNaN(ts)) return false;
   const dayMs = 24 * 60 * 60 * 1000;
   if (from) {
@@ -205,25 +244,39 @@ export async function GET(req: NextRequest) {
 
   const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const fetches = selectedTypes.map(async (leadType) => {
-    const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
-    upstream.searchParams.set("leadType", leadType);
-    if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
-    if (!managerEndpoint && isNewCrmGlobalSearchMode) {
-      upstream.searchParams.set("newCrmGlobalSearch", "true");
-    }
-    upstream.searchParams.set("page", "0");
-    upstream.searchParams.set("size", String(perType));
-    upstream.searchParams.set("sort", sort);
-    if (search) upstream.searchParams.set("search", search);
-    for (const key of extraParams) {
-      const v = extraParamValue(url, key, effDates);
-      if (v) upstream.searchParams.set(key, v);
-    }
+    const buildUpstream = (pageNum: number) => {
+      const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
+      upstream.searchParams.set("leadType", leadType);
+      if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
+      if (!managerEndpoint && isNewCrmGlobalSearchMode) {
+        upstream.searchParams.set("newCrmGlobalSearch", "true");
+      }
+      upstream.searchParams.set("page", String(pageNum));
+      upstream.searchParams.set("size", String(perType));
+      upstream.searchParams.set("sort", sort);
+      if (search) upstream.searchParams.set("search", search);
+      for (const key of extraParams) {
+        const v = extraParamValue(url, key, effDates);
+        if (v) upstream.searchParams.set(key, v);
+      }
+      return upstream;
+    };
+
     try {
-      const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
-      if (!res.ok) return [] as ApiLead[];
-      const data = (await res.json()) as SpringPage<ApiLead>;
-      return Array.isArray(data.content) ? data.content : [];
+      const allLeads: ApiLead[] = [];
+      for (let pageNum = 0; pageNum < 100; pageNum += 1) {
+        const res = await fetch(buildUpstream(pageNum).toString(), {
+          headers: upstreamAuthHeaders(req),
+          cache: "no-store",
+        });
+        if (!res.ok) break;
+        const pageData = (await res.json()) as SpringPage<ApiLead>;
+        const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+        if (chunk.length === 0) break;
+        allLeads.push(...chunk);
+        if (chunk.length < perType) break;
+      }
+      return allLeads;
     } catch {
       return [] as ApiLead[];
     }
@@ -311,7 +364,7 @@ export async function GET(req: NextRequest) {
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      if (!inDateRange(lead.updatedAt, dateFrom, dateTo)) return false;
+      if (!inDateRange(readLeadCreatedAtRaw(lead), dateFrom, dateTo)) return false;
 
       if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
       if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
@@ -326,6 +379,8 @@ export async function GET(req: NextRequest) {
   const slice = merged.slice(start, start + pageSize);
   const totalElements = merged.length;
   const totalPages = Math.max(1, Math.ceil(totalElements / pageSize));
+  const sourceCounts = computeSourceCounts(merged);
+  const summaryTotals = computeSummaryTotals(merged);
 
   const body: SpringPage<ApiLead> = {
     content: slice,
@@ -333,6 +388,8 @@ export async function GET(req: NextRequest) {
     totalPages,
     number: pageNum,
     size: pageSize,
+    sourceCounts,
+    summaryTotals,
   };
 
   return NextResponse.json(body);

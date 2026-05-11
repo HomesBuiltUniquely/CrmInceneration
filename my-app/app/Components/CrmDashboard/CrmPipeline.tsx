@@ -9,8 +9,13 @@ import {
   type MilestoneStage,
 } from "@/lib/crm-pipeline";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import { crmLeadTopLevelStage } from "@/lib/leads-filter";
 import type { MilestonePathItem } from "@/types/crm-pipeline";
 import type { CrmPipelineResponse } from "@/types/crm-pipeline";
+import {
+  applyNewCrmCutoff,
+  setEffectiveNewCrmDateRange,
+} from "@/lib/new-crm-cutoff";
 import Milestones from "./Milestones";
 import MilestonePaths from "./MilestonePaths";
 
@@ -46,7 +51,7 @@ function leftAccent(i: number): MilestonePathItem["leftAccent"] {
 }
 
 function stageFromLead(lead: ApiLead): string {
-  return String(lead.stage?.milestoneStage ?? "").trim();
+  return crmLeadTopLevelStage(lead).trim();
 }
 
 function subStageFromLead(lead: ApiLead): string {
@@ -62,8 +67,7 @@ function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
   q.set("leadType", "all");
   const effectiveAssignee = (assignee ?? filters.assignee).trim();
   if (effectiveAssignee) q.set("assignee", effectiveAssignee);
-  if (filters.dateFrom) q.set("dateFrom", filters.dateFrom);
-  if (filters.dateTo) q.set("dateTo", filters.dateTo);
+  setEffectiveNewCrmDateRange(q, filters.dateFrom, filters.dateTo);
   if (filters.milestoneStage) q.set("milestoneStage", filters.milestoneStage);
   if (filters.milestoneStageCategory) q.set("milestoneStageCategory", filters.milestoneStageCategory);
   if (filters.milestoneSubStage) q.set("milestoneSubStage", filters.milestoneSubStage);
@@ -71,25 +75,48 @@ function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
 }
 
 async function fetchDashboardLeads(filters: DashboardFilterState): Promise<ApiLead[]> {
+  const fetchAllPages = async (query: URLSearchParams): Promise<ApiLead[]> => {
+    const fetchPage = async (page: number) => {
+      const pagedQuery = new URLSearchParams(query);
+      pagedQuery.set("page", String(page));
+      const res = await fetch(`/api/crm/leads?${pagedQuery.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: getCrmAuthHeaders(),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as SpringPage<ApiLead>;
+    };
+
+    const firstPage = await fetchPage(0);
+    if (!firstPage) return [];
+    const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+    const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+    if (totalPages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, idx) => fetchPage(idx + 1)),
+      );
+      for (const page of rest) {
+        if (!page) continue;
+        allLeads.push(...(Array.isArray(page.content) ? page.content : []));
+      }
+    }
+    return allLeads;
+  };
+
   const assignees = [...new Set((filters.assignees ?? []).map((x) => x.trim()).filter(Boolean))];
   const leadsById = new Map<string, ApiLead>();
   const requests =
     assignees.length > 0 ? assignees.map((assignee) => buildLeadsQuery(filters, assignee)) : [buildLeadsQuery(filters)];
   for (const query of requests) {
-    const res = await fetch(`/api/crm/leads?${query.toString()}`, {
-      cache: "no-store",
-      credentials: "include",
-      headers: getCrmAuthHeaders(),
-    });
-    if (!res.ok) continue;
-    const json = (await res.json()) as SpringPage<ApiLead>;
-    for (const lead of json.content ?? []) {
+    const leads = await fetchAllPages(query);
+    for (const lead of leads) {
       const id = String(lead.id ?? "").trim();
       if (!id || leadsById.has(id)) continue;
       leadsById.set(id, lead);
     }
   }
-  return [...leadsById.values()];
+  return applyNewCrmCutoff([...leadsById.values()], true);
 }
 
 type Props = {

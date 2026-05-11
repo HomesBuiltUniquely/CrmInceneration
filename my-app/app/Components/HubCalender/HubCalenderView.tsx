@@ -244,18 +244,20 @@ export default function HubCalendarPage(): React.ReactElement | null {
     void refreshGoogleStatus();
   }, [refreshGoogleStatus]);
 
+  const canLoadCalendarWithoutConnection = role === "SUPER_ADMIN";
+
   const refreshEvents = React.useCallback(async () => {
-    if (!gConnected) return;
+    if (!gConnected && !canLoadCalendarWithoutConnection) return;
     try {
       const rows = await fetchGoogleMyEvents(weekIsoRange.timeMin, weekIsoRange.timeMax);
       setEvents(rows);
     } catch (e) {
       setGErr(e instanceof Error ? e.message : "Could not load events");
     }
-  }, [gConnected, weekIsoRange.timeMin, weekIsoRange.timeMax]);
+  }, [canLoadCalendarWithoutConnection, gConnected, weekIsoRange.timeMin, weekIsoRange.timeMax]);
 
   React.useEffect(() => {
-    if (gConnected) {
+    if (gConnected || canLoadCalendarWithoutConnection) {
       refreshEvents();
       // 60-second auto-refresh polling
       const timer = setInterval(refreshEvents, 60000);
@@ -263,7 +265,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
     } else {
       setEvents([]);
     }
-  }, [gConnected, refreshEvents]);
+  }, [canLoadCalendarWithoutConnection, gConnected, refreshEvents]);
 
   const handleConnect = React.useCallback(async () => {
     setGBusy(true);

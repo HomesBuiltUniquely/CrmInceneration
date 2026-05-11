@@ -117,10 +117,11 @@ function LeadRowAction({
 }: LeadRowActionProps) {
   const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
+  const gridClass = "grid grid-cols-[repeat(14,minmax(0,1fr))] items-start gap-3";
   return (
     <div
       onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
-      className={`grid cursor-pointer grid-cols-12 items-start gap-3 border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
+      className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
       role="button"
@@ -142,6 +143,11 @@ function LeadRowAction({
             className="h-4 w-4 cursor-pointer accent-blue-600"
           />
         ) : null}
+      </div>
+      <div className="col-span-2 flex min-h-[64px] items-center">
+        <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">
+          {row.enquiryDate}
+        </div>
       </div>
       <div className="col-span-3 flex min-h-[64px] items-start gap-3">
         <div className="leading-tight">
@@ -323,6 +329,7 @@ export default function LeadsTable({
   onAssignRow,
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const gridClass = "grid grid-cols-[repeat(14,minmax(0,1fr))] gap-3";
 
   useEffect(() => {
     const readOverrides = () => {
@@ -372,7 +379,7 @@ export default function LeadsTable({
   return (
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
-        <div className="grid grid-cols-12 gap-3 bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">
+        <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
           <div className="col-span-1">
             {showSelection ? (
               <input
@@ -388,6 +395,7 @@ export default function LeadsTable({
               />
             ) : null}
           </div>
+          <div className="col-span-2">ENQUIRY DATE</div>
           <div className="col-span-3">LEAD NAME</div>
           <div className="col-span-2">STATUS</div>
           <div className="col-span-2">JOURNEY TRACK</div>

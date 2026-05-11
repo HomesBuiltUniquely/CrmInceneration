@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ApiLead, LeadRowModel, SpringPage } from "@/lib/leads-filter";
-import { asCrmLeadType, isCrmLeadVerified, mapApiLeadToRow } from "@/lib/leads-filter";
+import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
+import { asCrmLeadType, crmLeadTopLevelStage, isCrmLeadVerified, mapApiLeadToRow } from "@/lib/leads-filter";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
@@ -33,6 +33,12 @@ import {
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
+import {
+  applyNewCrmCutoff,
+  getEffectiveNewCrmEndDate,
+  getEffectiveNewCrmStartDate,
+  setEffectiveNewCrmStartDate,
+} from "@/lib/new-crm-cutoff";
 
 type Props = {
   search: string;
@@ -72,6 +78,10 @@ type Props = {
   onReinquiryChange: (next: string) => void;
   /** Keeps Journey Phase Heatmap assignee filter aligned with toolbar (Sales Exec, etc.). */
   onHeatmapAssigneeSync?: (effectiveAssignee: string) => void;
+  /** Manager filters resolve to a team scope instead of a single assignee. */
+  onHeatmapAssigneeScopeSync?: (assignees: string[]) => void;
+  /** Fast Lead / Opportunity totals for the heatmap summary cards. */
+  onHeatmapSummarySync?: (summary: { lead: number; opportunity: number } | null) => void;
   /** Keeps heatmap phase counts aligned with the active insight filter (e.g. Team Leads). */
   onInsightTableModeChange?: (mode: InsightTableMode) => void;
 };
@@ -110,6 +120,13 @@ type LeadsViewPersistedState = {
 function readLeadsViewPersistedState(): LeadsViewPersistedState {
   if (typeof window === "undefined") return {};
   try {
+    const nav = window.performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (nav?.type === "reload") {
+      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
+      return {};
+    }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as LeadsViewPersistedState;
@@ -306,6 +323,41 @@ function computePrimarySourceCounts(leads: ApiLead[]): Record<string, number> {
   return counts;
 }
 
+function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts {
+  const counts: LeadSourceCounts = {
+    all: leads.length,
+    formlead: 0,
+    glead: 0,
+    mlead: 0,
+    addlead: 0,
+    websitelead: 0,
+  };
+  for (const lead of leads) {
+    const type = normalizeLeadTypeKey(lead.leadType);
+    counts[type] += 1;
+  }
+  return counts;
+}
+
+const LEAD_SUMMARY_STAGES = new Set(["fresh lead", "discovery", "connection"]);
+const OPPORTUNITY_SUMMARY_STAGES = new Set(["experience & design", "decision", "closed"]);
+
+function computeJourneySummaryCounts(leads: ApiLead[]): { lead: number; opportunity: number } {
+  let lead = 0;
+  let opportunity = 0;
+  for (const item of leads) {
+    const stage = crmLeadTopLevelStage(item).trim().toLowerCase();
+    if (LEAD_SUMMARY_STAGES.has(stage)) {
+      lead += 1;
+      continue;
+    }
+    if (OPPORTUNITY_SUMMARY_STAGES.has(stage)) {
+      opportunity += 1;
+    }
+  }
+  return { lead, opportunity };
+}
+
 async function fetchMergedPage(
   page: number,
   size: number,
@@ -326,12 +378,14 @@ async function fetchMergedPage(
   const qs = new URLSearchParams();
   const normalizedLeadType = leadType.trim().toLowerCase();
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
-  const wideListFetch = usesRoleEndpoint || leadView === "combined";
-  const shouldMerge = wideListFetch || normalizedLeadType === "all" || normalizedLeadType === "verified";
+  const shouldMerge =
+    usesRoleEndpoint || leadView === "combined" || normalizedLeadType === "all" || normalizedLeadType === "verified";
+  const effectiveDateFrom = getEffectiveNewCrmStartDate(dateFrom);
+  const effectiveDateTo = getEffectiveNewCrmEndDate(dateFrom, dateTo);
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
   qs.set("mergeAll", shouldMerge ? "1" : "0");
-  qs.set("page", wideListFetch ? "0" : String(page));
-  qs.set("size", wideListFetch ? "500" : String(size));
+  qs.set("page", usesRoleEndpoint ? "0" : String(page));
+  qs.set("size", usesRoleEndpoint ? "500" : String(size));
   qs.set("sort", sort);
   qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
   qs.set("milestoneScope", "crm");
@@ -340,8 +394,8 @@ async function fetchMergedPage(
   if (assignee.trim()) qs.set("assignee", assignee.trim());
   if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
   else {
-    if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-    if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
+    if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
+    if (effectiveDateTo) qs.set("dateTo", effectiveDateTo);
   }
   if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
   if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
@@ -365,7 +419,11 @@ async function fetchMergedPage(
     }
     throw new Error(text || `HTTP ${res.status}`);
   }
-  return res.json();
+  const pageJson = (await res.json()) as SpringPage<ApiLead>;
+  return {
+    ...pageJson,
+    content: applyNewCrmCutoff(Array.isArray(pageJson.content) ? pageJson.content : [], true),
+  };
 }
 
 async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combined" = "default"): Promise<{
@@ -380,6 +438,7 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
     size: "250",
     sort: "updatedAt,desc",
   });
+  setEffectiveNewCrmStartDate(leadsQs, "");
   if (leadView === "my" || leadView === "team") {
     leadsQs.set("roleView", leadView);
   }
@@ -485,10 +544,36 @@ async function deleteLeadRowsByType(leadType: string, ids: number[]) {
     body: JSON.stringify({ ids }),
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok || body.success === false) {
-    throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
+  if (res.ok && body.success !== false) {
+    return body;
   }
-  return body;
+  // Fallback for unstable bulk-delete backend endpoints (observed on addlead in production):
+  // retry selected IDs one-by-one through the proven lead DELETE route.
+  if (ids.length > 0) {
+    const failedIds: number[] = [];
+    await Promise.all(
+      ids.map(async (id) => {
+        const single = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: getCrmAuthHeaders(),
+          cache: "no-store",
+        });
+        if (!single.ok) failedIds.push(id);
+      }),
+    );
+    if (failedIds.length === 0) {
+      return {
+        success: true,
+        message:
+          "Bulk delete endpoint failed; deleted selected leads using safe fallback.",
+      } as Record<string, unknown>;
+    }
+    throw new Error(
+      `Delete failed for lead IDs: ${failedIds.join(", ")}.`,
+    );
+  }
+  throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
 }
 
 export default function LeadsDataSection({
@@ -523,6 +608,8 @@ export default function LeadsDataSection({
   onMilestoneSubStageChange,
   onReinquiryChange,
   onHeatmapAssigneeSync,
+  onHeatmapAssigneeScopeSync,
+  onHeatmapSummarySync,
   onInsightTableModeChange,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
@@ -542,6 +629,7 @@ export default function LeadsDataSection({
   const [assigneeOptions, setAssigneeOptions] = useState<string[]>([]);
   const [pipelineNested, setPipelineNested] = useState<CrmNestedStage[]>([]);
   const [leadTypeCounts, setLeadTypeCounts] = useState<Record<string, number>>({});
+  const [visibleFilteredTotal, setVisibleFilteredTotal] = useState<number | null>(null);
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(() => {
     const mode = persistedView.insightTableMode;
     return mode ?? null;
@@ -1086,6 +1174,10 @@ export default function LeadsDataSection({
   }, [effectiveAssignee, onHeatmapAssigneeSync]);
 
   useEffect(() => {
+    onHeatmapAssigneeScopeSync?.(effectiveAssigneeScope);
+  }, [effectiveAssigneeScope, onHeatmapAssigneeScopeSync]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const payload: LeadsViewPersistedState = {
       page,
@@ -1186,6 +1278,56 @@ export default function LeadsDataSection({
       targetLeadType: string,
       targetSort: string,
     ): Promise<SpringPage<ApiLead>> => {
+      const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
+        const firstPage = await fetchMergedPage(
+          0,
+          500,
+          targetLeadType,
+          targetSort,
+          debouncedSearch,
+          assigneeName,
+          dateFrom,
+          dateTo,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          reinquiry,
+          leadViewKey,
+          verificationStatusProp,
+          crmMonthWindowProp,
+        );
+        const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+        const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+        if (totalPages <= 1) return allLeads;
+
+        const remainingPages = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, idx) =>
+            fetchMergedPage(
+              idx + 1,
+              500,
+              targetLeadType,
+              targetSort,
+              debouncedSearch,
+              assigneeName,
+              dateFrom,
+              dateTo,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+              reinquiry,
+              leadViewKey,
+              verificationStatusProp,
+              crmMonthWindowProp,
+            ),
+          ),
+        );
+
+        for (const page of remainingPages) {
+          allLeads.push(...(Array.isArray(page.content) ? page.content : []));
+        }
+        return allLeads;
+      };
+
       if (effectiveAssigneeScope.length <= 1) {
         return fetchMergedPage(
           targetPage,
@@ -1205,30 +1347,12 @@ export default function LeadsDataSection({
           crmMonthWindowProp,
         );
       }
-      const pages = await Promise.all(
-        effectiveAssigneeScope.map((assigneeName) =>
-          fetchMergedPage(
-            0,
-            500,
-            targetLeadType,
-            targetSort,
-            debouncedSearch,
-            assigneeName,
-            dateFrom,
-            dateTo,
-            milestoneStage,
-            milestoneStageCategory,
-            milestoneSubStage,
-            reinquiry,
-            leadViewKey,
-            verificationStatusProp,
-            crmMonthWindowProp,
-          ),
-        ),
+      const chunks = await Promise.all(
+        effectiveAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
       );
       const byId = new Map<string, ApiLead>();
-      for (const pg of pages) {
-        for (const lead of pg.content ?? []) {
+      for (const leads of chunks) {
+        for (const lead of leads) {
           const id = String(lead.id ?? "").trim();
           if (!id || byId.has(id)) continue;
           byId.set(id, lead);
@@ -1239,13 +1363,16 @@ export default function LeadsDataSection({
         const bt = Date.parse(b.updatedAt ?? "");
         return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
       });
+      const visibleMerged = applyNewCrmCutoff(merged, true);
       const start = targetPage * targetSize;
       return {
-        content: merged.slice(start, start + targetSize),
-        totalElements: merged.length,
-        totalPages: Math.max(1, Math.ceil(merged.length / Math.max(1, targetSize))),
+        content: visibleMerged.slice(start, start + targetSize),
+        totalElements: visibleMerged.length,
+        totalPages: Math.max(1, Math.ceil(visibleMerged.length / Math.max(1, targetSize))),
         number: targetPage,
         size: targetSize,
+        sourceCounts: computeLeadTypeCountsFromRows(visibleMerged),
+        summaryTotals: computeJourneySummaryCounts(visibleMerged),
       };
     },
     [
@@ -1264,44 +1391,112 @@ export default function LeadsDataSection({
     ],
   );
 
+  const fetchAllScopedMergedLeads = useCallback(
+    async (targetLeadType: string, targetSort: string): Promise<ApiLead[]> => {
+      const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
+        const firstPage = await fetchMergedPage(
+          0,
+          500,
+          targetLeadType,
+          targetSort,
+          debouncedSearch,
+          assigneeName,
+          dateFrom,
+          dateTo,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          reinquiry,
+          leadViewKey,
+          verificationStatusProp,
+          crmMonthWindowProp,
+        );
+        const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+        const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+        if (totalPages <= 1) return allLeads;
+
+        const remainingPages = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, idx) =>
+            fetchMergedPage(
+              idx + 1,
+              500,
+              targetLeadType,
+              targetSort,
+              debouncedSearch,
+              assigneeName,
+              dateFrom,
+              dateTo,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+              reinquiry,
+              leadViewKey,
+              verificationStatusProp,
+              crmMonthWindowProp,
+            ),
+          ),
+        );
+
+        for (const page of remainingPages) {
+          allLeads.push(...(Array.isArray(page.content) ? page.content : []));
+        }
+        return allLeads;
+      };
+
+      if (effectiveAssigneeScope.length <= 1) {
+        return fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee);
+      }
+
+      const chunks = await Promise.all(
+        effectiveAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
+      );
+      const byId = new Map<string, ApiLead>();
+      for (const leads of chunks) {
+        for (const lead of leads) {
+          const id = String(lead.id ?? "").trim();
+          if (!id || byId.has(id)) continue;
+          byId.set(id, lead);
+        }
+      }
+      return [...byId.values()].sort((a, b) => {
+        const at = Date.parse(a.updatedAt ?? "");
+        const bt = Date.parse(b.updatedAt ?? "");
+        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+      });
+    },
+    [
+      crmMonthWindowProp,
+      dateFrom,
+      dateTo,
+      debouncedSearch,
+      effectiveAssignee,
+      effectiveAssigneeScope,
+      leadViewKey,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+      verificationStatusProp,
+    ],
+  );
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const roleKey = normalizeRole(authRoleProp ?? currentRole);
-        const fetchCount = async (type: string): Promise<number> => {
-          const page = await fetchScopedMergedPage(0, 1, type, "updatedAt,desc");
-          return Number(page.totalElements ?? 0);
-        };
-
-        // Presales tabs should use server pagination metadata only (no client-side visibility re-filter).
-        if (isPresalesRole(roleKey)) {
-          const [all, formlead, glead, mlead, addlead, websitelead] = await Promise.all([
-            fetchCount("all"),
-            fetchCount("formlead"),
-            fetchCount("glead"),
-            fetchCount("mlead"),
-            fetchCount("addlead"),
-            fetchCount("websitelead"),
-          ]);
-          if (cancelled) return;
-          setLeadTypeCounts({
-            all,
-            formlead,
-            glead,
-            mlead,
-            addlead,
-            websitelead,
-            verified: 0,
-          });
-          return;
-        }
-
-        // Non-presales insight tiles still need row-level data.
-        const page = await fetchScopedMergedPage(0, 500, "all", "updatedAt,desc");
+        const managerScopedTeam =
+          effectiveAssigneeScope.length > 0
+            ? effectiveAssigneeScope
+            : managerTeamNamesFromHeader.length > 0
+              ? managerTeamNamesFromHeader
+              : managerTeamNames;
+        const summaryLeadType =
+          leadType.trim().toLowerCase() === "verified"
+            ? "all"
+            : leadType.trim().toLowerCase() || "all";
+        const raw = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc");
         if (cancelled) return;
-        const raw = page.content ?? [];
-        const managerScopedTeam = effectiveAssigneeScope;
         const scopedTeam =
           managerScopedTeam.length > 0
             ? managerScopedTeam
@@ -1309,7 +1504,16 @@ export default function LeadsDataSection({
               ? managerTeamNamesFromHeader
               : managerTeamNames;
         const scoped = raw.filter((lead) => canViewLeadByRole(lead, roleKey));
-        const base = computePrimarySourceCounts(scoped);
+        const base = computeLeadTypeCountsFromRows(scoped);
+
+        if (isPresalesRole(roleKey)) {
+          setLeadTypeCounts({
+            ...base,
+            verified: 0,
+          });
+          return;
+        }
+
         const smMineTeam =
           roleKey === "SALES_MANAGER"
             ? countSalesManagerMineVsTeam(
@@ -1337,7 +1541,9 @@ export default function LeadsDataSection({
           team: smMineTeam.teamLeads,
         });
       } catch {
-        if (!cancelled) setLeadTypeCounts({});
+        if (!cancelled) {
+          setLeadTypeCounts({});
+        }
       }
     })();
     return () => {
@@ -1350,11 +1556,20 @@ export default function LeadsDataSection({
     managerTeamNames,
     managerTeamNamesFromHeader,
     canViewLeadByRole,
-    fetchScopedMergedPage,
+    fetchAllScopedMergedLeads,
+    debouncedSearch,
+    leadType,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    reinquiry,
+    verificationStatusProp,
+    crmMonthWindowProp,
     dateFrom,
     dateTo,
     insightLeadView,
     effectiveAssignee,
+    effectiveAssigneeScope,
   ]);
 
   const load = useCallback(async () => {
@@ -1362,6 +1577,20 @@ export default function LeadsDataSection({
     setError(null);
     setData(null);
     try {
+      const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>) => {
+        setData(pageJson);
+        setVisibleFilteredTotal(pageJson.totalElements ?? 0);
+        if (pageJson.sourceCounts) {
+          const sourceCounts = pageJson.sourceCounts;
+          setLeadTypeCounts((prev) => ({
+            ...prev,
+            ...sourceCounts,
+            all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
+          }));
+        }
+        onHeatmapSummarySync?.(pageJson.summaryTotals ?? null);
+      };
+
       const insightModeActive = insightTableMode !== null;
       const requestPage = insightModeActive ? 0 : page;
       const requestSize = insightModeActive ? 500 : size;
@@ -1400,10 +1629,10 @@ export default function LeadsDataSection({
           totalElements: fallbackJson.totalElements ?? 0,
         });
         setPage(fallbackPage);
-        setData(fallbackJson);
+        applyLoadedPageMeta(fallbackJson);
         return;
       }
-      setData(json);
+      applyLoadedPageMeta(json);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load leads";
       if (msg.toLowerCase().includes("session expired")) {
@@ -1432,6 +1661,7 @@ export default function LeadsDataSection({
     leadViewKey,
     verificationStatusProp,
     crmMonthWindowProp,
+    onHeatmapSummarySync,
   ]);
 
   useEffect(() => {
@@ -1498,13 +1728,15 @@ export default function LeadsDataSection({
   const total =
     insightTableMode !== null
       ? rows.length
-      : (data?.totalElements ?? rows.length);
+      : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
   const totalPages =
     insightTableMode !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-      : data?.totalPages && data.totalPages > 0
-        ? data.totalPages
-        : Math.max(1, Math.ceil(total / Math.max(1, size)));
+      : visibleFilteredTotal !== null
+        ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+        : data?.totalPages && data.totalPages > 0
+          ? data.totalPages
+          : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(visibleRows.map((row) => [row.id, row]));
@@ -1879,7 +2111,14 @@ export default function LeadsDataSection({
         pipelineNested={pipelineNested}
         onLeadTypeChange={onLeadTypeChange}
         onSortChange={onSortChange}
-        onAssigneeChange={onAssigneeChange}
+        onAssigneeChange={(next) => {
+          setSalesAdminFilter("");
+          setSalesManagerFilter("");
+          setSalesExecFilter("");
+          setPresalesManagerFilter("");
+          setPresalesExecFilter("");
+          onAssigneeChange(next);
+        }}
         onDateFromChange={onDateFromChange}
         onDateToChange={onDateToChange}
         onMilestoneStageChange={onMilestoneStageChange}
@@ -1888,19 +2127,44 @@ export default function LeadsDataSection({
         onReinquiryChange={onReinquiryChange}
         onSalesAdminFilterChange={(next) => {
           setSalesAdminFilter(next);
+          onAssigneeChange("");
           setSalesManagerFilter("");
           setSalesExecFilter("");
+          setPresalesManagerFilter("");
+          setPresalesExecFilter("");
         }}
         onSalesManagerFilterChange={(next) => {
           setSalesManagerFilter(next);
+          onAssigneeChange("");
+          setSalesAdminFilter("");
           setSalesExecFilter("");
-        }}
-        onSalesExecFilterChange={setSalesExecFilter}
-        onPresalesManagerFilterChange={(next) => {
-          setPresalesManagerFilter(next);
+          setPresalesManagerFilter("");
           setPresalesExecFilter("");
         }}
-        onPresalesExecFilterChange={setPresalesExecFilter}
+        onSalesExecFilterChange={(next) => {
+          setSalesExecFilter(next);
+          onAssigneeChange("");
+          setSalesAdminFilter("");
+          setSalesManagerFilter("");
+          setPresalesManagerFilter("");
+          setPresalesExecFilter("");
+        }}
+        onPresalesManagerFilterChange={(next) => {
+          setPresalesManagerFilter(next);
+          onAssigneeChange("");
+          setSalesAdminFilter("");
+          setSalesManagerFilter("");
+          setSalesExecFilter("");
+          setPresalesExecFilter("");
+        }}
+        onPresalesExecFilterChange={(next) => {
+          setPresalesExecFilter(next);
+          onAssigneeChange("");
+          setSalesAdminFilter("");
+          setSalesManagerFilter("");
+          setSalesExecFilter("");
+          setPresalesManagerFilter("");
+        }}
         insightActive={insightTableMode}
         onInsightNavigate={(mode) =>
           setInsightTableMode((prev) => (prev === mode ? null : mode))

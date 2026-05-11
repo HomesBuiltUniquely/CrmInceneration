@@ -110,20 +110,43 @@ function buildLeadsQuery(search: URLSearchParams, assignee?: string): URLSearchP
 }
 
 async function resolveLeads(req: NextRequest): Promise<ApiLead[]> {
+  const resolveAllPages = async (query: URLSearchParams): Promise<ApiLead[]> => {
+    const fetchPage = async (page: number) => {
+      const pagedQuery = new URLSearchParams(query);
+      pagedQuery.set("page", String(page));
+      const res = await fetch(`${req.nextUrl.origin}/api/crm/leads?${pagedQuery.toString()}`, {
+        cache: "no-store",
+        headers: {
+          cookie: req.headers.get("cookie") ?? "",
+        },
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as SpringPage<ApiLead>;
+    };
+
+    const firstPage = await fetchPage(0);
+    if (!firstPage) return [];
+    const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+    const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+    if (totalPages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, idx) => fetchPage(idx + 1)),
+      );
+      for (const page of rest) {
+        if (!page) continue;
+        allLeads.push(...(Array.isArray(page.content) ? page.content : []));
+      }
+    }
+    return allLeads;
+  };
+
   const search = new URLSearchParams(req.nextUrl.searchParams);
   const assignees = [...new Set((search.get("assignees") ?? "").split(",").map((v) => v.trim()).filter(Boolean))];
   const queries = assignees.length > 0 ? assignees.map((a) => buildLeadsQuery(search, a)) : [buildLeadsQuery(search)];
   const leadById = new Map<string, ApiLead>();
   for (const query of queries) {
-    const res = await fetch(`${req.nextUrl.origin}/api/crm/leads?${query.toString()}`, {
-      cache: "no-store",
-      headers: {
-        cookie: req.headers.get("cookie") ?? "",
-      },
-    });
-    if (!res.ok) continue;
-    const json = (await res.json()) as SpringPage<ApiLead>;
-    for (const lead of json.content ?? []) {
+    const leads = await resolveAllPages(query);
+    for (const lead of leads) {
       const id = String(lead.id ?? "").trim();
       if (!id || leadById.has(id)) continue;
       leadById.set(id, lead);
@@ -216,8 +239,7 @@ async function resolveCounts(req: NextRequest): Promise<CountsResponse> {
 export async function GET(req: NextRequest) {
   try {
     const [counts, mappings, leads] = await Promise.all([resolveCounts(req), resolveSubStatusMappings(req), resolveLeads(req)]);
-    const totalLeads =
-      Number(counts.totalCrmLeads ?? 0) || sumRows(counts.countsByMilestoneStage);
+    const totalLeads = leads.length || Number(counts.totalCrmLeads ?? 0) || sumRows(counts.countsByMilestoneStage);
     const closedStageLeads = (counts.countsByMilestoneStage ?? [])
       .filter((row) => norm(row.key) === "closed")
       .reduce((sum, row) => sum + Number(row.count ?? 0), 0);

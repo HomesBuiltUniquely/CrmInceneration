@@ -226,17 +226,19 @@ export default function LeadsToolbar({
   const [openFilter, setOpenFilter] = useState(false);
   const [openSort, setOpenSort] = useState(false);
   const [openLeadTypes, setOpenLeadTypes] = useState(false);
-  const [callsTileMode, setCallsTileMode] = useState<"totalCalls" | "callDelayed">(
-    "totalCalls"
+  const [draftDateFrom, setDraftDateFrom] = useState(dateFrom);
+  const [draftDateTo, setDraftDateTo] = useState(dateTo);
+  const [callsTileMode, setCallsTileMode] = useState<"totalCalls" | "callDelayed">(() =>
+    insightActive === "callDelayed" ? "callDelayed" : "totalCalls",
   );
-  useEffect(() => {
-    if (insightActive === "callDelayed") setCallsTileMode("callDelayed");
-    if (insightActive === "totalCalls") setCallsTileMode("totalCalls");
-  }, [insightActive]);
+  const activeCallsTileMode =
+    insightActive === "callDelayed" || insightActive === "totalCalls"
+      ? insightActive
+      : callsTileMode;
   const callsTileLabel =
-    callsTileMode === "totalCalls" ? "Total Calls" : "First Call Delayed";
+    activeCallsTileMode === "totalCalls" ? "Total Calls" : "First Call Delayed";
   const callsTileValue =
-    callsTileMode === "totalCalls"
+    activeCallsTileMode === "totalCalls"
       ? leadTypeCounts.totalCalls ?? 0
       : leadTypeCounts.callDelayed ?? 0;
   const role = normalizeRole(authRole || viewerRole);
@@ -265,6 +267,22 @@ export default function LeadsToolbar({
       ),
     [pipelineNested, milestoneStage, milestoneStageCategory],
   );
+
+  useEffect(() => {
+    setDraftDateFrom(dateFrom);
+  }, [dateFrom]);
+
+  useEffect(() => {
+    setDraftDateTo(dateTo);
+  }, [dateTo]);
+
+  const commitDateRange = (nextFrom: string, nextTo: string) => {
+    const bothEmpty = !nextFrom && !nextTo;
+    const bothFilled = Boolean(nextFrom && nextTo);
+    if (!bothEmpty && !bothFilled) return;
+    if (nextFrom !== dateFrom) onDateFromChange(nextFrom);
+    if (nextTo !== dateTo) onDateToChange(nextTo);
+  };
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
@@ -305,6 +323,8 @@ export default function LeadsToolbar({
   ]);
 
   const resetFilter = () => {
+    setDraftDateFrom("");
+    setDraftDateTo("");
     onLeadTypeChange("all");
     onAssigneeChange("");
     onMilestoneStageChange("");
@@ -495,7 +515,7 @@ export default function LeadsToolbar({
                       onDoubleClick={() => {
                         if (label === "Total Calls" || label === "First Call Delayed") {
                           const nextMode =
-                            callsTileMode === "totalCalls" ? "callDelayed" : "totalCalls";
+                            activeCallsTileMode === "totalCalls" ? "callDelayed" : "totalCalls";
                           setCallsTileMode(nextMode);
                           onInsightNavigate?.(nextMode);
                         }
@@ -681,8 +701,12 @@ export default function LeadsToolbar({
                 <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">From</span>
                 <input
                   type="date"
-                  value={dateFrom}
-                  onChange={(e) => onDateFromChange(e.target.value)}
+                  value={draftDateFrom}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDraftDateFrom(next);
+                    commitDateRange(next, draftDateTo);
+                  }}
                   className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
                 />
               </label>
@@ -690,8 +714,12 @@ export default function LeadsToolbar({
                 <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">To</span>
                 <input
                   type="date"
-                  value={dateTo}
-                  onChange={(e) => onDateToChange(e.target.value)}
+                  value={draftDateTo}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setDraftDateTo(next);
+                    commitDateRange(draftDateFrom, next);
+                  }}
                   className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
                 />
               </label>
