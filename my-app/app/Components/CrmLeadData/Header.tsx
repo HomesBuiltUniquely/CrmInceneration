@@ -22,6 +22,7 @@ import {
 import { readStoredCrmToken } from "@/lib/crm-client-auth";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
 const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
@@ -98,6 +99,11 @@ export default function Header() {
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
   /** Toolbar Sales Exec / hierarchy filters — same effective assignee as the lead table. */
   const [heatmapToolbarAssignee, setHeatmapToolbarAssignee] = useState("");
+  const [heatmapToolbarAssigneeScope, setHeatmapToolbarAssigneeScope] = useState<string[]>([]);
+  const [heatmapSummaryTotals, setHeatmapSummaryTotals] = useState<{
+    lead: number;
+    opportunity: number;
+  } | null>(null);
   /** Insight tile filter (Team Leads, Follow ups today, etc.) — heatmap uses same subset as the grid. */
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
   const [presalesSummaryTab, setPresalesSummaryTab] = useState<
@@ -275,14 +281,16 @@ export default function Header() {
     if (forcedLeadType && forcedLeadType !== "all") q.set("leadType", forcedLeadType);
     const assigneeForHeatmap =
       heatmapToolbarAssignee.trim() || forcedAssignee.trim();
-    if (assigneeForHeatmap) q.set("assignee", assigneeForHeatmap);
+    if (assigneeForHeatmap && heatmapToolbarAssigneeScope.length === 0) {
+      q.set("assignee", assigneeForHeatmap);
+    }
     const presalesMonthCards =
       isPresalesRole(currentRole) && presalesSummaryTab !== null;
     if (presalesMonthCards) q.set("crmMonthWindow", "current");
-    else {
-      if (dateFrom.trim()) q.set("dateFrom", dateFrom.trim());
-      if (dateTo.trim()) q.set("dateTo", dateTo.trim());
-    }
+    else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
+    if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
+    if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
+    if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     if (presalesVerificationStatus.trim()) q.set("verificationStatus", presalesVerificationStatus.trim());
     return q.toString();
@@ -290,9 +298,13 @@ export default function Header() {
     search,
     dateFrom,
     dateTo,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
     forcedAssignee,
     forcedLeadType,
     heatmapToolbarAssignee,
+    heatmapToolbarAssigneeScope,
     reinquiry,
     presalesVerificationStatus,
     currentRole,
@@ -398,6 +410,8 @@ export default function Header() {
                 currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}
                 managerTeamNames={managerTeamNames}
+                assigneeScope={heatmapToolbarAssigneeScope}
+                summaryTotalsOverride={heatmapSummaryTotals}
                 presalesTeamNames={presalesTeamNames}
                 insightTableMode={insightTableMode}
                 activeStageFilter={milestoneStage}
@@ -455,6 +469,8 @@ export default function Header() {
                 onMilestoneSubStageChange={setMilestoneSubStage}
                 onReinquiryChange={setReinquiry}
                 onHeatmapAssigneeSync={setHeatmapToolbarAssignee}
+                onHeatmapAssigneeScopeSync={setHeatmapToolbarAssigneeScope}
+                onHeatmapSummarySync={setHeatmapSummaryTotals}
                 onInsightTableModeChange={setInsightTableMode}
               />
             </>

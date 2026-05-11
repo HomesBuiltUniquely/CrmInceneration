@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardFilterState } from "./LeadFilters";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 
 type Props = {
   filters?: DashboardFilterState;
@@ -16,8 +17,7 @@ function toQueryString(filters?: DashboardFilterState): string {
   if (filters.milestoneStage.trim()) q.set("milestoneStage", filters.milestoneStage.trim());
   if (filters.milestoneStageCategory.trim()) q.set("milestoneStageCategory", filters.milestoneStageCategory.trim());
   if (filters.milestoneSubStage.trim()) q.set("milestoneSubStage", filters.milestoneSubStage.trim());
-  if (filters.dateFrom.trim()) q.set("dateFrom", filters.dateFrom.trim());
-  if (filters.dateTo.trim()) q.set("dateTo", filters.dateTo.trim());
+  setEffectiveNewCrmDateRange(q, filters.dateFrom, filters.dateTo);
   return q.toString();
 }
 
