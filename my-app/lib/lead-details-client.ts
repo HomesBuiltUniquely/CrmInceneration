@@ -206,10 +206,10 @@ export async function putLeadDetail(
     cache: "no-store",
   });
   if (!res.ok) {
-    throw await buildApiError(
-      res,
-      "Failed to update lead. Please check values and try again.",
-    );
+    if (res.status === 403) {
+      throw new Error("You don't have permission to edit this lead.");
+    }
+    throw await buildApiError(res, "Failed to update lead. Please check values and try again.");
   }
   return res.json() as Promise<Record<string, unknown>>;
 }
