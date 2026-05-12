@@ -1968,7 +1968,10 @@ export default function LeadDetailsApiClient({
           showGetQuote={canShowGetQuote}
           onCallClosed={canClosedLeadHeader ? handleCallClosed : undefined}
           showCallClosed={
-            canClosedLeadHeader && !isClosedWonBookingDone(lead.stageBlock)
+            canClosedLeadHeader &&
+            (lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "decision" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed") &&
+            !isClosedWonBookingDone(lead.stageBlock)
           }
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}
