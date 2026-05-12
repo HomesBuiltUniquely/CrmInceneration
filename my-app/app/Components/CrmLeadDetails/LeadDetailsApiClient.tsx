@@ -679,6 +679,7 @@ export default function LeadDetailsApiClient({
     emptyLead(leadId, validLeadType ? leadType : "formlead"),
   );
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown>>({});
+  const [salesClosureLoading, setSalesClosureLoading] = useState(false);
   const [closureReturnHandled, setClosureReturnHandled] = useState(false);
   const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
 
@@ -1014,34 +1015,102 @@ export default function LeadDetailsApiClient({
     [lead],
   );
 
-  const salesClosureHref = useMemo(() => {
-    if (!canClosedLeadHeader) return undefined;
-    if (typeof window === "undefined") return undefined;
-    if (!isCloserStageBookingDone(lead)) return undefined;
-    return buildSalesClosureUrl({
-      leadId,
-      leadTypeLabel: crmLeadTypeToApiLabel(leadType),
-      returnUrl: window.location.href,
-      lead,
-      authUser: salesClosureAuthUser,
-    });
-  }, [canClosedLeadHeader, lead, leadId, leadType, salesClosureAuthUser]);
+  const loadSalesClosureAuthUser = useCallback(async () => {
+    if (salesClosureAuthUser) return salesClosureAuthUser;
+    if (typeof window === "undefined") return null;
+    const raw = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
+    const token = raw.trim();
+    if (!token) return null;
+    const data = await getMe(token.startsWith("Bearer ") ? token : `Bearer ${token}`);
+    const user = unwrapAuthUserPayload(data);
+    setSalesClosureAuthUser(user);
+    return user;
+  }, [salesClosureAuthUser]);
 
-  const buildStrictSalesClosureUrl = useCallback(() => {
+  const loadLatestLeadForSalesClosure = useCallback(async () => {
+    const latestDetail = await getLeadDetail(leadType, leadId);
+    const latestLead = {
+      ...detailJsonToLead(latestDetail, leadType),
+      id: leadId,
+    };
+    console.info("[sales-closure] latest lead detail fetched", {
+      leadType,
+      leadId,
+      rawKeys: Object.keys(latestDetail),
+      rawLeadId: latestDetail.leadId,
+      rawName: latestDetail.name ?? latestDetail.fullName ?? latestDetail.customerName,
+      rawEmail: latestDetail.email ?? latestDetail.emailAddress ?? latestDetail.mail,
+      rawPhone: latestDetail.phone ?? latestDetail.phoneNumber ?? latestDetail.mobile,
+    });
+    console.info("[sales-closure] mapped lead prefill fields", {
+      leadId: latestLead.leadId,
+      name: latestLead.name,
+      email: latestLead.email,
+      phone: latestLead.phone,
+      propertyLocation: latestLead.propertyLocation,
+      propertyNotes: latestLead.propertyNotes,
+      possessionDate: latestLead.possessionDate,
+      leadSource: latestLead.leadSource,
+      configuration: latestLead.configuration,
+    });
+    setBaseDetail(latestDetail);
+    setLead((prev) => ({
+      ...latestLead,
+      activities: prev.activities,
+      quoteLink: latestLead.quoteLink?.trim() || prev.quoteLink || "",
+    }));
+    return latestLead;
+  }, [leadId, leadType]);
+
+  const buildStrictSalesClosureUrl = useCallback(async () => {
     const currentLeadId = lead.leadId?.trim() || leadId;
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set("salesClosureReturned", "1");
+    const [latestLeadResult, authUserResult] = await Promise.allSettled([
+      loadLatestLeadForSalesClosure(),
+      loadSalesClosureAuthUser(),
+    ]);
+    const latestLead =
+      latestLeadResult.status === "fulfilled" ? latestLeadResult.value : lead;
+    const latestAuthUser =
+      authUserResult.status === "fulfilled"
+        ? authUserResult.value
+        : salesClosureAuthUser;
+    if (latestLeadResult.status === "rejected") {
+      console.error("[sales-closure] latest lead fetch failed", latestLeadResult.reason);
+    }
+    if (authUserResult.status === "rejected") {
+      console.error("[sales-closure] current user fetch failed", authUserResult.reason);
+    }
+    console.info("[sales-closure] auth user for prefill", {
+      hasUser: Boolean(latestAuthUser),
+      email:
+        latestAuthUser?.email ??
+        latestAuthUser?.mail ??
+        latestAuthUser?.emailAddress ??
+        latestAuthUser?.workEmail ??
+        latestAuthUser?.username ??
+        "",
+      role: latestAuthUser ? getRoleFromUser(latestAuthUser) : "",
+    });
     return buildSalesClosureUrl({
-      leadId: currentLeadId,
+      leadId: latestLead.leadId?.trim() || currentLeadId,
       leadTypeLabel: crmLeadTypeToApiLabel(leadType),
       returnUrl: returnUrl.toString(),
-      lead,
-      authUser: salesClosureAuthUser,
+      lead: latestLead,
+      authUser: latestAuthUser,
     });
-  }, [lead, leadId, leadType, salesClosureAuthUser]);
+  }, [
+    lead,
+    leadId,
+    leadType,
+    loadLatestLeadForSalesClosure,
+    loadSalesClosureAuthUser,
+    salesClosureAuthUser,
+  ]);
 
   const redirectToStrictSalesClosure = useCallback(
-    (previousStage: Lead["stageBlock"]) => {
+    async (previousStage: Lead["stageBlock"]) => {
       if (!canClosedLeadHeader) {
         notifyError(
           "Sales closure is not available for Admin or Sales Admin. Use a sales role to complete closure.",
@@ -1054,10 +1123,41 @@ export default function LeadDetailsApiClient({
         previousStage,
       };
       window.sessionStorage.setItem(SALES_CLOSURE_PENDING_KEY, JSON.stringify(payload));
-      window.location.href = buildStrictSalesClosureUrl();
+      const url = await buildStrictSalesClosureUrl();
+      console.info("[sales-closure] redirect URL:", url);
+      console.info(
+        "[sales-closure] redirect params:",
+        Object.fromEntries(new URL(url).searchParams.entries()),
+      );
+      window.open(url, "_blank");
+      // Optionally listen for when the user returns to this tab to refresh the lead
+      window.addEventListener(
+        "focus",
+        () => {
+          console.info("[sales-closure] user returned to CRM, refreshing lead...");
+        },
+        { once: true }
+      );
     },
     [buildStrictSalesClosureUrl, canClosedLeadHeader, leadId, leadType, notifyError],
   );
+
+  const openStrictSalesClosureNewTab = useCallback(async () => {
+    if (!canClosedLeadHeader) {
+      notifyError("Sales closure is not available for your role.");
+      return;
+    }
+    try {
+      setSalesClosureLoading(true);
+      const url = await buildStrictSalesClosureUrl();
+      window.open(url, "_blank");
+    } catch (err) {
+      console.error(err);
+      notifyError("Failed to fetch latest lead data for Sales Closure.");
+    } finally {
+      setSalesClosureLoading(false);
+    }
+  }, [buildStrictSalesClosureUrl, canClosedLeadHeader, notifyError]);
 
   useEffect(() => {
     if (!validLeadType || loading || closureReturnHandled) return;
@@ -1227,7 +1327,7 @@ export default function LeadDetailsApiClient({
         return;
       }
       notifyError("Please complete Sales Closure form to keep this lead in Booking Done.");
-      redirectToStrictSalesClosure(previousLead.stageBlock);
+      void redirectToStrictSalesClosure(previousLead.stageBlock);
       return;
     }
     const lt = leadTypeParam as CrmLeadType;
@@ -1752,7 +1852,7 @@ export default function LeadDetailsApiClient({
             /* non-blocking before redirect */
           });
           notifyInfo("Opening Sales Closure — complete the form to confirm Booking Done.");
-          redirectToStrictSalesClosure(lead.stageBlock);
+          await redirectToStrictSalesClosure(lead.stageBlock);
           return;
         }
         const leadForSave: Lead = {
@@ -1872,7 +1972,9 @@ export default function LeadDetailsApiClient({
           }
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}
-          salesClosureHref={canClosedLeadHeader ? salesClosureHref : null}
+          showSalesClosure={canClosedLeadHeader && isCloserStageBookingDone(lead)}
+          onOpenSalesClosure={openStrictSalesClosureNewTab}
+          salesClosureLoading={salesClosureLoading}
           createdTimelineOptions={createdTimelineOptions}
           createdTimelineLoading={createdTimelineLoading}
           createdTimelineValue={selectedTimelineValue}
