@@ -314,11 +314,9 @@ function pickPropertyNotesFromDetail(
         return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
       }
     }
-    // For non-JSON strings, keep this fallback only for legacy lead types.
-    if (leadType === "addlead" || leadType === "mlead") {
-      return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
-    }
-    return "";
+    // For non-JSON strings, accept the raw string as notes
+    // (excluding cases where it exactly matches the configuration field).
+    return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
   }
   if (pd && typeof pd === "object" && !Array.isArray(pd)) {
     const o = pd as Record<string, unknown>;
@@ -334,38 +332,6 @@ function pickPropertyNotesFromDetail(
     return isConfigurationLikePropertyDetails(picked, detail) ? "" : picked;
   }
   return "";
-}
-
-/**
- * Merge Lead configuration + notes into backend `propertyDetails` (object) for non–Add Lead entities.
- * Add Lead (`addlead`) uses `propertyDetails` as a **string** in Java; that path does not call this.
- */
-function mergePropertyDetailsBlock(
-  base: Record<string, unknown>,
-  lead: Lead,
-): Record<string, unknown> {
-  const prev = base.propertyDetails ?? base.PropertyDetails;
-  let bag: Record<string, unknown> = {};
-
-  if (prev && typeof prev === "object" && !Array.isArray(prev)) {
-    bag = { ...(prev as Record<string, unknown>) };
-  } else if (typeof prev === "string") {
-    bag = asJsonObjectString(prev) ?? {};
-  }
-
-  const cfg = lead.configuration.trim();
-  bag.interiorSetup = cfg;
-  bag.interior_setup = cfg;
-  bag.configuration = cfg;
-  bag.propertyConfiguration = cfg;
-  bag.property_configuration = cfg;
-  bag.propertyType = cfg;
-
-  const notes = lead.propertyNotes.trim();
-  bag.propertyNotes = notes;
-  bag.property_detail = notes;
-
-  return bag;
 }
 
 export function extractStage(detail: Record<string, unknown>) {
@@ -470,6 +436,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
 
 /** Merge UI Lead + existing GET body for PUT (preserves unknown backend fields). */
 export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): Record<string, unknown> {
+  const mergedLt = asCrmLeadType(lead.leadType, "formlead");
   const next = { ...base };
   next.name = lead.name;
   next.customerName = lead.name;
@@ -524,12 +491,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   }
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
-  const mergedLt = asCrmLeadType(lead.leadType, "formlead");
-  if (mergedLt === "addlead" || mergedLt === "mlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
-  } else {
-    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
-  }
+  next.propertyDetails = lead.propertyNotes.trim();
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
@@ -576,6 +538,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
  * Preserves `stage`, name, phone, email, assignee, designer from `base`.
  */
 export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Lead): Record<string, unknown> {
+  const boxLt = asCrmLeadType(lead.leadType, "formlead");
   const next = { ...base };
   next.budget = lead.budget;
   next.leadSource = lead.leadSource;
@@ -585,12 +548,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   }
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
-  const boxLt = asCrmLeadType(lead.leadType, "formlead");
-  if (boxLt === "addlead" || boxLt === "mlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
-  } else {
-    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
-  }
+  next.propertyDetails = lead.propertyNotes.trim();
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
