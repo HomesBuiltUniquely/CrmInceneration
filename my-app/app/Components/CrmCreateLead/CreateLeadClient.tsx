@@ -9,7 +9,12 @@ import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import { BASE_URL } from "@/lib/base-url";
-import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  normalizeRole,
+} from "@/lib/auth/api";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
 
 const LEAD_SOURCES = [
@@ -217,10 +222,14 @@ function CreateLeadFieldLabel({
 
 export default function CreateLeadClient() {
   const [role, setRole] = useState("SUPER_ADMIN");
+  const [currentUserName, setCurrentUserName] = useState("");
   useEffect(() => {
     const stored =
       window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
     setRole(normalizeRole(stored) || "SUPER_ADMIN");
+    setCurrentUserName(
+      (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim(),
+    );
   }, []);
   const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
   const [error, setError] = useState<string | null>(null);
@@ -307,6 +316,25 @@ export default function CreateLeadClient() {
       notes: form.notes.trim() || undefined,
     };
 
+    const creatorName = currentUserName.trim();
+    const shouldSelfAssign =
+      (
+        role === "SALES_EXECUTIVE" ||
+        role === "PRESALES_EXECUTIVE" ||
+        role === "SALES_MANAGER" ||
+        role === "MANAGER" ||
+        role === "PRESALES_MANAGER"
+      ) &&
+      Boolean(creatorName);
+    if (shouldSelfAssign) {
+      // Keep create payload aligned with the common assignee aliases used elsewhere in CRM.
+      payload.assignedTo = creatorName;
+      payload.assignee = creatorName;
+      payload.salesOwnerName = creatorName;
+      payload.ownerName = creatorName;
+      payload.salesExecutive = creatorName;
+    }
+
     if (selectedFeedback) {
       payload.stage = {
         stage: selectedFeedback.stage,
@@ -323,17 +351,11 @@ export default function CreateLeadClient() {
 
     startTransition(async () => {
       try {
-        const authToken =
-          typeof window !== "undefined"
-            ? window.localStorage.getItem("authToken")
-            : null;
-
         const response = await fetch(`${BASE_URL}/v1/AddLead`, {
           method: "POST",
-          headers: {
+          headers: getCrmAuthHeaders({
             "Content-Type": "application/json",
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-          },
+          }),
           body: JSON.stringify(payload),
         });
 
