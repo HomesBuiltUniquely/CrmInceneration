@@ -71,9 +71,16 @@ type LeadRowActionProps = {
   onToggleSelected: (checked: boolean) => void;
   showSelection: boolean;
   showActions: boolean;
+  gridClass: string;
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
 };
+
+function getLeadsTableGridClass(showActions: boolean): string {
+  return showActions
+    ? "grid grid-cols-[minmax(36px,0.45fr)_minmax(110px,1.15fr)_minmax(170px,2fr)_minmax(130px,1.2fr)_minmax(150px,1.5fr)_minmax(110px,1fr)_minmax(120px,1.1fr)_minmax(132px,1.15fr)] items-start gap-3"
+    : "grid grid-cols-[minmax(36px,0.45fr)_minmax(110px,1.15fr)_minmax(180px,2.15fr)_minmax(130px,1.25fr)_minmax(160px,1.55fr)_minmax(120px,1.05fr)_minmax(150px,1.4fr)] items-start gap-3";
+}
 
 function BoltIcon() {
   return (
@@ -112,12 +119,12 @@ function LeadRowAction({
   onToggleSelected,
   showSelection,
   showActions,
+  gridClass,
   onDelete,
   onAssign,
 }: LeadRowActionProps) {
   const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
-  const gridClass = "grid grid-cols-[repeat(14,minmax(0,1fr))] items-start gap-3";
   return (
     <div
       onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
@@ -133,7 +140,7 @@ function LeadRowAction({
         }
       }}
     >
-      <div className="col-span-1 flex min-h-[64px] items-center gap-2">
+      <div className="flex min-h-[64px] items-center gap-2">
         {showSelection ? (
           <input
             type="checkbox"
@@ -144,12 +151,12 @@ function LeadRowAction({
           />
         ) : null}
       </div>
-      <div className="col-span-2 flex min-h-[64px] items-center">
+      <div className="flex min-h-[64px] items-center">
         <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">
           {row.enquiryDate}
         </div>
       </div>
-      <div className="col-span-3 flex min-h-[64px] items-start gap-3">
+      <div className="flex min-h-[64px] min-w-0 items-start gap-3">
         <div className="leading-tight">
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
@@ -165,13 +172,13 @@ function LeadRowAction({
         </div>
       </div>
 
-      <div className="col-span-2 flex min-h-[64px] items-center pt-0.5">
+      <div className="flex min-h-[64px] items-center pt-0.5">
         <div className="flex flex-wrap items-center gap-1.5">
           {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "slate" }} /> : null}
         </div>
       </div>
 
-      <div className="col-span-2 min-h-[64px]">
+      <div className="min-h-[64px] min-w-0">
         <div className="text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">{row.journey.stage}</div>
         <div className="mt-2 flex items-center gap-3">
           <ProgressBar pct={row.journey.progressPct} tone={critical ? "critical" : "normal"} />
@@ -180,28 +187,28 @@ function LeadRowAction({
         {row.journey.status ? <StatusInline status={row.journey.status} /> : null}
       </div>
 
-      <div className="col-span-2 flex min-h-[64px] items-center gap-2">
+      <div className="flex min-h-[64px] min-w-0 items-center gap-2">
         <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 
-      <div className={showActions ? "col-span-1 min-h-[64px] pt-0.5" : "col-span-2 min-h-[64px] pt-0.5"}>
+      <div className="min-h-[64px] min-w-0 pt-0.5">
         <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
           {row.engagement.time}
         </div>
-        <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-[var(--crm-text-secondary)]">
+        <div className="mt-1 break-words text-[11px] font-semibold text-[var(--crm-text-secondary)] [overflow-wrap:anywhere]">
           {row.engagement.action}
         </div>
       </div>
 
       {showActions ? (
-        <div className="col-span-1 flex min-h-[64px] items-center justify-end gap-2">
+        <div className="flex min-h-[64px] min-w-0 flex-wrap items-center justify-end gap-1.5">
           {onAssign ? (
             <button
               onClick={(event) => {
                 event.stopPropagation();
                 onAssign(row);
               }}
-              className="rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
+              className="shrink-0 rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
             >
               Assign
             </button>
@@ -212,7 +219,7 @@ function LeadRowAction({
                 event.stopPropagation();
                 onDelete(row);
               }}
-              className="rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
+              className="shrink-0 rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
             >
               Delete
             </button>
@@ -329,7 +336,6 @@ export default function LeadsTable({
   onAssignRow,
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
-  const gridClass = "grid grid-cols-[repeat(14,minmax(0,1fr))] gap-3";
 
   useEffect(() => {
     const readOverrides = () => {
@@ -367,6 +373,7 @@ export default function LeadsTable({
   const showPagination = onPageChange && onPageSizeChange;
   const showActions = Boolean(onAssignRow || onDeleteRow);
   const showSelection = showActions && Boolean(onSelectedRowIdsChange);
+  const gridClass = getLeadsTableGridClass(showActions);
   const allSelected = rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
   const someSelected = selectedRowIds.length > 0 && !allSelected;
   const selectAllRef = useRef<HTMLInputElement | null>(null);
@@ -380,7 +387,7 @@ export default function LeadsTable({
     <section className="mx-auto mt-5 max-w-[1200px] px-6">
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
-          <div className="col-span-1">
+          <div>
             {showSelection ? (
               <input
                 ref={selectAllRef}
@@ -395,13 +402,13 @@ export default function LeadsTable({
               />
             ) : null}
           </div>
-          <div className="col-span-2">ENQUIRY DATE</div>
-          <div className="col-span-3">LEAD NAME</div>
-          <div className="col-span-2">STATUS</div>
-          <div className="col-span-2">JOURNEY TRACK</div>
-          <div className="col-span-2">OWNER</div>
-          <div className={showActions ? "col-span-1" : "col-span-2"}>ENGAGEMENT</div>
-          {showActions ? <div className="col-span-1 text-right">ACTIONS</div> : null}
+          <div>ENQUIRY DATE</div>
+          <div>LEAD NAME</div>
+          <div>STATUS</div>
+          <div>JOURNEY TRACK</div>
+          <div>OWNER</div>
+          <div>ENGAGEMENT</div>
+          {showActions ? <div className="text-right">ACTIONS</div> : null}
         </div>
         {loading ? (
           <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
@@ -427,6 +434,7 @@ export default function LeadsTable({
               }}
               showSelection={showSelection}
               showActions={showActions}
+              gridClass={gridClass}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
             />

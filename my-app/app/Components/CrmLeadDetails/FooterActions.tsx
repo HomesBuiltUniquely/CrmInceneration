@@ -11,7 +11,7 @@ export default function FooterActions({
 }: {
   onSave?: () => void | Promise<void>;
   saving?: boolean;
-  /** `POST .../verify/{id}` — Presales Executive only (parent gates). */
+  /** `POST .../verify/{id}` — role-gated in parent (Super Admin / Presales Manager / Presales Executive). */
   onVerify?: () => void | Promise<void>;
   verifying?: boolean;
 }) {

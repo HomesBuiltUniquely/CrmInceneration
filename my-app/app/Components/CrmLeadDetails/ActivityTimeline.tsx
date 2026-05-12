@@ -55,7 +55,7 @@ const typeConfig: Record<
 function ActivityCard({ item, isLast, delay }: { item: ActivityItem; isLast: boolean; delay: string }) {
   const cfg = typeConfig[item.type];
   return (
-    <div className={cn("flex gap-4 animate-fade-up", delay)}>
+    <div className={cn("flex min-w-0 gap-4 animate-fade-up", delay)}>
       {/* Dot + connector */}
       <div className="flex flex-col items-center flex-shrink-0 w-8 pt-0.5">
         <div
@@ -70,33 +70,39 @@ function ActivityCard({ item, isLast, delay }: { item: ActivityItem; isLast: boo
       </div>
 
       {/* Content */}
-      <div className={cn("flex-1 pb-6", isLast && "pb-0")}>
+      <div className={cn("min-w-0 flex-1 pb-6", isLast && "pb-0")}>
         {/* Meta row */}
-        <div className="flex items-center justify-between mb-1.5">
+        <div className="mb-1.5 flex flex-wrap items-start justify-between gap-2">
           <span className={cn("text-[11px] font-bold tracking-[0.8px] uppercase", cfg.labelClass)}>
             {cfg.label}
           </span>
-          <span className="font-mono text-[11px] text-[var(--crm-text-muted)]">{item.timestamp}</span>
+          <span className="break-words text-right font-mono text-[11px] text-[var(--crm-text-muted)] [overflow-wrap:anywhere]">
+            {item.timestamp}
+          </span>
         </div>
 
         {/* Description */}
-        <p className="mb-1.5 text-[13.5px] leading-relaxed text-[var(--crm-text-primary)]">
+        <p className="mb-1.5 whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-[var(--crm-text-primary)] [overflow-wrap:anywhere]">
           {item.description}
         </p>
 
         {/* Note box */}
         {item.note && (
-          <div className="mt-2 rounded-lg border border-[var(--crm-border)] border-l-[3px] border-l-amber-400 bg-[var(--crm-surface-subtle)] p-3 font-mono text-[12px] leading-relaxed text-[var(--crm-text-muted)]">
+          <div className="mt-2 min-w-0 whitespace-pre-wrap break-words rounded-lg border border-[var(--crm-border)] border-l-[3px] border-l-amber-400 bg-[var(--crm-surface-subtle)] p-3 font-mono text-[12px] leading-relaxed text-[var(--crm-text-muted)] [overflow-wrap:anywhere]">
             {item.note}
           </div>
         )}
 
         {/* Change diff */}
         {item.change && (
-          <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 font-mono text-[12px]">
-            <span className="text-rose-500 line-through opacity-70">{item.change.old}</span>
-            <span className="text-[var(--crm-text-muted)]">→</span>
-            <span className="text-emerald-600">{item.change.new}</span>
+          <div className="mt-2 flex min-w-0 w-full flex-col gap-2 overflow-hidden rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 font-mono text-[12px]">
+            <span className="whitespace-pre-wrap break-words text-rose-500 line-through opacity-70 [overflow-wrap:anywhere]">
+              {item.change.old}
+            </span>
+            <span className="self-start text-[var(--crm-text-muted)]">→</span>
+            <span className="whitespace-pre-wrap break-words text-emerald-600 [overflow-wrap:anywhere]">
+              {item.change.new}
+            </span>
           </div>
         )}
 

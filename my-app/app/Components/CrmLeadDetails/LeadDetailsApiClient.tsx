@@ -48,10 +48,12 @@ import {
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import {
+  CRM_USER_NAME_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
   getMe,
+  getNameFromUser,
   getRoleFromUser,
   getSalesExecEndpointForVerify,
   normalizeRole,
@@ -65,6 +67,9 @@ import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
+import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
+import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
 
 type SalesExecutiveOption = {
   id: number;
@@ -645,6 +650,7 @@ export default function LeadDetailsApiClient({
     string | null
   >(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
+  const [verifyPresalesTeamNames, setVerifyPresalesTeamNames] = useState<string[]>([]);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
@@ -733,14 +739,22 @@ export default function LeadDetailsApiClient({
     const roleKey = normalizeRole(
       window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "",
     );
-    setCanVerifyRole(roleKey === "PRESALES_EXECUTIVE");
+    setCanVerifyRole(
+      roleKey === "PRESALES_EXECUTIVE" ||
+        roleKey === "PRESALES_MANAGER" ||
+        roleKey === "SUPER_ADMIN",
+    );
     setIsSuperAdmin(roleKey === "SUPER_ADMIN");
   }, []);
 
   useEffect(() => {
     if (!salesClosureAuthUser) return;
     const roleKey = normalizeRole(getRoleFromUser(salesClosureAuthUser));
-    setCanVerifyRole(roleKey === "PRESALES_EXECUTIVE");
+    setCanVerifyRole(
+      roleKey === "PRESALES_EXECUTIVE" ||
+        roleKey === "PRESALES_MANAGER" ||
+        roleKey === "SUPER_ADMIN",
+    );
     setIsSuperAdmin(roleKey === "SUPER_ADMIN");
   }, [salesClosureAuthUser]);
 
@@ -1004,6 +1018,85 @@ export default function LeadDetailsApiClient({
     }
     return "";
   }, [salesClosureAuthUser]);
+
+  const verifyViewerAliasSet = useMemo(() => {
+    const aliases = [
+      salesClosureAuthUser ? getNameFromUser(salesClosureAuthUser) : "",
+      typeof salesClosureAuthUser?.fullName === "string" ? salesClosureAuthUser.fullName : "",
+      typeof salesClosureAuthUser?.name === "string" ? salesClosureAuthUser.name : "",
+      typeof salesClosureAuthUser?.username === "string" ? salesClosureAuthUser.username : "",
+      typeof window !== "undefined"
+        ? (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "")
+        : "",
+    ];
+    return new Set(
+      aliases.map((value) => value.trim().toLowerCase()).filter(Boolean),
+    );
+  }, [salesClosureAuthUser]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (viewerRoleKey !== "PRESALES_MANAGER") {
+      setVerifyPresalesTeamNames([]);
+      return;
+    }
+    const currentUserId = Number(salesClosureAuthUser?.id ?? 0);
+    if (!Number.isFinite(currentUserId) || currentUserId <= 0) {
+      setVerifyPresalesTeamNames([]);
+      return;
+    }
+    void fetchPresalesExecutiveNamesForManager(currentUserId)
+      .then((names) => {
+        if (!cancelled) setVerifyPresalesTeamNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setVerifyPresalesTeamNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [salesClosureAuthUser, viewerRoleKey]);
+
+  const verifyLeadRecord = useMemo<ApiLead>(
+    () =>
+      ({
+        ...(baseDetail as ApiLead),
+        assignee: lead.assignee || (baseDetail as ApiLead).assignee,
+        salesOwner: (baseDetail as ApiLead).salesOwner,
+      }) as ApiLead,
+    [baseDetail, lead.assignee],
+  );
+
+  const canVerifyCurrentLead = useMemo(() => {
+    if (!canVerifyRole) return false;
+    if (isCrmLeadVerified(verifyLeadRecord)) return false;
+    if (viewerRoleKey === "SUPER_ADMIN") return true;
+
+    const assigneeAliases = assigneeAliasNorms(verifyLeadRecord);
+    const isSelfAssigned = [...verifyViewerAliasSet].some((alias) =>
+      assigneeAliases.has(alias),
+    );
+    if (viewerRoleKey === "PRESALES_EXECUTIVE") {
+      return isSelfAssigned;
+    }
+    if (viewerRoleKey === "PRESALES_MANAGER") {
+      if (isSelfAssigned) return true;
+      const teamAliasSet = new Set(
+        verifyPresalesTeamNames.map((name) => name.trim().toLowerCase()).filter(Boolean),
+      );
+      for (const alias of assigneeAliases) {
+        if (teamAliasSet.has(alias)) return true;
+      }
+      return false;
+    }
+    return false;
+  }, [
+    canVerifyRole,
+    verifyLeadRecord,
+    viewerRoleKey,
+    verifyViewerAliasSet,
+    verifyPresalesTeamNames,
+  ]);
 
   const canClosedLeadHeader = useMemo(
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
@@ -1927,7 +2020,7 @@ export default function LeadDetailsApiClient({
         <FooterActions
           onSave={handleSave}
           saving={saving}
-          onVerify={canVerifyRole ? handleOpenVerify : undefined}
+          onVerify={canVerifyCurrentLead ? handleOpenVerify : undefined}
           verifying={verifying}
         />
       </div>
