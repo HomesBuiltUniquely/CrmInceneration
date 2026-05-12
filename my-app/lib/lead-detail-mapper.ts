@@ -314,11 +314,9 @@ function pickPropertyNotesFromDetail(
         return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
       }
     }
-    // For non-JSON strings, keep this fallback only for legacy lead types.
-    if (leadType === "addlead" || leadType === "mlead") {
-      return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
-    }
-    return "";
+    // For non-JSON strings, accept the raw string as notes
+    // (excluding cases where it exactly matches the configuration field).
+    return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
   }
   if (pd && typeof pd === "object" && !Array.isArray(pd)) {
     const o = pd as Record<string, unknown>;
