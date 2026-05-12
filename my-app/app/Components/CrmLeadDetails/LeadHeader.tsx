@@ -49,7 +49,9 @@ export default function LeadHeader({
   canStageRollback = false,
   onCallClosed,
   showCallClosed = false,
-  salesClosureHref,
+  onOpenSalesClosure,
+  showSalesClosure = false,
+  salesClosureLoading = false,
   createdTimelineOptions = [],
   createdTimelineLoading = false,
   createdTimelineValue = "",
@@ -64,8 +66,9 @@ export default function LeadHeader({
   canStageRollback?: boolean;
   onCallClosed?: () => void;
   showCallClosed?: boolean;
-  /** §12 Hub Sales Closure — shown when Closer + Booking Done (opens new tab). */
-  salesClosureHref?: string | null;
+  onOpenSalesClosure?: () => void;
+  showSalesClosure?: boolean;
+  salesClosureLoading?: boolean;
   createdTimelineOptions?: Array<{ value: string; label: string; fullLabel?: string }>;
   createdTimelineLoading?: boolean;
   createdTimelineValue?: string;
@@ -213,16 +216,16 @@ export default function LeadHeader({
           {lead.assignee}
         </div>
 
-        {salesClosureHref ? (
-          <a
-            href={salesClosureHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-2.5 text-[13px] font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+        {showSalesClosure && onOpenSalesClosure ? (
+          <button
+            type="button"
+            onClick={onOpenSalesClosure}
+            disabled={salesClosureLoading}
+            className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/90 px-4 py-2.5 text-[13px] font-semibold text-emerald-900 shadow-sm transition hover:bg-emerald-100 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <span aria-hidden>🔗</span>
-            Sales closure
-          </a>
+            {salesClosureLoading ? "Opening..." : "Sales closure"}
+          </button>
         ) : null}
         {canStageRollback ? (
           <button

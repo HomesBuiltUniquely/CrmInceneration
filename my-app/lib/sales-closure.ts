@@ -1,7 +1,10 @@
 import type { Lead } from "@/lib/data";
 import { getRoleFromUser, normalizeRole } from "@/lib/auth/api";
 
-export const SALES_CLOSURE_ORIGIN = "https://design.hubinterior.com";
+export const SALES_CLOSURE_ORIGIN = (
+  process.env.NEXT_PUBLIC_SALES_CLOSURE_ORIGIN?.trim() ||
+  "https://design.hubinterior.com"
+).replace(/\/+$/, "");
 
 /** Avoid oversized URLs when property notes are long. */
 const MAX_QUERY_VALUE_LEN = 1800;
@@ -35,16 +38,45 @@ function formatNowForSalesClosure(): string {
   return `${dd}/${mm}/${yyyy}, ${hh}:${min}:${sec}`;
 }
 
+function setSalesClosurePrefillPayload(
+  u: URL,
+  lead: Lead,
+  authUser?: Record<string, unknown> | null,
+): void {
+  const mail = authUser
+    ? pickUserStr(
+        authUser,
+        "email",
+        "mail",
+        "emailAddress",
+        "workEmail",
+        "salesEmail",
+        "username",
+        "userName",
+        "login",
+      )
+    : "";
+  const payload = {
+    sales_email: isLikelyEmail(mail) ? mail : "",
+    customer_name: lead.name?.trim() ?? "",
+    co_no: lead.phone?.trim() ?? "",
+    email: lead.email?.trim() ?? "",
+    property_name: lead.propertyLocation?.trim() || lead.propertyNotes?.trim() || "",
+    possession: lead.possessionDate?.trim() || lead.configuration?.trim() || "",
+    lead_source: lead.leadSource?.trim() ?? "",
+    property_configuration: lead.configuration?.trim() ?? "",
+    sales_lead_name: lead.assignee?.trim() ?? "",
+    designer_name: lead.designerName?.trim() ?? "",
+  };
+  u.searchParams.set("prefill", JSON.stringify(payload));
+  u.searchParams.set("salesClosurePrefill", JSON.stringify(payload));
+}
+
 /**
  * CRM → Hub Sales Closure: lead tab fields as query params (Hub reads on load and prefills the form).
  * See `docs/sales-closure-prefill.md` for the contract.
  */
 export function appendSalesClosurePrefillFromLead(u: URL, lead: Lead): void {
-  const set = (key: string, val: string | undefined) => {
-    const raw = val?.trim();
-    if (!raw) return;
-    u.searchParams.set(key, trimForQuery(raw));
-  };
   const setAliases = (keys: string[], val: string | undefined) => {
     const raw = val?.trim();
     if (!raw) return;
@@ -52,23 +84,15 @@ export function appendSalesClosurePrefillFromLead(u: URL, lead: Lead): void {
       u.searchParams.set(key, trimForQuery(raw));
     }
   };
-  set("customerName", lead.name);
-  setAliases(["customerName", "customer_name"], lead.name);
-  setAliases(["clientEmail", "email", "customerEmail"], lead.email);
-  setAliases(["contactNo", "contactNumber", "phone"], lead.phone);
-  setAliases(["leadSource", "lead_source"], lead.leadSource);
-  /** Property notes (CRM) → "Property Name" on Hub form */
-  setAliases(
-    ["propertyName", "property_name"],
-    lead.propertyLocation || lead.propertyNotes,
-  );
-  /** Configuration (CRM; Add Lead uses propertyType on API — same UI field) → "Property Configuration" */
-  setAliases(
-    ["propertyConfiguration", "property_configuration"],
-    lead.configuration,
-  );
-  setAliases(["possession", "possessionDate"], lead.possessionDate);
-  setAliases(["dateTime", "date_time"], formatNowForSalesClosure());
+  setAliases(["customer_name"], lead.name);
+  setAliases(["email"], lead.email);
+  setAliases(["co_no"], lead.phone);
+  setAliases(["lead_source"], lead.leadSource);
+  setAliases(["property_name"], lead.propertyLocation || lead.propertyNotes);
+  setAliases(["property_configuration"], lead.configuration);
+  setAliases(["possession"], lead.possessionDate || lead.configuration);
+  setAliases(["sales_lead_name"], lead.assignee);
+  setAliases(["designer_name"], lead.designerName);
 }
 
 /**
@@ -87,13 +111,11 @@ export function appendSalesClosurePrefillFromAuthUser(
     "salesEmail",
   );
   if (mail && isLikelyEmail(mail)) {
-    u.searchParams.set("salesMail", mail);
-    u.searchParams.set("salesEmail", mail);
+    u.searchParams.set("sales_email", mail);
   } else {
     const uName = pickUserStr(user, "username", "userName", "login");
     if (uName && isLikelyEmail(uName)) {
-      u.searchParams.set("salesMail", uName);
-      u.searchParams.set("salesEmail", uName);
+      u.searchParams.set("sales_email", uName);
     }
   }
 
@@ -109,7 +131,9 @@ export function appendSalesClosurePrefillFromAuthUser(
     "territory",
     "region",
   );
-  if (xc) u.searchParams.set("experienceCenter", xc);
+  if (xc) {
+    u.searchParams.set("experience_center", xc);
+  }
 }
 
 /** §12 Sales Closure — external flow (opens in new tab or full redirect). */
@@ -126,14 +150,16 @@ export function buildSalesClosureUrl(params: {
   const u = new URL(`${SALES_CLOSURE_ORIGIN}/SalesClosure`);
   u.searchParams.set("leadId", params.leadId);
   u.searchParams.set("leadType", params.leadTypeLabel);
-  if (params.returnUrl?.trim()) {
-    u.searchParams.set("returnUrl", params.returnUrl.trim());
-  }
+
   if (params.lead) {
     appendSalesClosurePrefillFromLead(u, params.lead);
+    setSalesClosurePrefillPayload(u, params.lead, params.authUser);
   }
   if (params.authUser && Object.keys(params.authUser).length > 0) {
     appendSalesClosurePrefillFromAuthUser(u, params.authUser);
+  }
+  if (params.returnUrl?.trim()) {
+    u.searchParams.set("returnUrl", params.returnUrl.trim());
   }
   return u.toString();
 }
