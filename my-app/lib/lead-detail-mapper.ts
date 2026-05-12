@@ -121,13 +121,30 @@ function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
   return String(v);
 }
 
+function asJsonObjectString(value: string): Record<string, unknown> | null {
+  const raw = value.trim();
+  if (!raw.startsWith("{") || !raw.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** When backend nests interior/config under `propertyDetails` (object). */
 function asPropertyDetailsObject(
   detail: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  const pd = detail.propertyDetails;
+  const pd = detail.propertyDetails ?? detail.PropertyDetails;
   if (pd && typeof pd === "object" && !Array.isArray(pd)) {
     return pd as Record<string, unknown>;
+  }
+  if (typeof pd === "string") {
+    return asJsonObjectString(pd);
   }
   return null;
 }
@@ -179,15 +196,22 @@ function pickConfigurationFromDetail(
   const df = detail.dynamicFields;
   if (df && typeof df === "object" && !Array.isArray(df)) {
     const dfo = df as Record<string, unknown>;
-    const pdInDf = dfo.propertyDetails;
-    if (pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)) {
+    const pdInDf = dfo.propertyDetails ?? dfo.PropertyDetails;
+    const pdInDfObject =
+      pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)
+        ? (pdInDf as Record<string, unknown>)
+        : typeof pdInDf === "string"
+          ? asJsonObjectString(pdInDf)
+          : null;
+    if (pdInDfObject) {
       const inner = pickStr(
-        pdInDf as Record<string, unknown>,
+        pdInDfObject,
         "interior_setup",
         "interiorSetup",
         "configuration",
         "propertyConfiguration",
         "property_configuration",
+        "propertyType",
       );
       if (inner) return inner;
     }
@@ -320,16 +344,22 @@ function mergePropertyDetailsBlock(
   base: Record<string, unknown>,
   lead: Lead,
 ): Record<string, unknown> {
-  const prev = base.propertyDetails;
+  const prev = base.propertyDetails ?? base.PropertyDetails;
   let bag: Record<string, unknown> = {};
 
   if (prev && typeof prev === "object" && !Array.isArray(prev)) {
     bag = { ...(prev as Record<string, unknown>) };
+  } else if (typeof prev === "string") {
+    bag = asJsonObjectString(prev) ?? {};
   }
 
   const cfg = lead.configuration.trim();
   bag.interiorSetup = cfg;
   bag.interior_setup = cfg;
+  bag.configuration = cfg;
+  bag.propertyConfiguration = cfg;
+  bag.property_configuration = cfg;
+  bag.propertyType = cfg;
 
   const notes = lead.propertyNotes.trim();
   bag.propertyNotes = notes;
@@ -507,7 +537,11 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.agentName = lead.agentName;
   // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
   next.propertyType = lead.configuration;
+  next.configuration = lead.configuration;
+  next.propertyConfiguration = lead.configuration;
+  next.property_configuration = lead.configuration;
   next.interiorSetup = lead.configuration;
+  next.interior_setup = lead.configuration;
   if (mergedLt === "addlead") next.property_type = lead.configuration;
   next.floorPlan = lead.floorPlan;
   next.possessionDate = lead.possessionDate;
@@ -564,7 +598,11 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.agentName = lead.agentName;
   // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
   next.propertyType = lead.configuration;
+  next.configuration = lead.configuration;
+  next.propertyConfiguration = lead.configuration;
+  next.property_configuration = lead.configuration;
   next.interiorSetup = lead.configuration;
+  next.interior_setup = lead.configuration;
   next.language = lead.language;
   next.languagePrefered = lead.language;
   next.languagePreferred = lead.language;

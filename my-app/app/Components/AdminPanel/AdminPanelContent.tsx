@@ -808,8 +808,18 @@ function AdminUserSection() {
                 req = adminPanelApi.createManager(payload);
               } else if (userForm.role === "SALES_EXECUTIVE") {
                 req = adminPanelApi.createSalesExecutive(payload);
-              } else {
+              } else if (
+                userForm.role === "PRESALES_MANAGER" ||
+                userForm.role === "PRESALES_EXECUTIVE"
+              ) {
                 req = adminPanelApi.createPreSales(payload);
+              } else if (userForm.role === "DESIGN_MANAGER") {
+                req = adminPanelApi.createDesignManager(payload);
+              } else if (userForm.role === "DESIGNER") {
+                req = adminPanelApi.createDesigner(payload);
+              } else {
+                notifyError(`Role ${userForm.role.replace(/_/g, " ")} is not supported in this form yet.`);
+                return;
               }
               void req
                 .then(() => {

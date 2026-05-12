@@ -1037,10 +1037,14 @@ export default function LeadsDataSection({
 
   const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
   const meNorm = (currentUserName ?? "").trim().toLowerCase();
-  const meAliasSet = new Set(
-    [meNorm, ...currentUserAliases.map((v) => v.trim().toLowerCase())].filter(Boolean)
+  const meAliasSet = useMemo(
+    () =>
+      new Set(
+        [meNorm, ...currentUserAliases.map((v) => v.trim().toLowerCase())].filter(Boolean)
+      ),
+    [currentUserAliases, meNorm]
   );
-  const leadAssignedToSelfById = (lead: ApiLead): boolean => {
+  const leadAssignedToSelfById = useCallback((lead: ApiLead): boolean => {
     if (!Number.isFinite(currentUserId) || currentUserId <= 0) return false;
     const r = lead as Record<string, unknown>;
     const assigneeObj =
@@ -1061,8 +1065,8 @@ export default function LeadsDataSection({
       salesOwnerObj?.id,
     ];
     return idCandidates.some((v) => Number(v ?? 0) === Number(currentUserId));
-  };
-  const leadAssignedToSelf = (lead: ApiLead): boolean => {
+  }, [currentUserId]);
+  const leadAssignedToSelf = useCallback((lead: ApiLead): boolean => {
     if (leadAssignedToSelfById(lead)) return true;
     if (meAliasSet.size === 0) return false;
     const aliases = assigneeAliasNorms(lead);
@@ -1070,7 +1074,7 @@ export default function LeadsDataSection({
       if (aliases.has(meAlias)) return true;
     }
     return false;
-  };
+  }, [leadAssignedToSelfById, meAliasSet]);
   const canViewLeadByRole = useCallback(
     (lead: ApiLead, roleRaw: string) => {
       const roleKey = normalizeRole(roleRaw);
@@ -1118,13 +1122,21 @@ export default function LeadsDataSection({
     [
       managerTeamNames,
       managerTeamNamesFromHeader,
-      meNorm,
       presalesExecs,
       currentUserId,
       verificationStatusProp,
       leadAssignedToSelf,
     ]
   );
+  const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const requiresClientScopedDataset =
+    clientScopeRoleKey === "SALES_MANAGER" ||
+    clientScopeRoleKey === "MANAGER" ||
+    clientScopeRoleKey === "SALES_EXECUTIVE" ||
+    clientScopeRoleKey === "PRESALES_MANAGER" ||
+    clientScopeRoleKey === "PRESALES_EXECUTIVE" ||
+    clientScopeRoleKey === "PRE_SALES";
+  const isGlobalSearchActive = debouncedSearch.trim().length > 0;
   const leadViewKey: "default" | "my" | "team" | "combined" =
     leadView === "my" || leadView === "team" || leadView === "combined" ? leadView : "default";
   const filterOptionsView =
@@ -1327,25 +1339,52 @@ export default function LeadsDataSection({
         }
         return allLeads;
       };
+      const buildVisiblePage = (allLeads: ApiLead[]): SpringPage<ApiLead> => {
+        const roleScopedLeads = requiresClientScopedDataset && !isGlobalSearchActive
+          ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+          : allLeads;
+        const visibleMerged = applyNewCrmCutoff(roleScopedLeads, true).sort((a, b) => {
+          const at = Date.parse(a.updatedAt ?? "");
+          const bt = Date.parse(b.updatedAt ?? "");
+          return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+        });
+        const start = targetPage * targetSize;
+        return {
+          content: visibleMerged.slice(start, start + targetSize),
+          totalElements: visibleMerged.length,
+          totalPages: Math.max(1, Math.ceil(visibleMerged.length / Math.max(1, targetSize))),
+          number: targetPage,
+          size: targetSize,
+          sourceCounts: computeLeadTypeCountsFromRows(visibleMerged),
+          summaryTotals: computeJourneySummaryCounts(visibleMerged),
+        };
+      };
+      const requiresFullyVisiblePage =
+        effectiveAssigneeScope.length > 1 ||
+        (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500));
 
       if (effectiveAssigneeScope.length <= 1) {
-        return fetchMergedPage(
-          targetPage,
-          targetSize,
-          targetLeadType,
-          targetSort,
-          debouncedSearch,
-          effectiveAssigneeScope[0] ?? effectiveAssignee,
-          dateFrom,
-          dateTo,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          reinquiry,
-          leadViewKey,
-          verificationStatusProp,
-          crmMonthWindowProp,
-        );
+        if (!requiresFullyVisiblePage) {
+          return fetchMergedPage(
+            targetPage,
+            targetSize,
+            targetLeadType,
+            targetSort,
+            debouncedSearch,
+            effectiveAssigneeScope[0] ?? effectiveAssignee,
+            dateFrom,
+            dateTo,
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
+            reinquiry,
+            leadViewKey,
+            verificationStatusProp,
+            crmMonthWindowProp,
+          );
+        }
+        const allLeads = await fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee);
+        return buildVisiblePage(allLeads);
       }
       const chunks = await Promise.all(
         effectiveAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
@@ -1358,24 +1397,15 @@ export default function LeadsDataSection({
           byId.set(id, lead);
         }
       }
-      const merged = [...byId.values()].sort((a, b) => {
-        const at = Date.parse(a.updatedAt ?? "");
-        const bt = Date.parse(b.updatedAt ?? "");
-        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-      });
-      const visibleMerged = applyNewCrmCutoff(merged, true);
-      const start = targetPage * targetSize;
-      return {
-        content: visibleMerged.slice(start, start + targetSize),
-        totalElements: visibleMerged.length,
-        totalPages: Math.max(1, Math.ceil(visibleMerged.length / Math.max(1, targetSize))),
-        number: targetPage,
-        size: targetSize,
-        sourceCounts: computeLeadTypeCountsFromRows(visibleMerged),
-        summaryTotals: computeJourneySummaryCounts(visibleMerged),
-      };
+      return buildVisiblePage([...byId.values()]);
     },
     [
+      authRoleProp,
+      canViewLeadByRole,
+      clientScopeRoleKey,
+      currentRole,
+      requiresClientScopedDataset,
+      isGlobalSearchActive,
       effectiveAssigneeScope,
       debouncedSearch,
       effectiveAssignee,
@@ -1503,8 +1533,13 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const scoped = raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+        const scoped = isGlobalSearchActive
+          ? raw
+          : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
+        const summaryTotals = computeJourneySummaryCounts(scoped);
+        setVisibleFilteredTotal(scoped.length);
+        onHeatmapSummarySync?.(summaryTotals);
 
         if (isPresalesRole(roleKey)) {
           setLeadTypeCounts({
@@ -1568,6 +1603,7 @@ export default function LeadsDataSection({
     dateFrom,
     dateTo,
     insightLeadView,
+    isGlobalSearchActive,
     effectiveAssignee,
     effectiveAssigneeScope,
   ]);
@@ -1577,10 +1613,12 @@ export default function LeadsDataSection({
     setError(null);
     setData(null);
     try {
-      const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>) => {
+      const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>, usePageMetaForUi: boolean) => {
         setData(pageJson);
-        setVisibleFilteredTotal(pageJson.totalElements ?? 0);
-        if (pageJson.sourceCounts) {
+        if (usePageMetaForUi) {
+          setVisibleFilteredTotal(pageJson.totalElements ?? 0);
+        }
+        if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
           setLeadTypeCounts((prev) => ({
             ...prev,
@@ -1588,13 +1626,20 @@ export default function LeadsDataSection({
             all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
           }));
         }
-        onHeatmapSummarySync?.(pageJson.summaryTotals ?? null);
+        if (usePageMetaForUi) {
+          onHeatmapSummarySync?.(pageJson.summaryTotals ?? null);
+        }
       };
 
       const insightModeActive = insightTableMode !== null;
       const requestPage = insightModeActive ? 0 : page;
       const requestSize = insightModeActive ? 500 : size;
       const requestLeadType = insightModeActive ? "all" : leadType;
+      const usePageMetaForUi =
+        effectiveAssigneeScope.length > 1 ||
+        !requiresClientScopedDataset ||
+        isGlobalSearchActive ||
+        insightModeActive;
       const requested = {
         page: requestPage,
         size: requestSize,
@@ -1629,10 +1674,10 @@ export default function LeadsDataSection({
           totalElements: fallbackJson.totalElements ?? 0,
         });
         setPage(fallbackPage);
-        applyLoadedPageMeta(fallbackJson);
+        applyLoadedPageMeta(fallbackJson, usePageMetaForUi);
         return;
       }
-      applyLoadedPageMeta(json);
+      applyLoadedPageMeta(json, usePageMetaForUi);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load leads";
       if (msg.toLowerCase().includes("session expired")) {
@@ -1648,6 +1693,7 @@ export default function LeadsDataSection({
     dateFrom,
     dateTo,
     debouncedSearch,
+    effectiveAssigneeScope,
     fetchScopedMergedPage,
     leadType,
     milestoneStage,
@@ -1659,6 +1705,8 @@ export default function LeadsDataSection({
     size,
     sort,
     leadViewKey,
+    isGlobalSearchActive,
+    requiresClientScopedDataset,
     verificationStatusProp,
     crmMonthWindowProp,
     onHeatmapSummarySync,
@@ -1680,20 +1728,10 @@ export default function LeadsDataSection({
     [presalesTeamExecDisplayNames],
   );
 
-  const isClientScopedRole = (() => {
-    const role = normalizeRole(authRoleProp ?? currentRole);
-    return (
-      role === "SALES_MANAGER" ||
-      role === "MANAGER" ||
-      role === "SALES_EXECUTIVE" ||
-      role === "PRESALES_MANAGER" ||
-      role === "PRESALES_EXECUTIVE" ||
-      role === "PRE_SALES"
-    );
-  })();
-  const content = isClientScopedRole
+  const isClientScopedRole = requiresClientScopedDataset;
+  const content = isClientScopedRole && !isGlobalSearchActive
     ? contentFromApi.filter((lead) =>
-        canViewLeadByRole(lead, normalizeRole(authRoleProp ?? currentRole)),
+        canViewLeadByRole(lead, clientScopeRoleKey),
       )
     : contentFromApi;
   const insightOpts = {

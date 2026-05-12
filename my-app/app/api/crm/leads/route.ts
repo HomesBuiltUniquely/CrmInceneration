@@ -7,6 +7,7 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { applyNewCrmCutoff } from "@/lib/new-crm-cutoff";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -301,8 +302,10 @@ export async function GET(req: NextRequest) {
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
+  const shouldApplyCutoff = milestoneScope === "crm";
 
-  const merged = [...byId.values()]
+  const merged = applyNewCrmCutoff(
+    [...byId.values()]
     .filter((lead) => {
       if (search) {
         const needle = search.toLowerCase();
@@ -335,7 +338,7 @@ export async function GET(req: NextRequest) {
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-        if (hay.includes(needle)) return true;
+        const matchesText = hay.includes(needle);
 
         const phoneLike = [
           lead.phone,
@@ -348,12 +351,12 @@ export async function GET(req: NextRequest) {
           .map((v) => String(v ?? "").replace(/\D/g, ""))
           .filter(Boolean)
           .join(" ");
-        if (needleDigits && phoneLike.includes(needleDigits)) return true;
+        const matchesPhone = Boolean(needleDigits && phoneLike.includes(needleDigits));
 
         // Global visible-record fallback search for old/new CRM parity.
         const deepHay = JSON.stringify(lead).toLowerCase();
-        if (deepHay.includes(needle)) return true;
-        return false;
+        const matchesDeep = deepHay.includes(needle);
+        if (!matchesText && !matchesPhone && !matchesDeep) return false;
       }
 
       if (assignee) {
@@ -371,7 +374,9 @@ export async function GET(req: NextRequest) {
       if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
       return true;
     })
-    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
+    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a)),
+    shouldApplyCutoff,
+  );
 
   const pageNum = Number.parseInt(page, 10) || 0;
   const pageSize = Number.parseInt(size, 10) || 20;
