@@ -1,6 +1,6 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
-import { normalizeRole } from "@/lib/auth/api";
+import { getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
 
 type AnyJson = Record<string, unknown>;
 
@@ -16,11 +16,43 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & AnyJson;
   if (!res.ok) {
-    const message = (data as AnyJson).message;
+    const message =
+      (data as AnyJson).message ??
+      (data as AnyJson).error ??
+      (data as AnyJson).userMessage;
     const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return data;
+}
+
+async function callAuth<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${getAuthApiBaseUrl()}${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: getCrmAuthHeaders({
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as T & AnyJson;
+  if (!res.ok || data.success === false) {
+    const message = data.message ?? data.error ?? data.userMessage;
+    const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+function withPreferredParentId(payload: AnyJson): AnyJson {
+  const next: AnyJson = { ...payload };
+  const rawParent = next.parentId ?? next.managerId;
+  if (rawParent !== undefined && rawParent !== null && String(rawParent).trim() !== "") {
+    const parsed = Number(rawParent);
+    next.parentId = Number.isFinite(parsed) ? parsed : rawParent;
+  }
+  delete next.managerId;
+  return next;
 }
 
 async function list(path: string): Promise<AnyJson[]> {
@@ -155,9 +187,15 @@ export const adminPanelApi = {
     call<AnyJson>(`pre-sales/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   deletePreSales: (id: number | string) => call<AnyJson>(`pre-sales/${id}`, { method: "DELETE" }),
   createDesignManager: (payload: AnyJson) =>
-    call<AnyJson>("create-design-manager", { method: "POST", body: JSON.stringify(payload) }),
+    callAuth<AnyJson>("/api/auth/register-with-role", {
+      method: "POST",
+      body: JSON.stringify(withPreferredParentId(payload)),
+    }),
   createDesigner: (payload: AnyJson) =>
-    call<AnyJson>("create-designer", { method: "POST", body: JSON.stringify(payload) }),
+    callAuth<AnyJson>("/api/auth/register-with-role", {
+      method: "POST",
+      body: JSON.stringify(withPreferredParentId(payload)),
+    }),
   updateDesignManager: (id: number | string, payload: AnyJson) =>
     call<AnyJson>(`design-managers/${id}`, { method: "PUT", body: JSON.stringify(payload) }),
   updateDesigner: (id: number | string, payload: AnyJson) =>
