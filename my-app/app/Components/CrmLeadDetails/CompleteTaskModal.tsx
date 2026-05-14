@@ -396,10 +396,16 @@ export default function CompleteTaskModal({
     }
   }, [feedback, feedbackOptions, path, status]);
   const reasonRequired = requiresResoneField(path, feedback);
+  const isClosedWonCustomer =
+    status.trim() === "Closed" &&
+    path.trim() === "Closed Won" &&
+    (feedback.trim() === "Booking Done (Booking)" || feedback.trim() === "Token Done");
+  const noFollowUpRequired = reasonRequired || isClosedWonCustomer;
+
   const nextCallDateMissing =
     !scheduleMode &&
     !cancelMode &&
-    !reasonRequired &&
+    !noFollowUpRequired &&
     nextCallDate.trim().length === 0;
   const resoneMissing = Boolean(
     onApiComplete && reasonRequired && lostReason.trim().length === 0,
@@ -638,11 +644,11 @@ export default function CompleteTaskModal({
               <div>
                 <div className=" flex items-center gap-2">
                   <FieldLabel
-                    required={!scheduleMode && !cancelMode && !reasonRequired}
+                    required={!scheduleMode && !cancelMode && !noFollowUpRequired}
                   >
                     Next call date
                   </FieldLabel>
-                  {!scheduleMode && !cancelMode && !reasonRequired ? (
+                  {!scheduleMode && !cancelMode && !noFollowUpRequired ? (
                     <span className="text-[12px] text-[var(--crm-danger)]">
                       required
                     </span>
@@ -664,7 +670,7 @@ export default function CompleteTaskModal({
                     };
                     input.showPicker?.();
                   }}
-                  missing={showErrors && nextCallDateMissing && !reasonRequired}
+                  missing={showErrors && nextCallDateMissing && !noFollowUpRequired}
                   className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
                 />
 
@@ -678,8 +684,7 @@ export default function CompleteTaskModal({
                 {showErrors && nextCallDateMissing && (
                   <p className="mt-1 text-[12px] text-red-500">
                     Next call date is required unless a reason (resone) applies
-                    below (LOST / closure substages) or you use meeting
-                    scheduling only.
+                    below (LOST / closure substages) or for Closed Won customers.
                   </p>
                 )}
               </div>
