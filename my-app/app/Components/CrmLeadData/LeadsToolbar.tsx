@@ -423,8 +423,8 @@ export default function LeadsToolbar({
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
                     [callsTileLabel, callsTileValue],
-                    ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                    ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                    ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                    ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                     ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                     ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                     ["Google Leads", leadTypeCounts.glead ?? 0],
@@ -438,8 +438,8 @@ export default function LeadsToolbar({
                       ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
                       [callsTileLabel, callsTileValue],
-                      ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                      ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                      ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                      ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                       ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                       ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                       ["External Lead", leadTypeCounts.formlead ?? 0],
@@ -451,8 +451,8 @@ export default function LeadsToolbar({
                   : isSalesAdmin
                     ? [
                         [callsTileLabel, callsTileValue],
-                        ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                        ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                        ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                        ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                         ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                         ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                         ["External Lead", leadTypeCounts.formlead ?? 0],
@@ -478,13 +478,13 @@ export default function LeadsToolbar({
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => {
                 const insightKey: Exclude<InsightTableMode, null> | null =
-                  label === "Today's Lead"
+                  label === "Today's Lead Followup"
                     ? "followUpActive"
                     : label === "First Call Delayed"
                       ? "callDelayed"
                     : label === "Total Calls"
                       ? "totalCalls"
-                    : label === "Today's Opportunity"
+                    : label === "Today's Opportunity Followup"
                       ? "followUpClosure"
                       : label === "Lead Overdue"
                         ? "overdueActive"

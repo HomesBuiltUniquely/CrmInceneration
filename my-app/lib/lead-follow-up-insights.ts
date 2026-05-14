@@ -3,6 +3,31 @@ import {
   isFollowUpDueLocalToday,
   isFollowUpOverdueLocal,
 } from "@/lib/follow-up-date";
+import { isLostCategory } from "@/lib/crm-pipeline";
+
+
+/**
+ * True when this lead's current stage should NEVER appear in overdue or follow-up
+ * lists because no future call is needed:
+ *   • LOST path category (any stage — Discovery Lost, Connection Lost, etc.)
+ *   • Closed → Closed Won → Booking Done (Booking)  ← lead is now a customer
+ *   • Closed → Closed Won → Token Done              ← lead is now a customer
+ */
+function isNoFollowUpLead(lead: ApiLead): boolean {
+  const cat   = String(lead.stage?.milestoneStageCategory ?? "").trim();
+  if (isLostCategory(cat)) return true;
+
+  const stage = String(lead.stage?.milestoneStage ?? "").trim();
+  const sub   = String(lead.stage?.milestoneSubStage ?? "").trim();
+  if (
+    stage === "Closed" &&
+    cat   === "Closed Won" &&
+    (sub === "Booking Done (Booking)" || sub === "Token Done")
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function readFollowUpDateRaw(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
@@ -213,7 +238,7 @@ export function computeFollowUpInsightCounts(
         if (isFirstCallDelayedLead(lead)) {
           callDelayed += 1;
         }
-        if (isFollowUpOverdueLocal(fu)) {
+        if (isFollowUpOverdueLocal(fu) && !isNoFollowUpLead(lead)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
           if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -239,7 +264,7 @@ export function computeFollowUpInsightCounts(
           if (isFirstCallDelayedLead(lead)) {
             callDelayed += 1;
           }
-          if (isFollowUpOverdueLocal(fu)) {
+          if (isFollowUpOverdueLocal(fu) && !isNoFollowUpLead(lead)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
             if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -261,7 +286,7 @@ export function computeFollowUpInsightCounts(
           if (isFirstCallDelayedLead(lead)) {
             callDelayed += 1;
           }
-          if (isFollowUpOverdueLocal(fu)) {
+          if (isFollowUpOverdueLocal(fu) && !isNoFollowUpLead(lead)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
             if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -282,7 +307,7 @@ export function computeFollowUpInsightCounts(
         if (isFirstCallDelayedLead(lead)) {
           callDelayed += 1;
         }
-        if (isFollowUpOverdueLocal(fu)) {
+        if (isFollowUpOverdueLocal(fu) && !isNoFollowUpLead(lead)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
           if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -382,7 +407,7 @@ export function filterLeadsForInsightMode(
     }
 
     if (mode === "overdue" || mode === "overdueActive" || mode === "overdueClosure") {
-      if (!isFollowUpOverdueLocal(fu)) return false;
+      if (!isFollowUpOverdueLocal(fu) || isNoFollowUpLead(lead)) return false;
       if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
         return (
