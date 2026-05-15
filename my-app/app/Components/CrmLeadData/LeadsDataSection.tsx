@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
 import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
 import {
   asCrmLeadType,
@@ -134,12 +135,6 @@ type LeadsViewPersistedState = {
 function readLeadsViewPersistedState(): LeadsViewPersistedState {
   if (typeof window === "undefined") return {};
   try {
-    const nav = window.performance.getEntriesByType("navigation")[0] as
-      | PerformanceNavigationTiming
-      | undefined;
-    if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-    }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as LeadsViewPersistedState;
@@ -766,6 +761,9 @@ export default function LeadsDataSection({
   const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
   const [relativeTime, setRelativeTime] = useState<string>("Never");
+  const [isMinimized, setIsMinimized] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const isFirstMountRef = useRef(true);
 
   const formatRelativeTime = useCallback((date: Date | null): string => {
     if (!date) return "Never";
@@ -791,9 +789,24 @@ export default function LeadsDataSection({
   useEffect(() => {
     const update = () => setRelativeTime(formatRelativeTime(lastRefreshTime));
     update();
-    const timer = setInterval(update, 10000); // Update every 10 seconds for better responsiveness
-    return () => clearInterval(timer);
-  }, [lastRefreshTime, formatRelativeTime]);
+    const timer = setInterval(update, 10000); 
+    
+    const activityTimer = setInterval(() => {
+      if (!isMinimized && Date.now() - lastActivityRef.current > 5000) {
+        setIsMinimized(true);
+      }
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(activityTimer);
+    };
+  }, [lastRefreshTime, formatRelativeTime, isMinimized]);
+
+  const handleActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    if (isMinimized) setIsMinimized(false);
+  }, [isMinimized]);
 
   const handleResetAll = useCallback(() => {
     setPage(0);
@@ -846,6 +859,10 @@ export default function LeadsDataSection({
   }, []);
 
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
     setPage(0);
   }, [
     assignee,
@@ -2851,24 +2868,50 @@ export default function LeadsDataSection({
         </div>
       ) : null}
 
-      <button
-        onClick={handleRefresh}
-        title={lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads"}
-        className="fixed bottom-10 right-10 z-[100] flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group"
+      <div
+        className={cn(
+          "fixed bottom-10 z-[100] transition-all duration-500 ease-in-out",
+          isMinimized ? "-right-6 opacity-60 hover:opacity-100" : "right-10 opacity-100"
+        )}
+        onMouseEnter={handleActivity}
+        onClick={handleActivity}
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+        <button
+          onClick={(e) => {
+            if (isMinimized) {
+              e.stopPropagation();
+              setIsMinimized(false);
+              handleActivity();
+            } else {
+              handleRefresh();
+            }
+          }}
+          title={isMinimized ? "Expand Refresh Button" : (lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads")}
+          className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group",
+            isMinimized ? "cursor-e-resize" : "cursor-pointer"
+          )}
         >
-          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
-          <path d="M21 3v5h-5" />
-        </svg>
-      </button>
+          {isMinimized ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-4 w-4 -ml-4">
+              <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+            >
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          )}
+        </button>
+      </div>
     </>
   );
 }
