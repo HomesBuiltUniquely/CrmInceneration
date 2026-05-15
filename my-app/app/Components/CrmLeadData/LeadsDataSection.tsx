@@ -95,6 +95,8 @@ type Props = {
   onHeatmapSummarySync?: (summary: { lead: number; opportunity: number } | null) => void;
   /** Keeps heatmap phase counts aligned with the active insight filter (e.g. Team Leads). */
   onInsightTableModeChange?: (mode: InsightTableMode) => void;
+  /** Resets search and all header filters (passed up to Header). */
+  onResetAll?: () => void;
 };
 
 type SubStatusResp = {
@@ -136,7 +138,7 @@ function readLeadsViewPersistedState(): LeadsViewPersistedState {
       | PerformanceNavigationTiming
       | undefined;
     if (nav?.type === "reload") {
-      // Intentionally not clearing filters on reload so state is preserved
+      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
     }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
@@ -680,6 +682,7 @@ export default function LeadsDataSection({
   onHeatmapAssigneeScopeSync,
   onHeatmapSummarySync,
   onInsightTableModeChange,
+  onResetAll,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -762,6 +765,47 @@ export default function LeadsDataSection({
   const [rowAssignError, setRowAssignError] = useState("");
   const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
+  const [relativeTime, setRelativeTime] = useState<string>("Never");
+
+  const formatRelativeTime = useCallback((date: Date | null): string => {
+    if (!date) return "Never";
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (diffInSeconds < 5) return "just now";
+    if (diffInSeconds < 60) return `${diffInSeconds} seconds ago`;
+
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    if (diffInMinutes === 1) return "1 minute ago";
+    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
+
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    if (diffInHours === 1) return "1 hour ago";
+    if (diffInHours < 24) return `${diffInHours} hours ago`;
+
+    const diffInDays = Math.floor(diffInHours / 24);
+    if (diffInDays === 1) return "Yesterday";
+    return `${diffInDays} days ago`;
+  }, []);
+
+  useEffect(() => {
+    const update = () => setRelativeTime(formatRelativeTime(lastRefreshTime));
+    update();
+    const timer = setInterval(update, 10000); // Update every 10 seconds for better responsiveness
+    return () => clearInterval(timer);
+  }, [lastRefreshTime, formatRelativeTime]);
+
+  const handleResetAll = useCallback(() => {
+    setPage(0);
+    setSize(20);
+    setInsightTableMode(null);
+    setSalesAdminFilter("");
+    setSalesManagerFilter("");
+    setSalesExecFilter("");
+    setPresalesManagerFilter("");
+    setPresalesExecFilter("");
+    onResetAll?.();
+  }, [onResetAll]);
 
   const loadAssignableUsers = useCallback(async () => {
     if (!canLoadAllUsers(currentRole)) {
@@ -1876,9 +1920,11 @@ export default function LeadsDataSection({
   }, [load]);
 
   const handleRefresh = useCallback(async () => {
+    setError(null);
+    handleResetAll();
     await load();
     setLastRefreshTime(new Date());
-  }, [load]);
+  }, [load, handleResetAll]);
 
   const contentFromApi = data?.content ?? [];
   const scopedTeamForInsight =
@@ -2316,6 +2362,7 @@ export default function LeadsDataSection({
         pipelineNested={pipelineNested}
         onLeadTypeChange={onLeadTypeChange}
         onSortChange={onSortChange}
+        onResetAll={handleResetAll}
         onAssigneeChange={(next) => {
           setSalesAdminFilter("");
           setSalesManagerFilter("");
@@ -2804,28 +2851,23 @@ export default function LeadsDataSection({
         </div>
       ) : null}
 
-      {/* Floating Refresh Button */}
       <button
         onClick={handleRefresh}
-        className="group fixed bottom-8 right-8 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--crm-accent)] text-white shadow-lg shadow-[var(--crm-accent)]/30 transition-all hover:scale-110 active:scale-95"
-        title={lastRefreshTime ? `Last refresh: ${lastRefreshTime.toLocaleTimeString()}` : "Refresh Data"}
+        title={lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads"}
+        className="fixed bottom-10 right-10 z-[100] flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group"
       >
         <svg
-          xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          strokeWidth="2.5"
+          strokeWidth="3"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="h-5 w-5 transition-transform duration-500 group-active:rotate-180"
+          className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
         >
           <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
           <path d="M21 3v5h-5" />
         </svg>
-        <span className="absolute right-14 whitespace-nowrap rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700 pointer-events-none">
-          {lastRefreshTime ? `Last sync: ${lastRefreshTime.toLocaleTimeString()}` : "Refresh Leads"}
-        </span>
       </button>
     </>
   );
