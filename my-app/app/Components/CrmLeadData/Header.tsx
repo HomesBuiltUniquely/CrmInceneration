@@ -47,9 +47,8 @@ function readHeaderPersistedState(): HeaderPersistedState {
       | PerformanceNavigationTiming
       | undefined;
     if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-      return {};
+      // Intentionally not clearing filters on reload so state is preserved 
+      // across navigation and refreshes.
     }
     const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
     if (!raw) return {};
