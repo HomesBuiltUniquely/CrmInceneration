@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
-import { asCrmLeadType, crmLeadTopLevelStage, isCrmLeadVerified, mapApiLeadToRow } from "@/lib/leads-filter";
+import {
+  asCrmLeadType,
+  crmLeadAssigneeLabel,
+  crmLeadTopLevelStage,
+  isCrmLeadVerified,
+  mapApiLeadToRow,
+} from "@/lib/leads-filter";
+import {
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+  resolveAssigneeScopeForDisplayName,
+} from "@/lib/hierarchy-user-display";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
@@ -99,11 +110,6 @@ type HierarchyUser = {
   active?: boolean;
 };
 
-/** Match auth API + manager team roster (`fullName ?? name ?? username`). */
-function hierarchyUserDisplayName(u: HierarchyUser): string {
-  return String(u.fullName ?? u.name ?? u.username ?? "").trim();
-}
-
 type AssigneeUser = {
   userId: number;
   name: string;
@@ -140,6 +146,65 @@ function readLeadsViewPersistedState(): LeadsViewPersistedState {
   } catch {
     return {};
   }
+}
+
+function isHierarchyAdminRole(role?: string): boolean {
+  const r = normalizeRole(role ?? "");
+  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+}
+
+async function fetchMergedSalesExecutivesForFilters(
+  authHeaders: HeadersInit,
+): Promise<HierarchyUser[]> {
+  const authBase = getAuthApiBaseUrl();
+  const [byRoleRes, legacyRes] = await Promise.all([
+    fetch(`${authBase}/api/auth/users-by-role?role=${encodeURIComponent("SALES_EXECUTIVE")}`, {
+      cache: "no-store",
+      headers: authHeaders,
+      credentials: "include",
+    }),
+    fetch(`/api/sales-executive/all`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ Accept: "application/json" }),
+    }),
+  ]);
+
+  const byRoleRows: HierarchyUser[] = [];
+  if (byRoleRes.ok) {
+    const j = (await byRoleRes.json().catch(() => [])) as unknown;
+    byRoleRows.push(...(Array.isArray(j) ? (j as HierarchyUser[]) : []));
+  }
+
+  const legacyRows: HierarchyUser[] = [];
+  if (legacyRes.ok) {
+    const j = (await legacyRes.json().catch(() => [])) as unknown;
+    const raw = Array.isArray(j)
+      ? j
+      : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+        ? ((j as { data: unknown[] }).data ?? [])
+        : [];
+    for (const row of raw) {
+      if (!row || typeof row !== "object") continue;
+      legacyRows.push(normalizeLegacyHierarchyUser(row as Record<string, unknown>));
+    }
+  }
+
+  const byId = new Map<number, HierarchyUser>();
+  for (const row of [...byRoleRows, ...legacyRows]) {
+    const id = Number(row.id ?? 0);
+    if (id <= 0) continue;
+    const prev = byId.get(id);
+    byId.set(id, {
+      ...prev,
+      ...row,
+      id,
+      fullName: hierarchyUserDisplayName(row) || prev?.fullName,
+      name: row.name ?? prev?.name,
+      username: row.username ?? prev?.username,
+    });
+  }
+  return [...byId.values()];
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -466,8 +531,7 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
   if (leadsRes.ok) {
     const leads = (await leadsRes.json()) as SpringPage<ApiLead>;
     for (const lead of leads.content ?? []) {
-      const a = typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name;
-      const t = (a ?? "").trim();
+      const t = crmLeadAssigneeLabel(lead);
       if (t) assignees.add(t);
     }
   }
@@ -774,17 +838,42 @@ export default function LeadsDataSection({
       setManagerTeamNames([]);
       return;
     }
-    void fetchSalesExecutivesForManager(token)
-      .then((users) => {
+    void (async () => {
+      try {
+        const [users, legacyRes] = await Promise.all([
+          fetchSalesExecutivesForManager(token),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
+        ]);
         if (cancelled) return;
-        const names = users
-          .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
-          .filter(Boolean);
-        setManagerTeamNames(names);
-      })
-      .catch(() => {
+        const names = new Set<string>();
+        for (const u of users) {
+          const n = hierarchyUserDisplayName(u as HierarchyUser);
+          if (n) names.add(n);
+        }
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            const rec = row as Record<string, unknown>;
+            if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
+            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
+            if (n) names.add(n);
+          }
+        }
+        setManagerTeamNames([...names]);
+      } catch {
         if (!cancelled) setManagerTeamNames([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -920,32 +1009,39 @@ export default function LeadsDataSection({
         cancelled = true;
       };
     }
-    void Promise.all(
-      rolesToFetch.map(async (roleName) => {
-        try {
-          const res = await fetch(
-            `${authBase}/api/auth/users-by-role?role=${encodeURIComponent(roleName)}`,
-            { cache: "no-store", headers: auth, credentials: "include" },
-          );
-          if (res.status === 403) {
-            console.warn(`[RBAC] users-by-role 403 role=${roleName}, viewerRole=${currentRole}`);
-            return [roleName, [] as HierarchyUser[]] as const;
-          }
-          if (!res.ok) {
-            console.warn(`[RBAC] users-by-role failed role=${roleName}, status=${res.status}`);
-            return [roleName, [] as HierarchyUser[]] as const;
-          }
-          const j = (await res.json().catch(() => [])) as unknown;
-          const rows = Array.isArray(j) ? (j as HierarchyUser[]) : [];
-          return [roleName, rows] as const;
-        } catch (err) {
-          console.warn(`[RBAC] users-by-role request failed role=${roleName}`, err);
-          return [roleName, [] as HierarchyUser[]] as const;
-        }
-      }),
-    )
-      .then((pairs) => {
+    void (async () => {
+      try {
+        const pairs = await Promise.all(
+          rolesToFetch.map(async (roleName) => {
+            try {
+              const res = await fetch(
+                `${authBase}/api/auth/users-by-role?role=${encodeURIComponent(roleName)}`,
+                { cache: "no-store", headers: auth, credentials: "include" },
+              );
+              if (res.status === 403) {
+                console.warn(`[RBAC] users-by-role 403 role=${roleName}, viewerRole=${currentRole}`);
+                return [roleName, [] as HierarchyUser[]] as const;
+              }
+              if (!res.ok) {
+                console.warn(`[RBAC] users-by-role failed role=${roleName}, status=${res.status}`);
+                return [roleName, [] as HierarchyUser[]] as const;
+              }
+              const j = (await res.json().catch(() => [])) as unknown;
+              const rows = Array.isArray(j) ? (j as HierarchyUser[]) : [];
+              return [roleName, rows] as const;
+            } catch (err) {
+              console.warn(`[RBAC] users-by-role request failed role=${roleName}`, err);
+              return [roleName, [] as HierarchyUser[]] as const;
+            }
+          }),
+        );
         if (cancelled) return;
+
+        let mergedSalesExecs: HierarchyUser[] = [];
+        if (isHierarchyAdminRole(currentRole)) {
+          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(auth);
+        }
+
         const byRole = new Map<string, HierarchyUser[]>(pairs);
         const saJ = byRole.get("SALES_ADMIN") ?? [];
         const smJ = byRole.get("SALES_MANAGER") ?? [];
@@ -953,24 +1049,30 @@ export default function LeadsDataSection({
         const pmJ = byRole.get("PRESALES_MANAGER") ?? [];
         const peJ = byRole.get("PRESALES_EXECUTIVE") ?? [];
         const preJ = byRole.get("PRE_SALES") ?? [];
+
+        const salesExecList =
+          mergedSalesExecs.length > 0
+            ? mergedSalesExecs
+            : seJ;
+
         setSalesAdmins(saJ.filter((u) => u.active !== false));
         setSalesManagers(smJ.filter((u) => u.active !== false));
-        setSalesExecs(seJ.filter((u) => u.active !== false));
+        setSalesExecs(salesExecList);
         setPresalesManagers(pmJ.filter((u) => u.active !== false));
         const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
         setPresalesExecs(dedupedPresalesExecs);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
         setSalesAdmins([]);
         setSalesManagers([]);
         setSalesExecs([]);
         setPresalesManagers([]);
         setPresalesExecs([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -1152,10 +1254,16 @@ export default function LeadsDataSection({
 
     const isSalesManagerScope =
       clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
-    if (isSalesManagerScope) {
-      return Array.from(new Set([...fromUsers, ...managerTeamRoster])).sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: "base" }),
-      );
+    const isAdminScope = isHierarchyAdminRole(clientScopeRoleKey);
+
+    if (isSalesManagerScope || isAdminScope) {
+      return Array.from(
+        new Set([
+          ...fromUsers,
+          ...(isSalesManagerScope ? managerTeamRoster : []),
+          ...(isAdminScope ? assigneeOptions : []),
+        ]),
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
     }
 
     if (fromUsers.length > 0) return fromUsers;
@@ -1206,12 +1314,30 @@ export default function LeadsDataSection({
       presalesExecs,
     ],
   );
+  const singleExecScopedAssignees = useMemo(() => {
+    if (hierarchyScopedAssignees.length > 0) return [];
+    if (salesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(salesExecFilter, salesExecs);
+    }
+    if (presalesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(presalesExecFilter, presalesExecs);
+    }
+    return [];
+  }, [
+    hierarchyScopedAssignees,
+    salesExecFilter,
+    presalesExecFilter,
+    salesExecs,
+    presalesExecs,
+  ]);
   const effectiveAssigneeScope = useMemo(
     () =>
       hierarchyScopedAssignees.length > 0
         ? hierarchyScopedAssignees
-        : EMPTY_ASSIGNEE_SCOPE,
-    [hierarchyScopedAssignees],
+        : singleExecScopedAssignees.length > 0
+          ? singleExecScopedAssignees
+          : EMPTY_ASSIGNEE_SCOPE,
+    [hierarchyScopedAssignees, singleExecScopedAssignees],
   );
 
   useEffect(() => {

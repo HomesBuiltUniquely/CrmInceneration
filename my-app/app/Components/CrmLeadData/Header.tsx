@@ -19,7 +19,11 @@ import {
   normalizeRole,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
-import { readStoredCrmToken } from "@/lib/crm-client-auth";
+import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
+import {
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+} from "@/lib/hierarchy-user-display";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
@@ -228,17 +232,42 @@ export default function Header() {
       setManagerTeamNames([]);
       return;
     }
-    void fetchSalesExecutivesForManager(token)
-      .then((users) => {
+    void (async () => {
+      try {
+        const [users, legacyRes] = await Promise.all([
+          fetchSalesExecutivesForManager(token),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
+        ]);
         if (cancelled) return;
-        const names = users
-          .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
-          .filter(Boolean);
-        setManagerTeamNames(names);
-      })
-      .catch(() => {
+        const names = new Set<string>();
+        for (const u of users) {
+          const n = hierarchyUserDisplayName(u as { fullName?: string; name?: string; username?: string });
+          if (n) names.add(n);
+        }
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            const rec = row as Record<string, unknown>;
+            if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
+            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
+            if (n) names.add(n);
+          }
+        }
+        setManagerTeamNames([...names]);
+      } catch {
         if (!cancelled) setManagerTeamNames([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };

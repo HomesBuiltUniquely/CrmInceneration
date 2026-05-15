@@ -8,13 +8,21 @@ import {
   normalizeRole,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import {
+  collectHierarchyUserAssigneeAliases,
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+} from "@/lib/hierarchy-user-display";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
 type HierarchyUser = {
   id: number;
   fullName?: string;
+  name?: string;
   username?: string;
+  email?: string;
   role?: string;
   managerId?: number | null;
   active?: boolean;
@@ -36,7 +44,7 @@ type Props = {
 };
 
 function userLabel(u: HierarchyUser): string {
-  return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
+  return hierarchyUserDisplayName(u) || `User ${u.id}`;
 }
 
 async function fetchUsersByRole(
@@ -198,7 +206,7 @@ export default function LeadFilters({
           Number(meRecord.id ?? 0) > 0 ? (meRecord as HierarchyUser) : undefined;
         setViewerMe(me ?? null);
 
-        const [sa, sm, se, pm, pe] = await Promise.all([
+        const [sa, sm, se, pm, pe, legacyRes] = await Promise.all([
           token ? fetchUsersByRole("SALES_ADMIN", token) : Promise.resolve([]),
           token
             ? fetchUsersByRole("SALES_MANAGER", token)
@@ -212,8 +220,32 @@ export default function LeadFilters({
           token
             ? fetchUsersByRole("PRESALES_EXECUTIVE", token)
             : Promise.resolve([]),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
         ]);
         if (cancelled) return;
+
+        const legacyRows: HierarchyUser[] = [];
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            legacyRows.push(normalizeLegacyHierarchyUser(row as Record<string, unknown>));
+          }
+        }
+        const mergedSalesExecs = Array.from(
+          new Map(
+            [...se, ...legacyRows].map((u) => [Number(u.id ?? 0), u] as const),
+          ).values(),
+        ).filter((u) => Number(u.id ?? 0) > 0);
 
         setSalesAdmins(
           [
@@ -222,7 +254,7 @@ export default function LeadFilters({
           ].filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i),
         );
         setSalesManagers(sm.filter((u) => u.active !== false));
-        setSalesExecs(se.filter((u) => u.active !== false));
+        setSalesExecs(mergedSalesExecs);
         setPresalesManagers(pm.filter((u) => u.active !== false));
         setPresalesExecs(pe.filter((u) => u.active !== false));
       } catch {
@@ -276,23 +308,25 @@ export default function LeadFilters({
   }, [salesAdminId, salesExecs, visibleSalesManagers]);
 
   const effectiveFilters = useMemo(() => {
-    const selectedSalesExecName = (
-      visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.fullName ??
-      visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.username ??
-      ""
-    ).trim();
-    if (selectedSalesExecName)
-      return { assignee: selectedSalesExecName, assignees: [] as string[] };
+    const selectedSalesExec = visibleSalesExecs.find((u) => String(u.id) === salesExecId);
+    if (selectedSalesExec) {
+      const scope = collectHierarchyUserAssigneeAliases(selectedSalesExec);
+      if (scope.length <= 1) {
+        return { assignee: scope[0] ?? "", assignees: [] as string[] };
+      }
+      return { assignee: "", assignees: scope };
+    }
 
-    const selectedPresalesExecName = (
-      visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)
-        ?.fullName ??
-      visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)
-        ?.username ??
-      ""
-    ).trim();
-    if (selectedPresalesExecName)
-      return { assignee: selectedPresalesExecName, assignees: [] as string[] };
+    const selectedPresalesExec = visiblePresalesExecs.find(
+      (u) => String(u.id) === presalesExecId,
+    );
+    if (selectedPresalesExec) {
+      const scope = collectHierarchyUserAssigneeAliases(selectedPresalesExec);
+      if (scope.length <= 1) {
+        return { assignee: scope[0] ?? "", assignees: [] as string[] };
+      }
+      return { assignee: "", assignees: scope };
+    }
 
     if (salesManagerId) {
       const mgr = salesManagers.find((u) => String(u.id) === salesManagerId);
