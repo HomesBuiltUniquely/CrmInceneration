@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 export default function TopBar({
   designQaOpen,
@@ -9,6 +9,8 @@ export default function TopBar({
   designQaOpen?: boolean;
   onToggleDesignQa?: () => void;
 }) {
+  const router = useRouter();
+
   return (
     <div className="mb-8 flex items-center justify-between animate-fade-up">
       {/* Brand */}
@@ -41,15 +43,15 @@ export default function TopBar({
             Design Preferences
           </button>
         ) : null}
-        <Link
-          href="/Leads"
+        <button
+          onClick={() => router.back()}
           className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-slate-800 px-5 py-2.5 text-[13px] font-semibold tracking-tight text-white shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:bg-slate-700 hover:shadow-[0_6px_14px_rgba(15,23,42,0.22)] dark:border-[var(--crm-border-strong)]"
         >
           <span className="text-[14px] leading-none" aria-hidden>
             ✕
           </span>
           Close
-        </Link>
+        </button>
       </div>
     </div>
   );

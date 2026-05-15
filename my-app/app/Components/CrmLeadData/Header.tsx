@@ -50,10 +50,6 @@ function readHeaderPersistedState(): HeaderPersistedState {
     const nav = window.performance.getEntriesByType("navigation")[0] as
       | PerformanceNavigationTiming
       | undefined;
-    if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-    }
     const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as HeaderPersistedState;
