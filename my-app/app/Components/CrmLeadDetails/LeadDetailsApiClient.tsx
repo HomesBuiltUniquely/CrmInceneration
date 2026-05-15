@@ -1891,6 +1891,9 @@ export default function LeadDetailsApiClient({
         milestoneStage: args.milestoneStage.trim(),
         milestoneStageCategory: args.milestoneStageCategory.trim(),
         feedback: args.feedback.trim(),
+        budget: args.budget,
+        configuration: args.configuration,
+        propertyNotes: args.propertyNotes,
       });
       if (!discoveryGate.valid) {
         throw new Error(discoveryGate.message);
@@ -1994,6 +1997,9 @@ export default function LeadDetailsApiClient({
           meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
           status: persistedSubstage,
           stageBlock: nextStage,
+          budget: args.budget ?? lead.budget,
+          propertyNotes: args.propertyNotes ?? lead.propertyNotes,
+          configuration: args.configuration ?? lead.configuration,
           lostReason: args.lostReason?.trim()
             ? args.lostReason.trim()
             : lead.lostReason,

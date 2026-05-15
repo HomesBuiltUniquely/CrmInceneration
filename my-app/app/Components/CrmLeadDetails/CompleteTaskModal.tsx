@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
+import { BUDGET_OPTIONS } from "@/lib/data";
 import {
   fetchActiveDesigners,
   fetchAvailableSlots,
@@ -80,6 +81,10 @@ export type CompleteTaskApiPayload = {
   nextCallDateLocal: string;
   /** Sent as `resone` on PUT when path category is LOST. */
   lostReason?: string;
+  /** Direct property updates when gates apply. */
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
   meetingAppointment?: {
     designerName: string;
     date: string;
@@ -134,6 +139,9 @@ export default function CompleteTaskModal({
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
+  const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
+  const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
+  const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
@@ -176,7 +184,10 @@ export default function CompleteTaskModal({
     setApiError("");
     setGatePopupMessage("");
     setLostReason(lead.lostReason?.trim() ?? "");
-  }, [defaultNextCallDate, lead.lostReason, lead.status, open]);
+    setModalBudget(lead.budget ?? "");
+    setModalPropertyNotes(lead.propertyNotes ?? "");
+    setModalConfiguration(lead.configuration ?? "");
+  }, [defaultNextCallDate, lead.budget, lead.configuration, lead.lostReason, lead.propertyNotes, lead.status, open]);
 
   useEffect(() => {
     if (!open) {
@@ -382,6 +393,13 @@ export default function CompleteTaskModal({
     }
     return rows;
   }, [feedbackMappings]);
+  const budgetOptions = useMemo(() => {
+    const normalizedBudget = (lead.budget ?? "").trim();
+    return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
+      ? [normalizedBudget, ...BUDGET_OPTIONS]
+      : BUDGET_OPTIONS;
+  }, [lead.budget]);
+
   const feedbackSelectEnabled = !feedbackLoading && feedbackOptions.length > 0;
   useEffect(() => {
     const selected = feedbackOptions.find((m) => m.label === feedback);
@@ -412,6 +430,19 @@ export default function CompleteTaskModal({
   );
   const noteMissing = note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
+
+  const needsLeadPropertyGate = useMemo(() => {
+    return requiresLeadPropertyGateForCompleteTask({
+      currentMilestoneStage: lead.stageBlock?.milestoneStage,
+      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
+      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+      currentStatus: lead.status,
+      newMilestoneStage: status,
+      newStageCategory: path,
+      cancelMode,
+    });
+  }, [lead, status, path, cancelMode]);
+
   const meetingFieldsMissing =
     scheduleMode &&
     (!meetingDesigner.trim() ||
@@ -461,26 +492,19 @@ export default function CompleteTaskModal({
       return;
     }
 
-    const needsLeadPropertyGate = requiresLeadPropertyGateForCompleteTask({
-      currentMilestoneStage: lead.stageBlock?.milestoneStage,
-      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
-      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
-      currentStatus: lead.status,
-      newMilestoneStage: status,
-      newStageCategory: path,
-      cancelMode,
+
+
+    const effectivelyMissingFields = missingLeadPropertyGateFields({
+      budget: modalBudget,
+      propertyNotes: modalPropertyNotes,
+      configuration: modalConfiguration,
     });
-    if (needsLeadPropertyGate) {
-      const missing = missingLeadPropertyGateFields(lead);
-      if (missing.length > 0) {
-        const toConnection = status.trim().toLowerCase() === "connection";
-        const popupMessage = toConnection
-          ? "Fill all the details (Budget, Property notes, Configuration) before you update the milestone to Connection."
-          : leadPropertyGateErrorMessage(missing);
-        setApiError(popupMessage);
-        setGatePopupMessage(popupMessage);
-        return;
-      }
+
+    if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
+      setApiError(
+        `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`
+      );
+      return;
     }
 
     if (resoneMissing) {
@@ -505,6 +529,9 @@ export default function CompleteTaskModal({
           note,
           nextCallDateLocal: scheduleMode ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
+          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
+          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
+          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
           meetingAppointment: scheduleMode
             ? {
                 designerName: meetingDesigner.trim(),
@@ -759,6 +786,64 @@ export default function CompleteTaskModal({
                   </p>
                 )}
               </div>
+
+              {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
+              {scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
+                <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/10 text-blue-500">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
+                      Required Details for Connection
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-[var(--crm-text-muted)] leading-relaxed">
+                    The Connection milestone requires these property details. Fill them below to proceed without leaving this task.
+                  </p>
+                  
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <FieldLabel required>Budget</FieldLabel>
+                      <Select
+                        value={modalBudget}
+                        onChange={(e) => setModalBudget(e.target.value)}
+                        missing={showErrors && !modalBudget.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      >
+                        <option value="">Select Budget</option>
+                        {budgetOptions.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel required>Configuration</FieldLabel>
+                      <Input
+                        value={modalConfiguration}
+                        onChange={(e) => setModalConfiguration(e.target.value)}
+                        placeholder="e.g. 3 BHK"
+                        missing={showErrors && !modalConfiguration.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <FieldLabel required>Property Notes</FieldLabel>
+                    <Textarea
+                      value={modalPropertyNotes}
+                      onChange={(e) => setModalPropertyNotes(e.target.value)}
+                      placeholder="Add property notes..."
+                      missing={showErrors && !modalPropertyNotes.trim()}
+                      className="rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] min-h-[80px]"
+                    />
+                  </div>
+                </div>
+              )}
 
               {scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
