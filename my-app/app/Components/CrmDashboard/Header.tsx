@@ -24,9 +24,9 @@ export default function Header({ role = "sales_admin" }: Props) {
     const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? role;
     return normalizeRole(stored);
   });
-  const [activeDashboardView, setActiveDashboardView] = useState<
-    "overview" | "design-module"
-  >("overview");
+  const [activeDashboardView, setActiveDashboardView] = useState<"overview" | "design-module">(
+    "overview",
+  );
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilterState>({
     assignee: "",
     assignees: [],
@@ -38,7 +38,7 @@ export default function Header({ role = "sales_admin" }: Props) {
   });
 
   const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
-    const next = subItem.id === "design-module" ? "design-module" : "overview";
+    const next: "overview" | "design-module" = subItem.id === "design-module" ? "design-module" : "overview";
     setActiveDashboardView((prev) => (prev === next ? prev : next));
   }, []);
 

@@ -49,6 +49,8 @@ export type JourneyPhaseHeatmapProps = {
   onPhaseFilterToggle?: (stageName: string) => void;
   /** Display names of presales executives under the current manager (for scoping + Team verified). */
   presalesTeamNames?: string[];
+  /** Super-admin presales hub: restrict pool + month cards to leads assigned to these names (PM + PE). */
+  aggregatePresalesAssigneeNames?: string[];
   /** Active presales summary tab filter driven by the parent toolbar. */
   presalesSummaryTab?: "total" | "verified" | "teamVerified" | null;
   /** Toggle Total / Verified / Team verified — parent applies date + verification query params. */
@@ -408,6 +410,7 @@ export default function JourneyPhaseHeatmap({
   managerTeamNames = [],
   assigneeScope = [],
   presalesTeamNames = [],
+  aggregatePresalesAssigneeNames = [],
   insightTableMode = null,
   activeStageFilter = "",
   onPhaseFilterToggle,
@@ -448,8 +451,21 @@ export default function JourneyPhaseHeatmap({
   }, [filteredInsightLeads]);
 
   const roleKeyUi = normalizeRole(currentRole);
+  const aggregateNormSet = useMemo(
+    () =>
+      new Set(
+        (aggregatePresalesAssigneeNames ?? [])
+          .map((v) => v.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    [aggregatePresalesAssigneeNames],
+  );
   const usePresalesSummaryUi =
-    roleKeyUi === "PRESALES_EXECUTIVE" || roleKeyUi === "PRESALES_MANAGER";
+    roleKeyUi === "PRESALES_EXECUTIVE" ||
+    roleKeyUi === "PRESALES_MANAGER" ||
+    (roleKeyUi === "SUPER_ADMIN" && aggregateNormSet.size > 0);
+  const showPresalesManagerTeamVerifiedCard =
+    roleKeyUi === "PRESALES_MANAGER" && aggregateNormSet.size === 0;
 
   const presalesIdentity = useMemo(() => {
     const myAliases = new Set(
@@ -495,7 +511,7 @@ export default function JourneyPhaseHeatmap({
       presalesTeamNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
     );
     const teamVerifiedMonth =
-      roleKeyUi === "PRESALES_MANAGER"
+      roleKeyUi === "PRESALES_MANAGER" && aggregateNormSet.size === 0
         ? monthPool.filter(
             (l) =>
               isLeadVerifiedForPresales(l) &&
@@ -504,7 +520,7 @@ export default function JourneyPhaseHeatmap({
           ).length
         : 0;
     return { totalMonth, verifiedMonth, teamVerifiedMonth };
-  }, [poolLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
+  }, [aggregateNormSet.size, poolLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
 
   const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
   const freshLeadPhase = pickPhase(phases, "Fresh Lead");
@@ -627,6 +643,9 @@ export default function JourneyPhaseHeatmap({
           return false;
         };
         const roleScopedLeads = visibleLeads.filter((lead) => {
+          if (roleKey === "SUPER_ADMIN" && aggregateNormSet.size > 0) {
+            return leadAssignedToPresalesExecNameSet(lead, aggregateNormSet);
+          }
           if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
           if (roleKey === "SALES_EXECUTIVE") {
             return isSelfLead(lead);
@@ -686,6 +705,7 @@ export default function JourneyPhaseHeatmap({
     managerTeamNames,
     assigneeScopeSet,
     presalesTeamNames,
+    aggregateNormSet,
   ]);
 
   return (
@@ -710,7 +730,7 @@ export default function JourneyPhaseHeatmap({
         {usePresalesSummaryUi ? (
           <div>
             <div
-              className={`grid grid-cols-1 gap-4 ${roleKeyUi === "PRESALES_MANAGER" ? "md:grid-cols-3" : "md:grid-cols-2"}`}
+              className={`grid grid-cols-1 gap-4 ${showPresalesManagerTeamVerifiedCard ? "md:grid-cols-3" : "md:grid-cols-2"}`}
             >
               <PresalesSummaryCard
                 label="Total"
@@ -726,7 +746,7 @@ export default function JourneyPhaseHeatmap({
                 selected={presalesSummaryTab === "verified"}
                 onClick={() => onPresalesSummaryTabChange?.("verified")}
               />
-              {roleKeyUi === "PRESALES_MANAGER" ? (
+              {showPresalesManagerTeamVerifiedCard ? (
                 <PresalesSummaryCard
                   label="Team verified"
                   total={presalesMonthMetrics.teamVerifiedMonth}

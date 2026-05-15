@@ -84,6 +84,8 @@ type Props = {
   onHeatmapSummarySync?: (summary: { lead: number; opportunity: number } | null) => void;
   /** Keeps heatmap phase counts aligned with the active insight filter (e.g. Team Leads). */
   onInsightTableModeChange?: (mode: InsightTableMode) => void;
+  /** Super-admin `/presales-leads`: restrict merged list + counts to these assignee display names (PM + PE). */
+  superAdminPresalesAssigneeNames?: string[];
 };
 
 type SubStatusResp = {
@@ -611,6 +613,7 @@ export default function LeadsDataSection({
   onHeatmapAssigneeScopeSync,
   onHeatmapSummarySync,
   onInsightTableModeChange,
+  superAdminPresalesAssigneeNames,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -1137,6 +1140,19 @@ export default function LeadsDataSection({
     clientScopeRoleKey === "PRESALES_EXECUTIVE" ||
     clientScopeRoleKey === "PRE_SALES";
   const isGlobalSearchActive = debouncedSearch.trim().length > 0;
+  const superAdminPresalesPoolSet = useMemo(
+    () =>
+      new Set(
+        (superAdminPresalesAssigneeNames ?? [])
+          .map((n) => n.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    [superAdminPresalesAssigneeNames],
+  );
+  const superAdminPresalesPoolActive =
+    clientScopeRoleKey === "SUPER_ADMIN" &&
+    superAdminPresalesPoolSet.size > 0 &&
+    !isGlobalSearchActive;
   const leadViewKey: "default" | "my" | "team" | "combined" =
     leadView === "my" || leadView === "team" || leadView === "combined" ? leadView : "default";
   const filterOptionsView =
@@ -1340,9 +1356,15 @@ export default function LeadsDataSection({
         return allLeads;
       };
       const buildVisiblePage = (allLeads: ApiLead[]): SpringPage<ApiLead> => {
-        const roleScopedLeads = requiresClientScopedDataset && !isGlobalSearchActive
-          ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-          : allLeads;
+        let roleScopedLeads =
+          requiresClientScopedDataset && !isGlobalSearchActive
+            ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+            : allLeads;
+        if (superAdminPresalesPoolActive) {
+          roleScopedLeads = allLeads.filter((lead) =>
+            leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
+          );
+        }
         const visibleMerged = applyNewCrmCutoff(roleScopedLeads, true).sort((a, b) => {
           const at = Date.parse(a.updatedAt ?? "");
           const bt = Date.parse(b.updatedAt ?? "");
@@ -1361,7 +1383,8 @@ export default function LeadsDataSection({
       };
       const requiresFullyVisiblePage =
         effectiveAssigneeScope.length > 1 ||
-        (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500));
+        (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500)) ||
+        superAdminPresalesPoolActive;
 
       if (effectiveAssigneeScope.length <= 1) {
         if (!requiresFullyVisiblePage) {
@@ -1407,6 +1430,8 @@ export default function LeadsDataSection({
       requiresClientScopedDataset,
       isGlobalSearchActive,
       effectiveAssigneeScope,
+      superAdminPresalesPoolActive,
+      superAdminPresalesPoolSet,
       debouncedSearch,
       effectiveAssignee,
       dateFrom,
@@ -1423,6 +1448,12 @@ export default function LeadsDataSection({
 
   const fetchAllScopedMergedLeads = useCallback(
     async (targetLeadType: string, targetSort: string): Promise<ApiLead[]> => {
+      const applySuperAdminPool = (list: ApiLead[]) =>
+        superAdminPresalesPoolActive
+          ? list.filter((lead) =>
+              leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
+            )
+          : list;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
         const firstPage = await fetchMergedPage(
           0,
@@ -1474,7 +1505,9 @@ export default function LeadsDataSection({
       };
 
       if (effectiveAssigneeScope.length <= 1) {
-        return fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee);
+        return applySuperAdminPool(
+          await fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee),
+        );
       }
 
       const chunks = await Promise.all(
@@ -1488,11 +1521,13 @@ export default function LeadsDataSection({
           byId.set(id, lead);
         }
       }
-      return [...byId.values()].sort((a, b) => {
-        const at = Date.parse(a.updatedAt ?? "");
-        const bt = Date.parse(b.updatedAt ?? "");
-        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-      });
+      return applySuperAdminPool(
+        [...byId.values()].sort((a, b) => {
+          const at = Date.parse(a.updatedAt ?? "");
+          const bt = Date.parse(b.updatedAt ?? "");
+          return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
+        }),
+      );
     },
     [
       crmMonthWindowProp,
@@ -1507,6 +1542,8 @@ export default function LeadsDataSection({
       milestoneSubStage,
       reinquiry,
       verificationStatusProp,
+      superAdminPresalesPoolActive,
+      superAdminPresalesPoolSet,
     ],
   );
 
@@ -1541,7 +1578,7 @@ export default function LeadsDataSection({
         setVisibleFilteredTotal(scoped.length);
         onHeatmapSummarySync?.(summaryTotals);
 
-        if (isPresalesRole(roleKey)) {
+        if (isPresalesRole(roleKey) || superAdminPresalesPoolActive) {
           setLeadTypeCounts({
             ...base,
             verified: 0,
@@ -1606,6 +1643,7 @@ export default function LeadsDataSection({
     isGlobalSearchActive,
     effectiveAssignee,
     effectiveAssigneeScope,
+    superAdminPresalesPoolActive,
   ]);
 
   const load = useCallback(async () => {
@@ -1710,6 +1748,7 @@ export default function LeadsDataSection({
     verificationStatusProp,
     crmMonthWindowProp,
     onHeatmapSummarySync,
+    superAdminPresalesPoolActive,
   ]);
 
   useEffect(() => {

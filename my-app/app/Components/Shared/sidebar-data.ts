@@ -4,7 +4,7 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
   {
     id: "crm",
     label: "CRM",
-    subtitle: "Quick Access",
+    subtitle: "Turn connections into lasting customers.",
     icon: "users",
     items: [
       { id: "crm-my-leads", label: "My Leads", description: "View and manage pipeline", icon: "chart", href: "/Leads" },
@@ -16,9 +16,34 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     ],
   },
   {
+    id: "presales",
+    label: "Presales",
+    subtitle: "Every great deal starts here.",
+    icon: "chart",
+    items: [
+      { id: "presales-my-leads", label: "My Leads", description: "Presales team pipeline & month totals", icon: "chart", href: "/presales-leads" },
+      { id: "presales-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
+    ],
+  },
+  {
+    id: "booking-token",
+    label: "Booking & Token",
+    subtitle: "Everything booked. Nothing missed.",
+    icon: "receipt",
+    items: [
+      {
+        id: "booking-token-dashboard",
+        label: "Dashboard",
+        description: "Manage bookings & tokens",
+        icon: "chart",
+        href: "/booking-token",
+      },
+    ],
+  },
+  {
     id: "design",
     label: "Design",
-    subtitle: "Quick Access",
+    subtitle: "Where ideas become experiences.",
     icon: "palette",
     items: [
       {
@@ -42,7 +67,7 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
   {
     id: "admin",
     label: "Admin",
-    subtitle: "Quick Access",
+    subtitle: "Control everything with confidence.",
     icon: "settings",
     items: [
       { id: "admin-panel", label: "Admin Panel", description: "Configuration & controls", icon: "wrench", href: "/admin-panel" },
@@ -54,7 +79,7 @@ export const leadSidebarSections: QuickAccessParentItem[] = [
   {
     id: "lead-overview",
     label: "Lead",
-    subtitle: "Quick Access",
+    subtitle: "Full picture",
     icon: "users",
     items: [
       { id: "lead-summary", label: "Lead Summary", description: "Core profile details", icon: "id-card" },
@@ -65,7 +90,7 @@ export const leadSidebarSections: QuickAccessParentItem[] = [
   {
     id: "site-visit",
     label: "Visits",
-    subtitle: "Quick Access",
+    subtitle: "Visit to win",
     icon: "map-pin",
     items: [
       { id: "visit-plan", label: "Visit Plan", description: "Prepare next appointment", icon: "map-pin" },
@@ -76,7 +101,7 @@ export const leadSidebarSections: QuickAccessParentItem[] = [
   {
     id: "proposal",
     label: "Proposal",
-    subtitle: "Quick Access",
+    subtitle: "Pitch perfect",
     icon: "box",
     items: [
       { id: "proposal-draft", label: "Draft Deck", description: "Static proposal preview", icon: "note" },
@@ -87,7 +112,7 @@ export const leadSidebarSections: QuickAccessParentItem[] = [
   {
     id: "activity",
     label: "Activity",
-    subtitle: "Quick Access",
+    subtitle: "Stay sharp",
     icon: "activity",
     items: [
       { id: "activity-feed", label: "Activity Feed", description: "Recent updates", icon: "activity" },

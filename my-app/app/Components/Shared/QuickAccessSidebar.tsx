@@ -529,9 +529,12 @@ export default function QuickAccessSidebar({
     const isDesignManager = role === "DESIGN_MANAGER";
     const isDesigner = role === "DESIGNER";
     const isDesignRole = isTerritoryDesignManager || isDesignManager || isDesigner;
+    const isSuperAdmin = role === "SUPER_ADMIN";
 
     return sections
       .filter((section) => {
+        if (section.id === "presales") return isSuperAdmin;
+        if (section.id === "booking-token") return isSuperAdmin;
         if (isDesignRole) {
           return section.id === "design";
         }
@@ -804,8 +807,10 @@ export default function QuickAccessSidebar({
                       }
                     }}
                     className={cn(
-                      "flex w-full items-center rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
-                      isCollapsed ? "justify-center px-0 py-3.5" : "gap-3 px-4 py-4",
+                      "flex w-full rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
+                      isCollapsed
+                        ? "items-center justify-center px-0 py-3.5"
+                        : "min-h-[5.25rem] items-center gap-3 px-4 py-3.5",
                       isOpen
                         ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]"
                         : "border-[var(--crm-border)] bg-[var(--crm-surface)] hover:border-[var(--crm-border-strong)]",
@@ -831,10 +836,10 @@ export default function QuickAccessSidebar({
                     {!isCollapsed ? (
                       <>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[1.15rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
+                          <div className="text-[1.05rem] font-extrabold leading-tight tracking-[-0.03em] text-[var(--crm-text-primary)]">
                             {section.label}
                           </div>
-                          <div className="mt-0.5 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-[var(--crm-text-muted)]">
+                          <div className="mt-0.5 line-clamp-2 text-[0.65rem] font-semibold leading-snug tracking-wide text-[var(--crm-text-muted)]">
                             {section.subtitle}
                           </div>
                         </div>
@@ -887,7 +892,7 @@ export default function QuickAccessSidebar({
                             type="button"
                             onClick={() => handleSubItemClick(item)}
                             className={cn(
-                              "relative flex w-full items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition-all duration-200",
+                              "relative flex w-full min-h-[3.25rem] items-center gap-3 rounded-[18px] border px-4 py-2.5 text-left transition-all duration-200",
                               isActive
                                 ? "border-[var(--crm-accent-ring)] bg-[var(--crm-surface-elevated)] shadow-[0_10px_24px_rgba(37,99,235,0.08)]"
                                 : "border-[var(--crm-border)] bg-[var(--crm-surface)] opacity-85 hover:border-[var(--crm-border-strong)] hover:opacity-100",
@@ -899,19 +904,19 @@ export default function QuickAccessSidebar({
                                 className="pointer-events-none absolute right-[2px] top-1/2 h-[64%] w-[4px] -translate-y-1/2 rounded-full bg-[var(--crm-accent)]"
                               />
                             ) : null}
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]">
-                              <SidebarIcon name={item.icon} className="h-5 w-5" />
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]">
+                              <SidebarIcon name={item.icon} className="h-4 w-4" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div
                                 className={cn(
-                                  "text-[1rem] font-semibold",
+                                  "truncate text-[0.9rem] font-semibold leading-tight",
                                   isActive ? "text-[var(--crm-accent)]" : "text-[var(--crm-text-secondary)]",
                                 )}
                               >
                                 {item.label}
                               </div>
-                              <div className="mt-0.5 text-[0.78rem] text-[var(--crm-text-muted)]">
+                              <div className="mt-0.5 line-clamp-1 text-[0.72rem] leading-snug text-[var(--crm-text-muted)]">
                                 {item.description}
                               </div>
                             </div>

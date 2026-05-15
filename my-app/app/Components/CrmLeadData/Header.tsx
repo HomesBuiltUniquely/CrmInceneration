@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
@@ -23,6 +24,7 @@ import { readStoredCrmToken } from "@/lib/crm-client-auth";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
+import { fetchAllPresalesAssigneeDisplayNames } from "@/lib/fetch-all-presales-assignee-names";
 
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
 const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
@@ -61,6 +63,8 @@ function readHeaderPersistedState(): HeaderPersistedState {
 }
 
 export default function Header() {
+  const pathname = usePathname() ?? "";
+  const router = useRouter();
   const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
     if (typeof window === "undefined") return "SUPER_ADMIN";
@@ -117,8 +121,38 @@ export default function Header() {
       : null;
   });
   const [presalesTeamNames, setPresalesTeamNames] = useState<string[]>([]);
+  const [superAdminPresalesNames, setSuperAdminPresalesNames] = useState<string[]>([]);
   const presalesSummaryTabRef = useRef(presalesSummaryTab);
   presalesSummaryTabRef.current = presalesSummaryTab;
+
+  const isSuperAdminPresalesWorkspace =
+    pathname === "/presales-leads" && normalizeRole(currentRole) === "SUPER_ADMIN";
+
+  useEffect(() => {
+    if (!authResolved) return;
+    if (!pathname.startsWith("/presales-leads")) return;
+    if (normalizeRole(currentRole) !== "SUPER_ADMIN") {
+      router.replace("/Leads");
+    }
+  }, [authResolved, pathname, currentRole, router]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isSuperAdminPresalesWorkspace) {
+      setSuperAdminPresalesNames([]);
+      return;
+    }
+    void fetchAllPresalesAssigneeDisplayNames()
+      .then((names) => {
+        if (!cancelled) setSuperAdminPresalesNames(names);
+      })
+      .catch(() => {
+        if (!cancelled) setSuperAdminPresalesNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSuperAdminPresalesWorkspace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -265,15 +299,27 @@ export default function Header() {
   }, [isPresalesManager, currentUserId]);
 
   useEffect(() => {
-    if (!authResolved || !isPresalesRole(currentRole)) return;
-    setPresalesSummaryTab((prev) => (prev === null ? "total" : prev));
-  }, [authResolved, currentRole]);
+    if (!authResolved) return;
+    if (isPresalesRole(currentRole)) {
+      setPresalesSummaryTab((prev) => (prev === null ? "total" : prev));
+      return;
+    }
+    if (isSuperAdminPresalesWorkspace) {
+      if (superAdminPresalesNames.length > 0) {
+        setPresalesSummaryTab((prev) => (prev === null ? "total" : prev));
+      }
+      return;
+    }
+    setPresalesSummaryTab(null);
+  }, [authResolved, currentRole, isSuperAdminPresalesWorkspace, superAdminPresalesNames.length]);
 
   const presalesVerificationStatus = useMemo(() => {
-    if (!isPresalesRole(currentRole)) return "";
+    const superAdminPresalesCards =
+      isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
+    if (!isPresalesRole(currentRole) && !superAdminPresalesCards) return "";
     if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") return "verified";
     return "";
-  }, [currentRole, presalesSummaryTab]);
+  }, [currentRole, presalesSummaryTab, isSuperAdminPresalesWorkspace, superAdminPresalesNames.length]);
 
   const heatmapFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
@@ -284,8 +330,11 @@ export default function Header() {
     if (assigneeForHeatmap && heatmapToolbarAssigneeScope.length === 0) {
       q.set("assignee", assigneeForHeatmap);
     }
+    const superAdminPresalesCards =
+      isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
     const presalesMonthCards =
-      isPresalesRole(currentRole) && presalesSummaryTab !== null;
+      (isPresalesRole(currentRole) && presalesSummaryTab !== null) ||
+      (superAdminPresalesCards && presalesSummaryTab !== null);
     if (presalesMonthCards) q.set("crmMonthWindow", "current");
     else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
     if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
@@ -309,6 +358,8 @@ export default function Header() {
     presalesVerificationStatus,
     currentRole,
     presalesSummaryTab,
+    isSuperAdminPresalesWorkspace,
+    superAdminPresalesNames.length,
   ]);
 
   const handlePhaseFilterToggle = (stageName: string) => {
@@ -413,6 +464,9 @@ export default function Header() {
                 assigneeScope={heatmapToolbarAssigneeScope}
                 summaryTotalsOverride={heatmapSummaryTotals}
                 presalesTeamNames={presalesTeamNames}
+                aggregatePresalesAssigneeNames={
+                  isSuperAdminPresalesWorkspace ? superAdminPresalesNames : undefined
+                }
                 insightTableMode={insightTableMode}
                 activeStageFilter={milestoneStage}
                 onPhaseFilterToggle={handlePhaseFilterToggle}
@@ -438,13 +492,21 @@ export default function Header() {
                 reinquiry={reinquiry}
                 verificationStatus={presalesVerificationStatus}
                 crmMonthWindow={
-                  isPresalesRole(currentRole) && presalesSummaryTab ? "current" : ""
+                  (isPresalesRole(currentRole) && presalesSummaryTab) ||
+                  (isSuperAdminPresalesWorkspace &&
+                    superAdminPresalesNames.length > 0 &&
+                    presalesSummaryTab)
+                    ? "current"
+                    : ""
                 }
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
                   isPresalesManager && presalesSummaryTab === "teamVerified"
                 }
                 presalesTeamExecDisplayNames={presalesTeamNames}
+                superAdminPresalesAssigneeNames={
+                  isSuperAdminPresalesWorkspace ? superAdminPresalesNames : undefined
+                }
                 onLeadTypeChange={(next) => {
                   if (isPresalesRole(currentRole)) {
                     setLeadType(sanitizeLeadTypeForRole(currentRole, next));
