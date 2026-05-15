@@ -130,8 +130,7 @@ function readLeadsViewPersistedState(): LeadsViewPersistedState {
       | PerformanceNavigationTiming
       | undefined;
     if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-      return {};
+      // Intentionally not clearing filters on reload so state is preserved
     }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
@@ -630,6 +629,7 @@ export default function LeadsDataSection({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SpringPage<ApiLead> | null>(null);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [stageOrder, setStageOrder] = useState<string[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [assigneeOptions, setAssigneeOptions] = useState<string[]>([]);
@@ -1749,6 +1749,11 @@ export default function LeadsDataSection({
     void load();
   }, [load]);
 
+  const handleRefresh = useCallback(async () => {
+    await load();
+    setLastRefreshTime(new Date());
+  }, [load]);
+
   const contentFromApi = data?.content ?? [];
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
@@ -1781,7 +1786,16 @@ export default function LeadsDataSection({
     insightOpts,
   );
   const baseRows = insightFilteredContent.map((lead) => ({
-    ...mapApiLeadToRow(lead, asCrmLeadType(lead.leadType, "formlead"), stageOrder),
+    ...mapApiLeadToRow(
+      lead,
+      asCrmLeadType(
+        lead.leadType,
+        (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+          ? "formlead"
+          : leadType.trim().toLowerCase()) as any
+      ),
+      stageOrder
+    ),
     callDelayed: isFirstCallDelayedLead(lead),
   }));
   const norm = (v: string) => v.trim().toLowerCase();
@@ -2663,6 +2677,30 @@ export default function LeadsDataSection({
           </div>
         </div>
       ) : null}
+
+      {/* Floating Refresh Button */}
+      <button
+        onClick={handleRefresh}
+        className="group fixed bottom-8 right-8 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-[var(--crm-accent)] text-white shadow-lg shadow-[var(--crm-accent)]/30 transition-all hover:scale-110 active:scale-95"
+        title={lastRefreshTime ? `Last refresh: ${lastRefreshTime.toLocaleTimeString()}` : "Refresh Data"}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-5 w-5 transition-transform duration-500 group-active:rotate-180"
+        >
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+          <path d="M21 3v5h-5" />
+        </svg>
+        <span className="absolute right-14 whitespace-nowrap rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 dark:bg-gray-700 pointer-events-none">
+          {lastRefreshTime ? `Last sync: ${lastRefreshTime.toLocaleTimeString()}` : "Refresh Leads"}
+        </span>
+      </button>
     </>
   );
 }
