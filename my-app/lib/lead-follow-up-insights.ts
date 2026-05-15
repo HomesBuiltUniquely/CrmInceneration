@@ -1,4 +1,4 @@
-import { crmLeadAssigneeLabel, type ApiLead } from "@/lib/leads-filter";
+import { crmLeadAssigneeAliasNorms, type ApiLead } from "@/lib/leads-filter";
 import {
   isFollowUpDueLocalToday,
   isFollowUpOverdueLocal,
@@ -43,25 +43,9 @@ export function isFirstCallDelayedLead(
   return nowMs - createdTs >= thresholdMs;
 }
 
-/** Normalized assignee tokens (name / fullName / username / string assignee) for matching team lists and self. */
+/** Normalized assignee tokens for matching team lists, filters, and self. */
 export function assigneeAliasNorms(lead: ApiLead): Set<string> {
-  const out = new Set<string>();
-  const add = (s: string) => {
-    const n = s.trim().toLowerCase();
-    if (n) out.add(n);
-  };
-  const a = lead.assignee ?? lead.salesOwner;
-  if (!a) return out;
-  if (typeof a === "string") {
-    add(a);
-    return out;
-  }
-  const o = a as { name?: string; fullName?: string; username?: string };
-  add(String(o.name ?? ""));
-  add(String(o.fullName ?? ""));
-  add(String(o.username ?? ""));
-  add(crmLeadAssigneeLabel(lead));
-  return out;
+  return crmLeadAssigneeAliasNorms(lead);
 }
 
 function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {
