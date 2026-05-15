@@ -64,7 +64,7 @@ import {
   sendEmailNotification,
 } from "@/lib/email-request-builder";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
-import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import { fetchCrmPipeline, isLostCategory } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
@@ -577,6 +577,36 @@ function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boo
     (stageBlock?.milestoneStageCategory ?? "").trim() === "Closed Won" &&
     (stageBlock?.milestoneSubStage ?? "").trim() === "Booking Done (Booking)"
   );
+}
+
+/**
+ * Returns true when the next stage requires NO future follow-up and the
+ * follow-up date should be cleared on save:
+ *   • Any LOST path category (e.g. "Discovery Lost", "Connection Lost")
+ *   • Closed → Closed Won → Booking Done (Booking)  ← lead is now a customer
+ *   • Closed → Closed Won → Token Done              ← lead is now a customer
+ */
+function isNoFollowUpRequired(args: {
+  milestoneStage: string;
+  milestoneStageCategory: string;
+  milestoneSubStage: string;
+}): boolean {
+  // LOST path — any stage category containing the word "lost"
+  if (isLostCategory(args.milestoneStageCategory)) return true;
+
+  // Closed Won customer milestones
+  const stage    = args.milestoneStage.trim();
+  const category = args.milestoneStageCategory.trim();
+  const sub      = args.milestoneSubStage.trim();
+  if (
+    stage    === "Closed" &&
+    category === "Closed Won" &&
+    (sub === "Booking Done (Booking)" || sub === "Token Done")
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function readTextValue(value: unknown): string {
@@ -1882,7 +1912,16 @@ export default function LeadDetailsApiClient({
           ? ""
           : args.milestoneStageCategory;
 
-        let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
+        // For LOST-path leads and Closed-Won customer milestones (Booking Done / Token Done),
+        // clear the follow-up date so these leads never appear as overdue.
+        const noFollowUpNeeded = isNoFollowUpRequired({
+          milestoneStage:         args.milestoneStage,
+          milestoneStageCategory: args.milestoneStageCategory,
+          milestoneSubStage:      args.feedback,
+        });
+        let followUpDate = noFollowUpNeeded
+          ? ""
+          : (args.nextCallDateLocal.trim() || lead.followUpDate);
         let designerName = lead.designerName;
 
         if (args.meetingAppointment) {
