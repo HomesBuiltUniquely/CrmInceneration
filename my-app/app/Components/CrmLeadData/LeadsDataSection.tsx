@@ -92,11 +92,17 @@ type SubStatusResp = {
 type HierarchyUser = {
   id: number;
   fullName?: string;
+  name?: string;
   username?: string;
   managerId?: number | null;
   role?: string;
   active?: boolean;
 };
+
+/** Match auth API + manager team roster (`fullName ?? name ?? username`). */
+function hierarchyUserDisplayName(u: HierarchyUser): string {
+  return String(u.fullName ?? u.name ?? u.username ?? "").trim();
+}
 
 type AssigneeUser = {
   userId: number;
@@ -197,7 +203,7 @@ function buildHierarchyScopedAssignees(args: {
   if (salesManagerName) {
     const selectedManagerNorm = normText(salesManagerName);
     const selectedManager = args.salesManagers.find((u) => {
-      const n = normText(String(u.fullName ?? u.username ?? ""));
+      const n = normText(hierarchyUserDisplayName(u));
       return n === selectedManagerNorm;
     });
     if (selectedManager && Number(selectedManager.id ?? 0) > 0) {
@@ -220,7 +226,7 @@ function buildHierarchyScopedAssignees(args: {
   } else if (presalesManagerName) {
     const selectedPresalesManagerNorm = normText(presalesManagerName);
     const selectedPresalesManager = args.presalesManagers.find((u) => {
-      const n = normText(String(u.fullName ?? u.username ?? ""));
+      const n = normText(hierarchyUserDisplayName(u));
       return n === selectedPresalesManagerNorm;
     });
     if (selectedPresalesManager && Number(selectedPresalesManager.id ?? 0) > 0) {
@@ -238,9 +244,9 @@ function buildHierarchyScopedAssignees(args: {
     new Set(
       [
         ...managerNames,
-        ...salesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
-        ...presalesMgrUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
-        ...presalesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
+        ...salesExecUnderManager.map((u) => hierarchyUserDisplayName(u)),
+        ...presalesMgrUnderManager.map((u) => hierarchyUserDisplayName(u)),
+        ...presalesExecUnderManager.map((u) => hierarchyUserDisplayName(u)),
       ].filter(Boolean),
     ),
   );
@@ -1035,7 +1041,7 @@ export default function LeadsDataSection({
     };
   }, [currentRole, currentUserId]);
 
-  const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
+  const userName = hierarchyUserDisplayName;
   const meNorm = (currentUserName ?? "").trim().toLowerCase();
   const meAliasSet = useMemo(
     () =>
@@ -1129,6 +1135,33 @@ export default function LeadsDataSection({
     ]
   );
   const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const managerTeamRoster =
+    managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
+  const salesExecOptionsResolved = useMemo(() => {
+    const fromHierarchy = salesExecs.map(userName).filter(Boolean);
+    const fromAssigneeUsers = assigneeUsers
+      .filter((u) => u.role === "SALES_EXECUTIVE")
+      .map((u) => u.name.trim())
+      .filter(Boolean);
+    const fromUsers =
+      fromHierarchy.length > 0
+        ? fromHierarchy
+        : fromAssigneeUsers.length > 0
+          ? fromAssigneeUsers
+          : [];
+
+    const isSalesManagerScope =
+      clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
+    if (isSalesManagerScope) {
+      return Array.from(new Set([...fromUsers, ...managerTeamRoster])).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
+    }
+
+    if (fromUsers.length > 0) return fromUsers;
+    if (fromAssigneeUsers.length > 0) return fromAssigneeUsers;
+    return assigneeOptions;
+  }, [salesExecs, assigneeUsers, managerTeamRoster, clientScopeRoleKey, assigneeOptions]);
   const requiresClientScopedDataset =
     clientScopeRoleKey === "SALES_MANAGER" ||
     clientScopeRoleKey === "MANAGER" ||
@@ -2120,13 +2153,7 @@ export default function LeadsDataSection({
               ? assigneeUsers.filter((u) => u.role === "SALES_MANAGER").map((u) => u.name)
               : assigneeOptions
         }
-        salesExecOptions={
-          salesExecs.length
-            ? salesExecs.map((u) => userName(u)).filter(Boolean)
-            : assigneeUsers.filter((u) => u.role === "SALES_EXECUTIVE").map((u) => u.name).length
-              ? assigneeUsers.filter((u) => u.role === "SALES_EXECUTIVE").map((u) => u.name)
-              : assigneeOptions
-        }
+        salesExecOptions={salesExecOptionsResolved}
         presalesManagerOptions={
           presalesManagers.length
             ? presalesManagers.map((u) => userName(u)).filter(Boolean)
