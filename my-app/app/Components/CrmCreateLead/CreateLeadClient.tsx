@@ -527,7 +527,7 @@ export default function CreateLeadClient() {
                     </FormGroup>
 
                     <FormGroup>
-                      <div className="grid gap-5 xl:grid-cols-5">
+                      <div className="grid gap-5 xl:grid-cols-4">
                         <div>
                           <CreateLeadFieldLabel>
                             Alternate Phone
@@ -540,7 +540,7 @@ export default function CreateLeadClient() {
                             className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
                         </div>
-                        <div>
+                        {/* <div>
                           <CreateLeadFieldLabel>Feedback</CreateLeadFieldLabel>
                           <SelectField
                             value={form.feedbackSubstage}
@@ -558,7 +558,7 @@ export default function CreateLeadClient() {
                               </option>
                             ))}
                           </SelectField>
-                        </div>
+                        </div> */}
                         <div>
                           <CreateLeadFieldLabel>Budget</CreateLeadFieldLabel>
                           <SelectField
@@ -611,7 +611,7 @@ export default function CreateLeadClient() {
                             ))}
                           </SelectField>
                         </div>
-                        <div className="xl:col-span-5">
+                        <div className="xl:col-span-4">
                           <CreateLeadFieldLabel>
                             Property Details
                           </CreateLeadFieldLabel>
