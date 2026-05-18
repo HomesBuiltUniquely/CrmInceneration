@@ -197,6 +197,7 @@ type LeadsToolbarProps = {
   hideTotalLeadsPill?: boolean;
   /** Clear presales month summary when user resets filters from the toolbar. */
   onResetPresalesSummary?: () => void;
+  onResetAll?: () => void;
 };
 
 export default function LeadsToolbar({
@@ -250,6 +251,7 @@ export default function LeadsToolbar({
   onInsightNavigate,
   hideTotalLeadsPill = false,
   onResetPresalesSummary,
+  onResetAll,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
@@ -357,6 +359,10 @@ export default function LeadsToolbar({
   ]);
 
   const resetFilter = () => {
+    if (onResetAll) {
+      onResetAll();
+      return;
+    }
     setDraftDateFrom("");
     setDraftDateTo("");
     onLeadTypeChange("all");
@@ -376,6 +382,10 @@ export default function LeadsToolbar({
   };
 
   const resetSort = () => {
+    if (onResetAll) {
+      onResetAll();
+      return;
+    }
     onSortChange("updatedAt,desc");
   };
 

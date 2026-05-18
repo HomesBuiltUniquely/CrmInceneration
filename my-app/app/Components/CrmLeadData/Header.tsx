@@ -50,10 +50,6 @@ function readHeaderPersistedState(): HeaderPersistedState {
     const nav = window.performance.getEntriesByType("navigation")[0] as
       | PerformanceNavigationTiming
       | undefined;
-    if (nav?.type === "reload") {
-      // Intentionally not clearing filters on reload so state is preserved 
-      // across navigation and refreshes.
-    }
     const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as HeaderPersistedState;
@@ -404,6 +400,20 @@ export default function Header() {
     reinquiry,
   ]);
 
+  const handleResetAll = useCallback(() => {
+    setSearch("");
+    setLeadType("all");
+    setSort("updatedAt,desc");
+    setAssignee("");
+    setDateFrom("");
+    setDateTo("");
+    setMilestoneStage("");
+    setMilestoneStageCategory("");
+    setMilestoneSubStage("");
+    setReinquiry("");
+    setPresalesSummaryTab(isPresalesRole(currentRole) ? "total" : null);
+  }, [currentRole]);
+
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="xl:grid xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
@@ -481,6 +491,7 @@ export default function Header() {
                   setLeadType(next);
                 }}
                 onSortChange={setSort}
+                onResetAll={handleResetAll}
                 onAssigneeChange={(next) => {
                   if (
                     currentRole === "SALES_EXECUTIVE" ||
