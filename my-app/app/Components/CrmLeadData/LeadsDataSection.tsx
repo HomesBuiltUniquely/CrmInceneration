@@ -43,6 +43,7 @@ import {
   countSalesManagerMineVsTeam,
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
+import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   applyNewCrmCutoff,
@@ -1728,9 +1729,18 @@ export default function LeadsDataSection({
           dateFrom,
           dateTo,
         });
+        const milestoneTiles = computeMilestoneTileCounts(scoped, {
+          viewerRole: insightViewerRole,
+          currentUserName: currentUserName ?? "",
+          managerTeamNames: scopedTeam,
+          leadView: insightLeadViewForRole,
+          dateFrom,
+          dateTo,
+        });
         setLeadTypeCounts({
           ...base,
           ...insights,
+          ...milestoneTiles,
           managerMine: smMineTeam.managerMine,
           team: smMineTeam.teamLeads,
         });
@@ -2223,7 +2233,17 @@ export default function LeadsDataSection({
               ? "Overdue follow-ups"
           : insightTableMode === "teamLeads"
             ? "Team leads — assigned to your sales executives"
-            : null;
+            : insightTableMode === "meetingScheduled"
+              ? "Meeting Scheduled — substage filter"
+              : insightTableMode === "meetingRescheduled"
+                ? "Meeting Rescheduled — substage filter"
+                : insightTableMode === "meetingCancelled"
+                  ? "Meeting Cancelled — substage filter"
+                  : insightTableMode === "quoteSent"
+                    ? "Quote Sent — meeting done, quotation shared"
+                    : insightTableMode === "quoteDue"
+                      ? "Quote Due — Meeting Done but Quote Pending"
+                      : null;
 
   const insightBannerFollowUpNote =
     insightTableMode === "followUpActive" ||
