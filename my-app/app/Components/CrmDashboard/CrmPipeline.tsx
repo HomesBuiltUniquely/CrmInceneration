@@ -153,8 +153,8 @@ export default function CrmPipeline({ filters }: Props) {
     let cancelled = false;
     void (async () => {
       try {
-        const [pipeline, leads, subMapRes] = await Promise.all([
-          fetchCrmPipeline(true),
+        const [salesPipeline, leads, subMapRes] = await Promise.all([
+          fetchCrmPipeline({ nested: true, role: "SALES_EXECUTIVE" }),
           fetchDashboardLeads(sharedFilters),
           fetch("/api/milestone-count?resource=sub-status", {
             cache: "no-store",
@@ -163,7 +163,7 @@ export default function CrmPipeline({ filters }: Props) {
           }),
         ]);
         if (cancelled) return;
-        setData(pipeline);
+        setData(salesPipeline);
         setFilteredLeads(leads);
 
         if (subMapRes.ok) {

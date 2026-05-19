@@ -9,6 +9,13 @@ import {
   type AvailableSlotRow,
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
+import {
+  canPresalesAdvanceToStage,
+  presalesAllowedForwardStages,
+} from "@/lib/presales-milestone";
+import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
+import { normalizeStageKey } from "@/lib/milestone-progress";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
@@ -72,6 +79,13 @@ function getTodayStartDateTimeLocal(): string {
   return `${year}-${month}-${day}T00:00`;
 }
 
+export type PresalesCompleteTaskApiPayload = {
+  presalesMilestoneStage: string;
+  presalesMilestoneCategory: string;
+  presalesMilestoneSubStage: string;
+  note: string;
+};
+
 export type CompleteTaskApiPayload = {
   feedback: string;
   milestoneStage: string;
@@ -99,7 +113,10 @@ export default function CompleteTaskModal({
   onClose,
   onSave,
   onApiComplete,
+  onPresalesApiComplete,
   onPhoneCall,
+  userRole = "",
+  presalesHandedOff = false,
 }: {
   lead: Lead;
   open: boolean;
@@ -108,9 +125,14 @@ export default function CompleteTaskModal({
   onSave?: (status: string) => void;
   /** CRM API: PUT details + POST note */
   onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
+  /** Presales CRM API: PUT presales milestone fields only */
+  onPresalesApiComplete?: (payload: PresalesCompleteTaskApiPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
+  userRole?: string;
+  presalesHandedOff?: boolean;
 }) {
+  const presalesMode = isPresalesRole(userRole) && Boolean(onPresalesApiComplete);
   const defaultNextCallDate = useMemo(() => {
     return toDateTimeLocalValue(lead.followUpDate);
   }, [lead.followUpDate]);
@@ -143,6 +165,11 @@ export default function CompleteTaskModal({
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
+  const [presalesNested, setPresalesNested] = useState<CrmNestedStage[]>([]);
+  const [presalesPipelineLoading, setPresalesPipelineLoading] = useState(false);
+  const [presalesStage, setPresalesStage] = useState("");
+  const [presalesCategory, setPresalesCategory] = useState("");
+  const [presalesSubStage, setPresalesSubStage] = useState("");
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -190,7 +217,86 @@ export default function CompleteTaskModal({
   }, [defaultNextCallDate, lead.budget, lead.configuration, lead.lostReason, lead.propertyNotes, lead.status, open]);
 
   useEffect(() => {
+    if (!open || !presalesMode) return;
+    let cancelled = false;
+    const current =
+      lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data";
+    setPresalesStage(current);
+    setPresalesCategory(lead.stageBlock?.presalesMilestoneCategory?.trim() ?? "");
+    setPresalesSubStage(lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "");
+    setPresalesPipelineLoading(true);
+    void fetchCrmPipeline({
+      nested: true,
+      role: crmPipelineRoleParam(userRole),
+      forCompleteTask: true,
+      currentStage: current,
+    })
+      .then((p) => {
+        if (!cancelled) setPresalesNested(p.nested ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setPresalesNested([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPresalesPipelineLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    lead.stageBlock?.presalesMilestoneCategory,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    open,
+    presalesMode,
+    userRole,
+  ]);
+
+  const presalesCurrentStage =
+    lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data";
+  const presalesStageOptions = useMemo(() => {
+    const fromPipeline = presalesNested.map((n) => n.stage.trim()).filter(Boolean);
+    const allowed = presalesAllowedForwardStages(presalesCurrentStage);
+    const merged = [...new Set([...allowed, ...fromPipeline])];
+    return merged.filter((s) =>
+      canPresalesAdvanceToStage(presalesCurrentStage, s) ||
+      normalizeStageKey(s) === normalizeStageKey(presalesCurrentStage),
+    );
+  }, [presalesCurrentStage, presalesNested]);
+  const presalesIsConversion =
+    normalizeStageKey(presalesStage) === "data conversion";
+  const presalesCategoryNode = useMemo(
+    () =>
+      presalesNested.find(
+        (n) => normalizeStageKey(n.stage) === normalizeStageKey(presalesStage),
+      ),
+    [presalesNested, presalesStage],
+  );
+  const presalesCategoryOptions = useMemo(
+    () =>
+      presalesIsConversion
+        ? (presalesCategoryNode?.categories.map((c) => c.stageCategory.trim()) ?? [])
+        : [],
+    [presalesCategoryNode, presalesIsConversion],
+  );
+  const presalesSubStageOptions = useMemo(() => {
+    if (!presalesIsConversion || !presalesCategory.trim()) return [];
+    const cat = presalesCategoryNode?.categories.find(
+      (c) =>
+        normalizeStageKey(c.stageCategory) === normalizeStageKey(presalesCategory),
+    );
+    return cat?.subStages.map((s) => s.trim()).filter(Boolean) ?? [];
+  }, [
+    presalesCategory,
+    presalesCategoryNode,
+    presalesIsConversion,
+  ]);
+
+  useEffect(() => {
     if (!open) {
+      return;
+    }
+    if (presalesMode) {
       return;
     }
 
@@ -316,7 +422,7 @@ export default function CompleteTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [lead.stageBlock?.milestoneStage, lead.status, open]);
+  }, [lead.stageBlock?.milestoneStage, lead.status, open, presalesMode]);
 
   useEffect(() => {
     if (!open || !scheduleMode) {
@@ -455,6 +561,170 @@ export default function CompleteTaskModal({
 
   if (!open) {
     return null;
+  }
+
+  if (presalesMode && presalesHandedOff) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+        <div className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-6 shadow-xl">
+          <h2 className="text-[16px] font-semibold text-[var(--crm-text-primary)]">
+            Complete Task
+          </h2>
+          <p className="mt-3 text-[13px] text-[var(--crm-text-secondary)]">
+            This lead has been handed off to sales. No further updates allowed.
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-5 w-full rounded-xl bg-[var(--crm-accent)] py-2.5 text-[13px] font-semibold text-white"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const handlePresalesSave = async () => {
+    setShowErrors(true);
+    if (!presalesStage.trim()) {
+      setApiError("Select a presales stage.");
+      return;
+    }
+    if (presalesIsConversion) {
+      if (!presalesCategory.trim()) {
+        setApiError("Select Won or Lost category.");
+        return;
+      }
+      if (!presalesSubStage.trim()) {
+        setApiError("Select a presales substage.");
+        return;
+      }
+    }
+    if (!note.trim()) {
+      return;
+    }
+    if (!canPresalesAdvanceToStage(presalesCurrentStage, presalesStage)) {
+      setApiError("Stage can only move forward in the presales pipeline.");
+      return;
+    }
+    setApiBusy(true);
+    setApiError("");
+    try {
+      await onPresalesApiComplete?.({
+        presalesMilestoneStage: presalesStage.trim(),
+        presalesMilestoneCategory: presalesIsConversion ? presalesCategory.trim() : "",
+        presalesMilestoneSubStage: presalesIsConversion ? presalesSubStage.trim() : "",
+        note: note.trim(),
+      });
+      onClose();
+    } catch (e) {
+      setApiError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setApiBusy(false);
+    }
+  };
+
+  if (presalesMode) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+        <div className="w-full max-w-[560px] max-h-[85vh] overflow-y-auto rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
+          <div className="border-b border-[var(--crm-border)] px-4 py-4">
+            <h2 className="text-[18px] font-semibold text-[var(--crm-text-primary)]">
+              Complete Task — Presales
+            </h2>
+            <p className="text-[12px] text-[var(--crm-text-muted)]">{lead.customerId}</p>
+          </div>
+          <div className="space-y-4 px-4 py-4">
+            <div>
+              <FieldLabel required>Presales stage</FieldLabel>
+              <Select
+                value={presalesStage}
+                onChange={(e) => {
+                  setPresalesStage(e.target.value);
+                  setPresalesCategory("");
+                  setPresalesSubStage("");
+                }}
+                disabled={presalesPipelineLoading}
+                className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+              >
+                <option value="">Select stage</option>
+                {presalesStageOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {presalesIsConversion ? (
+              <>
+                <div>
+                  <FieldLabel required>Category</FieldLabel>
+                  <Select
+                    value={presalesCategory}
+                    onChange={(e) => {
+                      setPresalesCategory(e.target.value);
+                      setPresalesSubStage("");
+                    }}
+                    className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                  >
+                    <option value="">Select category</option>
+                    {presalesCategoryOptions.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <FieldLabel required>Substage</FieldLabel>
+                  <Select
+                    value={presalesSubStage}
+                    onChange={(e) => setPresalesSubStage(e.target.value)}
+                    disabled={!presalesCategory.trim()}
+                    className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                  >
+                    <option value="">Select substage</option>
+                    {presalesSubStageOptions.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </>
+            ) : null}
+            <div>
+              <FieldLabel required>Note</FieldLabel>
+              <Textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                missing={showErrors && !note.trim()}
+                className="min-h-[88px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+              />
+            </div>
+            {apiError ? <p className="text-[12px] text-red-500">{apiError}</p> : null}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-[var(--crm-border)] px-4 py-2 text-[13px] font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={apiBusy}
+                onClick={() => void handlePresalesSave()}
+                className="rounded-xl bg-[var(--crm-accent)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
+              >
+                {apiBusy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const handleSave = async () => {

@@ -16,6 +16,8 @@ import {
   resolveAssigneeScopeForDisplayName,
 } from "@/lib/hierarchy-user-display";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import { appendMilestoneFilterQuery } from "@/lib/presales-milestone";
+import { crmPipelineRoleParam } from "@/lib/roleUtils";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
@@ -48,8 +50,9 @@ import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   applyNewCrmCutoff,
-  getEffectiveNewCrmEndDate,
-  getEffectiveNewCrmStartDate,
+  getEffectiveNewCrmEndDateForRole,
+  getEffectiveNewCrmStartDateForRole,
+  shouldApplyNewCrmCutoffForRole,
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
 
@@ -441,15 +444,16 @@ async function fetchMergedPage(
   reinquiry: string,
   leadView: "default" | "my" | "team" | "combined" = "default",
   verificationStatus = "",
-  crmMonthWindow = ""
+  crmMonthWindow = "",
+  viewerRole = "",
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   const normalizedLeadType = leadType.trim().toLowerCase();
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const shouldMerge =
     usesRoleEndpoint || leadView === "combined" || normalizedLeadType === "all" || normalizedLeadType === "verified";
-  const effectiveDateFrom = getEffectiveNewCrmStartDate(dateFrom);
-  const effectiveDateTo = getEffectiveNewCrmEndDate(dateFrom, dateTo);
+  const effectiveDateFrom = getEffectiveNewCrmStartDateForRole(viewerRole, dateFrom);
+  const effectiveDateTo = getEffectiveNewCrmEndDateForRole(viewerRole, dateFrom, dateTo);
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
   qs.set("mergeAll", shouldMerge ? "1" : "0");
   qs.set("page", usesRoleEndpoint ? "0" : String(page));
@@ -465,9 +469,13 @@ async function fetchMergedPage(
     if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
     if (effectiveDateTo) qs.set("dateTo", effectiveDateTo);
   }
-  if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
-  if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
-  if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
+  appendMilestoneFilterQuery(
+    qs,
+    viewerRole,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+  );
   if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
   if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
   else if (verificationStatus.trim()) qs.set("verificationStatus", verificationStatus.trim());
@@ -490,7 +498,10 @@ async function fetchMergedPage(
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
   return {
     ...pageJson,
-    content: applyNewCrmCutoff(Array.isArray(pageJson.content) ? pageJson.content : [], true),
+    content: applyNewCrmCutoff(
+      Array.isArray(pageJson.content) ? pageJson.content : [],
+      shouldApplyNewCrmCutoffForRole(viewerRole),
+    ),
   };
 }
 
@@ -1440,11 +1451,12 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     let cancelled = false;
+    const pipelineRole = crmPipelineRoleParam(normalizeRole(authRoleProp ?? currentRole));
     void (async () => {
       try {
         const [o, p] = await Promise.all([
           fetchFilterOptions(filterOptionsView),
-          fetchCrmPipeline(true),
+          fetchCrmPipeline({ nested: true, role: pipelineRole }),
         ]);
         if (cancelled) return;
         setAssigneeOptions(o.assignees);
@@ -1460,7 +1472,7 @@ export default function LeadsDataSection({
     return () => {
       cancelled = true;
     };
-  }, [filterOptionsView]);
+  }, [authRoleProp, currentRole, filterOptionsView]);
 
   useEffect(() => {
     if (pipelineNested.length === 0) return;
@@ -1511,6 +1523,7 @@ export default function LeadsDataSection({
       targetLeadType: string,
       targetSort: string,
     ): Promise<SpringPage<ApiLead>> => {
+      const pipelineViewerRole = normalizeRole(authRoleProp ?? currentRole);
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
         const firstPage = await fetchMergedPage(
           0,
@@ -1528,6 +1541,7 @@ export default function LeadsDataSection({
           leadViewKey,
           verificationStatusProp,
           crmMonthWindowProp,
+          pipelineViewerRole,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -1551,6 +1565,7 @@ export default function LeadsDataSection({
               leadViewKey,
               verificationStatusProp,
               crmMonthWindowProp,
+              pipelineViewerRole,
             ),
           ),
         );
@@ -1564,7 +1579,10 @@ export default function LeadsDataSection({
         const roleScopedLeads = requiresClientScopedDataset && !isGlobalSearchActive
           ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
           : allLeads;
-        const visibleMerged = applyNewCrmCutoff(roleScopedLeads, true).sort((a, b) => {
+        const visibleMerged = applyNewCrmCutoff(
+          roleScopedLeads,
+          shouldApplyNewCrmCutoffForRole(pipelineViewerRole),
+        ).sort((a, b) => {
           const at = Date.parse(a.updatedAt ?? "");
           const bt = Date.parse(b.updatedAt ?? "");
           return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
@@ -1602,6 +1620,7 @@ export default function LeadsDataSection({
             leadViewKey,
             verificationStatusProp,
             crmMonthWindowProp,
+            pipelineViewerRole,
           );
         }
         const allLeads = await fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee);
@@ -1644,6 +1663,7 @@ export default function LeadsDataSection({
 
   const fetchAllScopedMergedLeads = useCallback(
     async (targetLeadType: string, targetSort: string): Promise<ApiLead[]> => {
+      const pipelineViewerRole = normalizeRole(authRoleProp ?? currentRole);
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
         const firstPage = await fetchMergedPage(
           0,
@@ -1661,6 +1681,7 @@ export default function LeadsDataSection({
           leadViewKey,
           verificationStatusProp,
           crmMonthWindowProp,
+          pipelineViewerRole,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -1684,6 +1705,7 @@ export default function LeadsDataSection({
               leadViewKey,
               verificationStatusProp,
               crmMonthWindowProp,
+              pipelineViewerRole,
             ),
           ),
         );
@@ -1993,7 +2015,8 @@ export default function LeadsDataSection({
           ? "formlead"
           : leadType.trim().toLowerCase()) as any
       ),
-      stageOrder
+      stageOrder,
+      scopeRoleKey,
     ),
     callDelayed: isFirstCallDelayedLead(lead),
   }));

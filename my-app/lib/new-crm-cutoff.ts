@@ -10,6 +10,14 @@ export function getNewCrmLeadsCutoffDate(): string | null {
   return NEW_CRM_LEADS_CUTOFF_DATE || null;
 }
 
+export function getEffectiveNewCrmStartDateForRole(
+  role: string,
+  dateFrom?: string | null,
+): string | null {
+  if (isPresalesRole(role)) return (dateFrom || "").trim() || null;
+  return getEffectiveNewCrmStartDate(dateFrom);
+}
+
 export function getEffectiveNewCrmStartDate(dateFrom?: string | null): string | null {
   const cutoff = NEW_CRM_LEADS_CUTOFF_DATE;
   const requested = (dateFrom || "").trim();
@@ -24,6 +32,15 @@ export function getEffectiveNewCrmStartDate(dateFrom?: string | null): string | 
   if (requestedMs == null) return cutoff;
 
   return requestedMs < cutoffMs ? cutoff : requested;
+}
+
+export function getEffectiveNewCrmEndDateForRole(
+  role: string,
+  dateFrom?: string | null,
+  dateTo?: string | null,
+): string | null {
+  if (isPresalesRole(role)) return (dateTo || "").trim() || null;
+  return getEffectiveNewCrmEndDate(dateFrom, dateTo);
 }
 
 export function getEffectiveNewCrmEndDate(
@@ -88,6 +105,15 @@ export function getLeadCreatedAtMs(lead: unknown): number | null {
 
   const parsed = new Date(String(value)).getTime();
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+import { isPresalesRole } from "@/lib/roleUtils";
+
+/** Presales list views show all assigned leads regardless of cutoff date. */
+export function shouldApplyNewCrmCutoffForRole(role: string, isNewCrm = true): boolean {
+  if (!isNewCrm) return false;
+  if (isPresalesRole(role)) return false;
+  return true;
 }
 
 export function applyNewCrmCutoff<T extends object>(leads: T[], isNewCrm = true): T[] {

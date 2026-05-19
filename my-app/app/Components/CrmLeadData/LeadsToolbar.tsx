@@ -672,59 +672,119 @@ export default function LeadsToolbar({
                   ))}
                 </SelectField>
               ) : null}
-              <SelectField
-                label="Stage"
-                value={milestoneStage}
-                onChange={(v) => {
-                  onMilestoneStageChange(v);
-                  onMilestoneStageCategoryChange("");
-                  onMilestoneSubStageChange("");
-                }}
-              >
-                <option value="">All</option>
-                {milestoneStageOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField
-                label="Category"
-                value={milestoneStageCategory}
-                onChange={(v) => {
-                  onMilestoneStageCategoryChange(v);
-                  onMilestoneSubStageChange("");
-                }}
-                disabled={!milestoneStage.trim()}
-              >
-                <option value="">
-                  {milestoneStage.trim() ? "All" : "Select stage first"}
-                </option>
-                {milestoneStageCategoryOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField
-                label="Sub Stage"
-                value={milestoneSubStage}
-                onChange={onMilestoneSubStageChange}
-                disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
-              >
-                <option value="">
-                  {milestoneStage.trim() && milestoneStageCategory.trim()
-                    ? "All"
-                    : milestoneStage.trim()
-                      ? "Select category first"
-                      : "Select stage first"}
-                </option>
-                {milestoneSubStageOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
+              {isPresalesFlow ? (
+                <>
+                  <SelectField
+                    label="Presales Stage"
+                    value={milestoneStage}
+                    onChange={(v) => {
+                      onMilestoneStageChange(v);
+                      onMilestoneStageCategoryChange("");
+                      onMilestoneSubStageChange("");
+                    }}
+                  >
+                    <option value="">All</option>
+                    {milestoneStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Category"
+                    value={milestoneStageCategory}
+                    onChange={(v) => {
+                      onMilestoneStageCategoryChange(v);
+                      onMilestoneSubStageChange("");
+                    }}
+                    disabled={!milestoneStage.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() ? "All" : "Select stage first"}
+                    </option>
+                    {milestoneStageCategoryOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Substage"
+                    value={milestoneSubStage}
+                    onChange={onMilestoneSubStageChange}
+                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() && milestoneStageCategory.trim()
+                        ? "All"
+                        : milestoneStage.trim()
+                          ? "Select category first"
+                          : "Select stage first"}
+                    </option>
+                    {milestoneSubStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                </>
+              ) : (
+                <>
+                  <SelectField
+                    label="Stage"
+                    value={milestoneStage}
+                    onChange={(v) => {
+                      onMilestoneStageChange(v);
+                      onMilestoneStageCategoryChange("");
+                      onMilestoneSubStageChange("");
+                    }}
+                  >
+                    <option value="">All</option>
+                    {milestoneStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Category"
+                    value={milestoneStageCategory}
+                    onChange={(v) => {
+                      onMilestoneStageCategoryChange(v);
+                      onMilestoneSubStageChange("");
+                    }}
+                    disabled={!milestoneStage.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() ? "All" : "Select stage first"}
+                    </option>
+                    {milestoneStageCategoryOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Sub Stage"
+                    value={milestoneSubStage}
+                    onChange={onMilestoneSubStageChange}
+                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() && milestoneStageCategory.trim()
+                        ? "All"
+                        : milestoneStage.trim()
+                          ? "Select category first"
+                          : "Select stage first"}
+                    </option>
+                    {milestoneSubStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                </>
+              )}
               <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
                 <option value="">All</option>
                 <option value="true">Reinquiry only</option>

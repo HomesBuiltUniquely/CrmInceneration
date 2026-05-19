@@ -7,7 +7,9 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { applyNewCrmCutoff } from "@/lib/new-crm-cutoff";
+import { applyNewCrmCutoff, shouldApplyNewCrmCutoffForRole } from "@/lib/new-crm-cutoff";
+import { isPresalesRole } from "@/lib/roleUtils";
+import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -154,6 +156,9 @@ export async function GET(req: NextRequest) {
     "milestoneStage",
     "milestoneStageCategory",
     "milestoneSubStage",
+    "presalesMilestoneStage",
+    "presalesMilestoneCategory",
+    "presalesMilestoneSubStage",
     "verificationStatus",
     "reinquiry",
   ] as const;
@@ -300,9 +305,13 @@ export async function GET(req: NextRequest) {
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
+  const psStage = (url.searchParams.get("presalesMilestoneStage") ?? "").trim();
+  const psCat = (url.searchParams.get("presalesMilestoneCategory") ?? "").trim();
+  const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
-  const shouldApplyCutoff = milestoneScope === "crm";
+  const shouldApplyCutoff =
+    milestoneScope === "crm" && shouldApplyNewCrmCutoffForRole(viewerRoleKey);
 
   const merged = applyNewCrmCutoff(
     [...byId.values()]
@@ -369,9 +378,16 @@ export async function GET(req: NextRequest) {
 
       if (!inDateRange(readLeadCreatedAtRaw(lead), dateFrom, dateTo)) return false;
 
-      if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
-      if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
-      if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
+      if (isPresalesRole(viewerRoleKey)) {
+        const ps = readPresalesMilestoneFromLead(lead);
+        if (psStage && norm(ps.stage) !== norm(psStage)) return false;
+        if (psCat && norm(ps.category) !== norm(psCat)) return false;
+        if (psSub && norm(ps.subStage) !== norm(psSub)) return false;
+      } else {
+        if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
+        if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
+        if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
+      }
       return true;
     })
     .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a)),

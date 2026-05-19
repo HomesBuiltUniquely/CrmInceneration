@@ -19,6 +19,14 @@ export type CrmPipelineResponse = {
   nested?: CrmNestedStage[];
 };
 
+export type PresalesPipelineStage = {
+  stageName: string;
+  categories: {
+    categoryName: string;
+    subStages: string[];
+  }[];
+};
+
 /** Cards in Won / Lost columns (matches `MilestonePaths` StatCard). */
 export type MilestonePathItem = {
   title: string;
