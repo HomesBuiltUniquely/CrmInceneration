@@ -202,6 +202,31 @@ function pickConfigurationFromDetail(
     if (directDf) return directDf;
   }
 
+  /** `propertyDetails` stored as JSON string (common for Mlead after merged saves). */
+  const pdStr = detail.propertyDetails;
+  if (typeof pdStr === "string" && pdStr.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(pdStr) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const fromJson = pickStr(
+          parsed,
+          "interior_setup",
+          "interiorSetup",
+          "configuration",
+          "propertyConfiguration",
+          "property_configuration",
+          "bhk",
+          "propertyType",
+          "unitType",
+          "property_type",
+        );
+        if (fromJson) return fromJson;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   return "";
 }
 
@@ -325,17 +350,51 @@ function mergePropertyDetailsBlock(
 
   if (prev && typeof prev === "object" && !Array.isArray(prev)) {
     bag = { ...(prev as Record<string, unknown>) };
+  } else if (typeof prev === "string" && prev.trim()) {
+    const raw = prev.trim();
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          bag = { ...parsed };
+        }
+      } catch {
+        bag = { propertyNotes: raw, property_detail: raw };
+      }
+    } else {
+      bag = { propertyNotes: raw, property_detail: raw };
+    }
   }
 
   const cfg = lead.configuration.trim();
   bag.interiorSetup = cfg;
-  bag.interior_setup = cfg;
 
   const notes = lead.propertyNotes.trim();
   bag.propertyNotes = notes;
   bag.property_detail = notes;
 
   return bag;
+}
+
+/** Ads / dynamic payloads sometimes keep a parallel copy under `dynamicFields`. */
+function mergeDynamicFieldsInterior(
+  next: Record<string, unknown>,
+  configuration: string,
+): void {
+  const cfg = configuration.trim();
+  const df = next.dynamicFields;
+  if (!df || typeof df !== "object" || Array.isArray(df)) return;
+  const dfo = { ...(df as Record<string, unknown>) };
+  const pdInDf = dfo.propertyDetails;
+  if (pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)) {
+    dfo.propertyDetails = {
+      ...(pdInDf as Record<string, unknown>),
+      interiorSetup: cfg,
+    };
+  } else {
+    dfo.interiorSetup = cfg;
+  }
+  next.dynamicFields = dfo;
 }
 
 export function extractStage(detail: Record<string, unknown>) {
@@ -495,17 +554,18 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   const mergedLt = asCrmLeadType(lead.leadType, "formlead");
-  if (mergedLt === "addlead" || mergedLt === "mlead") {
+  if (mergedLt === "addlead") {
     next.propertyDetails = lead.propertyNotes.trim();
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
   }
+  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
   next.propertyType = lead.configuration;
   next.interiorSetup = lead.configuration;
   if (mergedLt === "addlead") next.property_type = lead.configuration;
@@ -552,17 +612,18 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   const boxLt = asCrmLeadType(lead.leadType, "formlead");
-  if (boxLt === "addlead" || boxLt === "mlead") {
+  if (boxLt === "addlead") {
     next.propertyDetails = lead.propertyNotes.trim();
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
   }
+  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
   next.propertyType = lead.configuration;
   next.interiorSetup = lead.configuration;
   next.language = lead.language;
