@@ -1,45 +1,30 @@
-const NEW_CRM_LEADS_CUTOFF_DATE =
-  process.env.NEXT_PUBLIC_NEW_CRM_LEADS_CUTOFF_DATE?.trim() || "";
-
 function parseUtcDayStartMs(value: string): number | null {
   const parsed = new Date(`${value}T00:00:00Z`).getTime();
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** @deprecated No global lead visibility cutoff — always returns null. */
 export function getNewCrmLeadsCutoffDate(): string | null {
-  return NEW_CRM_LEADS_CUTOFF_DATE || null;
+  return null;
 }
 
 export function getEffectiveNewCrmStartDateForRole(
-  role: string,
+  _role: string,
   dateFrom?: string | null,
 ): string | null {
-  if (isPresalesRole(role)) return (dateFrom || "").trim() || null;
   return getEffectiveNewCrmStartDate(dateFrom);
 }
 
 export function getEffectiveNewCrmStartDate(dateFrom?: string | null): string | null {
-  const cutoff = NEW_CRM_LEADS_CUTOFF_DATE;
   const requested = (dateFrom || "").trim();
-
-  if (!cutoff) return requested || null;
-  if (!requested) return cutoff;
-
-  const cutoffMs = parseUtcDayStartMs(cutoff);
-  const requestedMs = parseUtcDayStartMs(requested);
-
-  if (cutoffMs == null) return requested || null;
-  if (requestedMs == null) return cutoff;
-
-  return requestedMs < cutoffMs ? cutoff : requested;
+  return requested || null;
 }
 
 export function getEffectiveNewCrmEndDateForRole(
-  role: string,
+  _role: string,
   dateFrom?: string | null,
   dateTo?: string | null,
 ): string | null {
-  if (isPresalesRole(role)) return (dateTo || "").trim() || null;
   return getEffectiveNewCrmEndDate(dateFrom, dateTo);
 }
 
@@ -107,25 +92,12 @@ export function getLeadCreatedAtMs(lead: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-import { isPresalesRole } from "@/lib/roleUtils";
-
-/** Presales list views show all assigned leads regardless of cutoff date. */
-export function shouldApplyNewCrmCutoffForRole(role: string, isNewCrm = true): boolean {
-  if (!isNewCrm) return false;
-  if (isPresalesRole(role)) return false;
-  return true;
+/** @deprecated Cutoff removed — returns false so callers keep working without filtering. */
+export function shouldApplyNewCrmCutoffForRole(_role: string, _isNewCrm = true): boolean {
+  return false;
 }
 
-export function applyNewCrmCutoff<T extends object>(leads: T[], isNewCrm = true): T[] {
-  if (!isNewCrm) return leads;
-  if (!NEW_CRM_LEADS_CUTOFF_DATE) return leads;
-
-  const cutoffMs = parseUtcDayStartMs(NEW_CRM_LEADS_CUTOFF_DATE);
-  if (cutoffMs == null) return leads;
-
-  return leads.filter((lead) => {
-    const createdAtMs = getLeadCreatedAtMs(lead);
-    if (createdAtMs == null) return true;
-    return createdAtMs >= cutoffMs;
-  });
+/** @deprecated Cutoff removed — returns leads unchanged. */
+export function applyNewCrmCutoff<T extends object>(leads: T[], _isNewCrm = true): T[] {
+  return leads;
 }

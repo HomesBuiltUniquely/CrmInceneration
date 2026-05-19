@@ -49,10 +49,6 @@ import {
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
-  applyNewCrmCutoff,
-  getEffectiveNewCrmEndDateForRole,
-  getEffectiveNewCrmStartDateForRole,
-  shouldApplyNewCrmCutoffForRole,
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
 
@@ -452,8 +448,8 @@ async function fetchMergedPage(
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const shouldMerge =
     usesRoleEndpoint || leadView === "combined" || normalizedLeadType === "all" || normalizedLeadType === "verified";
-  const effectiveDateFrom = getEffectiveNewCrmStartDateForRole(viewerRole, dateFrom);
-  const effectiveDateTo = getEffectiveNewCrmEndDateForRole(viewerRole, dateFrom, dateTo);
+  const effectiveDateFrom = dateFrom.trim() || null;
+  const effectiveDateTo = dateTo.trim() || null;
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
   qs.set("mergeAll", shouldMerge ? "1" : "0");
   qs.set("page", usesRoleEndpoint ? "0" : String(page));
@@ -498,10 +494,7 @@ async function fetchMergedPage(
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
   return {
     ...pageJson,
-    content: applyNewCrmCutoff(
-      Array.isArray(pageJson.content) ? pageJson.content : [],
-      shouldApplyNewCrmCutoffForRole(viewerRole),
-    ),
+    content: Array.isArray(pageJson.content) ? pageJson.content : [],
   };
 }
 
@@ -1579,10 +1572,7 @@ export default function LeadsDataSection({
         const roleScopedLeads = requiresClientScopedDataset && !isGlobalSearchActive
           ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
           : allLeads;
-        const visibleMerged = applyNewCrmCutoff(
-          roleScopedLeads,
-          shouldApplyNewCrmCutoffForRole(pipelineViewerRole),
-        ).sort((a, b) => {
+        const visibleMerged = roleScopedLeads.sort((a, b) => {
           const at = Date.parse(a.updatedAt ?? "");
           const bt = Date.parse(b.updatedAt ?? "");
           return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);

@@ -16,10 +16,7 @@ import {
   leadAssignedToPresalesExecNameSet,
 } from "@/lib/presales-heatmap-helpers";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
-import {
-  applyNewCrmCutoff,
-  setEffectiveNewCrmDateRange,
-} from "@/lib/new-crm-cutoff";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 
 type Phase = {
   phaseLabel: string;
@@ -579,7 +576,7 @@ export default function JourneyPhaseHeatmap({
           const rest = await Promise.all(followUps);
           for (const chunk of rest) allLeads.push(...chunk);
         }
-        const visibleLeads = applyNewCrmCutoff(allLeads, true);
+        const visibleLeads = allLeads;
 
         const roleKey = normalizeRole(currentRole);
         const myAliases = new Set(

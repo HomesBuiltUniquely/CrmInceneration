@@ -12,10 +12,7 @@ import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { crmLeadTopLevelStage } from "@/lib/leads-filter";
 import type { MilestonePathItem } from "@/types/crm-pipeline";
 import type { CrmPipelineResponse } from "@/types/crm-pipeline";
-import {
-  applyNewCrmCutoff,
-  setEffectiveNewCrmDateRange,
-} from "@/lib/new-crm-cutoff";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 import Milestones from "./Milestones";
 import MilestonePaths from "./MilestonePaths";
 
@@ -116,7 +113,7 @@ async function fetchDashboardLeads(filters: DashboardFilterState): Promise<ApiLe
       leadsById.set(id, lead);
     }
   }
-  return applyNewCrmCutoff([...leadsById.values()], true);
+  return [...leadsById.values()];
 }
 
 type Props = {

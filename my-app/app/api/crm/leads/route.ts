@@ -7,7 +7,6 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { applyNewCrmCutoff, shouldApplyNewCrmCutoffForRole } from "@/lib/new-crm-cutoff";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
 
@@ -310,11 +309,7 @@ export async function GET(req: NextRequest) {
   const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
-  const shouldApplyCutoff =
-    milestoneScope === "crm" && shouldApplyNewCrmCutoffForRole(viewerRoleKey);
-
-  const merged = applyNewCrmCutoff(
-    [...byId.values()]
+  const merged = [...byId.values()]
     .filter((lead) => {
       if (search) {
         const needle = search.toLowerCase();
@@ -390,9 +385,7 @@ export async function GET(req: NextRequest) {
       }
       return true;
     })
-    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a)),
-    shouldApplyCutoff,
-  );
+    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
 
   const pageNum = Number.parseInt(page, 10) || 0;
   const pageSize = Number.parseInt(size, 10) || 20;
