@@ -263,6 +263,7 @@ function PhaseCard({
           <div className={`text-[10px] font-semibold ${shareText}`}>
             {p.sharePct}% of total
           </div>
+
         </div>
       </div>
       <div className="mt-3 h-1.5 w-full rounded-full bg-[var(--crm-surface)]/70">
