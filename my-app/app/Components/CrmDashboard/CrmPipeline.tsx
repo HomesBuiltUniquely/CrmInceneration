@@ -170,7 +170,7 @@ export default function CrmPipeline({ filters }: Props) {
           setSubMappings([]);
         }
 
-        const stages = buildMilestoneStages(pipeline.entries, pipeline.nested);
+        const stages = buildMilestoneStages(salesPipeline.entries, salesPipeline.nested);
         setSelectedStage((prev) => {
           if (prev && stages.some((s) => s.stage === prev)) return prev;
           return "Total Leads";
