@@ -44,7 +44,7 @@ export default function StatsRow({ lead }: { lead: Lead }) {
     {
       icon: "🏢",
       label: "Configuration",
-      value: lead.configuration,
+      value: lead.configuration?.trim() ? lead.configuration : "Not set",
       iconBg: "bg-[rgba(167,139,250,0.15)]",
       iconColor: "text-[#a78bfa]",
     },

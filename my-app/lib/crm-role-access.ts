@@ -1,5 +1,6 @@
 import { normalizeRole } from "@/lib/auth/api";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { isPresalesRole as isPresalesRoleUtil } from "@/lib/roleUtils";
 
 export type LeadTypeFilterKey = "all" | CrmLeadType | "verified";
 
@@ -10,9 +11,15 @@ export function toRoleKey(role: string): string {
 }
 
 export function isPresalesRole(role: string): boolean {
-  const roleKey = toRoleKey(role);
-  return roleKey === "PRESALES_MANAGER" || roleKey === "PRESALES_EXECUTIVE";
+  return isPresalesRoleUtil(role);
 }
+
+export {
+  isSalesRole,
+  isAdminRole,
+  canViewBothMilestonePipelines,
+  crmPipelineRoleParam,
+} from "@/lib/roleUtils";
 
 /** All CRM lead sources allowed in `/v1/leads/filter` proxy (visibility still enforced upstream). */
 export function getAllowedLeadTypesForRole(_role: string): CrmLeadType[] {

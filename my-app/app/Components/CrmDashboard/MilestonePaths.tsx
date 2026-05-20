@@ -130,9 +130,10 @@ export default function MilestonePaths({
   lostItems,
 }: Props) {
   const isFreshLeadStage = stageTitle.trim().toLowerCase() === "fresh lead";
+  const isTotalLeadsStage = stageTitle.trim().toLowerCase() === "total leads";
   return (
     <section className="xl:mx-6 xl:mt-10 xl:w-[calc(100%-3rem)] xl:min-w-0">
-      <div className={`flex gap-6 ${isFreshLeadStage ? "justify-center" : ""}`}>
+      <div className={`flex gap-6 ${isFreshLeadStage || isTotalLeadsStage ? "justify-center" : ""}`}>
         <div className="w-64 rounded-3xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-7 py-8">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
@@ -158,7 +159,7 @@ export default function MilestonePaths({
           </div>
         </div>
 
-        {!isFreshLeadStage ? (
+        {!isFreshLeadStage && !isTotalLeadsStage ? (
           <div className="flex-1">
             <div className="grid grid-cols-2 gap-8">
               <div>

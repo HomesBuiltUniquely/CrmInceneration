@@ -16,6 +16,7 @@ import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
+  mergePresalesMilestoneIntoDetail,
   mergeSecondBoxIntoDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -31,6 +32,7 @@ import ActivityTimeline from "./ActivityTimeline";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
+  type PresalesCompleteTaskApiPayload,
 } from "./CompleteTaskModal";
 import {
   createAppointment,
@@ -70,6 +72,11 @@ import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import {
+  isLeadHandedOffToSales,
+  isPresalesHandedOffReadOnly,
+} from "@/lib/presales-milestone";
+import { isPresalesRole } from "@/lib/roleUtils";
 
 type SalesExecutiveOption = {
   id: number;
@@ -1579,8 +1586,25 @@ export default function LeadDetailsApiClient({
         resObj && typeof resObj.assignedTo === "string" && resObj.assignedTo.trim()
           ? ` Assigned to ${String(resObj.assignedTo).trim()}.`
           : "";
-      notifySuccess(`${baseMsg}${assigned}`);
+      notifySuccess("Lead successfully handed off to sales team.");
       setVerifyModalOpen(false);
+      setLead((prev) => ({
+        ...prev,
+        verified: true,
+        stageBlock: {
+          ...prev.stageBlock,
+          presalesMilestoneStage: "Data Conversion",
+          presalesMilestoneCategory: "Won",
+          presalesMilestoneSubStage: "Assigned",
+        },
+      }));
+      setBaseDetail((prev) =>
+        mergePresalesMilestoneIntoDetail(prev, {
+          presalesMilestoneStage: "Data Conversion",
+          presalesMilestoneCategory: "Won",
+          presalesMilestoneSubStage: "Assigned",
+        }),
+      );
       await load();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Verify failed");
@@ -1873,6 +1897,46 @@ export default function LeadDetailsApiClient({
     [leadId, leadTypeParam, refreshActivities, validLeadType],
   );
 
+  const presalesHandedOff = useMemo(
+    () => isPresalesHandedOffReadOnly(verifyLeadRecord, viewerRoleKey),
+    [verifyLeadRecord, viewerRoleKey],
+  );
+  const inSalesPhase = useMemo(
+    () => isLeadHandedOffToSales(lead) || isLeadHandedOffToSales(verifyLeadRecord),
+    [lead, verifyLeadRecord],
+  );
+
+  const handlePresalesCompleteTaskApi = async (args: PresalesCompleteTaskApiPayload) => {
+    if (!validLeadType) return;
+    if (presalesHandedOff) {
+      throw new Error(
+        "This lead has been handed off to sales. No further updates allowed.",
+      );
+    }
+    const lt = leadTypeParam as CrmLeadType;
+    const body = mergePresalesMilestoneIntoDetail(baseDetail, {
+      presalesMilestoneStage: args.presalesMilestoneStage,
+      presalesMilestoneCategory: args.presalesMilestoneCategory,
+      presalesMilestoneSubStage: args.presalesMilestoneSubStage,
+    });
+    const updated = await putLeadDetail(lt, leadId, body);
+    setBaseDetail(updated);
+    setLead((prev) => ({
+      ...detailJsonToLead(updated, lt),
+      id: leadId,
+      activities: prev.activities,
+      stageBlock: {
+        ...prev.stageBlock,
+        presalesMilestoneStage: args.presalesMilestoneStage,
+        presalesMilestoneCategory: args.presalesMilestoneCategory,
+        presalesMilestoneSubStage: args.presalesMilestoneSubStage,
+      },
+    }));
+    notifySuccess("Saved");
+    void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
+    void refreshActivities();
+  };
+
   const handleCompleteTaskApi = async (args: CompleteTaskApiPayload) => {
       if (!validLeadType) return;
       if (!leadId.trim()) {
@@ -2100,7 +2164,16 @@ export default function LeadDetailsApiClient({
         />
         <LeadHeader
           lead={lead}
-          onCompleteTask={() => setCompleteTaskOpen(true)}
+          userRole={viewerRoleKey}
+          presalesHandedOff={presalesHandedOff}
+          onCompleteTask={() => {
+            if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
+            setCompleteTaskOpen(true);
+          }}
+          completeTaskDisabled={
+            (presalesHandedOff && isPresalesRole(viewerRoleKey)) ||
+            (inSalesPhase && isPresalesRole(viewerRoleKey))
+          }
           onGetQuote={() => void handleGetQuote()}
           quoteFetching={quoteFetching}
           showGetQuote={canShowGetQuote}
@@ -2108,7 +2181,9 @@ export default function LeadDetailsApiClient({
           showCallClosed={
             canClosedLeadHeader &&
             (lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "decision" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed") &&
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience & design" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience and design") &&
             !isClosedWonBookingDone(lead.stageBlock)
           }
           canStageRollback={isSuperAdmin}
@@ -2178,7 +2253,16 @@ export default function LeadDetailsApiClient({
         lead={lead}
         open={completeTaskOpen}
         onClose={() => setCompleteTaskOpen(false)}
-        onApiComplete={handleCompleteTaskApi}
+        onApiComplete={
+          isPresalesRole(viewerRoleKey) ? undefined : handleCompleteTaskApi
+        }
+        onPresalesApiComplete={
+          isPresalesRole(viewerRoleKey) && !inSalesPhase
+            ? handlePresalesCompleteTaskApi
+            : undefined
+        }
+        userRole={viewerRoleKey}
+        presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
       />
       {rollbackOpen ? (

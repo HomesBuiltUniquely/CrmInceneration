@@ -10,6 +10,8 @@ type FetchCrmPipelineOptions = {
   nested?: boolean;
   forCompleteTask?: boolean;
   currentStage?: string;
+  /** Hub pipeline variant, e.g. `PRESALES_EXECUTIVE` | `SALES_EXECUTIVE`. */
+  role?: string;
 };
 
 export async function fetchCrmPipeline(
@@ -21,6 +23,7 @@ export async function fetchCrmPipeline(
   if (opts.nested !== false) q.set("nested", "true");
   if (opts.forCompleteTask) q.set("forCompleteTask", "true");
   if (opts.currentStage?.trim()) q.set("currentStage", opts.currentStage.trim());
+  if (opts.role?.trim()) q.set("role", opts.role.trim());
   const qs = q.toString();
   const suffix = qs ? `?${qs}` : "";
   const urls = [

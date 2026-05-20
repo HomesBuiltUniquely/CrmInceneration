@@ -2,6 +2,12 @@
 
 import { computeMilestoneProgress, normalizeStageKey } from "@/lib/milestone-progress";
 import { getLeadDisplayName } from "@/lib/lead-display";
+import {
+  getDisplayMilestone,
+  isLeadHandedOffToSales,
+  isPresalesHandedOffReadOnly,
+  presalesTopLevelStage,
+} from "@/lib/presales-milestone";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
@@ -58,10 +64,16 @@ export type ApiLead = {
   /** Next follow-up (string in API; parse client-side for “today” / overdue). */
   followUpDate?: string | null;
   additionalLeadSources?: string | string[] | null;
+  presalesMilestoneStage?: string | null;
+  presalesMilestoneCategory?: string | null;
+  presalesMilestoneSubStage?: string | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
     milestoneSubStage?: string | null;
+    presalesMilestoneStage?: string | null;
+    presalesMilestoneCategory?: string | null;
+    presalesMilestoneSubStage?: string | null;
     stage?: string | null;
     substage?: { substage?: string | null } | null;
   } | null;
@@ -87,6 +99,9 @@ export type LeadRowModel = {
   owner: { name: string };
   engagement: { time: string; action: string; tone?: "ok" | "late" };
   actionIcon?: "bolt" | "alert";
+  /** Orange = presales pipeline, blue = sales pipeline (list journey column). */
+  pipelineBadge?: "presales" | "sales";
+  handedOffReadOnly?: boolean;
 };
 
 function pickLeadScalar(lead: ApiLead, keys: string[]): unknown {
@@ -313,19 +328,23 @@ export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): C
 export function mapApiLeadToRow(
   lead: ApiLead,
   sourceLeadType: CrmLeadType,
-  orderedPipelineStages: string[] = []
+  orderedPipelineStages: string[] = [],
+  userRole = "",
 ): LeadRowModel {
+  const display = getDisplayMilestone(lead, userRole);
   const st = lead.stage;
-  const statusLabel =
-    st?.milestoneSubStage?.trim() ||
-    st?.milestoneStage?.trim() ||
-    st?.substage?.substage?.trim() ||
-    undefined;
+  const statusLabel = display.isPresales
+    ? display.subStage || display.category || display.stage
+    : st?.milestoneSubStage?.trim() ||
+      st?.milestoneStage?.trim() ||
+      st?.substage?.substage?.trim() ||
+      undefined;
 
-  const ms = crmLeadTopLevelStage(lead);
+  const ms = display.isPresales ? presalesTopLevelStage(lead) : crmLeadTopLevelStage(lead);
   const prog = computeMilestoneProgress(ms, orderedPipelineStages);
-  const fallbackJourney =
-    (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
+  const fallbackJourney = display.isPresales
+    ? (display.category || display.stage || "PIPELINE").trim() || "PIPELINE"
+    : (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
   const journeyStage =
     orderedPipelineStages.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
 
@@ -350,5 +369,10 @@ export function mapApiLeadToRow(
       tone: "ok",
     },
     actionIcon: "bolt",
+    pipelineBadge:
+      display.isPresales && !isLeadHandedOffToSales(lead)
+        ? "presales"
+        : "sales",
+    handedOffReadOnly: isPresalesHandedOffReadOnly(lead, userRole),
   };
 }

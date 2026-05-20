@@ -12,10 +12,7 @@ import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { crmLeadTopLevelStage } from "@/lib/leads-filter";
 import type { MilestonePathItem } from "@/types/crm-pipeline";
 import type { CrmPipelineResponse } from "@/types/crm-pipeline";
-import {
-  applyNewCrmCutoff,
-  setEffectiveNewCrmDateRange,
-} from "@/lib/new-crm-cutoff";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 import Milestones from "./Milestones";
 import MilestonePaths from "./MilestonePaths";
 
@@ -116,7 +113,7 @@ async function fetchDashboardLeads(filters: DashboardFilterState): Promise<ApiLe
       leadsById.set(id, lead);
     }
   }
-  return applyNewCrmCutoff([...leadsById.values()], true);
+  return [...leadsById.values()];
 }
 
 type Props = {
@@ -153,8 +150,8 @@ export default function CrmPipeline({ filters }: Props) {
     let cancelled = false;
     void (async () => {
       try {
-        const [pipeline, leads, subMapRes] = await Promise.all([
-          fetchCrmPipeline(true),
+        const [salesPipeline, leads, subMapRes] = await Promise.all([
+          fetchCrmPipeline({ nested: true, role: "SALES_EXECUTIVE" }),
           fetchDashboardLeads(sharedFilters),
           fetch("/api/milestone-count?resource=sub-status", {
             cache: "no-store",
@@ -163,7 +160,7 @@ export default function CrmPipeline({ filters }: Props) {
           }),
         ]);
         if (cancelled) return;
-        setData(pipeline);
+        setData(salesPipeline);
         setFilteredLeads(leads);
 
         if (subMapRes.ok) {
@@ -173,11 +170,10 @@ export default function CrmPipeline({ filters }: Props) {
           setSubMappings([]);
         }
 
-        const stages = buildMilestoneStages(pipeline.entries, pipeline.nested);
-        const first = stages[0]?.stage ?? null;
+        const stages = buildMilestoneStages(salesPipeline.entries, salesPipeline.nested);
         setSelectedStage((prev) => {
           if (prev && stages.some((s) => s.stage === prev)) return prev;
-          return first;
+          return "Total Leads";
         });
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load pipeline");
@@ -203,10 +199,17 @@ export default function CrmPipeline({ filters }: Props) {
     return acc;
   }, {});
 
-  const stages: MilestoneStage[] = (data ? buildMilestoneStages(data.entries, data.nested) : []).map((s) => ({
+  const baseStages: MilestoneStage[] = (data ? buildMilestoneStages(data.entries, data.nested) : []).map((s) => ({
     ...s,
     count: stageCounts[s.stage] ?? stageCounts[s.label] ?? 0,
   }));
+
+  const totalLeads = baseStages.reduce((sum, s) => sum + s.count, 0);
+
+  const stages: MilestoneStage[] = [
+    { stage: "Total Leads", label: "Total Leads", count: totalLeads },
+    ...baseStages,
+  ];
 
   const onSelectStage = useCallback((stage: string) => {
     setSelectedStage(stage);
@@ -217,7 +220,9 @@ export default function CrmPipeline({ filters }: Props) {
       setPathData(null);
       return;
     }
-    const scopedLeads = filteredLeads.filter((lead) => norm(stageFromLead(lead)) === norm(selectedStage));
+
+    const isTotalLeads = norm(selectedStage) === "total leads";
+    const scopedLeads = isTotalLeads ? filteredLeads : filteredLeads.filter((lead) => norm(stageFromLead(lead)) === norm(selectedStage));
     const bySub = scopedLeads.reduce<Map<string, number>>((acc, lead) => {
       const sub = subStageFromLead(lead);
       if (!sub) return acc;
@@ -230,7 +235,7 @@ export default function CrmPipeline({ filters }: Props) {
     let wi = 0;
     let li = 0;
     for (const m of subMappings ?? []) {
-      if (norm(m.stage) !== norm(selectedStage)) continue;
+      if (!isTotalLeads && norm(m.stage) !== norm(selectedStage)) continue;
       const count = bySub.get(norm(m.subStageName)) ?? 0;
       const item: MilestonePathItem = {
         title: m.subStageName.toUpperCase(),
@@ -244,7 +249,7 @@ export default function CrmPipeline({ filters }: Props) {
     const lostTotal = lostItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
     setPathData({
       stageTitle: selectedStage,
-      stageSubtitle: subtitleForStage(selectedStage),
+      stageSubtitle: isTotalLeads ? "All stages combined" : subtitleForStage(selectedStage),
       totalActiveLeads: scopedLeads.length,
       wonTotal,
       lostTotal,

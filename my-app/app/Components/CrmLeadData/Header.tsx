@@ -20,6 +20,7 @@ import {
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
+import { appendMilestoneFilterQuery } from "@/lib/presales-milestone";
 import {
   hierarchyUserDisplayName,
   normalizeLegacyHierarchyUser,
@@ -312,9 +313,13 @@ export default function Header() {
       isPresalesRole(currentRole) && presalesSummaryTab !== null;
     if (presalesMonthCards) q.set("crmMonthWindow", "current");
     else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
-    if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
-    if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
-    if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
+    appendMilestoneFilterQuery(
+      q,
+      currentRole,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+    );
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     if (presalesVerificationStatus.trim()) q.set("verificationStatus", presalesVerificationStatus.trim());
     return q.toString();

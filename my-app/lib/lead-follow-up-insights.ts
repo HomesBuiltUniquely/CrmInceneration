@@ -3,6 +3,7 @@ import {
   isFollowUpDueLocalToday,
   isFollowUpOverdueLocal,
 } from "@/lib/follow-up-date";
+import { filterLeadsForMilestoneInsightMode } from "@/lib/lead-milestone-insight-tiles";
 
 export function readFollowUpDateRaw(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
@@ -304,7 +305,12 @@ export type InsightTableMode =
   | "overdueClosure"
   | "callDelayed"
   | "totalCalls"
-  | "teamLeads";
+  | "teamLeads"
+  | "meetingScheduled"
+  | "meetingRescheduled"
+  | "meetingCancelled"
+  | "quoteSent"
+  | "quoteDue";
 
 export function filterLeadsForInsightMode(
   leads: ApiLead[],
@@ -312,6 +318,15 @@ export function filterLeadsForInsightMode(
   opts: InsightCountOpts,
 ): ApiLead[] {
   if (!mode) return leads;
+  if (
+    mode === "meetingScheduled" ||
+    mode === "meetingRescheduled" ||
+    mode === "meetingCancelled" ||
+    mode === "quoteSent" ||
+    mode === "quoteDue"
+  ) {
+    return filterLeadsForMilestoneInsightMode(leads, mode, opts);
+  }
   const norm = (s: string) => s.trim().toLowerCase();
   const me = norm(opts.currentUserName);
   const teamSet = new Set(opts.managerTeamNames.map(norm));
