@@ -2108,7 +2108,9 @@ export default function LeadDetailsApiClient({
           showCallClosed={
             canClosedLeadHeader &&
             (lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "decision" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed") &&
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience & design" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience and design") &&
             !isClosedWonBookingDone(lead.stageBlock)
           }
           canStageRollback={isSuperAdmin}
