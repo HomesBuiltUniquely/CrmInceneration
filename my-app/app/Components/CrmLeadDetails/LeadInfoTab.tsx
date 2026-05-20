@@ -172,6 +172,7 @@ export default function LeadInfoTab({
   const budgetOptions = normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
     ? [normalizedBudget, ...BUDGET_OPTIONS]
     : BUDGET_OPTIONS;
+  const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
 
   const handleAdditionalInfoToggle = async () => {
     if (!additionalInfoEditable) {
@@ -281,10 +282,23 @@ export default function LeadInfoTab({
             <div>
               <FieldLabel>Configuration</FieldLabel>
               <Input
+                placeholder={
+                  isAdsLead
+                    ? "e.g. 2 BHK — add here if not from the ad"
+                    : "e.g. 2 BHK"
+                }
                 {...(c
                   ? { value: lead.configuration, onChange: (e) => c({ configuration: e.target.value }) }
                   : { defaultValue: lead.configuration })}
               />
+              {Boolean(c) && isAdsLead && !(lead.configuration ?? "").trim() && (
+                <p className="mt-1.5 text-[11px] text-[var(--crm-text-muted)]">
+                  Not provided by the ad form — enter configuration and use{" "}
+                  <strong className="font-semibold text-[var(--crm-text-secondary)]">Save</strong> (or
+                  Additional Information <strong className="font-semibold text-[var(--crm-text-secondary)]">Done</strong>)
+                  to store it on the lead.
+                </p>
+              )}
             </div>
           </div>
 
