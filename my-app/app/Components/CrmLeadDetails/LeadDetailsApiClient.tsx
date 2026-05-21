@@ -70,6 +70,10 @@ import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline, isLostCategory } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import {
+  isClosedWonBookingDoneSubstage,
+  isClosedWonCustomerSubstage,
+} from "@/lib/milestone-substage-map";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
@@ -581,9 +585,10 @@ function truncateLabel(label: string, max = 80): string {
 
 function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boolean {
   return (
-    (stageBlock?.milestoneStage ?? "").trim() === "Closed" &&
-    (stageBlock?.milestoneStageCategory ?? "").trim() === "Closed Won" &&
-    (stageBlock?.milestoneSubStage ?? "").trim() === "Booking Done (Booking)"
+    (stageBlock?.milestoneStage ?? "").trim().toLowerCase() === "closed" &&
+    (stageBlock?.milestoneStageCategory ?? "").trim().toLowerCase() ===
+      "closed won" &&
+    isClosedWonBookingDoneSubstage(stageBlock?.milestoneSubStage ?? "")
   );
 }
 
@@ -607,9 +612,9 @@ function isNoFollowUpRequired(args: {
   const category = args.milestoneStageCategory.trim();
   const sub      = args.milestoneSubStage.trim();
   if (
-    stage    === "Closed" &&
-    category === "Closed Won" &&
-    (sub === "Booking Done (Booking)" || sub === "Token Done")
+    stage.toLowerCase() === "closed" &&
+    category.toLowerCase() === "closed won" &&
+    isClosedWonCustomerSubstage(sub)
   ) {
     return true;
   }
@@ -2275,6 +2280,27 @@ export default function LeadDetailsApiClient({
         userRole={viewerRoleKey}
         presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
+        quoteInline={
+          usePresalesCompleteTask
+            ? undefined
+            : {
+                quoteLink: lead.quoteLink ?? "",
+                onQuoteLinkChange: (v) => patchLead({ quoteLink: v }),
+                subject: quoteSubject,
+                onSubjectChange: setQuoteSubject,
+                body: quoteBody,
+                onBodyChange: setQuoteBody,
+                onSend: handleSendQuote,
+                sending: quoteSending,
+                onGetQuote: handleGetQuote,
+                gettingQuote: quoteFetching,
+              }
+        }
+        onOpenSalesClosure={
+          usePresalesCompleteTask || !canClosedLeadHeader
+            ? undefined
+            : openStrictSalesClosureNewTab
+        }
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">

@@ -13,64 +13,17 @@ const SALES_PIPELINE_ORDER = [
 ] as const;
 
 export function salesAllowedForwardStages(currentStage: string): string[] {
-  const canonical = normalizeSalesMilestoneStageForPipeline(currentStage);
-  const key = normalizeStageKey(canonical);
+  const key = normalizeStageKey(currentStage);
   const idx = SALES_PIPELINE_ORDER.findIndex((s) => normalizeStageKey(s) === key);
   if (idx < 0) return [];
   if (idx >= SALES_PIPELINE_ORDER.length - 1) {
     return [SALES_PIPELINE_ORDER[idx]!];
   }
+  /** Hub `forCompleteTask` for Fresh Lead lists Discovery + Connection substages together. */
+  if (key === "fresh lead") {
+    return ["Discovery", "Connection"];
+  }
   return [SALES_PIPELINE_ORDER[idx + 1]!];
-}
-
-/** Map API / UI variants to canonical sales pipeline stage names. */
-export function normalizeSalesMilestoneStageForPipeline(stage: string): string {
-  const key = normalizeStageKey(stage);
-  if (!key || key === "fresh" || key === "fresh lead" || key === "fresh leads") {
-    return "Fresh Lead";
-  }
-  const match = SALES_PIPELINE_ORDER.find((s) => normalizeStageKey(s) === key);
-  return match ?? stage.trim();
-}
-
-function looksLikeFreshLeadMilestone(
-  stage: string,
-  category: string,
-  subStage: string,
-): boolean {
-  for (const value of [stage, category, subStage]) {
-    const key = normalizeStageKey(value);
-    if (key === "fresh lead" || key === "fresh leads" || key === "fresh") {
-      return true;
-    }
-  }
-  return false;
-}
-
-/** Resolve sales Complete Task stage (Fresh Lead when milestone is empty but lead is still fresh). */
-export function resolveSalesCompleteTaskStage(args: {
-  milestoneStage: string;
-  milestoneCategory?: string;
-  milestoneSubStage?: string;
-  nested?: CrmNestedStage[];
-}): string {
-  const stage = args.milestoneStage.trim();
-  if (stage) return normalizeSalesMilestoneStageForPipeline(stage);
-  if (
-    looksLikeFreshLeadMilestone(
-      "",
-      args.milestoneCategory ?? "",
-      args.milestoneSubStage ?? "",
-    )
-  ) {
-    return "Fresh Lead";
-  }
-  const inferred = inferSalesStageFromNested(
-    args.nested ?? [],
-    args.milestoneSubStage ?? "",
-  );
-  if (inferred.trim()) return normalizeSalesMilestoneStageForPipeline(inferred);
-  return "Fresh Lead";
 }
 
 const PRESALES_STAGE_KEYS = new Set([
@@ -442,31 +395,10 @@ export function resolveCompleteTaskMappings(args: {
     return [];
   }
 
-  const salesStage = resolveSalesCompleteTaskStage({
-    milestoneStage: args.currentStage,
-    milestoneCategory: args.currentCategory,
-    milestoneSubStage: args.currentSubStage,
-    nested,
-  });
-
-  if (!salesStage.trim()) return [];
-
-  // Hub `forCompleteTask` may return two hops (e.g. Discovery + Connection on Fresh Lead).
-  // Client enforces exactly current milestone + one next milestone only.
-  if (args.completeTaskEntries.length > 0) {
-    const fromEntries = filterSalesCompleteTaskMappings(
-      entriesToMappings(args.completeTaskEntries),
-      salesStage,
-    );
-    if (fromEntries.length > 0) {
-      return sortMappingsByNestedPipelineOrder(nested, fromEntries);
-    }
-  }
-
-  if (nested.length > 0) {
+  if (nested.length > 0 && args.currentStage.trim()) {
     const fromNested = flattenSubstagesForCurrentAndNextStages(
       nested,
-      salesStage,
+      args.currentStage,
       salesAllowedForwardStages,
       (stage) => isPresalesTopLevelStage(stage),
     );
@@ -475,5 +407,9 @@ export function resolveCompleteTaskMappings(args: {
     }
   }
 
-  return [];
+  const fromEntries = filterSalesCompleteTaskMappings(
+    entriesToMappings(args.completeTaskEntries),
+    args.currentStage,
+  );
+  return sortMappingsByNestedPipelineOrder(nested, fromEntries);
 }
