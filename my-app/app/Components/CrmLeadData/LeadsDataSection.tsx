@@ -507,6 +507,7 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
 }> {
   const leadsQs = new URLSearchParams({
     mergeAll: "1",
+    milestoneScope: "crm",
     page: "0",
     size: "250",
     sort: "updatedAt,desc",
@@ -1877,6 +1878,11 @@ export default function LeadsDataSection({
             all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
           }));
         }
+        if (pageJson.accessDeniedLeadTypes?.length) {
+          notifyError(
+            `Could not load lead types: ${pageJson.accessDeniedLeadTypes.join(", ")}. Check your role or sign in again.`,
+          );
+        }
         if (usePageMetaForUi) {
           onHeatmapSummarySync?.(pageJson.summaryTotals ?? null);
         }
@@ -1962,6 +1968,7 @@ export default function LeadsDataSection({
     verificationStatusProp,
     crmMonthWindowProp,
     onHeatmapSummarySync,
+    notifyError,
   ]);
 
   useEffect(() => {

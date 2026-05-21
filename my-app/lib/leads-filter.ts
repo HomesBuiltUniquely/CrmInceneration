@@ -28,6 +28,8 @@ export type SpringPage<T> = {
   size: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
+  /** Present when mergeAll could not load one or more lead types (e.g. Hub 403). */
+  accessDeniedLeadTypes?: CrmLeadType[];
 };
 
 /** Minimal lead fields from backend; extend as entity stabilizes. */

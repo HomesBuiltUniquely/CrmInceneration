@@ -2,6 +2,26 @@ import type { CrmNestedStage, CrmPipelineEntry } from "@/types/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import { presalesAllowedForwardStages } from "@/lib/presales-milestone";
 
+/** Sales CRM pipeline order (matches Hub `/Leads/crm-pipeline` nested stages). */
+const SALES_PIPELINE_ORDER = [
+  "Fresh Lead",
+  "Discovery",
+  "Connection",
+  "Experience & Design",
+  "Decision",
+  "Closed",
+] as const;
+
+export function salesAllowedForwardStages(currentStage: string): string[] {
+  const key = normalizeStageKey(currentStage);
+  const idx = SALES_PIPELINE_ORDER.findIndex((s) => normalizeStageKey(s) === key);
+  if (idx < 0) return [];
+  if (idx >= SALES_PIPELINE_ORDER.length - 1) {
+    return [SALES_PIPELINE_ORDER[idx]!];
+  }
+  return [SALES_PIPELINE_ORDER[idx + 1]!];
+}
+
 const PRESALES_STAGE_KEYS = new Set([
   "fresh data",
   "data discovery",
@@ -78,12 +98,103 @@ export function presalesCatalogFromPipelineResponse(args: {
   return filterToPresalesStages(entriesToMappings(args.entries ?? []));
 }
 
+function allowedCompleteTaskStageKeys(
+  currentStage: string,
+  forwardStagesFor: (stage: string) => string[],
+): Set<string> {
+  const keys = new Set<string>();
+  const cur = normalizeStageKey(currentStage);
+  if (cur) keys.add(cur);
+  for (const s of forwardStagesFor(currentStage)) {
+    const k = normalizeStageKey(s);
+    if (k) keys.add(k);
+  }
+  return keys;
+}
+
 /**
- * Presales: limit to current top-level stage + allowed forward stages, and within the
- * current stage only the active substage and the next substage in the same category.
+ * Complete Task UX: all substages (every path/category) for the current milestone
+ * and all substages for the next allowed milestone(s).
  */
+export function flattenSubstagesForCurrentAndNextStages(
+  nested: CrmNestedStage[],
+  currentStage: string,
+  forwardStagesFor: (stage: string) => string[],
+  skipStage?: (stage: string) => boolean,
+): CompleteTaskMapping[] {
+  const allowed = allowedCompleteTaskStageKeys(currentStage, forwardStagesFor);
+  if (allowed.size === 0) return [];
+
+  const out: CompleteTaskMapping[] = [];
+  for (const node of nested) {
+    const stage = node.stage.trim();
+    if (!stage || skipStage?.(stage)) continue;
+    if (!allowed.has(normalizeStageKey(stage))) continue;
+    for (const cat of node.categories ?? []) {
+      const stageCategory = cat.stageCategory.trim();
+      for (const sub of cat.subStages ?? []) {
+        const subStageName = String(sub).trim();
+        if (!subStageName) continue;
+        out.push({ stage, stageCategory, subStageName });
+      }
+    }
+  }
+  return dedupeMappings(out);
+}
+
+export function filterToCurrentAndNextStageMappings(
+  mappings: CompleteTaskMapping[],
+  currentStage: string,
+  forwardStagesFor: (stage: string) => string[],
+): CompleteTaskMapping[] {
+  const allowed = allowedCompleteTaskStageKeys(currentStage, forwardStagesFor);
+  return dedupeMappings(
+    mappings.filter((row) => allowed.has(normalizeStageKey(row.stage))),
+  );
+}
+
 export function filterPresalesCompleteTaskMappings(
   mappings: CompleteTaskMapping[],
+  currentStage: string,
+): CompleteTaskMapping[] {
+  return filterToPresalesStages(
+    filterToCurrentAndNextStageMappings(mappings, currentStage, presalesAllowedForwardStages),
+  );
+}
+
+export function filterSalesCompleteTaskMappings(
+  mappings: CompleteTaskMapping[],
+  currentStage: string,
+): CompleteTaskMapping[] {
+  return filterToCurrentAndNextStageMappings(
+    mappings,
+    currentStage,
+    salesAllowedForwardStages,
+  );
+}
+
+/** Resolve sales top-level stage when `milestoneStage` is missing but substage exists in pipeline nested tree. */
+export function inferSalesStageFromNested(
+  nested: CrmNestedStage[],
+  milestoneSubStage: string,
+): string {
+  const subKey = normalizeStageKey(milestoneSubStage);
+  if (!subKey) return "";
+  for (const node of nested) {
+    const stage = node.stage.trim();
+    if (!stage || isPresalesTopLevelStage(stage)) continue;
+    for (const cat of node.categories ?? []) {
+      for (const sub of cat.subStages ?? []) {
+        if (normalizeStageKey(String(sub)) === subKey) return stage;
+      }
+    }
+  }
+  return "";
+}
+
+/** Presales fallback: current + next stage; within current stage only current + next substage in path. */
+function buildPresalesForwardCompleteTaskMappingsFromNested(
+  nested: CrmNestedStage[],
   currentStage: string,
   currentCategory: string,
   currentSubStage: string,
@@ -97,105 +208,21 @@ export function filterPresalesCompleteTaskMappings(
   ]);
 
   const out: CompleteTaskMapping[] = [];
-  for (const row of mappings) {
-    const stageKey = normalizeStageKey(row.stage);
-    if (!allowedStageKeys.has(stageKey)) continue;
-
-    if (stageKey !== curStageKey) {
-      out.push(row);
-      continue;
-    }
-
-    if (!curSubKey) {
-      const catKey = normalizeStageKey(row.stageCategory);
-      const already = out.some(
-        (r) =>
-          normalizeStageKey(r.stage) === stageKey &&
-          normalizeStageKey(r.stageCategory) === catKey,
-      );
-      if (!already) out.push(row);
-      continue;
-    }
-
-    if (curCatKey && normalizeStageKey(row.stageCategory) !== curCatKey) {
-      continue;
-    }
-
-    out.push(row);
-  }
-
-  if (!curSubKey || out.length === 0) {
-    return dedupeMappings(out);
-  }
-
-  const byCategory = new Map<string, CompleteTaskMapping[]>();
-  for (const row of out) {
-    if (normalizeStageKey(row.stage) !== curStageKey) continue;
-    const cat = normalizeStageKey(row.stageCategory);
-    const list = byCategory.get(cat) ?? [];
-    list.push(row);
-    byCategory.set(cat, list);
-  }
-
-  const trimmed: CompleteTaskMapping[] = [];
-  for (const row of out) {
-    if (normalizeStageKey(row.stage) !== curStageKey) {
-      trimmed.push(row);
-      continue;
-    }
-    const cat = normalizeStageKey(row.stageCategory);
-    const subs = byCategory.get(cat) ?? [];
-    const idx = subs.findIndex(
-      (s) => normalizeStageKey(s.subStageName) === curSubKey,
-    );
-    if (idx < 0) {
-      trimmed.push(row);
-      continue;
-    }
-    const subKey = normalizeStageKey(row.subStageName);
-    const keep =
-      subKey === curSubKey ||
-      (idx + 1 < subs.length &&
-        normalizeStageKey(subs[idx + 1].subStageName) === subKey);
-    if (keep) trimmed.push(row);
-  }
-
-  return dedupeMappings(trimmed.length > 0 ? trimmed : out);
-}
-
-/** Build forward-only options when Hub `forCompleteTask` returns no presales rows. */
-export function buildPresalesCompleteTaskMappingsFromNested(
-  nested: CrmNestedStage[],
-  currentStage: string,
-  currentCategory: string,
-  currentSubStage: string,
-): CompleteTaskMapping[] {
-  const curStageKey = normalizeStageKey(currentStage);
-  const curCatKey = normalizeStageKey(currentCategory);
-  const curSubKey = normalizeStageKey(currentSubStage);
-  const forwardNames = presalesAllowedForwardStages(currentStage);
-  const allowedStageKeys = new Set([
-    curStageKey,
-    ...forwardNames.map((s) => normalizeStageKey(s)),
-  ]);
-
-  const out: CompleteTaskMapping[] = [];
 
   for (const node of nested) {
     const stage = node.stage.trim();
-    if (!stage) continue;
+    if (!stage || !isPresalesTopLevelStage(stage)) continue;
     const stageKey = normalizeStageKey(stage);
     if (!allowedStageKeys.has(stageKey)) continue;
 
     const isCurrent = stageKey === curStageKey;
-    const isForward = !isCurrent;
 
     for (const cat of node.categories ?? []) {
       const stageCategory = cat.stageCategory.trim();
       const subs = (cat.subStages ?? []).map((s) => s.trim()).filter(Boolean);
       if (!subs.length) continue;
 
-      if (isForward) {
+      if (!isCurrent) {
         out.push({ stage, stageCategory, subStageName: subs[0] });
         continue;
       }
@@ -220,9 +247,35 @@ export function buildPresalesCompleteTaskMappingsFromNested(
   return dedupeMappings(out);
 }
 
+export function buildPresalesCompleteTaskMappingsFromNested(
+  nested: CrmNestedStage[],
+  currentStage: string,
+  currentCategory: string,
+  currentSubStage: string,
+): CompleteTaskMapping[] {
+  return buildPresalesForwardCompleteTaskMappingsFromNested(
+    nested,
+    currentStage,
+    currentCategory,
+    currentSubStage,
+  );
+}
+
+export function buildSalesCompleteTaskMappingsFromNested(
+  nested: CrmNestedStage[],
+  currentStage: string,
+): CompleteTaskMapping[] {
+  return flattenSubstagesForCurrentAndNextStages(
+    nested,
+    currentStage,
+    salesAllowedForwardStages,
+    (stage) => isPresalesTopLevelStage(stage),
+  );
+}
+
 /**
- * Sales-aligned: `forCompleteTask=true` rows are authoritative (current + next substages).
- * Do not union full-pipeline rows for the current stage — that exposes every substage name.
+ * Sales Complete Task: all substages for current milestone + all substages for next milestone(s).
+ * Presales: full catalog (all Fresh Data / Data Discovery / Data Conversion substages), then forward-only fallback.
  */
 export function resolveCompleteTaskMappings(args: {
   completeTaskEntries: CrmPipelineEntry[];
@@ -231,38 +284,41 @@ export function resolveCompleteTaskMappings(args: {
   currentStage: string;
   currentCategory?: string;
   currentSubStage?: string;
-  /**
-   * When false, presales `forCompleteTask` rows from Hub are used as-is (backend filters current + next).
-   * When true, apply client-side forward filter (fallback full `nested=true` catalog only).
-   */
   applyPresalesClientFilter?: boolean;
 }): CompleteTaskMapping[] {
-  let mappings = entriesToMappings(args.completeTaskEntries);
+  void args.applyPresalesClientFilter;
 
-  const shouldClientFilter =
-    args.presalesMode && mappings.length > 0 && args.applyPresalesClientFilter !== false;
+  if (args.presalesMode) {
+    const fullCatalog = presalesCatalogFromPipelineResponse({
+      entries: args.completeTaskEntries,
+      nested: args.nested,
+    });
+    if (fullCatalog.length > 0) return fullCatalog;
 
-  if (shouldClientFilter) {
-    mappings = filterPresalesCompleteTaskMappings(
-      mappings,
-      args.currentStage,
-      args.currentCategory ?? "",
-      args.currentSubStage ?? "",
-    );
+    if ((args.nested?.length ?? 0) > 0 && args.currentStage.trim()) {
+      return buildPresalesCompleteTaskMappingsFromNested(
+        args.nested ?? [],
+        args.currentStage,
+        args.currentCategory ?? "",
+        args.currentSubStage ?? "",
+      );
+    }
+    return [];
   }
 
-  if (mappings.length > 0) return filterToPresalesStages(mappings);
-
-  if (args.presalesMode && (args.nested?.length ?? 0) > 0) {
-    const catalog = flattenPresalesNestedCatalog(args.nested ?? []);
-    if (catalog.length > 0) return catalog;
-    return buildPresalesCompleteTaskMappingsFromNested(
+  if ((args.nested?.length ?? 0) > 0 && args.currentStage.trim()) {
+    const fromNested = flattenSubstagesForCurrentAndNextStages(
       args.nested ?? [],
       args.currentStage,
-      args.currentCategory ?? "",
-      args.currentSubStage ?? "",
+      salesAllowedForwardStages,
+      (stage) => isPresalesTopLevelStage(stage),
     );
+    if (fromNested.length > 0) return fromNested;
   }
 
-  return [];
+  const fromEntries = filterSalesCompleteTaskMappings(
+    entriesToMappings(args.completeTaskEntries),
+    args.currentStage,
+  );
+  return fromEntries;
 }

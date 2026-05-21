@@ -73,10 +73,14 @@ import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-exec
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
 import {
+  isPresalesVerifyHandoffSelection,
+  PRESALES_VERIFY_HANDOFF_MESSAGE,
+} from "@/lib/presales-milestone-ui";
+import {
   isLeadHandedOffToSales,
   isPresalesHandedOffReadOnly,
 } from "@/lib/presales-milestone";
-import { isPresalesRole } from "@/lib/roleUtils";
+import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
 
 type SalesExecutiveOption = {
   id: number;
@@ -1905,6 +1909,13 @@ export default function LeadDetailsApiClient({
     () => isLeadHandedOffToSales(lead) || isLeadHandedOffToSales(verifyLeadRecord),
     [lead, verifyLeadRecord],
   );
+  /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
+  const usePresalesCompleteTask = useMemo(
+    () =>
+      !inSalesPhase &&
+      (isPresalesRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey)),
+    [inSalesPhase, viewerRoleKey],
+  );
 
   const handlePresalesCompleteTaskApi = async (args: PresalesCompleteTaskApiPayload) => {
     if (!validLeadType) return;
@@ -1912,6 +1923,17 @@ export default function LeadDetailsApiClient({
       throw new Error(
         "This lead has been handed off to sales. No further updates allowed.",
       );
+    }
+    if (
+      !isCrmLeadVerified(verifyLeadRecord) &&
+      isPresalesVerifyHandoffSelection({
+        stage: args.presalesMilestoneStage,
+        category: args.presalesMilestoneCategory,
+        subStage: args.presalesMilestoneSubStage,
+        feedbackLabel: args.feedback,
+      })
+    ) {
+      throw new Error(PRESALES_VERIFY_HANDOFF_MESSAGE);
     }
     const lt = leadTypeParam as CrmLeadType;
     const isFreshData =
@@ -2283,13 +2305,9 @@ export default function LeadDetailsApiClient({
         lead={lead}
         open={completeTaskOpen}
         onClose={() => setCompleteTaskOpen(false)}
-        onApiComplete={
-          isPresalesRole(viewerRoleKey) ? undefined : handleCompleteTaskApi
-        }
+        onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
         onPresalesApiComplete={
-          isPresalesRole(viewerRoleKey) && !inSalesPhase
-            ? handlePresalesCompleteTaskApi
-            : undefined
+          usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined
         }
         userRole={viewerRoleKey}
         presalesHandedOff={presalesHandedOff || inSalesPhase}
