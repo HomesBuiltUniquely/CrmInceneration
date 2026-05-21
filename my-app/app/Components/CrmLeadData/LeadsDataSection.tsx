@@ -499,7 +499,10 @@ async function fetchMergedPage(
   };
 }
 
-async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combined" = "default"): Promise<{
+async function fetchFilterOptions(
+  leadView: "default" | "my" | "team" | "combined" = "default",
+  viewerRole = "",
+): Promise<{
   assignees: string[];
   stages: string[];
   categories: string[];
@@ -517,13 +520,17 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
     leadsQs.set("roleView", leadView);
   }
   // "combined" uses merged filter without roleView (same as default)
+  const pipelineRole = crmPipelineRoleParam(normalizeRole(viewerRole));
+  const subStatusQs = new URLSearchParams({ resource: "sub-status" });
+  if (pipelineRole) subStatusQs.set("role", pipelineRole);
+
   const [leadsRes, subRes] = await Promise.all([
     fetch(`/api/crm/leads?${leadsQs.toString()}`, {
       cache: "no-store",
       credentials: "include",
       headers: getCrmAuthHeaders(),
     }),
-    fetch("/api/milestone-count?resource=sub-status", {
+    fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
       cache: "no-store",
       credentials: "include",
       headers: getCrmAuthHeaders(),
@@ -1456,7 +1463,7 @@ export default function LeadsDataSection({
     void (async () => {
       try {
         const [o, p] = await Promise.all([
-          fetchFilterOptions(filterOptionsView),
+          fetchFilterOptions(filterOptionsView, authRoleProp ?? currentRole),
           fetchCrmPipeline({ nested: true, role: pipelineRole }),
         ]);
         if (cancelled) return;
