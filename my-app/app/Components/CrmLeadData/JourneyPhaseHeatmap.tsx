@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { isPresalesRole } from "@/lib/crm-role-access";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { crmLeadTopLevelStage } from "@/lib/leads-filter";
+import { normalizeStageKey } from "@/lib/milestone-progress";
+import { presalesTopLevelStage } from "@/lib/presales-milestone";
 import {
   assigneeAliasNorms,
   filterLeadsForInsightMode,
@@ -16,6 +19,7 @@ import {
   leadAssignedToPresalesExecNameSet,
 } from "@/lib/presales-heatmap-helpers";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
+import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 
 type Phase = {
@@ -66,17 +70,22 @@ function toneByCount(count: number, max: number): Phase["tone"] {
   return "critical";
 }
 
-function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
+function mapLeadsToPhases(
+  leads: ApiLead[],
+  defaults: Phase[],
+  getTopLevelStage: (lead: ApiLead) => string,
+): Phase[] {
   const counts = new Map<string, number>();
   for (const lead of leads) {
-    const stage = crmLeadTopLevelStage(lead).trim();
+    const stage = getTopLevelStage(lead).trim();
     if (!stage) continue;
-    counts.set(stage, (counts.get(stage) ?? 0) + 1);
+    const key = normalizeStageKey(stage);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
   const max = Math.max(...counts.values(), 0);
   return defaults.map((phase) => {
-    const count = [...counts.entries()].find(([k]) => normName(k) === normName(phase.name))?.[1] ?? 0;
+    const count = counts.get(normalizeStageKey(phase.name)) ?? 0;
     return {
       ...phase,
       count,
@@ -345,6 +354,34 @@ function PresalesSummaryCard({
   );
 }
 
+/** Presales pipeline — `presalesMilestoneStage` on each lead. */
+const PRESALES_DEFAULT_PHASES: Phase[] = [
+  {
+    phaseLabel: "PHASE 00",
+    name: "Fresh Data",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "New intake — not yet in discovery" },
+  },
+  {
+    phaseLabel: "PHASE 01",
+    name: "Data Discovery",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "Qualifying and enriching lead data" },
+  },
+  {
+    phaseLabel: "PHASE 02",
+    name: "Data Conversion",
+    count: 0,
+    sharePct: 0,
+    tone: "warning",
+    note: { icon: "check", text: "Ready for verify / sales handoff" },
+  },
+];
+
 const DEFAULT_PHASES: Phase[] = [
   {
     phaseLabel: "PHASE 00",
@@ -441,13 +478,14 @@ export default function JourneyPhaseHeatmap({
     [poolLeads, insightTableMode, insightOpts],
   );
 
-  const phases = useMemo(() => {
-    return mapLeadsToPhases(filteredInsightLeads, DEFAULT_PHASES);
-  }, [filteredInsightLeads]);
-
   const roleKeyUi = normalizeRole(currentRole);
-  const usePresalesSummaryUi =
-    roleKeyUi === "PRESALES_EXECUTIVE" || roleKeyUi === "PRESALES_MANAGER";
+  const usePresalesSummaryUi = isPresalesRole(roleKeyUi);
+
+  const phases = useMemo(() => {
+    const defaults = usePresalesSummaryUi ? PRESALES_DEFAULT_PHASES : DEFAULT_PHASES;
+    const getStage = usePresalesSummaryUi ? presalesTopLevelStage : crmLeadTopLevelStage;
+    return mapLeadsToPhases(filteredInsightLeads, defaults, getStage);
+  }, [filteredInsightLeads, usePresalesSummaryUi]);
 
   const presalesIdentity = useMemo(() => {
     const myAliases = new Set(
@@ -625,6 +663,7 @@ export default function JourneyPhaseHeatmap({
           return false;
         };
         const roleScopedLeads = visibleLeads.filter((lead) => {
+          if (trustPresalesUpstreamLeadScope(roleKey)) return true;
           if (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN") return true;
           if (roleKey === "SALES_EXECUTIVE") {
             return isSelfLead(lead);

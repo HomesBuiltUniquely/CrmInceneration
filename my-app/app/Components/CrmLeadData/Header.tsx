@@ -480,9 +480,7 @@ export default function Header() {
                 milestoneSubStage={milestoneSubStage}
                 reinquiry={reinquiry}
                 verificationStatus={presalesVerificationStatus}
-                crmMonthWindow={
-                  isPresalesRole(currentRole) && presalesSummaryTab ? "current" : ""
-                }
+                crmMonthWindow=""
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
                   isPresalesManager && presalesSummaryTab === "teamVerified"
