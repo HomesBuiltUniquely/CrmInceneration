@@ -9,17 +9,19 @@ import {
   type AvailableSlotRow,
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
   filterSalesCompleteTaskMappings,
-  inferSalesStageFromNested,
   isPresalesTopLevelStage,
+  resolveSalesCompleteTaskStage,
   presalesCatalogFromPipelineResponse,
   resolveCompleteTaskMappings,
+  sortMappingsByNestedPipelineOrder,
 } from "@/lib/complete-task-pipeline";
-import {
-  isPresalesVerifyHandoffSelection,
-  PRESALES_VERIFY_HANDOFF_MESSAGE,
-} from "@/lib/presales-milestone-ui";
+import { isPresalesVerifyHandoffSelection } from "@/lib/presales-milestone-ui";
+import PresalesVerifyPanel, {
+  type PresalesSalesExecutiveOption,
+} from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory } from "@/lib/crm-pipeline";
@@ -86,6 +88,12 @@ function getTodayStartDateTimeLocal(): string {
   return `${year}-${month}-${day}T00:00`;
 }
 
+export type PresalesVerifyFromCompleteTaskPayload = {
+  pincode: string;
+  salesExecutiveId?: number;
+  note: string;
+};
+
 export type PresalesCompleteTaskApiPayload = {
   presalesMilestoneStage: string;
   presalesMilestoneCategory: string;
@@ -127,9 +135,16 @@ export default function CompleteTaskModal({
   onSave,
   onApiComplete,
   onPresalesApiComplete,
+  onPresalesVerify,
   onPhoneCall,
   userRole = "",
   presalesHandedOff = false,
+  presalesVerifyAvailable = false,
+  salesExecutiveOptions = [],
+  salesExecutivesLoading = false,
+  salesExecutivesError = null,
+  salesExecutiveLabel = (u: PresalesSalesExecutiveOption) =>
+    (u.fullName ?? u.username ?? `User ${u.id}`).trim(),
 }: {
   lead: Lead;
   open: boolean;
@@ -140,10 +155,18 @@ export default function CompleteTaskModal({
   onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
   /** Presales CRM API: PUT presales milestone fields only */
   onPresalesApiComplete?: (payload: PresalesCompleteTaskApiPayload) => Promise<void>;
+  /** When feedback is Assigned (verify handoff), runs verify API instead of milestone PUT. */
+  onPresalesVerify?: (payload: PresalesVerifyFromCompleteTaskPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
   userRole?: string;
   presalesHandedOff?: boolean;
+  /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
+  presalesVerifyAvailable?: boolean;
+  salesExecutiveOptions?: PresalesSalesExecutiveOption[];
+  salesExecutivesLoading?: boolean;
+  salesExecutivesError?: string | null;
+  salesExecutiveLabel?: (u: PresalesSalesExecutiveOption) => string;
 }) {
   const presalesMode = Boolean(onPresalesApiComplete);
   const presalesLeadVerified =
@@ -176,6 +199,8 @@ export default function CompleteTaskModal({
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
+  const [verifyPincode, setVerifyPincode] = useState("");
+  const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
   const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
@@ -221,10 +246,21 @@ export default function CompleteTaskModal({
     setApiError("");
     setGatePopupMessage("");
     setLostReason(lead.lostReason?.trim() ?? "");
+    setVerifyPincode(lead.pincode?.trim() ?? "");
+    setVerifySalesExecutiveId("");
     setModalBudget(lead.budget ?? "");
     setModalPropertyNotes(lead.propertyNotes ?? "");
     setModalConfiguration(lead.configuration ?? "");
-  }, [defaultNextCallDate, lead.budget, lead.configuration, lead.lostReason, lead.propertyNotes, lead.status, open]);
+  }, [
+    defaultNextCallDate,
+    lead.budget,
+    lead.configuration,
+    lead.lostReason,
+    lead.pincode,
+    lead.propertyNotes,
+    lead.status,
+    open,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -239,6 +275,7 @@ export default function CompleteTaskModal({
 
       try {
         let mappings: SubStatusMapping[] = [];
+        let nestedForOrder: CrmNestedStage[] = [];
         const pipelineRole = presalesMode
           ? "PRESALES_EXECUTIVE"
           : crmPipelineRoleParam(userRole);
@@ -258,6 +295,7 @@ export default function CompleteTaskModal({
               nested: true,
               role: pipelineRole,
             });
+            nestedForOrder = fullPresalesPipeline.nested ?? [];
             mappings = presalesCatalogFromPipelineResponse(fullPresalesPipeline);
             if (mappings.length === 0) {
               const completeTaskPipeline = await fetchCrmPipeline({
@@ -266,6 +304,7 @@ export default function CompleteTaskModal({
                 currentStage,
                 role: pipelineRole,
               });
+              nestedForOrder = completeTaskPipeline.nested ?? nestedForOrder;
               mappings = resolveCompleteTaskMappings({
                 completeTaskEntries: completeTaskPipeline.entries ?? [],
                 nested: completeTaskPipeline.nested,
@@ -287,15 +326,16 @@ export default function CompleteTaskModal({
               fetchCrmPipeline({ nested: true, role: pipelineRole }),
             ]);
             const nestedTree =
-              fullPipeline.nested?.length
-                ? fullPipeline.nested
-                : completeTaskPipeline.nested;
-            let effectiveStage = currentStage;
-            if (!effectiveStage.trim()) {
-              effectiveStage =
-                inferSalesStageFromNested(nestedTree ?? [], currentSubStage) ||
-                effectiveStage;
-            }
+              completeTaskPipeline.nested?.length
+                ? completeTaskPipeline.nested
+                : fullPipeline.nested;
+            nestedForOrder = nestedTree ?? [];
+            const effectiveStage = resolveSalesCompleteTaskStage({
+              milestoneStage: currentStage,
+              milestoneCategory: currentCategory,
+              milestoneSubStage: currentSubStage,
+              nested: nestedTree ?? [],
+            });
             mappings = resolveCompleteTaskMappings({
               completeTaskEntries: completeTaskPipeline.entries ?? [],
               nested: nestedTree,
@@ -308,8 +348,12 @@ export default function CompleteTaskModal({
         } catch (pipelineError) {
           // Fallback to existing milestone endpoint only if complete-task
           // filtered endpoint is not reachable.
+          const subStatusQs = new URLSearchParams({ resource: "sub-status" });
+          if (presalesMode && pipelineRole) {
+            subStatusQs.set("role", pipelineRole);
+          }
           const response = await fetch(
-            "/api/milestone-count?resource=sub-status",
+            `/api/milestone-count?${subStatusQs.toString()}`,
             {
               method: "GET",
               cache: "no-store",
@@ -333,6 +377,18 @@ export default function CompleteTaskModal({
           if (mappings.length === 0) {
             throw pipelineError;
           }
+          if (nestedForOrder.length === 0) {
+            try {
+              const orderPipeline = await fetchCrmPipeline({
+                nested: true,
+                role: pipelineRole,
+              });
+              nestedForOrder = orderPipeline.nested ?? [];
+            } catch {
+              // keep fallback order as returned
+            }
+          }
+          mappings = sortMappingsByNestedPipelineOrder(nestedForOrder, mappings);
         }
 
         if (!cancelled) {
@@ -472,36 +528,13 @@ export default function CompleteTaskModal({
           : subStageName && !subKey.includes(stageKey)
             ? `${subStageName} (${stage})`
             : subStageName || stage;
-      if (
-        presalesMode &&
-        !presalesLeadVerified &&
-        !presalesHandedOff &&
-        isPresalesVerifyHandoffSelection({
-          stage,
-          category: stageCategory,
-          subStage: subStageName,
-          feedbackLabel: label,
-        })
-      ) {
-        continue;
-      }
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({ label, stage, stageCategory, subStageName });
     }
-    return rows.sort((a, b) => {
-      const stageOrder = ["Fresh Data", "Data Discovery", "Data Conversion"];
-      const ai = stageOrder.findIndex(
-        (s) => s.toLowerCase() === a.stage.toLowerCase(),
-      );
-      const bi = stageOrder.findIndex(
-        (s) => s.toLowerCase() === b.stage.toLowerCase(),
-      );
-      if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
-      return a.label.localeCompare(b.label);
-    });
-  }, [feedbackMappings, presalesMode, presalesLeadVerified, presalesHandedOff]);
+    return rows;
+  }, [feedbackMappings, presalesMode]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
     return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
@@ -529,6 +562,24 @@ export default function CompleteTaskModal({
       if (path) setPath("");
     }
   }, [feedback, feedbackOptions, path, status]);
+  const selectedFeedbackOption = useMemo(
+    () => feedbackOptions.find((m) => m.label === feedback),
+    [feedback, feedbackOptions],
+  );
+  const verifyHandoffMode = Boolean(
+    presalesMode &&
+      presalesVerifyAvailable &&
+      onPresalesVerify &&
+      !presalesLeadVerified &&
+      !presalesHandedOff &&
+      selectedFeedbackOption &&
+      isPresalesVerifyHandoffSelection({
+        stage: selectedFeedbackOption.stage,
+        category: selectedFeedbackOption.stageCategory,
+        subStage: selectedFeedbackOption.subStageName,
+        feedbackLabel: feedback,
+      }),
+  );
   const reasonRequired = requiresResoneField(path, feedback);
   const isClosedWonCustomer =
     !presalesMode &&
@@ -536,14 +587,16 @@ export default function CompleteTaskModal({
     path.trim() === "Closed Won" &&
     (feedback.trim() === "Booking Done (Booking)" || feedback.trim() === "Token Done");
   const noFollowUpRequired = presalesMode
-    ? isLostCategory(path)
+    ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
 
   const nextCallDateMissing =
     !scheduleMode &&
     !cancelMode &&
     !noFollowUpRequired &&
+    !verifyHandoffMode &&
     nextCallDate.trim().length === 0;
+  const verifyPincodeMissing = verifyHandoffMode && verifyPincode.trim().length === 0;
   const resoneMissing = Boolean(
     (onApiComplete || presalesMode) && reasonRequired && lostReason.trim().length === 0,
   );
@@ -659,24 +712,36 @@ export default function CompleteTaskModal({
       return;
     }
 
+    if (presalesMode && verifyHandoffMode && onPresalesVerify) {
+      if (verifyPincodeMissing) {
+        return;
+      }
+      setApiBusy(true);
+      setApiError("");
+      try {
+        const salesExecutiveId = Number(verifySalesExecutiveId);
+        await onPresalesVerify({
+          pincode: verifyPincode.trim(),
+          salesExecutiveId:
+            Number.isFinite(salesExecutiveId) && salesExecutiveId > 0
+              ? salesExecutiveId
+              : undefined,
+          note: note.trim(),
+        });
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Could not verify lead");
+      } finally {
+        setApiBusy(false);
+      }
+      return;
+    }
+
     if (presalesMode && onPresalesApiComplete) {
       const selected = feedbackOptions.find((o) => o.label === feedback);
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
-      if (
-        !presalesLeadVerified &&
-        !presalesHandedOff &&
-        isPresalesVerifyHandoffSelection({
-          stage: stageToSave,
-          category: catToSave,
-          subStage: substageToSave,
-          feedbackLabel: feedback,
-        })
-      ) {
-        setApiError(PRESALES_VERIFY_HANDOFF_MESSAGE);
-        return;
-      }
       setApiBusy(true);
       setApiError("");
       try {
@@ -848,6 +913,7 @@ export default function CompleteTaskModal({
             </div>
             <div className="space-y-3">
               {/* Next Call Date */}
+              {!verifyHandoffMode ? (
               <div>
                 <div className=" flex items-center gap-2">
                   <FieldLabel
@@ -899,6 +965,7 @@ export default function CompleteTaskModal({
                   </p>
                 )}
               </div>
+              ) : null}
 
               {/* Status */}
               <div>
@@ -966,6 +1033,21 @@ export default function CompleteTaskModal({
                   </p>
                 )}
               </div>
+
+              {verifyHandoffMode ? (
+                <PresalesVerifyPanel
+                  pincode={verifyPincode}
+                  onPincodeChange={setVerifyPincode}
+                  salesExecutiveId={verifySalesExecutiveId}
+                  onSalesExecutiveIdChange={setVerifySalesExecutiveId}
+                  salesExecutiveOptions={salesExecutiveOptions}
+                  salesExecutivesLoading={salesExecutivesLoading}
+                  salesExecutivesError={salesExecutivesError}
+                  salesExecutiveLabel={salesExecutiveLabel}
+                  showErrors={showErrors}
+                  pincodeMissing={verifyPincodeMissing}
+                />
+              ) : null}
 
               {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
               {presalesMode || scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
@@ -1258,7 +1340,13 @@ export default function CompleteTaskModal({
                 </svg>
               }
             >
-              {apiBusy ? "Saving..." : "Save note"}
+              {apiBusy
+                ? verifyHandoffMode
+                  ? "Verifying..."
+                  : "Saving..."
+                : verifyHandoffMode
+                  ? "Verify & hand off to sales"
+                  : "Save note"}
             </Button>
           </div>
         </div>
