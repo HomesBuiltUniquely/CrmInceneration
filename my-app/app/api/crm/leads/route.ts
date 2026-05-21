@@ -274,25 +274,36 @@ export async function GET(req: NextRequest) {
 
     try {
       const allLeads: ApiLead[] = [];
+      let accessDenied = false;
+      let upstreamTotalPages = 1;
       for (let pageNum = 0; pageNum < maxPagesPerType; pageNum += 1) {
         const res = await fetch(buildUpstream(pageNum).toString(), {
           headers: upstreamAuthHeaders(req),
           cache: "no-store",
         });
-        if (!res.ok) break;
+        if (!res.ok) {
+          if (res.status === 403) accessDenied = true;
+          break;
+        }
         const pageData = (await res.json()) as SpringPage<ApiLead>;
+        upstreamTotalPages = Math.max(1, Number(pageData.totalPages ?? 1));
         const chunk = Array.isArray(pageData.content) ? pageData.content : [];
         if (chunk.length === 0) break;
         allLeads.push(...chunk);
+        if (pageNum + 1 >= upstreamTotalPages) break;
         if (chunk.length < perType) break;
       }
-      return allLeads;
+      return { leads: allLeads, accessDenied };
     } catch {
-      return [] as ApiLead[];
+      return { leads: [] as ApiLead[], accessDenied: false };
     }
   });
 
-  const chunks = await Promise.all(fetches);
+  const fetchResults = await Promise.all(fetches);
+  const accessDeniedLeadTypes = fetchResults
+    .map((r, i) => (r.accessDenied ? selectedTypes[i] : null))
+    .filter((t): t is (typeof CRM_LEAD_TYPES)[number] => t !== null);
+  const chunks = fetchResults.map((r) => r.leads);
   const byId = new Map<string, ApiLead>();
   for (let i = 0; i < chunks.length; i++) {
     const sourceType = selectedTypes[i];
@@ -455,6 +466,9 @@ export async function GET(req: NextRequest) {
     size: pageSize,
     sourceCounts,
     summaryTotals,
+    ...(accessDeniedLeadTypes.length > 0
+      ? { accessDeniedLeadTypes: [...new Set(accessDeniedLeadTypes)] }
+      : {}),
   };
 
   return NextResponse.json(body);

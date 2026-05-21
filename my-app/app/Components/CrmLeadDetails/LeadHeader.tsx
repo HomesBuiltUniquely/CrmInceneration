@@ -5,7 +5,11 @@ import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { isLeadHandedOffToSales } from "@/lib/presales-milestone";
-import { isPresalesRole, isSalesRole } from "@/lib/roleUtils";
+import {
+  canViewBothMilestonePipelines,
+  isPresalesRole,
+  isSalesRole,
+} from "@/lib/roleUtils";
 
 function WonTrophyIcon({ className }: { className?: string }) {
   return (
@@ -92,9 +96,10 @@ export default function LeadHeader({
     [createdTimelineOptions, createdTimelineValue]
   );
   const inSalesPhase = isLeadHandedOffToSales(lead);
-  const showPresalesMilestone = isPresalesRole(userRole) && !inSalesPhase;
-  const showSalesMilestone =
-    isSalesRole(userRole) || inSalesPhase || !isPresalesRole(userRole);
+  const showPresalesMilestone =
+    !inSalesPhase &&
+    (isPresalesRole(userRole) || canViewBothMilestonePipelines(userRole));
+  const showSalesMilestone = inSalesPhase || !showPresalesMilestone;
   const milestoneStageLabel = showPresalesMilestone
     ? lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data"
     : lead.stageBlock?.milestoneStage?.trim() || "—";

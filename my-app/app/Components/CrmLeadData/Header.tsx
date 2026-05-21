@@ -208,7 +208,7 @@ export default function Header() {
   useEffect(() => {
     if (!isPresalesRole(currentRole)) return;
     if (isLeadTypeAllowedForRole(currentRole, leadType)) return;
-    setLeadType("formlead");
+    setLeadType("all");
   }, [currentRole, leadType]);
 
   const isDesignRole =

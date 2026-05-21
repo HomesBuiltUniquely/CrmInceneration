@@ -62,7 +62,7 @@ Complete Task save (unchanged): PUT lead detail with `presalesMilestoneStage`, `
 
 1. Open a presales lead → **Complete Task**.
 2. Network: `crm-pipeline?…forCompleteTask=true…role=PRESALES_EXECUTIVE` → `entries` not empty.
-3. **Feedback** dropdown lists forward options only; **Status** / **Path** update when feedback is selected.
+3. **Feedback** dropdown lists **all presales substages** (Fresh Data, Data Discovery, Data Conversion); **Status** / **Path** update when feedback is selected. Verify-handoff (`Data Conversion / Assigned`) stays hidden on unverified leads in the UI.
 
 ---
 

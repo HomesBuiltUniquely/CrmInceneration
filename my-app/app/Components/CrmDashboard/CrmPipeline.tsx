@@ -58,6 +58,7 @@ function subStageFromLead(lead: ApiLead): string {
 function buildLeadsQuery(filters: DashboardFilterState, assignee?: string) {
   const q = new URLSearchParams();
   q.set("mergeAll", "1");
+  q.set("milestoneScope", "crm");
   q.set("page", "0");
   q.set("size", "500");
   q.set("sort", "updatedAt,desc");

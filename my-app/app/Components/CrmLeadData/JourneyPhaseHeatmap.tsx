@@ -579,6 +579,7 @@ export default function JourneyPhaseHeatmap({
         query.delete("crmMonthWindow");
         setEffectiveNewCrmDateRange(query, query.get("dateFrom"), query.get("dateTo"));
         query.set("mergeAll", "1");
+        query.set("milestoneScope", "crm");
         query.set("page", "0");
         query.set("size", "250");
         query.set("sort", "updatedAt,desc");

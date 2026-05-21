@@ -10,10 +10,17 @@ import {
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import {
+  filterSalesCompleteTaskMappings,
+  inferSalesStageFromNested,
   isPresalesTopLevelStage,
   presalesCatalogFromPipelineResponse,
   resolveCompleteTaskMappings,
 } from "@/lib/complete-task-pipeline";
+import {
+  isPresalesVerifyHandoffSelection,
+  PRESALES_VERIFY_HANDOFF_MESSAGE,
+} from "@/lib/presales-milestone-ui";
+import { isCrmLeadVerified } from "@/lib/leads-filter";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory } from "@/lib/crm-pipeline";
 import {
@@ -138,7 +145,9 @@ export default function CompleteTaskModal({
   userRole?: string;
   presalesHandedOff?: boolean;
 }) {
-  const presalesMode = isPresalesRole(userRole) && Boolean(onPresalesApiComplete);
+  const presalesMode = Boolean(onPresalesApiComplete);
+  const presalesLeadVerified =
+    lead.verified === true || isCrmLeadVerified(lead as unknown as import("@/lib/leads-filter").ApiLead);
   const defaultNextCallDate = useMemo(() => {
     return toDateTimeLocalValue(lead.followUpDate);
   }, [lead.followUpDate]);
@@ -230,9 +239,12 @@ export default function CompleteTaskModal({
 
       try {
         let mappings: SubStatusMapping[] = [];
+        const pipelineRole = presalesMode
+          ? "PRESALES_EXECUTIVE"
+          : crmPipelineRoleParam(userRole);
         const currentStage = presalesMode
           ? (lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data")
-          : (lead.stageBlock?.milestoneStage ?? lead.status ?? "").trim();
+          : (lead.stageBlock?.milestoneStage?.trim() ?? "");
         const currentCategory = presalesMode
           ? (lead.stageBlock?.presalesMilestoneCategory?.trim() ?? "")
           : (lead.stageBlock?.milestoneStageCategory?.trim() ?? "");
@@ -241,19 +253,19 @@ export default function CompleteTaskModal({
           : (lead.stageBlock?.milestoneSubStage?.trim() ?? lead.status?.trim() ?? "");
 
         try {
-          const presalesRole = crmPipelineRoleParam(userRole);
           if (presalesMode) {
-            const [fullPresalesPipeline, completeTaskPipeline] = await Promise.all([
-              fetchCrmPipeline({ nested: true, role: presalesRole }),
-              fetchCrmPipeline({
+            const fullPresalesPipeline = await fetchCrmPipeline({
+              nested: true,
+              role: pipelineRole,
+            });
+            mappings = presalesCatalogFromPipelineResponse(fullPresalesPipeline);
+            if (mappings.length === 0) {
+              const completeTaskPipeline = await fetchCrmPipeline({
                 nested: true,
                 forCompleteTask: true,
                 currentStage,
-                role: presalesRole,
-              }),
-            ]);
-            mappings = presalesCatalogFromPipelineResponse(fullPresalesPipeline);
-            if (mappings.length === 0) {
+                role: pipelineRole,
+              });
               mappings = resolveCompleteTaskMappings({
                 completeTaskEntries: completeTaskPipeline.entries ?? [],
                 nested: completeTaskPipeline.nested,
@@ -265,31 +277,30 @@ export default function CompleteTaskModal({
               });
             }
           } else {
-            const completeTaskPipeline = await fetchCrmPipeline({
-              nested: true,
-              forCompleteTask: true,
-              currentStage,
-            });
+            const [completeTaskPipeline, fullPipeline] = await Promise.all([
+              fetchCrmPipeline({
+                nested: true,
+                forCompleteTask: true,
+                currentStage: currentStage || undefined,
+                role: pipelineRole,
+              }),
+              fetchCrmPipeline({ nested: true, role: pipelineRole }),
+            ]);
+            const nestedTree =
+              fullPipeline.nested?.length
+                ? fullPipeline.nested
+                : completeTaskPipeline.nested;
+            let effectiveStage = currentStage;
+            if (!effectiveStage.trim()) {
+              effectiveStage =
+                inferSalesStageFromNested(nestedTree ?? [], currentSubStage) ||
+                effectiveStage;
+            }
             mappings = resolveCompleteTaskMappings({
               completeTaskEntries: completeTaskPipeline.entries ?? [],
-              nested: completeTaskPipeline.nested,
+              nested: nestedTree,
               presalesMode: false,
-              currentStage,
-              currentCategory,
-              currentSubStage,
-            });
-          }
-
-          if (!presalesMode && mappings.length === 0) {
-            const fullPipeline = await fetchCrmPipeline({ nested: true });
-            mappings = resolveCompleteTaskMappings({
-              completeTaskEntries: (fullPipeline.entries ?? []).filter((e) => {
-                const stage = String(e.stage ?? "").trim().toLowerCase();
-                return stage && stage === currentStage.trim().toLowerCase();
-              }),
-              nested: fullPipeline.nested,
-              presalesMode: false,
-              currentStage,
+              currentStage: effectiveStage,
               currentCategory,
               currentSubStage,
             });
@@ -311,9 +322,14 @@ export default function CompleteTaskModal({
 
           const data: { mappings?: SubStatusMapping[] } = await response.json();
           const raw = Array.isArray(data.mappings) ? data.mappings : [];
+          const normalized = raw.map((m) => ({
+            stage: String(m.stage ?? "").trim(),
+            stageCategory: String(m.stageCategory ?? "").trim(),
+            subStageName: String(m.subStageName ?? "").trim(),
+          }));
           mappings = presalesMode
-            ? raw.filter((m) => isPresalesTopLevelStage(String(m.stage ?? "")))
-            : raw;
+            ? normalized.filter((m) => isPresalesTopLevelStage(m.stage))
+            : filterSalesCompleteTaskMappings(normalized, currentStage);
           if (mappings.length === 0) {
             throw pipelineError;
           }
@@ -453,7 +469,22 @@ export default function CompleteTaskModal({
       const label =
         presalesMode && subStageName && !subKey.includes(stageKey)
           ? `${subStageName} (${stage})`
-          : subStageName || stage;
+          : subStageName && !subKey.includes(stageKey)
+            ? `${subStageName} (${stage})`
+            : subStageName || stage;
+      if (
+        presalesMode &&
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        isPresalesVerifyHandoffSelection({
+          stage,
+          category: stageCategory,
+          subStage: subStageName,
+          feedbackLabel: label,
+        })
+      ) {
+        continue;
+      }
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -470,7 +501,7 @@ export default function CompleteTaskModal({
       if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
       return a.label.localeCompare(b.label);
     });
-  }, [feedbackMappings, presalesMode]);
+  }, [feedbackMappings, presalesMode, presalesLeadVerified, presalesHandedOff]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
     return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
@@ -631,12 +662,27 @@ export default function CompleteTaskModal({
     if (presalesMode && onPresalesApiComplete) {
       const selected = feedbackOptions.find((o) => o.label === feedback);
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
+      const stageToSave = (selected?.stage ?? status).trim();
+      const catToSave = (selected?.stageCategory ?? path).trim();
+      if (
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        isPresalesVerifyHandoffSelection({
+          stage: stageToSave,
+          category: catToSave,
+          subStage: substageToSave,
+          feedbackLabel: feedback,
+        })
+      ) {
+        setApiError(PRESALES_VERIFY_HANDOFF_MESSAGE);
+        return;
+      }
       setApiBusy(true);
       setApiError("");
       try {
         await onPresalesApiComplete({
-          presalesMilestoneStage: (selected?.stage ?? status).trim(),
-          presalesMilestoneCategory: (selected?.stageCategory ?? path).trim(),
+          presalesMilestoneStage: stageToSave,
+          presalesMilestoneCategory: catToSave,
           presalesMilestoneSubStage: substageToSave,
           feedback: substageToSave,
           note: note.trim(),
