@@ -661,7 +661,7 @@ export default function CompleteTaskModal({
           milestoneStage: status,
           milestoneStageCategory: path,
           note,
-          nextCallDateLocal: scheduleMode ? "" : nextCallDate,
+          nextCallDateLocal: scheduleMode || noFollowUpRequired ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
           budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
           propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
@@ -823,16 +823,18 @@ export default function CompleteTaskModal({
                 <Input
                   type="datetime-local"
                   min={minNextCallDate}
-                  value={nextCallDate}
+                  value={noFollowUpRequired ? "" : nextCallDate}
                   onChange={(e) => setNextCallDate(e.target.value)}
+                  disabled={noFollowUpRequired}
                   onClick={(event) => {
+                    if (noFollowUpRequired) return;
                     const input = event.currentTarget as HTMLInputElement & {
                       showPicker?: () => void;
                     };
                     input.showPicker?.();
                   }}
                   missing={showErrors && nextCallDateMissing && !noFollowUpRequired}
-                  className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                  className={["h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]", noFollowUpRequired ? "opacity-60 cursor-not-allowed" : ""].join(" ")}
                 />
 
                 <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
@@ -840,9 +842,11 @@ export default function CompleteTaskModal({
                     ? isDesignRefinementSchedulingSubstage(feedback)
                       ? "For refinement meetings, the Hub appointment time will be used as follow-up."
                       : "For Meeting Scheduled / Rescheduled (and fix-appointment scheduling), the Hub appointment time will be used as follow-up."
-                    : "Click the field to open calendar and time picker."}
+                    : noFollowUpRequired
+                      ? "Follow-up is not required for this path."
+                      : "Click the field to open calendar and time picker."}
                 </p>
-                {showErrors && nextCallDateMissing && (
+                {showErrors && nextCallDateMissing && !noFollowUpRequired && (
                   <p className="mt-1 text-[12px] text-red-500">
                     Next call date is required unless a reason (resone) applies
                     below (LOST / closure substages) or for Closed Won customers.
