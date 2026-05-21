@@ -32,6 +32,7 @@ import {
 } from "@/lib/auth/api";
 import { isPresalesRole } from "@/lib/crm-role-access";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
+import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -1281,9 +1282,14 @@ export default function LeadsDataSection({
       }
 
       if (roleKey === "PRESALES_MANAGER") {
-        const presalesTeamSet = new Set(
-          presalesExecs.map((u) => userName(u).trim().toLowerCase()).filter(Boolean)
-        );
+        const teamFromHeader = presalesTeamExecDisplayNames
+          .map((n) => n.trim().toLowerCase())
+          .filter(Boolean);
+        const teamFromHierarchy = presalesExecs
+          .filter((u) => Number(u.managerId ?? 0) === Number(currentUserId))
+          .map((u) => userName(u).trim().toLowerCase())
+          .filter(Boolean);
+        const presalesTeamSet = new Set([...teamFromHeader, ...teamFromHierarchy]);
         if (presalesTeamSet.size === 0) return isSelf;
         for (const alias of leadAliases) {
           if (presalesTeamSet.has(alias)) return true;
@@ -1297,6 +1303,7 @@ export default function LeadsDataSection({
       managerTeamNames,
       managerTeamNamesFromHeader,
       presalesExecs,
+      presalesTeamExecDisplayNames,
       currentUserId,
       verificationStatusProp,
       leadAssignedToSelf,
@@ -1569,9 +1576,11 @@ export default function LeadsDataSection({
         return allLeads;
       };
       const buildVisiblePage = (allLeads: ApiLead[]): SpringPage<ApiLead> => {
-        const roleScopedLeads = requiresClientScopedDataset && !isGlobalSearchActive
-          ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-          : allLeads;
+        const trustPresalesScope = trustPresalesUpstreamLeadScope(clientScopeRoleKey);
+        const roleScopedLeads =
+          requiresClientScopedDataset && !isGlobalSearchActive && !trustPresalesScope
+            ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+            : allLeads;
         const visibleMerged = roleScopedLeads.sort((a, b) => {
           const at = Date.parse(a.updatedAt ?? "");
           const bt = Date.parse(b.updatedAt ?? "");
@@ -1589,8 +1598,7 @@ export default function LeadsDataSection({
         };
       };
       const requiresFullyVisiblePage =
-        effectiveAssigneeScope.length > 1 ||
-        (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500));
+        effectiveAssigneeScope.length > 1 || requiresClientScopedDataset;
 
       if (effectiveAssigneeScope.length <= 1) {
         if (!requiresFullyVisiblePage) {
@@ -1766,9 +1774,10 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const scoped = isGlobalSearchActive
-          ? raw
-          : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+        const scoped =
+          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
+            ? raw
+            : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
         setVisibleFilteredTotal(scoped.length);
@@ -1881,7 +1890,8 @@ export default function LeadsDataSection({
         effectiveAssigneeScope.length > 1 ||
         !requiresClientScopedDataset ||
         isGlobalSearchActive ||
-        insightModeActive;
+        insightModeActive ||
+        trustPresalesUpstreamLeadScope(normalizeRole(authRoleProp ?? currentRole));
       const requested = {
         page: requestPage,
         size: requestSize,
@@ -1978,11 +1988,11 @@ export default function LeadsDataSection({
   );
 
   const isClientScopedRole = requiresClientScopedDataset;
-  const content = isClientScopedRole && !isGlobalSearchActive
-    ? contentFromApi.filter((lead) =>
-        canViewLeadByRole(lead, clientScopeRoleKey),
-      )
-    : contentFromApi;
+  const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
+  const content =
+    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
+      ? contentFromApi.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+      : contentFromApi;
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",

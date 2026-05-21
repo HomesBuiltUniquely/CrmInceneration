@@ -7,6 +7,7 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
 
@@ -247,7 +248,11 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
+  const isPresalesPool = isPresalesRole(viewerRoleKey);
+  const perType = isPresalesPool
+    ? 1000
+    : Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
+  const maxPagesPerType = isPresalesPool ? 200 : 100;
   const fetches = selectedTypes.map(async (leadType) => {
     const buildUpstream = (pageNum: number) => {
       const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
@@ -269,7 +274,7 @@ export async function GET(req: NextRequest) {
 
     try {
       const allLeads: ApiLead[] = [];
-      for (let pageNum = 0; pageNum < 100; pageNum += 1) {
+      for (let pageNum = 0; pageNum < maxPagesPerType; pageNum += 1) {
         const res = await fetch(buildUpstream(pageNum).toString(), {
           headers: upstreamAuthHeaders(req),
           cache: "no-store",
@@ -296,6 +301,41 @@ export async function GET(req: NextRequest) {
       if (!id) continue;
       if (!byId.has(id)) {
         byId.set(id, { ...lead, leadType: sourceType });
+      }
+    }
+  }
+
+  if (isPresalesPool) {
+    const searchSize = 500;
+    for (let pageNum = 0; pageNum < 200; pageNum += 1) {
+      const upstream = new URL(`${BASE_URL}/v1/leads/presales-search`);
+      upstream.searchParams.set("page", String(pageNum));
+      upstream.searchParams.set("size", String(searchSize));
+      try {
+        const res = await fetch(upstream.toString(), {
+          headers: upstreamAuthHeaders(req),
+          cache: "no-store",
+        });
+        if (!res.ok) break;
+        const pageData = (await res.json()) as { content?: Array<{ type?: string; lead?: ApiLead }> };
+        const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+        if (chunk.length === 0) break;
+        for (const item of chunk) {
+          const lt = String(item.type ?? "").trim().toLowerCase();
+          const lead = item.lead;
+          if (!lead || typeof lead !== "object") continue;
+          const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+          if (!id) continue;
+          const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
+            ? (lt as (typeof CRM_LEAD_TYPES)[number])
+            : "formlead";
+          if (!byId.has(id)) {
+            byId.set(id, { ...lead, leadType: typed });
+          }
+        }
+        if (chunk.length < searchSize) break;
+      } catch {
+        break;
       }
     }
   }
@@ -371,7 +411,18 @@ export async function GET(req: NextRequest) {
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      if (!inDateRange(readLeadCreatedAtRaw(lead), dateFrom, dateTo)) return false;
+      const dateFieldRaw =
+        dateFrom || dateTo
+          ? isPresalesRole(viewerRoleKey)
+            ? (() => {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              })()
+            : readLeadCreatedAtRaw(lead)
+          : "";
+      if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
 
       if (isPresalesRole(viewerRoleKey)) {
         const ps = readPresalesMilestoneFromLead(lead);

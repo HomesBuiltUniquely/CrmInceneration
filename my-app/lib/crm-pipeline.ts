@@ -5,6 +5,7 @@ import type {
   MilestonePathItem,
 } from "@/types/crm-pipeline";
 import { BASE_URL } from "@/lib/base-url";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 
 type FetchCrmPipelineOptions = {
   nested?: boolean;
@@ -26,13 +27,20 @@ export async function fetchCrmPipeline(
   if (opts.role?.trim()) q.set("role", opts.role.trim());
   const qs = q.toString();
   const suffix = qs ? `?${qs}` : "";
-  const urls = [
-    `${BASE_URL}/v1/Leads/crm-pipeline${suffix}`,
-    `${BASE_URL}/Leads/crm-pipeline${suffix}`,
-  ];
+  const useBrowserProxy = typeof window !== "undefined";
+  const urls = useBrowserProxy
+    ? [`/api/crm/crm-pipeline${suffix}`]
+    : [
+        `${BASE_URL}/v1/Leads/crm-pipeline${suffix}`,
+        `${BASE_URL}/Leads/crm-pipeline${suffix}`,
+      ];
   let lastStatus = 0;
   for (const url of urls) {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      credentials: useBrowserProxy ? "include" : undefined,
+      headers: useBrowserProxy ? getCrmAuthHeaders({ Accept: "application/json" }) : undefined,
+    });
     if (res.ok) return res.json();
     lastStatus = res.status;
   }

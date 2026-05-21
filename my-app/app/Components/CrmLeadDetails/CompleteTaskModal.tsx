@@ -9,13 +9,13 @@ import {
   type AvailableSlotRow,
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
-import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
-  canPresalesAdvanceToStage,
-  presalesAllowedForwardStages,
-} from "@/lib/presales-milestone";
+  isPresalesTopLevelStage,
+  presalesCatalogFromPipelineResponse,
+  resolveCompleteTaskMappings,
+} from "@/lib/complete-task-pipeline";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
-import { normalizeStageKey } from "@/lib/milestone-progress";
+import { isLostCategory } from "@/lib/crm-pipeline";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
@@ -83,7 +83,13 @@ export type PresalesCompleteTaskApiPayload = {
   presalesMilestoneStage: string;
   presalesMilestoneCategory: string;
   presalesMilestoneSubStage: string;
+  /** Substage label from pipeline feedback dropdown (same as sales `feedback`). */
+  feedback: string;
   note: string;
+  /** ISO-ish datetime for follow-up; cleared on LOST path (same rules as sales). */
+  nextCallDateLocal: string;
+  /** Sent as `resone` on PUT when path category is LOST. */
+  lostReason?: string;
 };
 
 export type CompleteTaskApiPayload = {
@@ -165,11 +171,6 @@ export default function CompleteTaskModal({
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
-  const [presalesNested, setPresalesNested] = useState<CrmNestedStage[]>([]);
-  const [presalesPipelineLoading, setPresalesPipelineLoading] = useState(false);
-  const [presalesStage, setPresalesStage] = useState("");
-  const [presalesCategory, setPresalesCategory] = useState("");
-  const [presalesSubStage, setPresalesSubStage] = useState("");
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -217,86 +218,7 @@ export default function CompleteTaskModal({
   }, [defaultNextCallDate, lead.budget, lead.configuration, lead.lostReason, lead.propertyNotes, lead.status, open]);
 
   useEffect(() => {
-    if (!open || !presalesMode) return;
-    let cancelled = false;
-    const current =
-      lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data";
-    setPresalesStage(current);
-    setPresalesCategory(lead.stageBlock?.presalesMilestoneCategory?.trim() ?? "");
-    setPresalesSubStage(lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "");
-    setPresalesPipelineLoading(true);
-    void fetchCrmPipeline({
-      nested: true,
-      role: crmPipelineRoleParam(userRole),
-      forCompleteTask: true,
-      currentStage: current,
-    })
-      .then((p) => {
-        if (!cancelled) setPresalesNested(p.nested ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setPresalesNested([]);
-      })
-      .finally(() => {
-        if (!cancelled) setPresalesPipelineLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    lead.stageBlock?.presalesMilestoneCategory,
-    lead.stageBlock?.presalesMilestoneStage,
-    lead.stageBlock?.presalesMilestoneSubStage,
-    open,
-    presalesMode,
-    userRole,
-  ]);
-
-  const presalesCurrentStage =
-    lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data";
-  const presalesStageOptions = useMemo(() => {
-    const fromPipeline = presalesNested.map((n) => n.stage.trim()).filter(Boolean);
-    const allowed = presalesAllowedForwardStages(presalesCurrentStage);
-    const merged = [...new Set([...allowed, ...fromPipeline])];
-    return merged.filter((s) =>
-      canPresalesAdvanceToStage(presalesCurrentStage, s) ||
-      normalizeStageKey(s) === normalizeStageKey(presalesCurrentStage),
-    );
-  }, [presalesCurrentStage, presalesNested]);
-  const presalesIsConversion =
-    normalizeStageKey(presalesStage) === "data conversion";
-  const presalesCategoryNode = useMemo(
-    () =>
-      presalesNested.find(
-        (n) => normalizeStageKey(n.stage) === normalizeStageKey(presalesStage),
-      ),
-    [presalesNested, presalesStage],
-  );
-  const presalesCategoryOptions = useMemo(
-    () =>
-      presalesIsConversion
-        ? (presalesCategoryNode?.categories.map((c) => c.stageCategory.trim()) ?? [])
-        : [],
-    [presalesCategoryNode, presalesIsConversion],
-  );
-  const presalesSubStageOptions = useMemo(() => {
-    if (!presalesIsConversion || !presalesCategory.trim()) return [];
-    const cat = presalesCategoryNode?.categories.find(
-      (c) =>
-        normalizeStageKey(c.stageCategory) === normalizeStageKey(presalesCategory),
-    );
-    return cat?.subStages.map((s) => s.trim()).filter(Boolean) ?? [];
-  }, [
-    presalesCategory,
-    presalesCategoryNode,
-    presalesIsConversion,
-  ]);
-
-  useEffect(() => {
     if (!open) {
-      return;
-    }
-    if (presalesMode) {
       return;
     }
 
@@ -308,67 +230,69 @@ export default function CompleteTaskModal({
 
       try {
         let mappings: SubStatusMapping[] = [];
-        const currentStage = (
-          lead.stageBlock?.milestoneStage ??
-          lead.status ??
-          ""
-        ).trim();
-
-        const mergeUniqueMappings = (
-          primary: SubStatusMapping[],
-          secondary: SubStatusMapping[],
-        ): SubStatusMapping[] => {
-          const out: SubStatusMapping[] = [];
-          const seen = new Set<string>();
-          for (const row of [...primary, ...secondary]) {
-            const stage = String(row.stage ?? "").trim();
-            const stageCategory = String(row.stageCategory ?? "").trim();
-            const subStageName = String(row.subStageName ?? "").trim();
-            if (!stage) continue;
-            const key = `${stage}||${stageCategory}||${subStageName}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push({ stage, stageCategory, subStageName });
-          }
-          return out;
-        };
+        const currentStage = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data")
+          : (lead.stageBlock?.milestoneStage ?? lead.status ?? "").trim();
+        const currentCategory = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneCategory?.trim() ?? "")
+          : (lead.stageBlock?.milestoneStageCategory?.trim() ?? "");
+        const currentSubStage = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "")
+          : (lead.stageBlock?.milestoneSubStage?.trim() ?? lead.status?.trim() ?? "");
 
         try {
-          const [completeTaskPipeline, fullPipeline] = await Promise.all([
-            fetchCrmPipeline({
+          const presalesRole = crmPipelineRoleParam(userRole);
+          if (presalesMode) {
+            const [fullPresalesPipeline, completeTaskPipeline] = await Promise.all([
+              fetchCrmPipeline({ nested: true, role: presalesRole }),
+              fetchCrmPipeline({
+                nested: true,
+                forCompleteTask: true,
+                currentStage,
+                role: presalesRole,
+              }),
+            ]);
+            mappings = presalesCatalogFromPipelineResponse(fullPresalesPipeline);
+            if (mappings.length === 0) {
+              mappings = resolveCompleteTaskMappings({
+                completeTaskEntries: completeTaskPipeline.entries ?? [],
+                nested: completeTaskPipeline.nested,
+                presalesMode: true,
+                currentStage,
+                currentCategory,
+                currentSubStage,
+                applyPresalesClientFilter: false,
+              });
+            }
+          } else {
+            const completeTaskPipeline = await fetchCrmPipeline({
               nested: true,
               forCompleteTask: true,
               currentStage,
-            }),
-            fetchCrmPipeline({ nested: true }),
-          ]);
-          const completeTaskMappings = completeTaskPipeline.entries.map((e) => ({
-            stage: e.stage,
-            stageCategory: e.stageCategory,
-            subStageName: e.subStageName,
-          }));
-          const currentStageMappings = fullPipeline.entries
-            .filter((e) => {
-              const stage = String(e.stage ?? "").trim().toLowerCase();
-              return stage && stage === currentStage.trim().toLowerCase();
-            })
-            .map((e) => ({
-              stage: e.stage,
-              stageCategory: e.stageCategory,
-              subStageName: e.subStageName,
-            }));
-          mappings = mergeUniqueMappings(
-            currentStageMappings,
-            completeTaskMappings,
-          );
-          if (mappings.length === 0) {
-            // Keep prior behavior if both endpoints return no rows.
-            const fallback = completeTaskPipeline.entries.map((e) => ({
-              stage: e.stage,
-              stageCategory: e.stageCategory,
-              subStageName: e.subStageName,
-            }));
-            mappings = fallback;
+            });
+            mappings = resolveCompleteTaskMappings({
+              completeTaskEntries: completeTaskPipeline.entries ?? [],
+              nested: completeTaskPipeline.nested,
+              presalesMode: false,
+              currentStage,
+              currentCategory,
+              currentSubStage,
+            });
+          }
+
+          if (!presalesMode && mappings.length === 0) {
+            const fullPipeline = await fetchCrmPipeline({ nested: true });
+            mappings = resolveCompleteTaskMappings({
+              completeTaskEntries: (fullPipeline.entries ?? []).filter((e) => {
+                const stage = String(e.stage ?? "").trim().toLowerCase();
+                return stage && stage === currentStage.trim().toLowerCase();
+              }),
+              nested: fullPipeline.nested,
+              presalesMode: false,
+              currentStage,
+              currentCategory,
+              currentSubStage,
+            });
           }
         } catch (pipelineError) {
           // Fallback to existing milestone endpoint only if complete-task
@@ -386,7 +310,10 @@ export default function CompleteTaskModal({
           }
 
           const data: { mappings?: SubStatusMapping[] } = await response.json();
-          mappings = Array.isArray(data.mappings) ? data.mappings : [];
+          const raw = Array.isArray(data.mappings) ? data.mappings : [];
+          mappings = presalesMode
+            ? raw.filter((m) => isPresalesTopLevelStage(String(m.stage ?? "")))
+            : raw;
           if (mappings.length === 0) {
             throw pipelineError;
           }
@@ -394,9 +321,27 @@ export default function CompleteTaskModal({
 
         if (!cancelled) {
           setFeedbackMappings(mappings);
-          setFeedback("");
-          setStatus("");
-          setPath("");
+          const presetSub = presalesMode
+            ? (lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "")
+            : (lead.stageBlock?.milestoneSubStage?.trim() ?? lead.status?.trim() ?? "");
+          const preset = presetSub
+            ? mappings.find((m) => m.subStageName.trim() === presetSub)
+            : undefined;
+          if (preset) {
+            const sub = preset.subStageName.trim();
+            const st = preset.stage.trim();
+            const feedbackLabel =
+              presalesMode && sub && !sub.toLowerCase().includes(st.toLowerCase())
+                ? `${sub} (${st})`
+                : sub;
+            setFeedback(feedbackLabel);
+            setStatus(preset.stage);
+            setPath(preset.stageCategory);
+          } else {
+            setFeedback("");
+            setStatus("");
+            setPath("");
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -422,7 +367,18 @@ export default function CompleteTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [lead.stageBlock?.milestoneStage, lead.status, open, presalesMode]);
+  }, [
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneCategory,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    lead.status,
+    open,
+    presalesMode,
+    userRole,
+  ]);
 
   useEffect(() => {
     if (!open || !scheduleMode) {
@@ -491,14 +447,30 @@ export default function CompleteTaskModal({
       const stageCategory = m.stageCategory.trim();
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
-      const label = subStageName || stage;
+      if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
+      const stageKey = stage.toLowerCase();
+      const subKey = subStageName.toLowerCase();
+      const label =
+        presalesMode && subStageName && !subKey.includes(stageKey)
+          ? `${subStageName} (${stage})`
+          : subStageName || stage;
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({ label, stage, stageCategory, subStageName });
     }
-    return rows;
-  }, [feedbackMappings]);
+    return rows.sort((a, b) => {
+      const stageOrder = ["Fresh Data", "Data Discovery", "Data Conversion"];
+      const ai = stageOrder.findIndex(
+        (s) => s.toLowerCase() === a.stage.toLowerCase(),
+      );
+      const bi = stageOrder.findIndex(
+        (s) => s.toLowerCase() === b.stage.toLowerCase(),
+      );
+      if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+      return a.label.localeCompare(b.label);
+    });
+  }, [feedbackMappings, presalesMode]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
     return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
@@ -507,6 +479,13 @@ export default function CompleteTaskModal({
   }, [lead.budget]);
 
   const feedbackSelectEnabled = !feedbackLoading && feedbackOptions.length > 0;
+  const feedbackPlaceholder = feedbackLoading
+    ? "Loading feedback options…"
+    : feedbackOptions.length > 0
+      ? "Select feedback"
+      : feedbackError
+        ? "Could not load options"
+        : "No feedback options for this stage";
   useEffect(() => {
     const selected = feedbackOptions.find((m) => m.label === feedback);
     if (selected) {
@@ -521,10 +500,13 @@ export default function CompleteTaskModal({
   }, [feedback, feedbackOptions, path, status]);
   const reasonRequired = requiresResoneField(path, feedback);
   const isClosedWonCustomer =
+    !presalesMode &&
     status.trim() === "Closed" &&
     path.trim() === "Closed Won" &&
     (feedback.trim() === "Booking Done (Booking)" || feedback.trim() === "Token Done");
-  const noFollowUpRequired = reasonRequired || isClosedWonCustomer;
+  const noFollowUpRequired = presalesMode
+    ? isLostCategory(path)
+    : reasonRequired || isClosedWonCustomer;
 
   const nextCallDateMissing =
     !scheduleMode &&
@@ -532,7 +514,7 @@ export default function CompleteTaskModal({
     !noFollowUpRequired &&
     nextCallDate.trim().length === 0;
   const resoneMissing = Boolean(
-    onApiComplete && reasonRequired && lostReason.trim().length === 0,
+    (onApiComplete || presalesMode) && reasonRequired && lostReason.trim().length === 0,
   );
   const noteMissing = note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
@@ -580,148 +562,6 @@ export default function CompleteTaskModal({
           >
             Close
           </button>
-        </div>
-      </div>
-    );
-  }
-
-  const handlePresalesSave = async () => {
-    setShowErrors(true);
-    if (!presalesStage.trim()) {
-      setApiError("Select a presales stage.");
-      return;
-    }
-    if (presalesIsConversion) {
-      if (!presalesCategory.trim()) {
-        setApiError("Select Won or Lost category.");
-        return;
-      }
-      if (!presalesSubStage.trim()) {
-        setApiError("Select a presales substage.");
-        return;
-      }
-    }
-    if (!note.trim()) {
-      return;
-    }
-    if (!canPresalesAdvanceToStage(presalesCurrentStage, presalesStage)) {
-      setApiError("Stage can only move forward in the presales pipeline.");
-      return;
-    }
-    setApiBusy(true);
-    setApiError("");
-    try {
-      await onPresalesApiComplete?.({
-        presalesMilestoneStage: presalesStage.trim(),
-        presalesMilestoneCategory: presalesIsConversion ? presalesCategory.trim() : "",
-        presalesMilestoneSubStage: presalesIsConversion ? presalesSubStage.trim() : "",
-        note: note.trim(),
-      });
-      onClose();
-    } catch (e) {
-      setApiError(e instanceof Error ? e.message : "Could not save");
-    } finally {
-      setApiBusy(false);
-    }
-  };
-
-  if (presalesMode) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
-        <div className="w-full max-w-[560px] max-h-[85vh] overflow-y-auto rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
-          <div className="border-b border-[var(--crm-border)] px-4 py-4">
-            <h2 className="text-[18px] font-semibold text-[var(--crm-text-primary)]">
-              Complete Task — Presales
-            </h2>
-            <p className="text-[12px] text-[var(--crm-text-muted)]">{lead.customerId}</p>
-          </div>
-          <div className="space-y-4 px-4 py-4">
-            <div>
-              <FieldLabel required>Presales stage</FieldLabel>
-              <Select
-                value={presalesStage}
-                onChange={(e) => {
-                  setPresalesStage(e.target.value);
-                  setPresalesCategory("");
-                  setPresalesSubStage("");
-                }}
-                disabled={presalesPipelineLoading}
-                className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-              >
-                <option value="">Select stage</option>
-                {presalesStageOptions.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            {presalesIsConversion ? (
-              <>
-                <div>
-                  <FieldLabel required>Category</FieldLabel>
-                  <Select
-                    value={presalesCategory}
-                    onChange={(e) => {
-                      setPresalesCategory(e.target.value);
-                      setPresalesSubStage("");
-                    }}
-                    className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                  >
-                    <option value="">Select category</option>
-                    {presalesCategoryOptions.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div>
-                  <FieldLabel required>Substage</FieldLabel>
-                  <Select
-                    value={presalesSubStage}
-                    onChange={(e) => setPresalesSubStage(e.target.value)}
-                    disabled={!presalesCategory.trim()}
-                    className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                  >
-                    <option value="">Select substage</option>
-                    {presalesSubStageOptions.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </>
-            ) : null}
-            <div>
-              <FieldLabel required>Note</FieldLabel>
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                missing={showErrors && !note.trim()}
-                className="min-h-[88px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-              />
-            </div>
-            {apiError ? <p className="text-[12px] text-red-500">{apiError}</p> : null}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-xl border border-[var(--crm-border)] px-4 py-2 text-[13px] font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={apiBusy}
-                onClick={() => void handlePresalesSave()}
-                className="rounded-xl bg-[var(--crm-accent)] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
-              >
-                {apiBusy ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     );
@@ -785,6 +625,30 @@ export default function CompleteTaskModal({
     }
 
     if (nextCallDateMissing || noteMissing || feedbackMissing) {
+      return;
+    }
+
+    if (presalesMode && onPresalesApiComplete) {
+      const selected = feedbackOptions.find((o) => o.label === feedback);
+      const substageToSave = selected?.subStageName.trim() || feedback.trim();
+      setApiBusy(true);
+      setApiError("");
+      try {
+        await onPresalesApiComplete({
+          presalesMilestoneStage: (selected?.stage ?? status).trim(),
+          presalesMilestoneCategory: (selected?.stageCategory ?? path).trim(),
+          presalesMilestoneSubStage: substageToSave,
+          feedback: substageToSave,
+          note: note.trim(),
+          nextCallDateLocal: nextCallDate,
+          lostReason: reasonRequired ? lostReason.trim() : undefined,
+        });
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Could not save");
+      } finally {
+        setApiBusy(false);
+      }
       return;
     }
 
@@ -1024,11 +888,7 @@ export default function CompleteTaskModal({
                       : "",
                   ].join(" ")}
                 >
-                  <option value="">
-                    {feedbackSelectEnabled
-                      ? "Select feedback"
-                      : "Wait..."}
-                  </option>
+                  <option value="">{feedbackPlaceholder}</option>
                   {feedbackOptions.map((option) => (
                     <option
                       key={`${option.stage}-${option.stageCategory}-${option.label}`}
@@ -1058,7 +918,7 @@ export default function CompleteTaskModal({
               </div>
 
               {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
-              {scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
+              {presalesMode || scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
                   <div className="flex items-center gap-2">
                     <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/10 text-blue-500">
@@ -1115,7 +975,7 @@ export default function CompleteTaskModal({
                 </div>
               )}
 
-              {scheduleMode ? (
+              {!presalesMode && scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
                     {meetingSchedulePanelTitle(feedback)}
@@ -1229,7 +1089,7 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
-              {onApiComplete && reasonRequired ? (
+              {(onApiComplete || presalesMode) && reasonRequired ? (
                 <div>
                   <FieldLabel required>Reason (resone)</FieldLabel>
                   <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
@@ -1255,7 +1115,7 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
-              {cancelMode ? (
+              {!presalesMode && cancelMode ? (
                 <div className="rounded-[14px] border border-amber-200/80 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/40 p-3.5">
                   <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-100">
                     Cancel meeting
@@ -1302,7 +1162,7 @@ export default function CompleteTaskModal({
             </div>
           </div>
 
-          {onApiComplete && showLeadPropertyGateFooterHint ? (
+          {!presalesMode && onApiComplete && showLeadPropertyGateFooterHint ? (
             <p className="border-t border-[var(--crm-border)] px-4 py-2 text-[11px] leading-snug text-[var(--crm-text-muted)] md:px-5">
               For{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}

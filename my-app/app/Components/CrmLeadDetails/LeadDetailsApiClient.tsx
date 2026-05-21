@@ -1914,22 +1914,52 @@ export default function LeadDetailsApiClient({
       );
     }
     const lt = leadTypeParam as CrmLeadType;
-    const body = mergePresalesMilestoneIntoDetail(baseDetail, {
-      presalesMilestoneStage: args.presalesMilestoneStage,
-      presalesMilestoneCategory: args.presalesMilestoneCategory,
-      presalesMilestoneSubStage: args.presalesMilestoneSubStage,
-    });
+    const isFreshData =
+      args.presalesMilestoneStage.trim().toLowerCase() === "fresh data";
+    const persistedCategory = isFreshData ? "" : args.presalesMilestoneCategory.trim();
+    const persistedSubStage = isFreshData
+      ? ""
+      : (args.presalesMilestoneSubStage.trim() || args.feedback.trim());
+
+    const noFollowUpNeeded = isLostCategory(persistedCategory);
+    const followUpDate = noFollowUpNeeded
+      ? ""
+      : (args.nextCallDateLocal.trim() || lead.followUpDate);
+
+    const nextPresalesStage = {
+      presalesMilestoneStage: args.presalesMilestoneStage.trim(),
+      presalesMilestoneCategory: persistedCategory,
+      presalesMilestoneSubStage: persistedSubStage,
+    };
+
+    const leadForSave: Lead = {
+      ...lead,
+      followUpDate,
+      status: persistedSubStage || lead.status,
+      lostReason: args.lostReason?.trim()
+        ? args.lostReason.trim()
+        : lead.lostReason,
+      stageBlock: {
+        ...lead.stageBlock,
+        ...nextPresalesStage,
+      },
+    };
+
+    const body = mergeLeadIntoDetail(
+      mergePresalesMilestoneIntoDetail(baseDetail, nextPresalesStage),
+      leadForSave,
+    );
     const updated = await putLeadDetail(lt, leadId, body);
     setBaseDetail(updated);
     setLead((prev) => ({
       ...detailJsonToLead(updated, lt),
       id: leadId,
       activities: prev.activities,
+      followUpDate: leadForSave.followUpDate,
+      lostReason: leadForSave.lostReason,
       stageBlock: {
         ...prev.stageBlock,
-        presalesMilestoneStage: args.presalesMilestoneStage,
-        presalesMilestoneCategory: args.presalesMilestoneCategory,
-        presalesMilestoneSubStage: args.presalesMilestoneSubStage,
+        ...nextPresalesStage,
       },
     }));
     notifySuccess("Saved");
