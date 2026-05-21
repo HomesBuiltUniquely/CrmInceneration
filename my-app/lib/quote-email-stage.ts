@@ -1,4 +1,5 @@
 import type { Lead } from "@/lib/data";
+import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
 
 /** Status (milestone stage) dropdown in Complete Task — e.g. "Experience & Design". */
 export function isExperienceDesignStageName(stageName: string): boolean {
@@ -10,9 +11,9 @@ export function isExperienceDesignStageName(stageName: string): boolean {
   );
 }
 
-/** Feedback (substage) used to unlock quote follow-up UI. */
+/** Feedback (substage) used to unlock quote follow-up UI (Meeting Successful). */
 export function isQuoteSentFeedbackName(feedback: string): boolean {
-  const f = feedback.trim().toLowerCase();
+  const f = pipelineSubStageLabel(feedback).toLowerCase();
   return (
     f === "meeting successful" ||
     /\bmeeting\s*successful\b/.test(f) ||

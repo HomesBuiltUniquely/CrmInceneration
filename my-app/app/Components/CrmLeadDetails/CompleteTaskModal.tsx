@@ -12,13 +12,14 @@ import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
   filterSalesCompleteTaskMappings,
+  inferSalesStageFromNested,
   isPresalesTopLevelStage,
-  resolveSalesCompleteTaskStage,
   presalesCatalogFromPipelineResponse,
   resolveCompleteTaskMappings,
   sortMappingsByNestedPipelineOrder,
 } from "@/lib/complete-task-pipeline";
 import { isPresalesVerifyHandoffSelection } from "@/lib/presales-milestone-ui";
+import { shouldOpenQuoteSentPanelInCompleteTask } from "@/lib/quote-email-stage";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
@@ -30,6 +31,10 @@ import {
   isMeetingCancelledSubstage,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
+  isClosedWonBookingDoneSubstage,
+  isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
+  pipelineSubStageLabel,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -107,6 +112,20 @@ export type PresalesCompleteTaskApiPayload = {
   lostReason?: string;
 };
 
+/** Sales: quote email popup when feedback is Meeting Successful on Experience & Design. */
+export type CompleteTaskQuoteInline = {
+  quoteLink: string;
+  onQuoteLinkChange: (v: string) => void;
+  subject: string;
+  onSubjectChange: (v: string) => void;
+  body: string;
+  onBodyChange: (v: string) => void;
+  onSend: () => void | Promise<void>;
+  sending: boolean;
+  onGetQuote?: () => void | Promise<void>;
+  gettingQuote?: boolean;
+};
+
 export type CompleteTaskApiPayload = {
   feedback: string;
   milestoneStage: string;
@@ -137,6 +156,8 @@ export default function CompleteTaskModal({
   onPresalesApiComplete,
   onPresalesVerify,
   onPhoneCall,
+  quoteInline,
+  onOpenSalesClosure,
   userRole = "",
   presalesHandedOff = false,
   presalesVerifyAvailable = false,
@@ -159,6 +180,10 @@ export default function CompleteTaskModal({
   onPresalesVerify?: (payload: PresalesVerifyFromCompleteTaskPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
+  /** Sales only: Meeting Successful quote popup inside Complete Task. */
+  quoteInline?: CompleteTaskQuoteInline;
+  /** Sales only: open Sales Closure tab (Booking Done under Closed Won). */
+  onOpenSalesClosure?: () => void | Promise<void>;
   userRole?: string;
   presalesHandedOff?: boolean;
   /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
@@ -201,6 +226,7 @@ export default function CompleteTaskModal({
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
+  const [quotePopupDismissed, setQuotePopupDismissed] = useState(false);
   const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
@@ -212,11 +238,25 @@ export default function CompleteTaskModal({
   }, []);
 
   const scheduleMode = Boolean(
-    onApiComplete && isMeetingScheduleSubstage(feedback),
+    onApiComplete && !presalesMode && isMeetingScheduleSubstage(feedback),
   );
   const cancelMode = Boolean(
-    onApiComplete && isMeetingCancelledSubstage(feedback),
+    onApiComplete && !presalesMode && isMeetingCancelledSubstage(feedback),
   );
+
+  const quotePopupOpen = Boolean(
+    !presalesMode &&
+      onApiComplete &&
+      quoteInline &&
+      shouldOpenQuoteSentPanelInCompleteTask(status, feedback) &&
+      !quotePopupDismissed,
+  );
+
+  useEffect(() => {
+    if (!shouldOpenQuoteSentPanelInCompleteTask(status, feedback)) {
+      setQuotePopupDismissed(false);
+    }
+  }, [status, feedback]);
 
   /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
   const showLeadPropertyGateFooterHint = useMemo(
@@ -248,6 +288,7 @@ export default function CompleteTaskModal({
     setLostReason(lead.lostReason?.trim() ?? "");
     setVerifyPincode(lead.pincode?.trim() ?? "");
     setVerifySalesExecutiveId("");
+    setQuotePopupDismissed(false);
     setModalBudget(lead.budget ?? "");
     setModalPropertyNotes(lead.propertyNotes ?? "");
     setModalConfiguration(lead.configuration ?? "");
@@ -326,16 +367,16 @@ export default function CompleteTaskModal({
               fetchCrmPipeline({ nested: true, role: pipelineRole }),
             ]);
             const nestedTree =
-              completeTaskPipeline.nested?.length
-                ? completeTaskPipeline.nested
-                : fullPipeline.nested;
+              fullPipeline.nested?.length
+                ? fullPipeline.nested
+                : completeTaskPipeline.nested;
             nestedForOrder = nestedTree ?? [];
-            const effectiveStage = resolveSalesCompleteTaskStage({
-              milestoneStage: currentStage,
-              milestoneCategory: currentCategory,
-              milestoneSubStage: currentSubStage,
-              nested: nestedTree ?? [],
-            });
+            let effectiveStage = currentStage;
+            if (!effectiveStage.trim()) {
+              effectiveStage =
+                inferSalesStageFromNested(nestedTree ?? [], currentSubStage) ||
+                effectiveStage;
+            }
             mappings = resolveCompleteTaskMappings({
               completeTaskEntries: completeTaskPipeline.entries ?? [],
               nested: nestedTree,
@@ -581,11 +622,21 @@ export default function CompleteTaskModal({
       }),
   );
   const reasonRequired = requiresResoneField(path, feedback);
+  const selectedSubStageForRules =
+    selectedFeedbackOption?.subStageName.trim() ||
+    pipelineSubStageLabel(feedback);
   const isClosedWonCustomer =
     !presalesMode &&
-    status.trim() === "Closed" &&
-    path.trim() === "Closed Won" &&
-    (feedback.trim() === "Booking Done (Booking)" || feedback.trim() === "Token Done");
+    status.trim().toLowerCase() === "closed" &&
+    isClosedWonPathCategory(path) &&
+    isClosedWonCustomerSubstage(selectedSubStageForRules);
+  const bookingDoneClosureMode = Boolean(
+    !presalesMode &&
+      onApiComplete &&
+      status.trim().toLowerCase() === "closed" &&
+      isClosedWonPathCategory(path) &&
+      isClosedWonBookingDoneSubstage(selectedSubStageForRules),
+  );
   const noFollowUpRequired = presalesMode
     ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
@@ -695,9 +746,9 @@ export default function CompleteTaskModal({
     });
 
     if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
-      setApiError(
-        `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`
-      );
+      const msg = leadPropertyGateErrorMessage(effectivelyMissingFields);
+      setGatePopupMessage(msg);
+      setApiError(msg);
       return;
     }
 
@@ -764,11 +815,14 @@ export default function CompleteTaskModal({
     }
 
     if (onApiComplete) {
+      const selected = feedbackOptions.find((o) => o.label === feedback);
+      const feedbackToSave =
+        selected?.subStageName.trim() || pipelineSubStageLabel(feedback);
       setApiBusy(true);
       setApiError("");
       try {
         await onApiComplete({
-          feedback,
+          feedback: feedbackToSave,
           milestoneStage: status,
           milestoneStageCategory: path,
           note,
@@ -1247,6 +1301,31 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
+              {bookingDoneClosureMode ? (
+                <div className="rounded-[14px] border border-violet-200/80 bg-violet-50/50 p-3.5 space-y-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+                  <div>
+                    <p className="text-[13px] font-semibold text-violet-900 dark:text-violet-100">
+                      Booking Done — Sales Closure
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-violet-800/90 dark:text-violet-200/80">
+                      Closed → Closed Won → Booking Done requires the Sales Closure
+                      form. Add a note, then save — you will be redirected to complete
+                      Sales Closure and confirm the customer handoff.
+                    </p>
+                  </div>
+                  {onOpenSalesClosure ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-[38px] w-full rounded-[12px] border border-violet-300/80 text-[13px] font-medium text-violet-900 dark:text-violet-100"
+                      onClick={() => void onOpenSalesClosure()}
+                    >
+                      Open Sales Closure now (optional)
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
               {!presalesMode && cancelMode ? (
                 <div className="rounded-[14px] border border-amber-200/80 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/40 p-3.5">
                   <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-100">
@@ -1343,14 +1422,110 @@ export default function CompleteTaskModal({
               {apiBusy
                 ? verifyHandoffMode
                   ? "Verifying..."
-                  : "Saving..."
+                  : bookingDoneClosureMode
+                    ? "Opening Sales Closure…"
+                    : "Saving..."
                 : verifyHandoffMode
                   ? "Verify & hand off to sales"
-                  : "Save note"}
+                  : bookingDoneClosureMode
+                    ? "Save & open Sales Closure"
+                    : "Save note"}
             </Button>
           </div>
         </div>
       </div>
+
+      {quotePopupOpen && quoteInline ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="meeting-successful-popup-title"
+          onClick={() => setQuotePopupDismissed(true)}
+        >
+          <div
+            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3
+                  id="meeting-successful-popup-title"
+                  className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
+                >
+                  Meeting Successful
+                </h3>
+                <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
+                  Experience &amp; Design — add quote link, send quote email, or
+                  close and continue your note in Complete Task.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuotePopupDismissed(true)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)] hover:text-[var(--crm-text-primary)]"
+                aria-label="Close quote panel"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <FieldLabel>Quote link</FieldLabel>
+                <div className="mt-1.5 flex gap-2">
+                  <Input
+                    value={quoteInline.quoteLink}
+                    onChange={(e) => quoteInline.onQuoteLinkChange(e.target.value)}
+                    placeholder="https://… (PDF or proposal URL)"
+                    className="flex-1"
+                  />
+                  {quoteInline.onGetQuote ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={quoteInline.gettingQuote}
+                      onClick={() => void quoteInline.onGetQuote?.()}
+                      className="shrink-0"
+                    >
+                      {quoteInline.gettingQuote ? "Getting…" : "Get quote"}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
+                <p className="text-[12px] font-semibold text-[var(--crm-text-primary)]">
+                  Send quote email
+                </p>
+                <div>
+                  <FieldLabel>Email subject</FieldLabel>
+                  <Input
+                    value={quoteInline.subject}
+                    onChange={(e) => quoteInline.onSubjectChange(e.target.value)}
+                    className="mt-1.5"
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Email body</FieldLabel>
+                  <Textarea
+                    value={quoteInline.body}
+                    onChange={(e) => quoteInline.onBodyChange(e.target.value)}
+                    className="mt-1.5 min-h-[72px]"
+                    placeholder="Message shown in the email…"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="primary"
+                  disabled={quoteInline.sending}
+                  onClick={() => void quoteInline.onSend()}
+                >
+                  {quoteInline.sending ? "Sending…" : "Send quote email"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {gatePopupMessage ? (
         <div
