@@ -817,19 +817,20 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
-      if (
-        !presalesLeadVerified &&
-        selected &&
-        (isWonCategory(catToSave) ||
-          isPresalesVerifyHandoffSelection({
-            stage: stageToSave,
-            category: catToSave,
-            subStage: substageToSave,
-            feedbackLabel: feedback,
-          }))
-      ) {
-        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
-        return;
+      if (!presalesLeadVerified && selected) {
+        const verifyHandoff = isPresalesVerifyHandoffSelection({
+          stage: stageToSave,
+          category: catToSave,
+          subStage: substageToSave,
+          feedbackLabel: feedback,
+        });
+        const dataConversionWon =
+          normalizeStageKey(stageToSave) === "data conversion" &&
+          isWonCategory(catToSave);
+        if (verifyHandoff || dataConversionWon) {
+          setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+          return;
+        }
       }
       setApiBusy(true);
       setApiError("");
