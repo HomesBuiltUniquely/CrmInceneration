@@ -11,6 +11,46 @@ export type DisplayMilestone = {
   isPresales: boolean;
 };
 
+/** Presales pipeline columns for list/journey progress (Fresh → Discovery → Conversion). */
+export const PRESALES_PIPELINE_STAGE_ORDER = [
+  "Fresh Data",
+  "Data Discovery",
+  "Data Conversion",
+] as const;
+
+/** Presales list rows use presales milestones until the lead is verified / handed to sales. */
+export function shouldUsePresalesListDisplay(
+  lead: ApiLead | Record<string, unknown>,
+  userRole: string,
+): boolean {
+  if (!isPresalesRole(userRole)) return false;
+  return !isLeadHandedOffToSales(lead);
+}
+
+/** Milestone fields shown on presales lead list rows. */
+export function getListDisplayMilestone(
+  lead: ApiLead | Record<string, unknown>,
+  _userRole: string,
+): DisplayMilestone {
+  const ps = readPresalesMilestoneFromLead(lead);
+  return {
+    stage: ps.stage || "Fresh Data",
+    category: ps.category,
+    subStage: ps.subStage,
+    isPresales: true,
+  };
+}
+
+/** Status column label: prefer substage, then category, then top-level stage. */
+export function formatPresalesListStatusLabel(display: DisplayMilestone): string | undefined {
+  const sub = display.subStage.trim();
+  if (sub) return sub;
+  const cat = display.category.trim();
+  if (cat) return cat;
+  const st = display.stage.trim();
+  return st || undefined;
+}
+
 function pickLeadScalar(lead: Record<string, unknown>, keys: string[]): unknown {
   for (const k of keys) {
     if (!(k in lead)) continue;
