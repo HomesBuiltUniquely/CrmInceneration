@@ -12,8 +12,59 @@ const SALES_PIPELINE_ORDER = [
   "Closed",
 ] as const;
 
+/** Map API / UI variants to canonical sales pipeline stage names. */
+export function normalizeSalesMilestoneStageForPipeline(stage: string): string {
+  const key = normalizeStageKey(stage);
+  if (!key || key === "fresh" || key === "fresh lead" || key === "fresh leads") {
+    return "Fresh Lead";
+  }
+  const match = SALES_PIPELINE_ORDER.find((s) => normalizeStageKey(s) === key);
+  return match ?? stage.trim();
+}
+
+function looksLikeFreshLeadMilestone(
+  stage: string,
+  category: string,
+  subStage: string,
+): boolean {
+  for (const value of [stage, category, subStage]) {
+    const key = normalizeStageKey(value);
+    if (key === "fresh lead" || key === "fresh leads" || key === "fresh") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Resolve sales Complete Task stage (Fresh Lead when milestone is empty but lead is still fresh). */
+export function resolveSalesCompleteTaskStage(args: {
+  milestoneStage: string;
+  milestoneCategory?: string;
+  milestoneSubStage?: string;
+  nested?: CrmNestedStage[];
+}): string {
+  const stage = args.milestoneStage.trim();
+  if (stage) return normalizeSalesMilestoneStageForPipeline(stage);
+  if (
+    looksLikeFreshLeadMilestone(
+      "",
+      args.milestoneCategory ?? "",
+      args.milestoneSubStage ?? "",
+    )
+  ) {
+    return "Fresh Lead";
+  }
+  const inferred = inferSalesStageFromNested(
+    args.nested ?? [],
+    args.milestoneSubStage ?? "",
+  );
+  if (inferred.trim()) return normalizeSalesMilestoneStageForPipeline(inferred);
+  return "Fresh Lead";
+}
+
 export function salesAllowedForwardStages(currentStage: string): string[] {
-  const key = normalizeStageKey(currentStage);
+  const canonical = normalizeSalesMilestoneStageForPipeline(currentStage);
+  const key = normalizeStageKey(canonical);
   const idx = SALES_PIPELINE_ORDER.findIndex((s) => normalizeStageKey(s) === key);
   if (idx < 0) return [];
   if (idx >= SALES_PIPELINE_ORDER.length - 1) {
@@ -375,30 +426,73 @@ export function resolveCompleteTaskMappings(args: {
   const nested = args.nested ?? [];
 
   if (args.presalesMode) {
-    const fullCatalog = presalesCatalogFromPipelineResponse({
-      entries: args.completeTaskEntries,
-      nested,
-    });
-    if (fullCatalog.length > 0) return fullCatalog;
+    const currentStage = args.currentStage.trim() || "Fresh Data";
 
-    if (nested.length > 0 && args.currentStage.trim()) {
+    if (args.completeTaskEntries.length > 0) {
+      const fromEntries = filterPresalesCompleteTaskMappings(
+        entriesToMappings(args.completeTaskEntries),
+        currentStage,
+      );
+      if (fromEntries.length > 0) {
+        return sortMappingsByNestedPipelineOrder(nested, fromEntries);
+      }
+    }
+
+    if (nested.length > 0) {
+      const fromNested = filterToPresalesStages(
+        flattenSubstagesForCurrentAndNextStages(
+          nested,
+          currentStage,
+          presalesAllowedForwardStages,
+        ),
+      );
+      if (fromNested.length > 0) {
+        return sortMappingsByNestedPipelineOrder(nested, fromNested);
+      }
       return sortMappingsByNestedPipelineOrder(
         nested,
         buildPresalesCompleteTaskMappingsFromNested(
           nested,
-          args.currentStage,
+          currentStage,
           args.currentCategory ?? "",
           args.currentSubStage ?? "",
         ),
       );
     }
+
+    const fullCatalog = presalesCatalogFromPipelineResponse({
+      entries: args.completeTaskEntries,
+      nested,
+    });
+    if (fullCatalog.length > 0) {
+      return filterPresalesCompleteTaskMappings(fullCatalog, currentStage);
+    }
     return [];
   }
 
-  if (nested.length > 0 && args.currentStage.trim()) {
+  const salesStage = resolveSalesCompleteTaskStage({
+    milestoneStage: args.currentStage,
+    milestoneCategory: args.currentCategory,
+    milestoneSubStage: args.currentSubStage,
+    nested,
+  });
+
+  if (!salesStage.trim()) return [];
+
+  if (args.completeTaskEntries.length > 0) {
+    const fromEntries = filterSalesCompleteTaskMappings(
+      entriesToMappings(args.completeTaskEntries),
+      salesStage,
+    );
+    if (fromEntries.length > 0) {
+      return sortMappingsByNestedPipelineOrder(nested, fromEntries);
+    }
+  }
+
+  if (nested.length > 0) {
     const fromNested = flattenSubstagesForCurrentAndNextStages(
       nested,
-      args.currentStage,
+      salesStage,
       salesAllowedForwardStages,
       (stage) => isPresalesTopLevelStage(stage),
     );
@@ -407,9 +501,5 @@ export function resolveCompleteTaskMappings(args: {
     }
   }
 
-  const fromEntries = filterSalesCompleteTaskMappings(
-    entriesToMappings(args.completeTaskEntries),
-    args.currentStage,
-  );
-  return sortMappingsByNestedPipelineOrder(nested, fromEntries);
+  return [];
 }

@@ -106,8 +106,10 @@ export function isPresalesHandedOffReadOnly(
 
 export function presalesAllowedForwardStages(currentStage: string): string[] {
   const key = normalizeStageKey(currentStage);
-  if (key === "fresh data") return ["Data Discovery", "Data Conversion"];
-  if (key === "data discovery") return ["Data Conversion"];
+  if (key === "fresh data") {
+    return ["Fresh Data", "Data Discovery", "Data Conversion"];
+  }
+  if (key === "data discovery") return ["Data Discovery", "Data Conversion"];
   if (key === "data conversion") return ["Data Conversion"];
   return ["Fresh Data", "Data Discovery", "Data Conversion"];
 }

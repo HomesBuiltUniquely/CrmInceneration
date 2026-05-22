@@ -1,5 +1,5 @@
 import type { Lead } from "@/lib/data";
-import { shouldSendEmail } from "@/lib/email-substage-mapper";
+import { resolveEmailSubstage, shouldSendEmail } from "@/lib/email-substage-mapper";
 
 /**
  * Email request payload structure
@@ -27,38 +27,25 @@ export function buildEmailRequest(
   lead: Lead,
   substage: string
 ): EmailRequestPayload | null {
-  const originalSubstage = substage;
   const trimmedSubstage = substage.trim();
-  
-  console.log("[buildEmailRequest] ========================================");
-  console.log("[buildEmailRequest] Original substage:", originalSubstage);
-  console.log("[buildEmailRequest] Trimmed substage:", trimmedSubstage);
-  console.log("[buildEmailRequest] Lead name:", lead.name);
-  console.log("[buildEmailRequest] Lead email:", lead.email);
-  
-  // Check if this substage should trigger an email
-  const shouldSend = shouldSendEmail(trimmedSubstage);
-  console.log("[buildEmailRequest] Should send email?", shouldSend);
-  
-  if (!shouldSend) {
-    console.log("[buildEmailRequest] ❌ Substage not in email map");
+  const emailSubstage = resolveEmailSubstage(trimmedSubstage);
+
+  if (!emailSubstage || !shouldSendEmail(trimmedSubstage)) {
     return null;
   }
 
-  // Don't send if no email
   if (!lead.email?.trim()) {
-    console.log("[buildEmailRequest] ❌ Lead has no email");
     return null;
   }
 
   const payload: EmailRequestPayload = {
-    subStage: trimmedSubstage,
+    subStage: emailSubstage,
     clientName: lead.name?.trim() || "Valued Customer",
     clientEmail: lead.email.trim(),
   };
 
   // Add optional fields based on substage
-  switch (trimmedSubstage) {
+  switch (emailSubstage) {
     case "Meeting Scheduled":
     case "Meeting Rescheduled":
       if (lead.followUpDate?.includes("T")) {
@@ -95,7 +82,7 @@ export function buildEmailRequest(
     case "Meeting Cancelled/Paused":
       payload.cancellationReason = lead.lostReason?.trim() || "No detailed reason provided";
       break;
-      
+
     case "Quote Sent":
       if (lead.budget) {
         payload.quotedAmount = lead.budget;
@@ -122,8 +109,6 @@ export function buildEmailRequest(
       break;
   }
 
-  console.log("[buildEmailRequest] ✅ Payload built:", payload);
-  console.log("[buildEmailRequest] ========================================");
   return payload;
 }
 

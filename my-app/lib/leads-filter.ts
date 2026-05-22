@@ -3,10 +3,12 @@
 import { computeMilestoneProgress, normalizeStageKey } from "@/lib/milestone-progress";
 import { getLeadDisplayName } from "@/lib/lead-display";
 import {
-  getDisplayMilestone,
-  isLeadHandedOffToSales,
+  formatPresalesListStatusLabel,
+  getListDisplayMilestone,
   isPresalesHandedOffReadOnly,
+  PRESALES_PIPELINE_STAGE_ORDER,
   presalesTopLevelStage,
+  shouldUsePresalesListDisplay,
 } from "@/lib/presales-milestone";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
@@ -333,22 +335,27 @@ export function mapApiLeadToRow(
   orderedPipelineStages: string[] = [],
   userRole = "",
 ): LeadRowModel {
-  const display = getDisplayMilestone(lead, userRole);
+  const usePresalesDisplay = shouldUsePresalesListDisplay(lead, userRole);
+  const display = getListDisplayMilestone(lead, userRole);
   const st = lead.stage;
-  const statusLabel = display.isPresales
-    ? display.subStage || display.category || display.stage
+  const pipelineOrder = usePresalesDisplay
+    ? [...PRESALES_PIPELINE_STAGE_ORDER]
+    : orderedPipelineStages;
+
+  const statusLabel = usePresalesDisplay
+    ? formatPresalesListStatusLabel(display)
     : st?.milestoneSubStage?.trim() ||
       st?.milestoneStage?.trim() ||
       st?.substage?.substage?.trim() ||
       undefined;
 
-  const ms = display.isPresales ? presalesTopLevelStage(lead) : crmLeadTopLevelStage(lead);
-  const prog = computeMilestoneProgress(ms, orderedPipelineStages);
-  const fallbackJourney = display.isPresales
-    ? (display.category || display.stage || "PIPELINE").trim() || "PIPELINE"
+  const ms = usePresalesDisplay ? presalesTopLevelStage(lead) : crmLeadTopLevelStage(lead);
+  const prog = computeMilestoneProgress(ms, pipelineOrder);
+  const fallbackJourney = usePresalesDisplay
+    ? (display.stage || "Fresh Data").trim()
     : (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
   const journeyStage =
-    orderedPipelineStages.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
+    pipelineOrder.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
 
   return {
     id: String(lead.id ?? ""),
@@ -361,8 +368,8 @@ export function mapApiLeadToRow(
     reinquiry: hasReinquiry(lead),
     journey: {
       stage: journeyStage,
-      progressLabel: orderedPipelineStages.length > 0 ? prog.progressLabel : "—",
-      progressPct: orderedPipelineStages.length > 0 ? prog.pct : 0,
+      progressLabel: pipelineOrder.length > 0 ? prog.progressLabel : "—",
+      progressPct: pipelineOrder.length > 0 ? prog.pct : 0,
     },
     owner: { name: assigneeName(lead) },
     engagement: {
@@ -371,10 +378,7 @@ export function mapApiLeadToRow(
       tone: "ok",
     },
     actionIcon: "bolt",
-    pipelineBadge:
-      display.isPresales && !isLeadHandedOffToSales(lead)
-        ? "presales"
-        : "sales",
+    pipelineBadge: usePresalesDisplay ? "presales" : "sales",
     handedOffReadOnly: isPresalesHandedOffReadOnly(lead, userRole),
   };
 }

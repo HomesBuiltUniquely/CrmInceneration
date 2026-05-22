@@ -1,6 +1,7 @@
 "use client";
 
 import type { Lead } from "@/lib/data";
+import { maskLeadPhoneForDisplay } from "@/lib/lead-display";
 
 interface StatCard {
   icon: string;
@@ -11,7 +12,7 @@ interface StatCard {
 }
 
 export default function StatsRow({ lead }: { lead: Lead }) {
-  const phone = lead.phone?.trim() || "—";
+  const phone = maskLeadPhoneForDisplay(lead.phone ?? "");
 
   const stats: StatCard[] = [
     {

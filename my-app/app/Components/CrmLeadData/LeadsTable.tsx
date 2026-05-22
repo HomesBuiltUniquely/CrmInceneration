@@ -169,9 +169,9 @@ function LeadRowAction({
             {row.reinquiry ? <TinyTag chip={{ label: "Re-inquiry", tone: "rose" }} /> : null}
             {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
             {row.pipelineBadge === "presales" ? (
-              <TinyTag chip={{ label: "Presales Pipeline", tone: "amber" }} />
+              <TinyTag chip={{ label: "Presales", tone: "amber" }} />
             ) : row.pipelineBadge === "sales" ? (
-              <TinyTag chip={{ label: "Sales Pipeline", tone: "blue" }} />
+              <TinyTag chip={{ label: "Sales", tone: "blue" }} />
             ) : null}
             {row.handedOffReadOnly ? (
               <TinyTag chip={{ label: "Handed Off — Read Only", tone: "slate" }} />
