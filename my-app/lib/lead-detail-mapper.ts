@@ -149,7 +149,7 @@ function asPropertyDetailsObject(
   return null;
 }
 
-function pickConfigurationFromDetail(
+export function pickConfigurationFromDetail(
   detail: Record<string, unknown>,
   leadType: CrmLeadType,
 ): string {
@@ -302,7 +302,7 @@ function isConfigurationLikePropertyDetails(
 }
 
 /** Property notes: never treat config/interior values as notes. */
-function pickPropertyNotesFromDetail(
+export function pickPropertyNotesFromDetail(
   detail: Record<string, unknown>,
   leadType: CrmLeadType,
 ): string {
