@@ -30,9 +30,11 @@ import { isLostCategory } from "@/lib/crm-pipeline";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
+  completeTaskFeedbackLabel,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
   pipelineSubStageLabel,
+  resolveSubStageFromCompleteTaskFeedback,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -214,15 +216,25 @@ export default function CompleteTaskModal({
     return d.toISOString().slice(0, 10);
   }, []);
 
+  const schedulingSubStageKey = useMemo(
+    () =>
+      resolveSubStageFromCompleteTaskFeedback(
+        feedback,
+        feedbackMappings,
+        presalesMode,
+      ),
+    [feedback, feedbackMappings, presalesMode],
+  );
+
   const scheduleMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
+      isMeetingScheduleSubstage(schedulingSubStageKey),
   );
   const cancelMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingCancelledSubstage(pipelineSubStageLabel(feedback)),
+      isMeetingCancelledSubstage(schedulingSubStageKey),
   );
 
   /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
@@ -443,11 +455,9 @@ export default function CompleteTaskModal({
             if (preset) {
               const sub = preset.subStageName.trim();
               const st = preset.stage.trim();
-              const feedbackLabel =
-                sub && !sub.toLowerCase().includes(st.toLowerCase())
-                  ? `${sub} (${st})`
-                  : sub;
-              setFeedback(feedbackLabel);
+              setFeedback(
+                completeTaskFeedbackLabel(preset.stage, preset.subStageName, true),
+              );
               setStatus(preset.stage);
               setPath(preset.stageCategory);
             } else {
@@ -584,13 +594,7 @@ export default function CompleteTaskModal({
       ) {
         continue;
       }
-      const stageKey = stage.toLowerCase();
-      const subKey = subStageName.toLowerCase();
-      const label = presalesMode
-        ? subStageName && !subKey.includes(stageKey)
-          ? `${subStageName} (${stage})`
-          : subStageName || stage
-        : subStageName || stage;
+      const label = completeTaskFeedbackLabel(stage, subStageName, presalesMode);
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -1041,7 +1045,7 @@ export default function CompleteTaskModal({
 
                 <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                   {scheduleMode
-                    ? isDesignRefinementSchedulingSubstage(feedback)
+                    ? isDesignRefinementSchedulingSubstage(schedulingSubStageKey)
                       ? "For refinement meetings, the Hub appointment time will be used as follow-up."
                       : "For Meeting Scheduled / Rescheduled (and fix-appointment scheduling), the Hub appointment time will be used as follow-up."
                     : noFollowUpRequired
@@ -1223,13 +1227,13 @@ export default function CompleteTaskModal({
               {!presalesMode && scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
-                    {meetingSchedulePanelTitle(feedback)}
+                    {meetingSchedulePanelTitle(schedulingSubStageKey)}
                   </p>
                   <p className="text-[11px] text-[var(--crm-text-muted)]">
                     Pick designer, date, and slot. Hub creates the booking; description uses:
                     Meeting with [Lead type] - Lead ID: [id].
                   </p>
-                  {isDesignRefinementSchedulingSubstage(feedback) ? (
+                  {isDesignRefinementSchedulingSubstage(schedulingSubStageKey) ? (
                     <p className="text-[11px] text-[var(--crm-text-muted)]">
                       Same flow as the first meeting. The server does{" "}
                       <strong className="font-medium text-[var(--crm-text-secondary)]">not</strong>{" "}
