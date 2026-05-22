@@ -1,11 +1,4 @@
-import { normalizeRole } from "@/lib/auth/api";
 import type { MilestoneFilterQuery } from "@/lib/presales-milestone";
-import type { QuickAccessParentItem } from "@/app/Components/Shared/QuickAccessSidebar";
-import {
-  dashboardSidebarSections,
-  presalesWorkspaceSidebarSections,
-  salesWorkspaceSidebarSections,
-} from "@/app/Components/Shared/sidebar-data";
 
 /** CRM area split: sales pipeline vs presales pipeline (routes + dashboards). */
 export type CrmWorkspace = "sales" | "presales";
@@ -65,17 +58,4 @@ export function defaultLeadsVerificationStatus(
 ): string {
   if (explicit?.trim()) return explicit.trim();
   return workspace === "sales" ? "verified" : "unverified";
-}
-
-/** SUPER_ADMIN / ADMIN see every module; others see workspace-scoped sidebar. */
-export function sidebarSectionsForViewer(
-  workspace: CrmWorkspace,
-  role: string,
-): QuickAccessParentItem[] {
-  const r = normalizeRole(role);
-  if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") {
-    return dashboardSidebarSections;
-  }
-  if (workspace === "presales") return presalesWorkspaceSidebarSections;
-  return salesWorkspaceSidebarSections;
 }
