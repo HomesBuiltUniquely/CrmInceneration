@@ -18,6 +18,8 @@ import {
   mergeLeadIntoDetail,
   mergePresalesMilestoneIntoDetail,
   mergeSecondBoxIntoDetail,
+  pickConfigurationFromDetail,
+  pickPropertyNotesFromDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -335,6 +337,10 @@ async function postExternalIntakeLead(args: {
   lead: Lead;
   baseDetail: Record<string, unknown>;
   authUser?: Record<string, unknown> | null;
+  leadType?: CrmLeadType;
+  /** Complete Task / modal overrides (sent before PUT lead detail). */
+  propertyNotes?: string;
+  configuration?: string;
   /** When set (e.g. after scheduling), forwarded to Hub external-intake. */
   schedule?: {
     appointmentDate: string;
@@ -467,6 +473,21 @@ async function postExternalIntakeLead(args: {
       ? salesExecutiveEmailCandidate
       : "";
 
+  const intakeLeadType: CrmLeadType =
+    args.leadType && isCrmLeadType(args.leadType) ? args.leadType : "formlead";
+  const propertyNotes = (
+    args.propertyNotes?.trim() ||
+    args.lead.propertyNotes?.trim() ||
+    pickPropertyNotesFromDetail(args.baseDetail, intakeLeadType)
+  ).trim();
+  const configuration = (
+    args.configuration?.trim() ||
+    args.lead.configuration?.trim() ||
+    pickConfigurationFromDetail(args.baseDetail, intakeLeadType)
+  ).trim();
+  if (propertyNotes) payload.propertyNotes = propertyNotes;
+  if (configuration) payload.configuration = configuration;
+
   if (args.schedule) {
     const {
       appointmentDate,
@@ -506,6 +527,8 @@ async function postExternalIntakeLead(args: {
       typeof payload.salesExecutiveEmail === "string" &&
         payload.salesExecutiveEmail.trim(),
     ),
+    hasPropertyNotes: Boolean(propertyNotes),
+    hasConfiguration: Boolean(configuration),
   });
 
   const res = await fetch("/api/crm/external-intake", {
@@ -2032,6 +2055,9 @@ export default function LeadDetailsApiClient({
             lead,
             baseDetail,
             authUser: salesClosureAuthUser,
+            leadType: lt,
+            propertyNotes: args.propertyNotes ?? lead.propertyNotes,
+            configuration: args.configuration ?? lead.configuration,
             schedule:
               schedule.appointmentDate ||
               schedule.appointmentSlot ||

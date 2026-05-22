@@ -57,6 +57,12 @@ export async function POST(req: NextRequest) {
       typeof parsed?.salesExecutiveEmail === "string" &&
         parsed.salesExecutiveEmail.trim(),
     ),
+    hasPropertyNotes: Boolean(
+      typeof parsed?.propertyNotes === "string" && parsed.propertyNotes.trim(),
+    ),
+    hasConfiguration: Boolean(
+      typeof parsed?.configuration === "string" && parsed.configuration.trim(),
+    ),
     contactNoMasked: maskValue(parsed?.contactNo),
     clientEmailMasked: maskValue(parsed?.clientEmail),
   });
