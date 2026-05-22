@@ -2280,27 +2280,6 @@ export default function LeadDetailsApiClient({
         userRole={viewerRoleKey}
         presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
-        quoteInline={
-          usePresalesCompleteTask
-            ? undefined
-            : {
-                quoteLink: lead.quoteLink ?? "",
-                onQuoteLinkChange: (v) => patchLead({ quoteLink: v }),
-                subject: quoteSubject,
-                onSubjectChange: setQuoteSubject,
-                body: quoteBody,
-                onBodyChange: setQuoteBody,
-                onSend: handleSendQuote,
-                sending: quoteSending,
-                onGetQuote: handleGetQuote,
-                gettingQuote: quoteFetching,
-              }
-        }
-        onOpenSalesClosure={
-          usePresalesCompleteTask || !canClosedLeadHeader
-            ? undefined
-            : openStrictSalesClosureNewTab
-        }
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">

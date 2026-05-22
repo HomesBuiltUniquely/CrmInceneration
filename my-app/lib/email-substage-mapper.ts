@@ -1,3 +1,5 @@
+import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
+
 /**
  * Maps substages to email metadata
  * These match the backend SubStageConstants exactly
@@ -8,7 +10,7 @@ export type EmailSubstage =
   | "Meeting Rescheduled"
   | "Meeting Cancelled/Paused"
   | "No Response After Discussion"
-  | "MEETING SUCCESSFUL"
+  | "Quote Sent"
   | "Customer Dropped After Proposal"
   | "Budget Mismatch (Major)"
   | "Project Postponed Indefinitely"
@@ -52,11 +54,11 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
     requiresEmail: true,
     optionalFields: ["reconnectDate"],
   },
-  "MEETING SUCCESSFUL": {
-    substage: "MEETING SUCCESSFUL",
+  "Quote Sent": {
+    substage: "Quote Sent",
     subject: "Meeting Done – Your Quote is Coming Soon!",
     requiresEmail: true,
-    optionalFields: [],
+    optionalFields: ["quotedAmount"],
   },
   "Customer Dropped After Proposal": {
     substage: "Customer Dropped After Proposal",
@@ -90,16 +92,43 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
   },
 };
 
+/** Pipeline / UI labels → canonical email substage keys. */
+const EMAIL_SUBSTAGE_ALIASES: Record<string, EmailSubstage> = {
+  "meeting successful": "Quote Sent",
+  "meeting cancelled": "Meeting Cancelled/Paused",
+  "meeting cancelled/paused": "Meeting Cancelled/Paused",
+};
+
+/**
+ * Resolve CRM substage label to a key in {@link SUBSTAGE_EMAIL_MAP}.
+ * Strips parenthetical stage suffixes, e.g. `Meeting Scheduled (Connection)`.
+ */
+export function resolveEmailSubstage(substage: string): EmailSubstage | null {
+  const stripped = pipelineSubStageLabel(substage).trim();
+  if (!stripped) return null;
+
+  if (stripped in SUBSTAGE_EMAIL_MAP) {
+    return stripped as EmailSubstage;
+  }
+
+  const alias = EMAIL_SUBSTAGE_ALIASES[stripped.toLowerCase()];
+  if (alias) return alias;
+
+  const lower = stripped.toLowerCase();
+  for (const key of Object.keys(SUBSTAGE_EMAIL_MAP) as EmailSubstage[]) {
+    if (key.toLowerCase() === lower) return key;
+  }
+  return null;
+}
+
 /**
  * Get email metadata for a given substage
  * Trims the substage string for safety
  */
 export function getEmailMetadata(substage: string): EmailMetadata | null {
-  const trimmed = substage.trim();
-  console.log('[getEmailMetadata] Looking for substage:', trimmed);
-  const result = SUBSTAGE_EMAIL_MAP[trimmed as EmailSubstage] ?? null;
-  console.log('[getEmailMetadata] Found metadata:', result ? 'yes' : 'no');
-  return result;
+  const resolved = resolveEmailSubstage(substage);
+  if (!resolved) return null;
+  return SUBSTAGE_EMAIL_MAP[resolved];
 }
 
 /**
@@ -107,13 +136,7 @@ export function getEmailMetadata(substage: string): EmailMetadata | null {
  * Trims the substage string for safety
  */
 export function shouldSendEmail(substage: string): boolean {
-  const trimmed = substage.trim();
-  const result = trimmed in SUBSTAGE_EMAIL_MAP;
-  console.log('[shouldSendEmail] Checking substage "' + trimmed + '":', result);
-  if (!result) {
-    console.log('[shouldSendEmail] Available substages:', Object.keys(SUBSTAGE_EMAIL_MAP));
-  }
-  return result;
+  return resolveEmailSubstage(substage) !== null;
 }
 
 /**
@@ -123,10 +146,9 @@ export function validateEmailFields(
   substage: string,
   data: Record<string, unknown>
 ): { valid: boolean; missingFields: string[] } {
-  const trimmed = substage.trim();
-  const metadata = getEmailMetadata(trimmed);
+  const metadata = getEmailMetadata(substage);
   if (!metadata) {
-    console.log('[validateEmailFields] No metadata found for:', trimmed);
+    console.log("[validateEmailFields] No metadata found for:", substage.trim());
     return { valid: false, missingFields: ["substage"] };
   }
 

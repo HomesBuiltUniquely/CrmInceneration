@@ -119,6 +119,16 @@ export function getLeadDisplayPhone(lead: AnyLead): string {
   );
 }
 
+/** Show only the first four digits; remaining digits are replaced with X (no reveal). */
+export function maskLeadPhoneForDisplay(phone: string): string {
+  const trimmed = phone.trim();
+  if (!trimmed) return "—";
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return "—";
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}${"X".repeat(digits.length - 4)}`;
+}
+
 export function getLeadDisplayPincode(lead: AnyLead): string {
   const dynamic = obj(lead.dynamicFields);
   return pick(

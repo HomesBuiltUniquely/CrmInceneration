@@ -237,7 +237,7 @@ export async function putLeadDetail(
     cache: "no-store",
   });
   if (!res.ok) {
-    throw await buildApiError(res, "Failed to update lead. Please check values and try again.");
+    throw await buildApiError(res, "Unable to save lead");
   }
   return res.json() as Promise<Record<string, unknown>>;
 }

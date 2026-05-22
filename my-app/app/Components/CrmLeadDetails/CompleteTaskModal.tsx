@@ -11,15 +11,16 @@ import {
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
-  filterSalesCompleteTaskMappings,
-  inferSalesStageFromNested,
   isPresalesTopLevelStage,
-  presalesCatalogFromPipelineResponse,
   resolveCompleteTaskMappings,
   sortMappingsByNestedPipelineOrder,
 } from "@/lib/complete-task-pipeline";
-import { isPresalesVerifyHandoffSelection } from "@/lib/presales-milestone-ui";
-import { shouldOpenQuoteSentPanelInCompleteTask } from "@/lib/quote-email-stage";
+import {
+  isPresalesVerifyHandoffSelection,
+  PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
+} from "@/lib/presales-milestone-ui";
+import { isWonCategory } from "@/lib/crm-pipeline";
+import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
@@ -31,9 +32,6 @@ import {
   isMeetingCancelledSubstage,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
-  isClosedWonBookingDoneSubstage,
-  isClosedWonCustomerSubstage,
-  isClosedWonPathCategory,
   pipelineSubStageLabel,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
@@ -112,20 +110,6 @@ export type PresalesCompleteTaskApiPayload = {
   lostReason?: string;
 };
 
-/** Sales: quote email popup when feedback is Meeting Successful on Experience & Design. */
-export type CompleteTaskQuoteInline = {
-  quoteLink: string;
-  onQuoteLinkChange: (v: string) => void;
-  subject: string;
-  onSubjectChange: (v: string) => void;
-  body: string;
-  onBodyChange: (v: string) => void;
-  onSend: () => void | Promise<void>;
-  sending: boolean;
-  onGetQuote?: () => void | Promise<void>;
-  gettingQuote?: boolean;
-};
-
 export type CompleteTaskApiPayload = {
   feedback: string;
   milestoneStage: string;
@@ -156,8 +140,6 @@ export default function CompleteTaskModal({
   onPresalesApiComplete,
   onPresalesVerify,
   onPhoneCall,
-  quoteInline,
-  onOpenSalesClosure,
   userRole = "",
   presalesHandedOff = false,
   presalesVerifyAvailable = false,
@@ -180,10 +162,6 @@ export default function CompleteTaskModal({
   onPresalesVerify?: (payload: PresalesVerifyFromCompleteTaskPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
-  /** Sales only: Meeting Successful quote popup inside Complete Task. */
-  quoteInline?: CompleteTaskQuoteInline;
-  /** Sales only: open Sales Closure tab (Booking Done under Closed Won). */
-  onOpenSalesClosure?: () => void | Promise<void>;
   userRole?: string;
   presalesHandedOff?: boolean;
   /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
@@ -226,7 +204,6 @@ export default function CompleteTaskModal({
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
-  const [quotePopupDismissed, setQuotePopupDismissed] = useState(false);
   const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
@@ -238,25 +215,15 @@ export default function CompleteTaskModal({
   }, []);
 
   const scheduleMode = Boolean(
-    onApiComplete && !presalesMode && isMeetingScheduleSubstage(feedback),
+    onApiComplete &&
+      !presalesMode &&
+      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
   );
   const cancelMode = Boolean(
-    onApiComplete && !presalesMode && isMeetingCancelledSubstage(feedback),
+    onApiComplete &&
+      !presalesMode &&
+      isMeetingCancelledSubstage(pipelineSubStageLabel(feedback)),
   );
-
-  const quotePopupOpen = Boolean(
-    !presalesMode &&
-      onApiComplete &&
-      quoteInline &&
-      shouldOpenQuoteSentPanelInCompleteTask(status, feedback) &&
-      !quotePopupDismissed,
-  );
-
-  useEffect(() => {
-    if (!shouldOpenQuoteSentPanelInCompleteTask(status, feedback)) {
-      setQuotePopupDismissed(false);
-    }
-  }, [status, feedback]);
 
   /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
   const showLeadPropertyGateFooterHint = useMemo(
@@ -288,7 +255,6 @@ export default function CompleteTaskModal({
     setLostReason(lead.lostReason?.trim() ?? "");
     setVerifyPincode(lead.pincode?.trim() ?? "");
     setVerifySalesExecutiveId("");
-    setQuotePopupDismissed(false);
     setModalBudget(lead.budget ?? "");
     setModalPropertyNotes(lead.propertyNotes ?? "");
     setModalConfiguration(lead.configuration ?? "");
@@ -332,59 +298,93 @@ export default function CompleteTaskModal({
 
         try {
           if (presalesMode) {
-            const fullPresalesPipeline = await fetchCrmPipeline({
-              nested: true,
-              role: pipelineRole,
-            });
-            nestedForOrder = fullPresalesPipeline.nested ?? [];
-            mappings = presalesCatalogFromPipelineResponse(fullPresalesPipeline);
-            if (mappings.length === 0) {
-              const completeTaskPipeline = await fetchCrmPipeline({
-                nested: true,
-                forCompleteTask: true,
-                currentStage,
-                role: pipelineRole,
-              });
-              nestedForOrder = completeTaskPipeline.nested ?? nestedForOrder;
-              mappings = resolveCompleteTaskMappings({
-                completeTaskEntries: completeTaskPipeline.entries ?? [],
-                nested: completeTaskPipeline.nested,
-                presalesMode: true,
-                currentStage,
-                currentCategory,
-                currentSubStage,
-                applyPresalesClientFilter: false,
-              });
-            }
-          } else {
-            const [completeTaskPipeline, fullPipeline] = await Promise.all([
+            const [completeTaskPipeline, fullPresalesPipeline] = await Promise.all([
               fetchCrmPipeline({
                 nested: true,
                 forCompleteTask: true,
-                currentStage: currentStage || undefined,
+                currentStage: currentStage || "Fresh Data",
                 role: pipelineRole,
               }),
               fetchCrmPipeline({ nested: true, role: pipelineRole }),
             ]);
-            const nestedTree =
-              fullPipeline.nested?.length
-                ? fullPipeline.nested
-                : completeTaskPipeline.nested;
-            nestedForOrder = nestedTree ?? [];
-            let effectiveStage = currentStage;
-            if (!effectiveStage.trim()) {
-              effectiveStage =
-                inferSalesStageFromNested(nestedTree ?? [], currentSubStage) ||
-                effectiveStage;
-            }
+            nestedForOrder =
+              fullPresalesPipeline.nested?.length
+                ? fullPresalesPipeline.nested
+                : completeTaskPipeline.nested ?? [];
             mappings = resolveCompleteTaskMappings({
               completeTaskEntries: completeTaskPipeline.entries ?? [],
-              nested: nestedTree,
-              presalesMode: false,
-              currentStage: effectiveStage,
+              nested: nestedForOrder,
+              presalesMode: true,
+              currentStage: currentStage || "Fresh Data",
               currentCategory,
               currentSubStage,
+              applyPresalesClientFilter: false,
             });
+          } else {
+            const salesCurrentStage = (
+              lead.stageBlock?.milestoneStage ??
+              lead.status ??
+              ""
+            ).trim();
+
+            const mergeUniqueMappings = (
+              primary: SubStatusMapping[],
+              secondary: SubStatusMapping[],
+            ): SubStatusMapping[] => {
+              const out: SubStatusMapping[] = [];
+              const seen = new Set<string>();
+              for (const row of [...primary, ...secondary]) {
+                const stage = String(row.stage ?? "").trim();
+                const stageCategory = String(row.stageCategory ?? "").trim();
+                const subStageName = String(row.subStageName ?? "").trim();
+                if (!stage) continue;
+                const key = `${stage}||${stageCategory}||${subStageName}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push({ stage, stageCategory, subStageName });
+              }
+              return out;
+            };
+
+            const [completeTaskPipeline, fullPipeline] = await Promise.all([
+              fetchCrmPipeline({
+                nested: true,
+                forCompleteTask: true,
+                currentStage: salesCurrentStage || undefined,
+              }),
+              fetchCrmPipeline({ nested: true, role: pipelineRole }),
+            ]);
+            nestedForOrder =
+              fullPipeline.nested?.length
+                ? fullPipeline.nested
+                : completeTaskPipeline.nested ?? [];
+            const completeTaskMappings = (completeTaskPipeline.entries ?? []).map(
+              (e) => ({
+                stage: String(e.stage ?? "").trim(),
+                stageCategory: String(e.stageCategory ?? "").trim(),
+                subStageName: String(e.subStageName ?? "").trim(),
+              }),
+            );
+            const currentStageMappings = (fullPipeline.entries ?? [])
+              .filter((e) => {
+                const stage = String(e.stage ?? "").trim().toLowerCase();
+                return stage && stage === salesCurrentStage.trim().toLowerCase();
+              })
+              .map((e) => ({
+                stage: String(e.stage ?? "").trim(),
+                stageCategory: String(e.stageCategory ?? "").trim(),
+                subStageName: String(e.subStageName ?? "").trim(),
+              }));
+            mappings = mergeUniqueMappings(
+              currentStageMappings,
+              completeTaskMappings,
+            );
+            if (mappings.length === 0) {
+              mappings = completeTaskMappings;
+            }
+            if (nestedForOrder.length > 0) {
+              mappings = sortMappingsByNestedPipelineOrder(nestedForOrder, mappings);
+            }
           }
         } catch (pipelineError) {
           // Fallback to existing milestone endpoint only if complete-task
@@ -414,7 +414,7 @@ export default function CompleteTaskModal({
           }));
           mappings = presalesMode
             ? normalized.filter((m) => isPresalesTopLevelStage(m.stage))
-            : filterSalesCompleteTaskMappings(normalized, currentStage);
+            : normalized;
           if (mappings.length === 0) {
             throw pipelineError;
           }
@@ -434,22 +434,27 @@ export default function CompleteTaskModal({
 
         if (!cancelled) {
           setFeedbackMappings(mappings);
-          const presetSub = presalesMode
-            ? (lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "")
-            : (lead.stageBlock?.milestoneSubStage?.trim() ?? lead.status?.trim() ?? "");
-          const preset = presetSub
-            ? mappings.find((m) => m.subStageName.trim() === presetSub)
-            : undefined;
-          if (preset) {
-            const sub = preset.subStageName.trim();
-            const st = preset.stage.trim();
-            const feedbackLabel =
-              presalesMode && sub && !sub.toLowerCase().includes(st.toLowerCase())
-                ? `${sub} (${st})`
-                : sub;
-            setFeedback(feedbackLabel);
-            setStatus(preset.stage);
-            setPath(preset.stageCategory);
+          if (presalesMode) {
+            const presetSub =
+              lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "";
+            const preset = presetSub
+              ? mappings.find((m) => m.subStageName.trim() === presetSub)
+              : undefined;
+            if (preset) {
+              const sub = preset.subStageName.trim();
+              const st = preset.stage.trim();
+              const feedbackLabel =
+                sub && !sub.toLowerCase().includes(st.toLowerCase())
+                  ? `${sub} (${st})`
+                  : sub;
+              setFeedback(feedbackLabel);
+              setStatus(preset.stage);
+              setPath(preset.stageCategory);
+            } else {
+              setFeedback("");
+              setStatus("");
+              setPath("");
+            }
           } else {
             setFeedback("");
             setStatus("");
@@ -552,6 +557,15 @@ export default function CompleteTaskModal({
     };
   }, [appointmentDate, meetingDesigner, open, scheduleMode]);
 
+  const presalesOnFreshData = useMemo(
+    () =>
+      presalesMode &&
+      normalizeStageKey(
+        lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data",
+      ) === "fresh data",
+    [lead.stageBlock?.presalesMilestoneStage, presalesMode],
+  );
+
   const feedbackOptions = useMemo<FeedbackOption[]>(() => {
     const seen = new Set<string>();
     const rows: FeedbackOption[] = [];
@@ -561,21 +575,34 @@ export default function CompleteTaskModal({
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
+      if (
+        presalesMode &&
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        normalizeStageKey(stage) === "data conversion" &&
+        isWonCategory(stageCategory)
+      ) {
+        continue;
+      }
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();
-      const label =
-        presalesMode && subStageName && !subKey.includes(stageKey)
+      const label = presalesMode
+        ? subStageName && !subKey.includes(stageKey)
           ? `${subStageName} (${stage})`
-          : subStageName && !subKey.includes(stageKey)
-            ? `${subStageName} (${stage})`
-            : subStageName || stage;
+          : subStageName || stage
+        : subStageName || stage;
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({ label, stage, stageCategory, subStageName });
     }
     return rows;
-  }, [feedbackMappings, presalesMode]);
+  }, [
+    feedbackMappings,
+    presalesMode,
+    presalesLeadVerified,
+    presalesHandedOff,
+  ]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
     return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
@@ -622,21 +649,12 @@ export default function CompleteTaskModal({
       }),
   );
   const reasonRequired = requiresResoneField(path, feedback);
-  const selectedSubStageForRules =
-    selectedFeedbackOption?.subStageName.trim() ||
-    pipelineSubStageLabel(feedback);
   const isClosedWonCustomer =
     !presalesMode &&
-    status.trim().toLowerCase() === "closed" &&
-    isClosedWonPathCategory(path) &&
-    isClosedWonCustomerSubstage(selectedSubStageForRules);
-  const bookingDoneClosureMode = Boolean(
-    !presalesMode &&
-      onApiComplete &&
-      status.trim().toLowerCase() === "closed" &&
-      isClosedWonPathCategory(path) &&
-      isClosedWonBookingDoneSubstage(selectedSubStageForRules),
-  );
+    status.trim() === "Closed" &&
+    path.trim() === "Closed Won" &&
+    (feedback.trim() === "Booking Done (Booking)" ||
+      feedback.trim() === "Token Done");
   const noFollowUpRequired = presalesMode
     ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
@@ -746,9 +764,15 @@ export default function CompleteTaskModal({
     });
 
     if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
-      const msg = leadPropertyGateErrorMessage(effectivelyMissingFields);
-      setGatePopupMessage(msg);
-      setApiError(msg);
+      const msg = presalesMode
+        ? leadPropertyGateErrorMessage(effectivelyMissingFields)
+        : `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`;
+      if (!presalesMode) {
+        setApiError(msg);
+      } else {
+        setGatePopupMessage(msg);
+        setApiError(msg);
+      }
       return;
     }
 
@@ -793,6 +817,20 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
+      if (
+        !presalesLeadVerified &&
+        selected &&
+        (isWonCategory(catToSave) ||
+          isPresalesVerifyHandoffSelection({
+            stage: stageToSave,
+            category: catToSave,
+            subStage: substageToSave,
+            feedbackLabel: feedback,
+          }))
+      ) {
+        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+        return;
+      }
       setApiBusy(true);
       setApiError("");
       try {
@@ -815,14 +853,11 @@ export default function CompleteTaskModal({
     }
 
     if (onApiComplete) {
-      const selected = feedbackOptions.find((o) => o.label === feedback);
-      const feedbackToSave =
-        selected?.subStageName.trim() || pipelineSubStageLabel(feedback);
       setApiBusy(true);
       setApiError("");
       try {
         await onApiComplete({
-          feedback: feedbackToSave,
+          feedback,
           milestoneStage: status,
           milestoneStageCategory: path,
           note,
@@ -1086,10 +1121,33 @@ export default function CompleteTaskModal({
                     Feedback is required.
                   </p>
                 )}
+                {presalesOnFreshData ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
+                    You can move to{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Data Discovery
+                    </strong>{" "}
+                    or skip to{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Data Conversion
+                    </strong>
+                    . Sales handoff (Won / Assigned) uses{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Verify Lead
+                    </strong>{" "}
+                    on unverified leads.
+                  </p>
+                ) : null}
+                {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
+                  <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
+                    Data Conversion → Won paths are hidden until the lead is verified.
+                  </p>
+                ) : null}
               </div>
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
+                  handoffLabel={feedback}
                   pincode={verifyPincode}
                   onPincodeChange={setVerifyPincode}
                   salesExecutiveId={verifySalesExecutiveId}
@@ -1301,31 +1359,6 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
-              {bookingDoneClosureMode ? (
-                <div className="rounded-[14px] border border-violet-200/80 bg-violet-50/50 p-3.5 space-y-3 dark:border-violet-900/40 dark:bg-violet-950/20">
-                  <div>
-                    <p className="text-[13px] font-semibold text-violet-900 dark:text-violet-100">
-                      Booking Done — Sales Closure
-                    </p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-violet-800/90 dark:text-violet-200/80">
-                      Closed → Closed Won → Booking Done requires the Sales Closure
-                      form. Add a note, then save — you will be redirected to complete
-                      Sales Closure and confirm the customer handoff.
-                    </p>
-                  </div>
-                  {onOpenSalesClosure ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-[38px] w-full rounded-[12px] border border-violet-300/80 text-[13px] font-medium text-violet-900 dark:text-violet-100"
-                      onClick={() => void onOpenSalesClosure()}
-                    >
-                      Open Sales Closure now (optional)
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
-
               {!presalesMode && cancelMode ? (
                 <div className="rounded-[14px] border border-amber-200/80 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/40 p-3.5">
                   <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-100">
@@ -1422,110 +1455,14 @@ export default function CompleteTaskModal({
               {apiBusy
                 ? verifyHandoffMode
                   ? "Verifying..."
-                  : bookingDoneClosureMode
-                    ? "Opening Sales Closure…"
-                    : "Saving..."
+                  : "Saving..."
                 : verifyHandoffMode
                   ? "Verify & hand off to sales"
-                  : bookingDoneClosureMode
-                    ? "Save & open Sales Closure"
-                    : "Save note"}
+                  : "Save note"}
             </Button>
           </div>
         </div>
       </div>
-
-      {quotePopupOpen && quoteInline ? (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="meeting-successful-popup-title"
-          onClick={() => setQuotePopupDismissed(true)}
-        >
-          <div
-            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <h3
-                  id="meeting-successful-popup-title"
-                  className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
-                >
-                  Meeting Successful
-                </h3>
-                <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
-                  Experience &amp; Design — add quote link, send quote email, or
-                  close and continue your note in Complete Task.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setQuotePopupDismissed(true)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)] hover:text-[var(--crm-text-primary)]"
-                aria-label="Close quote panel"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <FieldLabel>Quote link</FieldLabel>
-                <div className="mt-1.5 flex gap-2">
-                  <Input
-                    value={quoteInline.quoteLink}
-                    onChange={(e) => quoteInline.onQuoteLinkChange(e.target.value)}
-                    placeholder="https://… (PDF or proposal URL)"
-                    className="flex-1"
-                  />
-                  {quoteInline.onGetQuote ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      disabled={quoteInline.gettingQuote}
-                      onClick={() => void quoteInline.onGetQuote?.()}
-                      className="shrink-0"
-                    >
-                      {quoteInline.gettingQuote ? "Getting…" : "Get quote"}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
-                <p className="text-[12px] font-semibold text-[var(--crm-text-primary)]">
-                  Send quote email
-                </p>
-                <div>
-                  <FieldLabel>Email subject</FieldLabel>
-                  <Input
-                    value={quoteInline.subject}
-                    onChange={(e) => quoteInline.onSubjectChange(e.target.value)}
-                    className="mt-1.5"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Email body</FieldLabel>
-                  <Textarea
-                    value={quoteInline.body}
-                    onChange={(e) => quoteInline.onBodyChange(e.target.value)}
-                    className="mt-1.5 min-h-[72px]"
-                    placeholder="Message shown in the email…"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="primary"
-                  disabled={quoteInline.sending}
-                  onClick={() => void quoteInline.onSend()}
-                >
-                  {quoteInline.sending ? "Sending…" : "Send quote email"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {gatePopupMessage ? (
         <div
