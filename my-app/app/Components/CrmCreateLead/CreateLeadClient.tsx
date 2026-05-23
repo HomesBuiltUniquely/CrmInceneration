@@ -378,6 +378,9 @@ export default function CreateLeadClient() {
           customerId: result?.customerId,
         });
         setForm(INITIAL_FORM);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("crm:leads-invalidate"));
+        }
       } catch (submitError) {
         setError(
           submitError instanceof Error
