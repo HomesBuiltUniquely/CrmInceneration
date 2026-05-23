@@ -446,6 +446,9 @@ export default function ImportLeadsClient() {
         errors: Array.isArray(data?.errors) ? (data.errors as string[]) : [],
       });
       setAlert({ tone: "success", message: "Import completed successfully." });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("crm:leads-invalidate"));
+      }
       setStep("results");
     } catch (error) {
       showError(

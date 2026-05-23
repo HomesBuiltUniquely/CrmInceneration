@@ -7,6 +7,7 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { compareLeadsByRecencyDesc } from "@/lib/lead-recency";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
@@ -39,13 +40,6 @@ const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
   "PRESALES_MANAGER",
   "PRESALES_EXECUTIVE",
 ]);
-
-function parseUpdatedAt(a: ApiLead): number {
-  const u = a.updatedAt;
-  if (!u) return 0;
-  const t = Date.parse(u);
-  return Number.isNaN(t) ? 0 : t;
-}
 
 function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
@@ -96,7 +90,8 @@ function inDateRange(
 ): boolean {
   if (!from && !to) return true;
   const ts = leadDateRaw ? Date.parse(leadDateRaw) : Number.NaN;
-  if (Number.isNaN(ts)) return false;
+  // Include brand-new rows before the API backfills created/updated timestamps.
+  if (Number.isNaN(ts)) return true;
   const dayMs = 24 * 60 * 60 * 1000;
   if (from) {
     const fromTs = Date.parse(`${from}T00:00:00`);
@@ -447,7 +442,7 @@ export async function GET(req: NextRequest) {
       }
       return true;
     })
-    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
+    .sort(compareLeadsByRecencyDesc);
 
   const pageNum = Number.parseInt(page, 10) || 0;
   const pageSize = Number.parseInt(size, 10) || 20;

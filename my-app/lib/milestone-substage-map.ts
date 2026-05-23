@@ -14,9 +14,35 @@ function normSubstageLabel(s: string): string {
   return s.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
-/** UI label → pipeline substage, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`. */
+/** Substage names where trailing `(…)` is part of the catalog label, not a stage suffix. */
+const SUBSTAGE_WITH_TRAILING_PAREN = new Set(
+  ["Design Refinement Round (Revisit)", "Booking Done (Booking)"].map(normSubstageLabel),
+);
+
+function isSubstageWithTrailingParen(label: string): boolean {
+  return SUBSTAGE_WITH_TRAILING_PAREN.has(normSubstageLabel(label));
+}
+
+/**
+ * UI label → pipeline substage.
+ * Strips stage suffix from Complete Task, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`.
+ * Preserves substage-internal parens, e.g. `Design Refinement Round (Revisit)`.
+ */
 export function pipelineSubStageLabel(value: string): string {
-  return value.replace(/\s*\([^)]+\)\s*$/i, "").trim();
+  let s = value.trim();
+  if (!s) return "";
+
+  while (true) {
+    const match = s.match(/^(.*)\s*\(([^)]+)\)\s*$/i);
+    if (!match) return s;
+    const base = match[1].trim();
+    const paren = match[2].trim();
+    const candidate = `${base} (${paren})`;
+    if (isSubstageWithTrailingParen(candidate)) {
+      return candidate;
+    }
+    s = base;
+  }
 }
 
 /** True when selected feedback (substage) is one of the closer cancellation/refund substages. */

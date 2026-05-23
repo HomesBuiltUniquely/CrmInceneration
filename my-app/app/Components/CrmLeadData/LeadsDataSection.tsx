@@ -52,6 +52,9 @@ import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helper
 import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
+import { compareLeadsByRecencyDesc } from "@/lib/lead-recency";
+
+const LEADS_AUTO_REFRESH_MS = 20_000;
 
 type Props = {
   search: string;
@@ -1589,11 +1592,7 @@ export default function LeadsDataSection({
           requiresClientScopedDataset && !isGlobalSearchActive && !trustPresalesScope
             ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
             : allLeads;
-        const visibleMerged = roleScopedLeads.sort((a, b) => {
-          const at = Date.parse(a.updatedAt ?? "");
-          const bt = Date.parse(b.updatedAt ?? "");
-          return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-        });
+        const visibleMerged = roleScopedLeads.sort(compareLeadsByRecencyDesc);
         const start = targetPage * targetSize;
         return {
           content: visibleMerged.slice(start, start + targetSize),
@@ -1737,11 +1736,7 @@ export default function LeadsDataSection({
           byId.set(id, lead);
         }
       }
-      return [...byId.values()].sort((a, b) => {
-        const at = Date.parse(a.updatedAt ?? "");
-        const bt = Date.parse(b.updatedAt ?? "");
-        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-      });
+      return [...byId.values()].sort(compareLeadsByRecencyDesc);
     },
     [
       crmMonthWindowProp,
@@ -1867,10 +1862,13 @@ export default function LeadsDataSection({
     effectiveAssigneeScope,
   ]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setData(null);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+      setData(null);
+    }
     try {
       const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>, usePageMetaForUi: boolean) => {
         setData(pageJson);
@@ -1952,7 +1950,7 @@ export default function LeadsDataSection({
       setError(msg);
       setData(null);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [
     dateFrom,
@@ -1980,6 +1978,22 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refreshQuiet = () => {
+      if (document.visibilityState !== "visible") return;
+      void load({ silent: true });
+    };
+    const onInvalidate = () => refreshQuiet();
+    window.addEventListener("crm:leads-invalidate", onInvalidate);
+    document.addEventListener("visibilitychange", onInvalidate);
+    const poll = window.setInterval(refreshQuiet, LEADS_AUTO_REFRESH_MS);
+    return () => {
+      window.removeEventListener("crm:leads-invalidate", onInvalidate);
+      document.removeEventListener("visibilitychange", onInvalidate);
+      window.clearInterval(poll);
+    };
   }, [load]);
 
   const handleRefresh = useCallback(async () => {
