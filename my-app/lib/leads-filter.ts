@@ -181,6 +181,15 @@ function hasReinquiry(lead: ApiLead): boolean {
   return typeof src === "string" && src.trim().length > 0;
 }
 
+function leadDynamicFields(lead: ApiLead): Record<string, unknown> {
+  const r = lead as Record<string, unknown>;
+  const df = r.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    return df as Record<string, unknown>;
+  }
+  return {};
+}
+
 function pickLeadAssigneeFlatString(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
   const keys = [
@@ -193,12 +202,52 @@ function pickLeadAssigneeFlatString(lead: ApiLead): string {
     "salesRepName",
     "rmName",
     "relationshipManager",
+    "assignee",
   ];
   for (const k of keys) {
     const v = r[k];
     if (typeof v === "string" && v.trim()) return v.trim();
   }
+  const d = leadDynamicFields(lead);
+  for (const k of keys) {
+    const v = d[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
   return "";
+}
+
+/** Numeric owner ids on list rows (FormLead often uses snake_case or nested user). */
+export function readLeadSalesExecutiveIds(lead: ApiLead): number[] {
+  const r = lead as Record<string, unknown>;
+  const ids = new Set<number>();
+  const push = (v: unknown) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) ids.add(n);
+  };
+  for (const k of [
+    "assigneeId",
+    "assignee_id",
+    "assignedToId",
+    "assigned_to_id",
+    "salesExecutiveId",
+    "sales_executive_id",
+    "salesOwnerId",
+    "sales_owner_id",
+    "userId",
+  ]) {
+    push(r[k]);
+  }
+  const d = leadDynamicFields(lead);
+  for (const k of ["assigneeId", "assignedToId", "salesExecutiveId", "sales_executive_id"]) {
+    push(d[k]);
+  }
+  for (const key of ["assignee", "assignedTo", "salesOwner", "assignedUser", "owner"]) {
+    const v = r[key];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      push((v as { id?: unknown }).id);
+    }
+  }
+  return [...ids];
 }
 
 function pickPersonAssigneeString(value: unknown): string {
@@ -239,9 +288,15 @@ export function crmLeadAssigneeAliasNorms(lead: ApiLead): Set<string> {
     "salesRepName",
     "rmName",
     "relationshipManager",
+    "assignee",
   ];
   for (const k of flatKeys) {
     const v = r[k];
+    if (typeof v === "string") add(v);
+  }
+  const d = leadDynamicFields(lead);
+  for (const k of flatKeys) {
+    const v = d[k];
     if (typeof v === "string") add(v);
   }
   for (const key of ["assignee", "salesOwner", "assignedTo", "assignedUser", "owner"]) {
