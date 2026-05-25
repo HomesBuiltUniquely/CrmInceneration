@@ -1,12 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Chip, Button } from "./ui";
+import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Button } from "./ui";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
+import {
+  crmFloorPlanContentProxyPath,
+  crmFloorPlanOpenProxyPath,
+} from "@/lib/crm-floor-plan-proxy";
+import { leadHasFloorPlan } from "@/lib/floor-plan";
+import type { CrmLeadType } from "@/lib/leads-filter";
+import FloorPlanUpload from "./FloorPlanUpload";
+import ScheduleFields from "./ScheduleFields";
+import {
+  isAutoScheduleMilestone,
+  resolveDisplayFollowUpDate,
+  resolveDisplayMeetingDate,
+} from "@/lib/lead-schedule-display";
 
 function meetingTypeDisplay(value: string): string {
   const raw = value.trim();
@@ -53,6 +66,12 @@ type Props = {
   onLogCall?: () => void | Promise<void>;
   /** Optional activity hook for Design QA link copy tracking. */
   onDesignQaLinkCopied?: (link: string) => void | Promise<void>;
+  /** Upload floor plan file to S3 via CRM API (API-backed lead details only). */
+  onFloorPlanUpload?: (file: File) => void | Promise<void>;
+  onFloorPlanMissing?: () => void;
+  onFloorPlanRemove?: () => void | Promise<void>;
+  floorPlanUploading?: boolean;
+  floorPlanRemoving?: boolean;
   /** Quote email (`POST /v1/quote/send`) — only on API-backed lead details. */
   quoteExtras?: {
     subject: string;
@@ -73,6 +92,11 @@ export default function LeadInfoTab({
   onAdditionalInfoSave,
   onLogCall,
   onDesignQaLinkCopied,
+  onFloorPlanUpload,
+  onFloorPlanMissing,
+  onFloorPlanRemove,
+  floorPlanUploading = false,
+  floorPlanRemoving = false,
   quoteExtras,
 }: Props) {
   const c = onLeadChange;
@@ -173,6 +197,20 @@ export default function LeadInfoTab({
     ? [normalizedBudget, ...BUDGET_OPTIONS]
     : BUDGET_OPTIONS;
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
+  const floorPlanS3Key = (lead.floorPlan ?? "").trim();
+  const floorPlanPublicLink = (lead.floorPlanPublicLink ?? "").trim();
+  const hasFloorPlan = leadHasFloorPlan(floorPlanS3Key, undefined, floorPlanPublicLink);
+  const canUploadFloorPlan = Boolean(c && onFloorPlanUpload);
+  const floorPlanViewHref =
+    lead.floorPlanViewPath?.trim() ||
+    (lead.leadType && lead.id
+      ? crmFloorPlanContentProxyPath(lead.leadType as CrmLeadType, lead.id)
+      : "");
+  const floorPlanOpenHref =
+    lead.floorPlanOpenPath?.trim() ||
+    (lead.leadType && lead.id
+      ? crmFloorPlanOpenProxyPath(lead.leadType as CrmLeadType, lead.id)
+      : "");
 
   const handleAdditionalInfoToggle = async () => {
     if (!additionalInfoEditable) {
@@ -302,34 +340,30 @@ export default function LeadInfoTab({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3.5 mb-4">
-            <div>
-              <FieldLabel>Floor Plan</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.floorPlan, onChange: (e) => c({ floorPlan: e.target.value }) }
-                  : { defaultValue: lead.floorPlan })}
-              />
-            </div>
-            <div>
-              <FieldLabel>Possession Date</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.possessionDate, onChange: (e) => c({ possessionDate: e.target.value }) }
-                  : { defaultValue: lead.possessionDate })}
-              />
-            </div>
-          </div>
-
-          <div>
-            <FieldLabel>Property Location</FieldLabel>
-            <Input
-              {...(c
-                ? {
-                    value: lead.propertyLocation,
-                    onChange: (e) => c({ propertyLocation: e.target.value }),
-                  }
-                : { defaultValue: lead.propertyLocation })}
+          <div className="border-t border-[var(--crm-border)] pt-1">
+            <FloorPlanUpload
+              hasFloorPlan={hasFloorPlan}
+              floorPlanS3Key={floorPlanS3Key}
+              publicLink={floorPlanPublicLink}
+              viewHref={floorPlanViewHref}
+              openHref={floorPlanOpenHref}
+              canUpload={canUploadFloorPlan}
+              uploading={floorPlanUploading}
+              onError={(msg) => notifyError(msg)}
+              onFloorPlanMissing={onFloorPlanMissing}
+              onRemove={onFloorPlanRemove}
+              removing={floorPlanRemoving}
+              onFileSelect={async (file) => {
+                if (!onFloorPlanUpload) return;
+                try {
+                  await onFloorPlanUpload(file);
+                  notifySuccess("Floor plan uploaded");
+                } catch (e) {
+                  notifyError(
+                    e instanceof Error ? e.message : "Floor plan upload failed.",
+                  );
+                }
+              }}
             />
           </div>
         </Card>
@@ -495,60 +529,16 @@ export default function LeadInfoTab({
         </Card>
 
         <Card>
-          <CardTitle icon="✦" color="purple">Requirements & Schedule</CardTitle>
+          <CardTitle icon="📅" color="purple">Schedule</CardTitle>
+          <p className="-mt-2 mb-4 text-[12px] text-[var(--crm-text-muted)]">
+            Read-only — updated from Complete Task (meeting milestones) and CRM follow-up.
+          </p>
 
-          <div className="mb-4">
-            <FieldLabel>Requirements</FieldLabel>
-            <div className="mt-1.5">
-              {lead.requirements.map((r) => (
-                <Chip key={r}>{r}</Chip>
-              ))}
-              <button
-                type="button"
-                className="mr-1.5 mb-1.5 inline-flex cursor-pointer items-center rounded-full border border-blue-400/30 bg-blue-500/10 px-3 py-1 text-[11.5px] font-medium text-blue-300 transition-all hover:bg-blue-500/15"
-              >
-                + Add
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3.5 mb-4">
-            <div>
-              <FieldLabel>Meeting Date</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.meetingDate, onChange: (e) => c({ meetingDate: e.target.value }) }
-                  : { defaultValue: lead.meetingDate })}
-              />
-            </div>
-            <div>
-              <FieldLabel>Venue</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.meetingVenue, onChange: (e) => c({ meetingVenue: e.target.value }) }
-                  : { defaultValue: lead.meetingVenue })}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3.5">
-            <div>
-              <FieldLabel>Follow Up Date</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.followUpDate, onChange: (e) => c({ followUpDate: e.target.value }) }
-                  : { defaultValue: lead.followUpDate })}
-              />
-            </div>
-            <div>
-              <FieldLabel>Agent Name</FieldLabel>
-              <Input
-                {...(c
-                  ? { value: lead.agentName, onChange: (e) => c({ agentName: e.target.value }) }
-                  : { defaultValue: lead.agentName })}
-              />
-            </div>
-          </div>
+          <ScheduleFields
+            meetingDate={resolveDisplayMeetingDate(lead)}
+            followUpDate={resolveDisplayFollowUpDate(lead)}
+            autoFromMilestone={isAutoScheduleMilestone(lead)}
+          />
 
           {designQaLink ? (
             <div className="mt-3.5">

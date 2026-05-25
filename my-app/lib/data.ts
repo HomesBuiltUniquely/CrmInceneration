@@ -55,7 +55,12 @@ export interface Lead {
   altPhone: string;
   pincode: string;
   configuration: string;
+  /** S3 object key — internal; do not use as browser `href`. */
   floorPlan: string;
+  /** Permanent public link from upload/metadata (`publicUrl` / `floorPlanPublicLink`). */
+  floorPlanPublicLink?: string;
+  floorPlanViewPath?: string;
+  floorPlanOpenPath?: string;
   possessionDate: string;
   propertyLocation: string;
   budget: string;

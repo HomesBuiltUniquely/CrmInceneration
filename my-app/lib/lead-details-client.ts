@@ -1,8 +1,23 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import {
+  backendFloorPlanPathToProxy,
+  crmFloorPlanContentProxyPath,
+  crmFloorPlanOpenProxyPath,
+} from "@/lib/crm-floor-plan-proxy";
+import {
+  formatFloorPlanUploadError,
+  normalizeFloorPlanS3Key,
+  pickFloorPlanPublicLink,
+  type FloorPlanMetaResponse,
+  type LeadFloorPlanState,
+  validateFloorPlanFile,
+} from "@/lib/floor-plan";
+import {
   sanitizeErrorMessage,
 } from "@/lib/friendly-api-error";
+import { mergeClearFloorPlanInDetail } from "@/lib/lead-detail-mapper";
+import type { Lead } from "@/lib/data";
 
 function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
@@ -438,4 +453,127 @@ export async function getNewCrmQuoteInternalLinkByLead(
     throw new Error(message);
   }
   return parsed ?? {};
+}
+
+export type FloorPlanUploadResponse = FloorPlanMetaResponse & {
+  userMessage?: string;
+  debugMessage?: string;
+};
+
+function parseLeadFloorPlanState(
+  data: FloorPlanMetaResponse,
+  leadType: CrmLeadType,
+  id: string,
+): LeadFloorPlanState | null {
+  if (data.hasFloorPlan === false) return null;
+
+  const s3Key = normalizeFloorPlanS3Key(
+    String(data.floorPlanS3Key ?? data.floorPlanUrl ?? ""),
+  );
+  if (data.hasFloorPlan !== true && !s3Key) return null;
+  const viewPath =
+    backendFloorPlanPathToProxy(String(data.viewUrl ?? ""), leadType, id) ??
+    crmFloorPlanContentProxyPath(leadType, id);
+  const openPath =
+    backendFloorPlanPathToProxy(String(data.openUrl ?? ""), leadType, id) ??
+    crmFloorPlanOpenProxyPath(leadType, id);
+  const publicLink = pickFloorPlanPublicLink(data);
+
+  return { s3Key, viewPath, openPath, publicLink };
+}
+
+/** `GET /api/crm/lead/{leadType}/{id}/floor-plan` — metadata (viewUrl/openUrl, not raw S3). */
+export async function getLeadFloorPlanMeta(
+  leadType: CrmLeadType,
+  id: string,
+): Promise<LeadFloorPlanState | null> {
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
+    credentials: "include",
+    headers: authHeaders(),
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  let data: FloorPlanMetaResponse = {};
+  try {
+    data = (await res.json()) as FloorPlanMetaResponse;
+  } catch {
+    data = {};
+  }
+  if (!res.ok) return null;
+  return parseLeadFloorPlanState(data, leadType, id);
+}
+
+/** `POST /api/crm/lead/{leadType}/{id}/floor-plan` → S3 upload on CRM backend. */
+export async function uploadLeadFloorPlan(
+  leadType: CrmLeadType,
+  id: string,
+  file: File,
+): Promise<LeadFloorPlanState> {
+  const validationError = validateFloorPlanFile(file);
+  if (validationError) throw new Error(validationError);
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    body: formData,
+    cache: "no-store",
+  });
+
+  let data: FloorPlanUploadResponse = {};
+  try {
+    data = (await res.json()) as FloorPlanUploadResponse;
+  } catch {
+    data = {};
+  }
+
+  if (!res.ok || data.success === false) {
+    const upstream =
+      data.error?.trim() ||
+      data.userMessage?.trim() ||
+      data.debugMessage?.trim() ||
+      "";
+    if (upstream) {
+      throw new Error(formatFloorPlanUploadError(upstream));
+    }
+    throw await buildApiError(res, "Unable to upload floor plan. Please try again.");
+  }
+
+  const state = parseLeadFloorPlanState(data, leadType, id);
+  if (!state) {
+    throw new Error("Upload succeeded but floor plan metadata was not returned.");
+  }
+  return state;
+}
+
+/** Remove floor plan — tries DELETE; falls back to PUT with cleared fields. */
+export async function removeLeadFloorPlan(
+  leadType: CrmLeadType,
+  id: string,
+  baseDetail: Record<string, unknown>,
+  lead: Lead,
+): Promise<void> {
+  const delRes = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    cache: "no-store",
+  });
+
+  if (delRes.ok) return;
+
+  const methodNotAllowed =
+    delRes.status === 405 ||
+    delRes.status === 500 ||
+    delRes.status === 404;
+
+  if (!methodNotAllowed) {
+    throw await buildApiError(delRes, "Unable to remove floor plan. Please try again.");
+  }
+
+  const body = mergeClearFloorPlanInDetail(baseDetail, lead);
+  await putLeadDetail(leadType, id, body);
 }
