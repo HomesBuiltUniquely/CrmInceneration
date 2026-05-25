@@ -9,7 +9,7 @@ import {
 } from "react";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import { leadLimitsApi } from "@/lib/lead-limits-api";
-import { pickNumber } from "@/lib/api-normalize";
+import { mergeUserRowsById, pickNumber } from "@/lib/api-normalize";
 import { cn } from "@/lib/cn";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -2138,9 +2138,20 @@ interface UserLimit {
 
 function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
   const userId = Number(u.userId ?? u.id ?? idx);
-  const limit = pickNumber(u, ["limit", "monthlyLimit", "leadLimit", "maxLeads"]) ?? 0;
-  const current = pickNumber(u, ["current", "currentCount", "used", "leadsCount", "activeLeads"]) ?? 0;
-  const remaining = pickNumber(u, ["remaining"]) ?? Math.max(0, limit - current);
+  const limit =
+    pickNumber(u, ["limit", "monthlyLimit", "monthlyLeadLimit", "leadLimit", "maxLeads"]) ?? 0;
+  const current =
+    pickNumber(u, [
+      "current",
+      "currentCount",
+      "used",
+      "leadsCount",
+      "activeLeads",
+      "usedLeads",
+      "leadsUsed",
+    ]) ?? 0;
+  const remaining =
+    pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
   const pct = limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0;
   return {
     userId,
@@ -2187,11 +2198,12 @@ function LeadLimitSection() {
       adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
     ])
       .then(([rows, def, presalesExecRows, preSalesRows]) => {
-        const mergedRows = [...rows, ...presalesExecRows, ...preSalesRows];
-        const dedupedRows = Array.from(
-          new Map(mergedRows.map((u, i) => [Number((u as Record<string, unknown>).userId ?? (u as Record<string, unknown>).id ?? i), u])).values(),
+        const dedupedRows = mergeUserRowsById(
+          presalesExecRows as Array<Record<string, unknown>>,
+          preSalesRows as Array<Record<string, unknown>>,
+          rows as Array<Record<string, unknown>>,
         );
-        setUsers(dedupedRows.map((r, i) => mapLimitUser(r as Record<string, unknown>, i)));
+        setUsers(dedupedRows.map((r, i) => mapLimitUser(r, i)));
         const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
         if (d !== undefined) setDefaultLimit(String(d));
       })

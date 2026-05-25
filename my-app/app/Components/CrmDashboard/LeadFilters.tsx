@@ -8,13 +8,22 @@ import {
   normalizeRole,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import {
+  collectHierarchyUserAssigneeAliases,
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+} from "@/lib/hierarchy-user-display";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
 type HierarchyUser = {
   id: number;
   fullName?: string;
+  name?: string;
   username?: string;
+  email?: string;
   role?: string;
   managerId?: number | null;
   active?: boolean;
@@ -32,11 +41,12 @@ export type DashboardFilterState = {
 
 type Props = {
   role?: DashboardRole;
+  workspace?: CrmWorkspace;
   onFiltersChange?: (filters: DashboardFilterState) => void;
 };
 
 function userLabel(u: HierarchyUser): string {
-  return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
+  return hierarchyUserDisplayName(u) || `User ${u.id}`;
 }
 
 async function fetchUsersByRole(
@@ -134,9 +144,12 @@ function computeQuickRangeDates(
 
 export default function LeadFilters({
   role = "sales_admin",
+  workspace = "sales",
   onFiltersChange,
 }: Props) {
-  const isManager = role === "sales_manager";
+  const isPresalesWorkspace = workspace === "presales";
+  const isSalesWorkspace = workspace === "sales";
+  const isManager = role === "sales_manager" && isSalesWorkspace;
   const [viewerRole, setViewerRole] = useState("");
   const isSalesAdmin =
     viewerRole === "SALES_ADMIN" ||
@@ -170,10 +183,21 @@ export default function LeadFilters({
 
   /** Sales Manager dashboard: scope pipeline metrics to self + direct reports (matches backend JWT). */
   useEffect(() => {
-    if (role !== "sales_manager") return;
+    if (!isSalesWorkspace || role !== "sales_manager") return;
     if (!viewerMe?.id) return;
     setSalesManagerId(String(viewerMe.id));
-  }, [role, viewerMe]);
+  }, [isSalesWorkspace, role, viewerMe]);
+
+  useEffect(() => {
+    if (isSalesWorkspace) {
+      setPresalesManagerId("");
+      setPresalesExecId("");
+      return;
+    }
+    setSalesAdminId("");
+    setSalesManagerId("");
+    setSalesExecId("");
+  }, [isSalesWorkspace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +222,7 @@ export default function LeadFilters({
           Number(meRecord.id ?? 0) > 0 ? (meRecord as HierarchyUser) : undefined;
         setViewerMe(me ?? null);
 
-        const [sa, sm, se, pm, pe] = await Promise.all([
+        const [sa, sm, se, pm, pe, legacyRes] = await Promise.all([
           token ? fetchUsersByRole("SALES_ADMIN", token) : Promise.resolve([]),
           token
             ? fetchUsersByRole("SALES_MANAGER", token)
@@ -212,8 +236,32 @@ export default function LeadFilters({
           token
             ? fetchUsersByRole("PRESALES_EXECUTIVE", token)
             : Promise.resolve([]),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
         ]);
         if (cancelled) return;
+
+        const legacyRows: HierarchyUser[] = [];
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            legacyRows.push(normalizeLegacyHierarchyUser(row as Record<string, unknown>));
+          }
+        }
+        const mergedSalesExecs = Array.from(
+          new Map(
+            [...se, ...legacyRows].map((u) => [Number(u.id ?? 0), u] as const),
+          ).values(),
+        ).filter((u) => Number(u.id ?? 0) > 0);
 
         setSalesAdmins(
           [
@@ -222,7 +270,7 @@ export default function LeadFilters({
           ].filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i),
         );
         setSalesManagers(sm.filter((u) => u.active !== false));
-        setSalesExecs(se.filter((u) => u.active !== false));
+        setSalesExecs(mergedSalesExecs);
         setPresalesManagers(pm.filter((u) => u.active !== false));
         setPresalesExecs(pe.filter((u) => u.active !== false));
       } catch {
@@ -276,23 +324,36 @@ export default function LeadFilters({
   }, [salesAdminId, salesExecs, visibleSalesManagers]);
 
   const effectiveFilters = useMemo(() => {
-    const selectedSalesExecName = (
-      visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.fullName ??
-      visibleSalesExecs.find((u) => String(u.id) === salesExecId)?.username ??
-      ""
-    ).trim();
-    if (selectedSalesExecName)
-      return { assignee: selectedSalesExecName, assignees: [] as string[] };
+    if (isPresalesWorkspace) {
+      const selectedPresalesExec = visiblePresalesExecs.find(
+        (u) => String(u.id) === presalesExecId,
+      );
+      if (selectedPresalesExec) {
+        const scope = collectHierarchyUserAssigneeAliases(selectedPresalesExec);
+        if (scope.length <= 1) {
+          return { assignee: scope[0] ?? "", assignees: [] as string[] };
+        }
+        return { assignee: "", assignees: scope };
+      }
+      if (presalesManagerId) {
+        const teamAssignees = [
+          ...new Set(
+            visiblePresalesExecs.map((u) => userLabel(u)).filter(Boolean),
+          ),
+        ];
+        return { assignee: "", assignees: teamAssignees };
+      }
+      return { assignee: "", assignees: [] as string[] };
+    }
 
-    const selectedPresalesExecName = (
-      visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)
-        ?.fullName ??
-      visiblePresalesExecs.find((u) => String(u.id) === presalesExecId)
-        ?.username ??
-      ""
-    ).trim();
-    if (selectedPresalesExecName)
-      return { assignee: selectedPresalesExecName, assignees: [] as string[] };
+    const selectedSalesExec = visibleSalesExecs.find((u) => String(u.id) === salesExecId);
+    if (selectedSalesExec) {
+      const scope = collectHierarchyUserAssigneeAliases(selectedSalesExec);
+      if (scope.length <= 1) {
+        return { assignee: scope[0] ?? "", assignees: [] as string[] };
+      }
+      return { assignee: "", assignees: scope };
+    }
 
     if (salesManagerId) {
       const mgr = salesManagers.find((u) => String(u.id) === salesManagerId);
@@ -303,14 +364,6 @@ export default function LeadFilters({
       const assignees = [...new Set([mgrLabel, ...teamExecNames].filter(Boolean))];
       return { assignee: "", assignees };
     }
-    if (presalesManagerId) {
-      const teamAssignees = [
-        ...new Set(
-          visiblePresalesExecs.map((u) => userLabel(u)).filter(Boolean),
-        ),
-      ];
-      return { assignee: "", assignees: teamAssignees };
-    }
     if (salesAdminId) {
       const teamAssignees = [...new Set(adminTeamExecAssignees)];
       return { assignee: "", assignees: teamAssignees };
@@ -318,6 +371,7 @@ export default function LeadFilters({
     return { assignee: "", assignees: [] as string[] };
   }, [
     adminTeamExecAssignees,
+    isPresalesWorkspace,
     presalesExecId,
     presalesManagerId,
     salesAdminId,
@@ -381,7 +435,9 @@ export default function LeadFilters({
                   Pipeline filters
                 </h2>
                 <p className="mt-0.5 text-[12px] text-[var(--crm-text-muted)]">
-                  Refine your view — updates apply as you change
+                  {isPresalesWorkspace
+                    ? "Presales pipeline only — filters apply automatically"
+                    : "Sales pipeline only — filters apply automatically"}
                 </p>
               </div>
             </div>
@@ -397,9 +453,57 @@ export default function LeadFilters({
 
         <div className="px-6 pb-5 pt-5">
           <div
-            className={`grid gap-x-4 gap-y-4 ${isManager ? "grid-cols-5" : "grid-cols-5"}`}
+            className={`grid gap-x-4 gap-y-4 ${
+              isPresalesWorkspace ? "grid-cols-2" : isManager ? "grid-cols-1" : "grid-cols-5"
+            }`}
           >
-            {isManager ? (
+            {isPresalesWorkspace ? (
+              <>
+                <label className="col-span-1 min-w-0">
+                  <span className={labelClass}>Presales Mgr</span>
+                  <div className="relative">
+                    <select
+                      value={presalesManagerId}
+                      onChange={(e) => {
+                        setPresalesManagerId(e.target.value);
+                        setPresalesExecId("");
+                      }}
+                      className={selectClass}
+                    >
+                      <option value="">All</option>
+                      {presalesManagers.map((u) => (
+                        <option key={u.id} value={String(u.id)}>
+                          {userLabel(u)}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                      <SelectChevron />
+                    </div>
+                  </div>
+                </label>
+                <label className="col-span-1 min-w-0">
+                  <span className={labelClass}>Presales Exec</span>
+                  <div className="relative">
+                    <select
+                      value={presalesExecId}
+                      onChange={(e) => setPresalesExecId(e.target.value)}
+                      className={selectClass}
+                    >
+                      <option value="">All</option>
+                      {visiblePresalesExecs.map((u) => (
+                        <option key={u.id} value={String(u.id)}>
+                          {userLabel(u)}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                      <SelectChevron />
+                    </div>
+                  </div>
+                </label>
+              </>
+            ) : isManager ? (
               <>
                 <label className="col-span-1 min-w-0">
                   <span className={labelClass}>Sales Exec</span>
@@ -483,49 +587,6 @@ export default function LeadFilters({
                     >
                       <option value="">All</option>
                       {visibleSalesExecs.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Presales Mgr</span>
-                  <div className="relative">
-                    <select
-                      value={presalesManagerId}
-                      onChange={(e) => {
-                        setPresalesManagerId(e.target.value);
-                        setPresalesExecId("");
-                      }}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {presalesManagers.map((u) => (
-                        <option key={u.id} value={String(u.id)}>
-                          {userLabel(u)}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                      <SelectChevron />
-                    </div>
-                  </div>
-                </label>
-                <label className="col-span-1 min-w-0">
-                  <span className={labelClass}>Presales Exec</span>
-                  <div className="relative">
-                    <select
-                      value={presalesExecId}
-                      onChange={(e) => setPresalesExecId(e.target.value)}
-                      className={selectClass}
-                    >
-                      <option value="">All</option>
-                      {visiblePresalesExecs.map((u) => (
                         <option key={u.id} value={String(u.id)}>
                           {userLabel(u)}
                         </option>

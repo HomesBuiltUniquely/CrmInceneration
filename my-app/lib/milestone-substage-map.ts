@@ -14,9 +14,14 @@ function normSubstageLabel(s: string): string {
   return s.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
+/** UI label → pipeline substage, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`. */
+export function pipelineSubStageLabel(value: string): string {
+  return value.replace(/\s*\([^)]+\)\s*$/i, "").trim();
+}
+
 /** True when selected feedback (substage) is one of the closer cancellation/refund substages. */
 export function isClosureResoneSubstage(subStageName: string): boolean {
-  return CLOSURE_RESONE_SUBSTAGES.has(normSubstageLabel(subStageName));
+  return CLOSURE_RESONE_SUBSTAGES.has(normSubstageLabel(pipelineSubStageLabel(subStageName)));
 }
 
 /**
@@ -33,7 +38,7 @@ export function requiresResoneField(path: string, feedback: string): boolean {
  * See spec: persist `Meeting Cancelled` so cancellation email + appointment delete run.
  */
 export function normalizeMilestoneSubStageForApi(pipelineLabel: string): string {
-  const t = pipelineLabel.trim();
+  const t = pipelineSubStageLabel(pipelineLabel);
   if (t === "Meeting Cancelled/Paused") {
     return "Meeting Cancelled";
   }
@@ -45,7 +50,7 @@ export function normalizeMilestoneSubStageForApi(pipelineLabel: string): string 
  * (first design meeting, fix-appointment queue, or design refinement revisit — see E2E guide).
  */
 export function isMeetingScheduleSubstage(subStageName: string): boolean {
-  const s = subStageName.trim();
+  const s = pipelineSubStageLabel(subStageName);
   return (
     s === "Meeting Scheduled" ||
     s === "Meeting Rescheduled" ||
@@ -55,18 +60,41 @@ export function isMeetingScheduleSubstage(subStageName: string): boolean {
 }
 
 export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {
-  return subStageName.trim() === "Design Refinement Round (Revisit)";
+  return pipelineSubStageLabel(subStageName) === "Design Refinement Round (Revisit)";
 }
 
 /** Short heading for the scheduling panel in Complete Task. */
 export function meetingSchedulePanelTitle(subStageName: string): string {
-  const s = subStageName.trim();
+  const s = pipelineSubStageLabel(subStageName);
   if (s === "Design Refinement Round (Revisit)") return "Hub meeting (Design refinement)";
   if (s === "Fix Appointment") return "Hub meeting (Fix appointment)";
   return "Hub meeting (Connection)";
 }
 
 export function isMeetingCancelledSubstage(subStageName: string): boolean {
-  const s = subStageName.trim();
+  const s = pipelineSubStageLabel(subStageName);
   return s === "Meeting Cancelled/Paused" || s === "Meeting Cancelled";
+}
+
+/** Closed → Closed Won → Booking Done (Booking). */
+export function isClosedWonBookingDoneSubstage(subStageName: string): boolean {
+  const s = pipelineSubStageLabel(subStageName).toLowerCase();
+  return s === "booking done (booking)" || s === "booking done";
+}
+
+/** Closed → Closed Won → Token Done (no follow-up). */
+export function isClosedWonTokenDoneSubstage(subStageName: string): boolean {
+  return pipelineSubStageLabel(subStageName).toLowerCase() === "token done";
+}
+
+export function isClosedWonCustomerSubstage(subStageName: string): boolean {
+  return (
+    isClosedWonBookingDoneSubstage(subStageName) ||
+    isClosedWonTokenDoneSubstage(subStageName)
+  );
+}
+
+export function isClosedWonPathCategory(stageCategory: string): boolean {
+  const c = stageCategory.trim().toLowerCase();
+  return c === "closed won" || /\bclosed\s+won\b/.test(c);
 }

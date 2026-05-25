@@ -1,29 +1,31 @@
-const NEW_CRM_LEADS_CUTOFF_DATE =
-  process.env.NEXT_PUBLIC_NEW_CRM_LEADS_CUTOFF_DATE?.trim() || "";
-
 function parseUtcDayStartMs(value: string): number | null {
   const parsed = new Date(`${value}T00:00:00Z`).getTime();
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+/** @deprecated No global lead visibility cutoff — always returns null. */
 export function getNewCrmLeadsCutoffDate(): string | null {
-  return NEW_CRM_LEADS_CUTOFF_DATE || null;
+  return null;
+}
+
+export function getEffectiveNewCrmStartDateForRole(
+  _role: string,
+  dateFrom?: string | null,
+): string | null {
+  return getEffectiveNewCrmStartDate(dateFrom);
 }
 
 export function getEffectiveNewCrmStartDate(dateFrom?: string | null): string | null {
-  const cutoff = NEW_CRM_LEADS_CUTOFF_DATE;
   const requested = (dateFrom || "").trim();
+  return requested || null;
+}
 
-  if (!cutoff) return requested || null;
-  if (!requested) return cutoff;
-
-  const cutoffMs = parseUtcDayStartMs(cutoff);
-  const requestedMs = parseUtcDayStartMs(requested);
-
-  if (cutoffMs == null) return requested || null;
-  if (requestedMs == null) return cutoff;
-
-  return requestedMs < cutoffMs ? cutoff : requested;
+export function getEffectiveNewCrmEndDateForRole(
+  _role: string,
+  dateFrom?: string | null,
+  dateTo?: string | null,
+): string | null {
+  return getEffectiveNewCrmEndDate(dateFrom, dateTo);
 }
 
 export function getEffectiveNewCrmEndDate(
@@ -90,16 +92,12 @@ export function getLeadCreatedAtMs(lead: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-export function applyNewCrmCutoff<T extends object>(leads: T[], isNewCrm = true): T[] {
-  if (!isNewCrm) return leads;
-  if (!NEW_CRM_LEADS_CUTOFF_DATE) return leads;
+/** @deprecated Cutoff removed — returns false so callers keep working without filtering. */
+export function shouldApplyNewCrmCutoffForRole(_role: string, _isNewCrm = true): boolean {
+  return false;
+}
 
-  const cutoffMs = parseUtcDayStartMs(NEW_CRM_LEADS_CUTOFF_DATE);
-  if (cutoffMs == null) return leads;
-
-  return leads.filter((lead) => {
-    const createdAtMs = getLeadCreatedAtMs(lead);
-    if (createdAtMs == null) return true;
-    return createdAtMs >= cutoffMs;
-  });
+/** @deprecated Cutoff removed — returns leads unchanged. */
+export function applyNewCrmCutoff<T extends object>(leads: T[], _isNewCrm = true): T[] {
+  return leads;
 }

@@ -1,8 +1,9 @@
-import { crmLeadAssigneeLabel, type ApiLead } from "@/lib/leads-filter";
+import { crmLeadAssigneeAliasNorms, type ApiLead } from "@/lib/leads-filter";
 import {
   isFollowUpDueLocalToday,
   isFollowUpOverdueLocal,
 } from "@/lib/follow-up-date";
+import { filterLeadsForMilestoneInsightMode } from "@/lib/lead-milestone-insight-tiles";
 
 export function readFollowUpDateRaw(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
@@ -43,25 +44,9 @@ export function isFirstCallDelayedLead(
   return nowMs - createdTs >= thresholdMs;
 }
 
-/** Normalized assignee tokens (name / fullName / username / string assignee) for matching team lists and self. */
+/** Normalized assignee tokens for matching team lists, filters, and self. */
 export function assigneeAliasNorms(lead: ApiLead): Set<string> {
-  const out = new Set<string>();
-  const add = (s: string) => {
-    const n = s.trim().toLowerCase();
-    if (n) out.add(n);
-  };
-  const a = lead.assignee ?? lead.salesOwner;
-  if (!a) return out;
-  if (typeof a === "string") {
-    add(a);
-    return out;
-  }
-  const o = a as { name?: string; fullName?: string; username?: string };
-  add(String(o.name ?? ""));
-  add(String(o.fullName ?? ""));
-  add(String(o.username ?? ""));
-  add(crmLeadAssigneeLabel(lead));
-  return out;
+  return crmLeadAssigneeAliasNorms(lead);
 }
 
 function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {
@@ -320,7 +305,12 @@ export type InsightTableMode =
   | "overdueClosure"
   | "callDelayed"
   | "totalCalls"
-  | "teamLeads";
+  | "teamLeads"
+  | "meetingScheduled"
+  | "meetingRescheduled"
+  | "meetingCancelled"
+  | "quoteSent"
+  | "quoteDue";
 
 export function filterLeadsForInsightMode(
   leads: ApiLead[],
@@ -328,6 +318,15 @@ export function filterLeadsForInsightMode(
   opts: InsightCountOpts,
 ): ApiLead[] {
   if (!mode) return leads;
+  if (
+    mode === "meetingScheduled" ||
+    mode === "meetingRescheduled" ||
+    mode === "meetingCancelled" ||
+    mode === "quoteSent" ||
+    mode === "quoteDue"
+  ) {
+    return filterLeadsForMilestoneInsightMode(leads, mode, opts);
+  }
   const norm = (s: string) => s.trim().toLowerCase();
   const me = norm(opts.currentUserName);
   const teamSet = new Set(opts.managerTeamNames.map(norm));

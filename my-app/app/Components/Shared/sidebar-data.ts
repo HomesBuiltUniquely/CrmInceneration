@@ -7,6 +7,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     subtitle: "Turn connections into lasting customers.",
     icon: "users",
     items: [
+      {
+        id: "crm-dashboard",
+        label: "Dashboard",
+        description: "Sales pipeline analytics & journey",
+        icon: "chart",
+        href: "/",
+      },
       { id: "crm-my-leads", label: "My Leads", description: "View and manage pipeline", icon: "chart", href: "/Leads" },
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
@@ -21,6 +28,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     subtitle: "Every great deal starts here.",
     icon: "chart",
     items: [
+      {
+        id: "presales-dashboard",
+        label: "Dashboard",
+        description: "Presales pipeline analytics & journey",
+        icon: "chart",
+        href: "/presales-dashboard",
+      },
       { id: "presales-my-leads", label: "My Leads", description: "Presales team pipeline & month totals", icon: "chart", href: "/presales-leads" },
       { id: "presales-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
     ],
@@ -74,6 +88,14 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
     ],
   },
 ];
+
+/** Sales dashboard & `/Leads` — hide presales module. */
+export const salesWorkspaceSidebarSections: QuickAccessParentItem[] =
+  dashboardSidebarSections.filter((s) => s.id !== "presales");
+
+/** Presales dashboard & `/presales-leads` — presales module only. */
+export const presalesWorkspaceSidebarSections: QuickAccessParentItem[] =
+  dashboardSidebarSections.filter((s) => s.id === "presales");
 
 export const leadSidebarSections: QuickAccessParentItem[] = [
   {

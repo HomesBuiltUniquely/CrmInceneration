@@ -10,6 +10,9 @@ export type DiscoveryToConnectionPayload = {
   milestoneStage: string;
   milestoneStageCategory: string;
   feedback: string;
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
 };
 
 /**
@@ -37,7 +40,12 @@ export function validateDiscoveryToConnectionTransition(
     return { valid: true, message: "" };
   }
 
-  const missing = missingLeadPropertyGateFields(lead);
+  const missing = missingLeadPropertyGateFields({
+    budget: payload.budget ?? lead.budget,
+    propertyNotes: payload.propertyNotes ?? lead.propertyNotes,
+    configuration: payload.configuration ?? lead.configuration,
+  });
+
   if (missing.length === 0) {
     return { valid: true, message: "" };
   }

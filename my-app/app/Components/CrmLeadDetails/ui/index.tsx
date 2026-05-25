@@ -149,15 +149,21 @@ export function Input({ missing, className, ...props }: InputProps) {
   );
 }
 
+interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  missing?: boolean;
+}
+
 export function Textarea({
+  missing,
   className,
   ...props
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+}: TextareaProps) {
   return (
     <textarea
       className={cn(
         "min-h-[90px] w-full resize-y rounded-xl border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 text-[13.5px] font-medium leading-relaxed text-[var(--crm-text-primary)] outline-none",
         "placeholder:font-normal placeholder:text-[var(--crm-text-muted)] transition-all duration-200 focus:border-[var(--crm-accent)] focus:shadow-[0_0_0_3px_var(--crm-accent-ring)]",
+        missing ? "border-[var(--crm-danger)] bg-[var(--crm-danger-bg)]" : "",
         className,
       )}
       {...props}
@@ -165,16 +171,22 @@ export function Textarea({
   );
 }
 
+interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  missing?: boolean;
+}
+
 export function Select({
+  missing,
   className,
   children,
   ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+}: SelectProps) {
   return (
     <select
       className={cn(
         "w-full cursor-pointer appearance-none rounded-xl border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3.5 py-2.5 pr-9 text-[13.5px] font-medium text-[var(--crm-text-primary)] outline-none transition-all duration-200 focus:border-[var(--crm-accent)]",
         "bg-[image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\")] bg-no-repeat bg-[right_12px_center]",
+        missing ? "border-[var(--crm-danger)] bg-[var(--crm-danger-bg)]" : "",
         className,
       )}
       {...props}

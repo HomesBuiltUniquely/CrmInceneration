@@ -29,6 +29,9 @@ export type LeadStageBlock = {
   milestoneStage?: string | null;
   milestoneStageCategory?: string | null;
   milestoneSubStage?: string | null;
+  presalesMilestoneStage?: string | null;
+  presalesMilestoneCategory?: string | null;
+  presalesMilestoneSubStage?: string | null;
   stage?: string | null;
   substage?: { substage?: string | null } | null;
 };
@@ -74,6 +77,8 @@ export interface Lead {
   leadType?: CrmLeadType;
   /** Pipeline + legacy stage for GET/PUT */
   stageBlock?: LeadStageBlock;
+  /** Presales handoff — when true, presales users see read-only milestone actions. */
+  verified?: boolean;
   /** Backend field `resone` — required when substage is LOST (legacy spelling). */
   lostReason?: string;
   /** Quote / proposal link for `POST /v1/quote/send`. */

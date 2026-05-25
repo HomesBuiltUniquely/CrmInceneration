@@ -99,6 +99,37 @@ function normalizeLeadUpdatePayload(
     delete normalizedBody.zip;
   }
 
+  const psStage = String(
+    normalizedBody.presalesMilestoneStage ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneStage ??
+      "",
+  ).trim();
+  const psCat = String(
+    normalizedBody.presalesMilestoneCategory ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneCategory ??
+      "",
+  ).trim();
+  const psSub = String(
+    normalizedBody.presalesMilestoneSubStage ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneSubStage ??
+      "",
+  ).trim();
+  if (psStage || psCat || psSub) {
+    normalizedBody.presalesMilestoneStage = psStage;
+    normalizedBody.presalesMilestoneCategory = psCat;
+    normalizedBody.presalesMilestoneSubStage = psSub;
+    const prevStage =
+      normalizedBody.stage && typeof normalizedBody.stage === "object" && !Array.isArray(normalizedBody.stage)
+        ? (normalizedBody.stage as Record<string, unknown>)
+        : {};
+    normalizedBody.stage = {
+      ...prevStage,
+      presalesMilestoneStage: psStage,
+      presalesMilestoneCategory: psCat,
+      presalesMilestoneSubStage: psSub,
+    };
+  }
+
   return normalizedBody;
 }
 
@@ -206,10 +237,7 @@ export async function putLeadDetail(
     cache: "no-store",
   });
   if (!res.ok) {
-    if (res.status === 403) {
-      throw new Error("You don't have permission to edit this lead.");
-    }
-    throw await buildApiError(res, "Failed to update lead. Please check values and try again.");
+    throw await buildApiError(res, "Unable to save lead");
   }
   return res.json() as Promise<Record<string, unknown>>;
 }

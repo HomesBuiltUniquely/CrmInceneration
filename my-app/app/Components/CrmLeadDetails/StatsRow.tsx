@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import type { Lead } from "@/lib/data";
+import { maskLeadPhoneForDisplay } from "@/lib/lead-display";
 
 interface StatCard {
   icon: string;
@@ -9,14 +9,10 @@ interface StatCard {
   value: string;
   iconBg: string;
   iconColor: string;
-  masked?: boolean;
 }
 
 export default function StatsRow({ lead }: { lead: Lead }) {
-  const [phoneRevealed, setPhoneRevealed] = useState(false);
-
-  const phone = lead.phone || "";
-  const maskedPhone = phone.length >= 4 ? `${phone.slice(0, 4)}xxxxxx` : phone.length > 0 ? "xxxxxx" : "—";
+  const phone = maskLeadPhoneForDisplay(lead.phone ?? "");
 
   const stats: StatCard[] = [
     {
@@ -29,10 +25,9 @@ export default function StatsRow({ lead }: { lead: Lead }) {
     {
       icon: "📞",
       label: "Phone Number",
-      value: phoneRevealed ? phone || "—" : maskedPhone,
+      value: phone,
       iconBg: "bg-[rgba(247,127,75,0.15)]",
       iconColor: "text-[#f77f4b]",
-      masked: !phoneRevealed,
     },
     {
       icon: "💰",
@@ -44,7 +39,7 @@ export default function StatsRow({ lead }: { lead: Lead }) {
     {
       icon: "🏢",
       label: "Configuration",
-      value: lead.configuration,
+      value: lead.configuration?.trim() ? lead.configuration : "Not set",
       iconBg: "bg-[rgba(167,139,250,0.15)]",
       iconColor: "text-[#a78bfa]",
     },
@@ -53,10 +48,9 @@ export default function StatsRow({ lead }: { lead: Lead }) {
   return (
     <div className="mb-5 grid grid-cols-2 gap-3.5 animate-fade-up delay-2 md:grid-cols-4">
       {stats.map((s, i) => (
-        <button
+        <div
           key={i}
-          onClick={() => s.masked && setPhoneRevealed(true)}
-          className="group flex cursor-pointer items-center gap-3 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-3.5 text-left shadow-[0_14px_30px_rgba(15,23,42,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--crm-border-strong)]"
+          className="flex items-center gap-3 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-3.5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]"
         >
           <div className={`w-10 h-10 rounded-[9px] flex items-center justify-center text-base flex-shrink-0 ${s.iconBg} ${s.iconColor}`}>
             {s.icon}
@@ -65,16 +59,9 @@ export default function StatsRow({ lead }: { lead: Lead }) {
             <div className="truncate text-[15px] font-bold tracking-[-0.2px] text-[var(--crm-text-primary)]">
               {s.value}
             </div>
-            <div className="mt-0.5 text-[11px] text-[var(--crm-text-muted)]">
-              {s.label}
-              {s.masked && (
-                <span className="ml-1 font-semibold text-[var(--crm-accent)] opacity-0 transition-opacity group-hover:opacity-100">
-                  · tap to reveal
-                </span>
-              )}
-            </div>
+            <div className="mt-0.5 text-[11px] text-[var(--crm-text-muted)]">{s.label}</div>
           </div>
-        </button>
+        </div>
       ))}
     </div>
   );

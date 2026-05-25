@@ -13,6 +13,36 @@ import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import { normalizeRole } from "@/lib/auth/api";
 
+function meetingQuoteLeadTypeTiles(
+  counts: Record<string, number>,
+): Array<[string, number]> {
+  return [
+    ["Meeting Scheduled", counts.meetingScheduled ?? 0],
+    ["Meeting Rescheduled", counts.meetingRescheduled ?? 0],
+    ["Meeting Cancelled", counts.meetingCancelled ?? 0],
+    ["Quote Sent", counts.quoteSent ?? 0],
+    ["Quote Due", counts.quoteDue ?? 0],
+  ];
+}
+
+function insightKeyForLeadTypeLabel(
+  label: string,
+): Exclude<InsightTableMode, null> | null {
+  if (label === "Today's Lead Followup") return "followUpActive";
+  if (label === "First Call Delayed") return "callDelayed";
+  if (label === "Total Calls") return "totalCalls";
+  if (label === "Today's Opportunity Followup") return "followUpClosure";
+  if (label === "Lead Overdue") return "overdueActive";
+  if (label === "Opportunity Overdue") return "overdueClosure";
+  if (label === "Team Leads") return "teamLeads";
+  if (label === "Meeting Scheduled") return "meetingScheduled";
+  if (label === "Meeting Rescheduled") return "meetingRescheduled";
+  if (label === "Meeting Cancelled") return "meetingCancelled";
+  if (label === "Quote Sent") return "quoteSent";
+  if (label === "Quote Due") return "quoteDue";
+  return null;
+}
+
 function Pill({
   label,
   value,
@@ -167,6 +197,7 @@ type LeadsToolbarProps = {
   hideTotalLeadsPill?: boolean;
   /** Clear presales month summary when user resets filters from the toolbar. */
   onResetPresalesSummary?: () => void;
+  onResetAll?: () => void;
 };
 
 export default function LeadsToolbar({
@@ -220,6 +251,7 @@ export default function LeadsToolbar({
   onInsightNavigate,
   hideTotalLeadsPill = false,
   onResetPresalesSummary,
+  onResetAll,
 }: LeadsToolbarProps) {
   const countLabel =
     loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
@@ -248,6 +280,10 @@ export default function LeadsToolbar({
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
+  const showMeetingQuoteTiles = isSalesManager || isSalesExecutive || isSalesAdmin;
+  const meetingQuoteTiles = showMeetingQuoteTiles
+    ? meetingQuoteLeadTypeTiles(leadTypeCounts)
+    : [];
   const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
 
   const milestoneStageOptions = useMemo(
@@ -323,6 +359,10 @@ export default function LeadsToolbar({
   ]);
 
   const resetFilter = () => {
+    if (onResetAll) {
+      onResetAll();
+      return;
+    }
     setDraftDateFrom("");
     setDraftDateTo("");
     onLeadTypeChange("all");
@@ -342,6 +382,10 @@ export default function LeadsToolbar({
   };
 
   const resetSort = () => {
+    if (onResetAll) {
+      onResetAll();
+      return;
+    }
     onSortChange("updatedAt,desc");
   };
 
@@ -423,10 +467,11 @@ export default function LeadsToolbar({
                     ["My Assigned Leads", leadTypeCounts.all ?? 0],
                     ["Leads for Month", leadTypeCounts.all ?? 0],
                     [callsTileLabel, callsTileValue],
-                    ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                    ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                    ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                    ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                     ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                     ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
+                    ...meetingQuoteTiles,
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
                   ]
@@ -438,10 +483,11 @@ export default function LeadsToolbar({
                       ],
                       ["Team Leads", leadTypeCounts.team ?? 0],
                       [callsTileLabel, callsTileValue],
-                      ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                      ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                      ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                      ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                       ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                       ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
+                      ...meetingQuoteTiles,
                       ["External Lead", leadTypeCounts.formlead ?? 0],
                       ["Google Ads", leadTypeCounts.glead ?? 0],
                       ["Meta Ads", leadTypeCounts.mlead ?? 0],
@@ -451,10 +497,11 @@ export default function LeadsToolbar({
                   : isSalesAdmin
                     ? [
                         [callsTileLabel, callsTileValue],
-                        ["Today's Lead", leadTypeCounts.followupsActive ?? 0],
-                        ["Today's Opportunity", leadTypeCounts.followupsClosure ?? 0],
+                        ["Today's Lead Followup", leadTypeCounts.followupsActive ?? 0],
+                        ["Today's Opportunity Followup", leadTypeCounts.followupsClosure ?? 0],
                         ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                         ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
+                        ...meetingQuoteTiles,
                         ["External Lead", leadTypeCounts.formlead ?? 0],
                         ["Google Ads", leadTypeCounts.glead ?? 0],
                         ["Meta Ads", leadTypeCounts.mlead ?? 0],
@@ -477,22 +524,8 @@ export default function LeadsToolbar({
                       ["Add Lead", leadTypeCounts.addlead ?? 0],
                       ["Website Lead", leadTypeCounts.websitelead ?? 0],
                     ]).map(([label, value]) => {
-                const insightKey: Exclude<InsightTableMode, null> | null =
-                  label === "Today's Lead"
-                    ? "followUpActive"
-                    : label === "First Call Delayed"
-                      ? "callDelayed"
-                    : label === "Total Calls"
-                      ? "totalCalls"
-                    : label === "Today's Opportunity"
-                      ? "followUpClosure"
-                      : label === "Lead Overdue"
-                        ? "overdueActive"
-                        : label === "Opportunity Overdue"
-                          ? "overdueClosure"
-                        : label === "Team Leads"
-                          ? "teamLeads"
-                          : null;
+                const tileLabel = String(label);
+                const insightKey = insightKeyForLeadTypeLabel(tileLabel);
                 const interactive = Boolean(insightKey && onInsightNavigate);
                 const isActive = Boolean(insightKey && insightActive === insightKey);
                 const tileClass = `rounded-xl border px-3 py-4 text-center transition-colors ${
@@ -503,17 +536,17 @@ export default function LeadsToolbar({
                 const inner = (
                   <>
                     <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
-                    <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{label}</div>
+                    <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{tileLabel}</div>
                   </>
                 );
                 if (interactive && insightKey) {
                   return (
                     <button
-                      key={label}
+                      key={tileLabel}
                       type="button"
                       onClick={() => onInsightNavigate?.(insightKey)}
                       onDoubleClick={() => {
-                        if (label === "Total Calls" || label === "First Call Delayed") {
+                        if (tileLabel === "Total Calls" || tileLabel === "First Call Delayed") {
                           const nextMode =
                             activeCallsTileMode === "totalCalls" ? "callDelayed" : "totalCalls";
                           setCallsTileMode(nextMode);
@@ -527,7 +560,7 @@ export default function LeadsToolbar({
                   );
                 }
                 return (
-                  <div key={label} className={tileClass}>
+                  <div key={tileLabel} className={tileClass}>
                     {inner}
                   </div>
                 );
@@ -639,59 +672,119 @@ export default function LeadsToolbar({
                   ))}
                 </SelectField>
               ) : null}
-              <SelectField
-                label="Stage"
-                value={milestoneStage}
-                onChange={(v) => {
-                  onMilestoneStageChange(v);
-                  onMilestoneStageCategoryChange("");
-                  onMilestoneSubStageChange("");
-                }}
-              >
-                <option value="">All</option>
-                {milestoneStageOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField
-                label="Category"
-                value={milestoneStageCategory}
-                onChange={(v) => {
-                  onMilestoneStageCategoryChange(v);
-                  onMilestoneSubStageChange("");
-                }}
-                disabled={!milestoneStage.trim()}
-              >
-                <option value="">
-                  {milestoneStage.trim() ? "All" : "Select stage first"}
-                </option>
-                {milestoneStageCategoryOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
-              <SelectField
-                label="Sub Stage"
-                value={milestoneSubStage}
-                onChange={onMilestoneSubStageChange}
-                disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
-              >
-                <option value="">
-                  {milestoneStage.trim() && milestoneStageCategory.trim()
-                    ? "All"
-                    : milestoneStage.trim()
-                      ? "Select category first"
-                      : "Select stage first"}
-                </option>
-                {milestoneSubStageOptions.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </SelectField>
+              {isPresalesFlow ? (
+                <>
+                  <SelectField
+                    label="Presales Stage"
+                    value={milestoneStage}
+                    onChange={(v) => {
+                      onMilestoneStageChange(v);
+                      onMilestoneStageCategoryChange("");
+                      onMilestoneSubStageChange("");
+                    }}
+                  >
+                    <option value="">All</option>
+                    {milestoneStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Category"
+                    value={milestoneStageCategory}
+                    onChange={(v) => {
+                      onMilestoneStageCategoryChange(v);
+                      onMilestoneSubStageChange("");
+                    }}
+                    disabled={!milestoneStage.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() ? "All" : "Select stage first"}
+                    </option>
+                    {milestoneStageCategoryOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Presales Substage"
+                    value={milestoneSubStage}
+                    onChange={onMilestoneSubStageChange}
+                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() && milestoneStageCategory.trim()
+                        ? "All"
+                        : milestoneStage.trim()
+                          ? "Select category first"
+                          : "Select stage first"}
+                    </option>
+                    {milestoneSubStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                </>
+              ) : (
+                <>
+                  <SelectField
+                    label="Stage"
+                    value={milestoneStage}
+                    onChange={(v) => {
+                      onMilestoneStageChange(v);
+                      onMilestoneStageCategoryChange("");
+                      onMilestoneSubStageChange("");
+                    }}
+                  >
+                    <option value="">All</option>
+                    {milestoneStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Category"
+                    value={milestoneStageCategory}
+                    onChange={(v) => {
+                      onMilestoneStageCategoryChange(v);
+                      onMilestoneSubStageChange("");
+                    }}
+                    disabled={!milestoneStage.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() ? "All" : "Select stage first"}
+                    </option>
+                    {milestoneStageCategoryOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                  <SelectField
+                    label="Sub Stage"
+                    value={milestoneSubStage}
+                    onChange={onMilestoneSubStageChange}
+                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                  >
+                    <option value="">
+                      {milestoneStage.trim() && milestoneStageCategory.trim()
+                        ? "All"
+                        : milestoneStage.trim()
+                          ? "Select category first"
+                          : "Select stage first"}
+                    </option>
+                    {milestoneSubStageOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </SelectField>
+                </>
+              )}
               <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
                 <option value="">All</option>
                 <option value="true">Reinquiry only</option>

@@ -2,17 +2,37 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
+import { BUDGET_OPTIONS } from "@/lib/data";
 import {
   fetchActiveDesigners,
   fetchAvailableSlots,
   type AvailableSlotRow,
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
+import {
+  isPresalesTopLevelStage,
+  resolveCompleteTaskMappings,
+  sortMappingsByNestedPipelineOrder,
+} from "@/lib/complete-task-pipeline";
+import {
+  isPresalesVerifyHandoffSelection,
+  PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
+} from "@/lib/presales-milestone-ui";
+import { isWonCategory } from "@/lib/crm-pipeline";
+import { normalizeStageKey } from "@/lib/milestone-progress";
+import PresalesVerifyPanel, {
+  type PresalesSalesExecutiveOption,
+} from "./PresalesVerifyPanel";
+import { isCrmLeadVerified } from "@/lib/leads-filter";
+import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
+import { isLostCategory } from "@/lib/crm-pipeline";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
+  pipelineSubStageLabel,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -71,6 +91,25 @@ function getTodayStartDateTimeLocal(): string {
   return `${year}-${month}-${day}T00:00`;
 }
 
+export type PresalesVerifyFromCompleteTaskPayload = {
+  pincode: string;
+  salesExecutiveId?: number;
+  note: string;
+};
+
+export type PresalesCompleteTaskApiPayload = {
+  presalesMilestoneStage: string;
+  presalesMilestoneCategory: string;
+  presalesMilestoneSubStage: string;
+  /** Substage label from pipeline feedback dropdown (same as sales `feedback`). */
+  feedback: string;
+  note: string;
+  /** ISO-ish datetime for follow-up; cleared on LOST path (same rules as sales). */
+  nextCallDateLocal: string;
+  /** Sent as `resone` on PUT when path category is LOST. */
+  lostReason?: string;
+};
+
 export type CompleteTaskApiPayload = {
   feedback: string;
   milestoneStage: string;
@@ -80,6 +119,10 @@ export type CompleteTaskApiPayload = {
   nextCallDateLocal: string;
   /** Sent as `resone` on PUT when path category is LOST. */
   lostReason?: string;
+  /** Direct property updates when gates apply. */
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
   meetingAppointment?: {
     designerName: string;
     date: string;
@@ -94,7 +137,17 @@ export default function CompleteTaskModal({
   onClose,
   onSave,
   onApiComplete,
+  onPresalesApiComplete,
+  onPresalesVerify,
   onPhoneCall,
+  userRole = "",
+  presalesHandedOff = false,
+  presalesVerifyAvailable = false,
+  salesExecutiveOptions = [],
+  salesExecutivesLoading = false,
+  salesExecutivesError = null,
+  salesExecutiveLabel = (u: PresalesSalesExecutiveOption) =>
+    (u.fullName ?? u.username ?? `User ${u.id}`).trim(),
 }: {
   lead: Lead;
   open: boolean;
@@ -103,9 +156,24 @@ export default function CompleteTaskModal({
   onSave?: (status: string) => void;
   /** CRM API: PUT details + POST note */
   onApiComplete?: (payload: CompleteTaskApiPayload) => Promise<void>;
+  /** Presales CRM API: PUT presales milestone fields only */
+  onPresalesApiComplete?: (payload: PresalesCompleteTaskApiPayload) => Promise<void>;
+  /** When feedback is Assigned (verify handoff), runs verify API instead of milestone PUT. */
+  onPresalesVerify?: (payload: PresalesVerifyFromCompleteTaskPayload) => Promise<void>;
   /** Log `POST …/activity` with type CALL before opening the dialer. */
   onPhoneCall?: () => void | Promise<void>;
+  userRole?: string;
+  presalesHandedOff?: boolean;
+  /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
+  presalesVerifyAvailable?: boolean;
+  salesExecutiveOptions?: PresalesSalesExecutiveOption[];
+  salesExecutivesLoading?: boolean;
+  salesExecutivesError?: string | null;
+  salesExecutiveLabel?: (u: PresalesSalesExecutiveOption) => string;
 }) {
+  const presalesMode = Boolean(onPresalesApiComplete);
+  const presalesLeadVerified =
+    lead.verified === true || isCrmLeadVerified(lead as unknown as import("@/lib/leads-filter").ApiLead);
   const defaultNextCallDate = useMemo(() => {
     return toDateTimeLocalValue(lead.followUpDate);
   }, [lead.followUpDate]);
@@ -134,6 +202,11 @@ export default function CompleteTaskModal({
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
+  const [verifyPincode, setVerifyPincode] = useState("");
+  const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
+  const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
+  const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
+  const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
@@ -142,10 +215,14 @@ export default function CompleteTaskModal({
   }, []);
 
   const scheduleMode = Boolean(
-    onApiComplete && isMeetingScheduleSubstage(feedback),
+    onApiComplete &&
+      !presalesMode &&
+      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
   );
   const cancelMode = Boolean(
-    onApiComplete && isMeetingCancelledSubstage(feedback),
+    onApiComplete &&
+      !presalesMode &&
+      isMeetingCancelledSubstage(pipelineSubStageLabel(feedback)),
   );
 
   /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
@@ -176,7 +253,21 @@ export default function CompleteTaskModal({
     setApiError("");
     setGatePopupMessage("");
     setLostReason(lead.lostReason?.trim() ?? "");
-  }, [defaultNextCallDate, lead.lostReason, lead.status, open]);
+    setVerifyPincode(lead.pincode?.trim() ?? "");
+    setVerifySalesExecutiveId("");
+    setModalBudget(lead.budget ?? "");
+    setModalPropertyNotes(lead.propertyNotes ?? "");
+    setModalConfiguration(lead.configuration ?? "");
+  }, [
+    defaultNextCallDate,
+    lead.budget,
+    lead.configuration,
+    lead.lostReason,
+    lead.pincode,
+    lead.propertyNotes,
+    lead.status,
+    open,
+  ]);
 
   useEffect(() => {
     if (!open) {
@@ -191,73 +282,119 @@ export default function CompleteTaskModal({
 
       try {
         let mappings: SubStatusMapping[] = [];
-        const currentStage = (
-          lead.stageBlock?.milestoneStage ??
-          lead.status ??
-          ""
-        ).trim();
-
-        const mergeUniqueMappings = (
-          primary: SubStatusMapping[],
-          secondary: SubStatusMapping[],
-        ): SubStatusMapping[] => {
-          const out: SubStatusMapping[] = [];
-          const seen = new Set<string>();
-          for (const row of [...primary, ...secondary]) {
-            const stage = String(row.stage ?? "").trim();
-            const stageCategory = String(row.stageCategory ?? "").trim();
-            const subStageName = String(row.subStageName ?? "").trim();
-            if (!stage) continue;
-            const key = `${stage}||${stageCategory}||${subStageName}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            out.push({ stage, stageCategory, subStageName });
-          }
-          return out;
-        };
+        let nestedForOrder: CrmNestedStage[] = [];
+        const pipelineRole = presalesMode
+          ? "PRESALES_EXECUTIVE"
+          : crmPipelineRoleParam(userRole);
+        const currentStage = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data")
+          : (lead.stageBlock?.milestoneStage?.trim() ?? "");
+        const currentCategory = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneCategory?.trim() ?? "")
+          : (lead.stageBlock?.milestoneStageCategory?.trim() ?? "");
+        const currentSubStage = presalesMode
+          ? (lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "")
+          : (lead.stageBlock?.milestoneSubStage?.trim() ?? lead.status?.trim() ?? "");
 
         try {
-          const [completeTaskPipeline, fullPipeline] = await Promise.all([
-            fetchCrmPipeline({
-              nested: true,
-              forCompleteTask: true,
-              currentStage,
-            }),
-            fetchCrmPipeline({ nested: true }),
-          ]);
-          const completeTaskMappings = completeTaskPipeline.entries.map((e) => ({
-            stage: e.stage,
-            stageCategory: e.stageCategory,
-            subStageName: e.subStageName,
-          }));
-          const currentStageMappings = fullPipeline.entries
-            .filter((e) => {
-              const stage = String(e.stage ?? "").trim().toLowerCase();
-              return stage && stage === currentStage.trim().toLowerCase();
-            })
-            .map((e) => ({
-              stage: e.stage,
-              stageCategory: e.stageCategory,
-              subStageName: e.subStageName,
-            }));
-          mappings = mergeUniqueMappings(
-            currentStageMappings,
-            completeTaskMappings,
-          );
-          if (mappings.length === 0) {
-            // Keep prior behavior if both endpoints return no rows.
-            const fallback = completeTaskPipeline.entries.map((e) => ({
-              stage: e.stage,
-              stageCategory: e.stageCategory,
-              subStageName: e.subStageName,
-            }));
-            mappings = fallback;
+          if (presalesMode) {
+            const [completeTaskPipeline, fullPresalesPipeline] = await Promise.all([
+              fetchCrmPipeline({
+                nested: true,
+                forCompleteTask: true,
+                currentStage: currentStage || "Fresh Data",
+                role: pipelineRole,
+              }),
+              fetchCrmPipeline({ nested: true, role: pipelineRole }),
+            ]);
+            nestedForOrder =
+              fullPresalesPipeline.nested?.length
+                ? fullPresalesPipeline.nested
+                : completeTaskPipeline.nested ?? [];
+            mappings = resolveCompleteTaskMappings({
+              completeTaskEntries: completeTaskPipeline.entries ?? [],
+              nested: nestedForOrder,
+              presalesMode: true,
+              currentStage: currentStage || "Fresh Data",
+              currentCategory,
+              currentSubStage,
+              applyPresalesClientFilter: false,
+            });
+          } else {
+            const salesCurrentStage = (
+              lead.stageBlock?.milestoneStage ??
+              lead.status ??
+              ""
+            ).trim();
+
+            const mergeUniqueMappings = (
+              primary: SubStatusMapping[],
+              secondary: SubStatusMapping[],
+            ): SubStatusMapping[] => {
+              const out: SubStatusMapping[] = [];
+              const seen = new Set<string>();
+              for (const row of [...primary, ...secondary]) {
+                const stage = String(row.stage ?? "").trim();
+                const stageCategory = String(row.stageCategory ?? "").trim();
+                const subStageName = String(row.subStageName ?? "").trim();
+                if (!stage) continue;
+                const key = `${stage}||${stageCategory}||${subStageName}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                out.push({ stage, stageCategory, subStageName });
+              }
+              return out;
+            };
+
+            const [completeTaskPipeline, fullPipeline] = await Promise.all([
+              fetchCrmPipeline({
+                nested: true,
+                forCompleteTask: true,
+                currentStage: salesCurrentStage || undefined,
+              }),
+              fetchCrmPipeline({ nested: true, role: pipelineRole }),
+            ]);
+            nestedForOrder =
+              fullPipeline.nested?.length
+                ? fullPipeline.nested
+                : completeTaskPipeline.nested ?? [];
+            const completeTaskMappings = (completeTaskPipeline.entries ?? []).map(
+              (e) => ({
+                stage: String(e.stage ?? "").trim(),
+                stageCategory: String(e.stageCategory ?? "").trim(),
+                subStageName: String(e.subStageName ?? "").trim(),
+              }),
+            );
+            const currentStageMappings = (fullPipeline.entries ?? [])
+              .filter((e) => {
+                const stage = String(e.stage ?? "").trim().toLowerCase();
+                return stage && stage === salesCurrentStage.trim().toLowerCase();
+              })
+              .map((e) => ({
+                stage: String(e.stage ?? "").trim(),
+                stageCategory: String(e.stageCategory ?? "").trim(),
+                subStageName: String(e.subStageName ?? "").trim(),
+              }));
+            mappings = mergeUniqueMappings(
+              currentStageMappings,
+              completeTaskMappings,
+            );
+            if (mappings.length === 0) {
+              mappings = completeTaskMappings;
+            }
+            if (nestedForOrder.length > 0) {
+              mappings = sortMappingsByNestedPipelineOrder(nestedForOrder, mappings);
+            }
           }
         } catch (pipelineError) {
           // Fallback to existing milestone endpoint only if complete-task
           // filtered endpoint is not reachable.
+          const subStatusQs = new URLSearchParams({ resource: "sub-status" });
+          if (presalesMode && pipelineRole) {
+            subStatusQs.set("role", pipelineRole);
+          }
           const response = await fetch(
-            "/api/milestone-count?resource=sub-status",
+            `/api/milestone-count?${subStatusQs.toString()}`,
             {
               method: "GET",
               cache: "no-store",
@@ -269,17 +406,60 @@ export default function CompleteTaskModal({
           }
 
           const data: { mappings?: SubStatusMapping[] } = await response.json();
-          mappings = Array.isArray(data.mappings) ? data.mappings : [];
+          const raw = Array.isArray(data.mappings) ? data.mappings : [];
+          const normalized = raw.map((m) => ({
+            stage: String(m.stage ?? "").trim(),
+            stageCategory: String(m.stageCategory ?? "").trim(),
+            subStageName: String(m.subStageName ?? "").trim(),
+          }));
+          mappings = presalesMode
+            ? normalized.filter((m) => isPresalesTopLevelStage(m.stage))
+            : normalized;
           if (mappings.length === 0) {
             throw pipelineError;
           }
+          if (nestedForOrder.length === 0) {
+            try {
+              const orderPipeline = await fetchCrmPipeline({
+                nested: true,
+                role: pipelineRole,
+              });
+              nestedForOrder = orderPipeline.nested ?? [];
+            } catch {
+              // keep fallback order as returned
+            }
+          }
+          mappings = sortMappingsByNestedPipelineOrder(nestedForOrder, mappings);
         }
 
         if (!cancelled) {
           setFeedbackMappings(mappings);
-          setFeedback("");
-          setStatus("");
-          setPath("");
+          if (presalesMode) {
+            const presetSub =
+              lead.stageBlock?.presalesMilestoneSubStage?.trim() ?? "";
+            const preset = presetSub
+              ? mappings.find((m) => m.subStageName.trim() === presetSub)
+              : undefined;
+            if (preset) {
+              const sub = preset.subStageName.trim();
+              const st = preset.stage.trim();
+              const feedbackLabel =
+                sub && !sub.toLowerCase().includes(st.toLowerCase())
+                  ? `${sub} (${st})`
+                  : sub;
+              setFeedback(feedbackLabel);
+              setStatus(preset.stage);
+              setPath(preset.stageCategory);
+            } else {
+              setFeedback("");
+              setStatus("");
+              setPath("");
+            }
+          } else {
+            setFeedback("");
+            setStatus("");
+            setPath("");
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -305,7 +485,18 @@ export default function CompleteTaskModal({
     return () => {
       cancelled = true;
     };
-  }, [lead.stageBlock?.milestoneStage, lead.status, open]);
+  }, [
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneCategory,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    lead.status,
+    open,
+    presalesMode,
+    userRole,
+  ]);
 
   useEffect(() => {
     if (!open || !scheduleMode) {
@@ -366,6 +557,15 @@ export default function CompleteTaskModal({
     };
   }, [appointmentDate, meetingDesigner, open, scheduleMode]);
 
+  const presalesOnFreshData = useMemo(
+    () =>
+      presalesMode &&
+      normalizeStageKey(
+        lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data",
+      ) === "fresh data",
+    [lead.stageBlock?.presalesMilestoneStage, presalesMode],
+  );
+
   const feedbackOptions = useMemo<FeedbackOption[]>(() => {
     const seen = new Set<string>();
     const rows: FeedbackOption[] = [];
@@ -374,15 +574,50 @@ export default function CompleteTaskModal({
       const stageCategory = m.stageCategory.trim();
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
-      const label = subStageName || stage;
+      if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
+      if (
+        presalesMode &&
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        normalizeStageKey(stage) === "data conversion" &&
+        isWonCategory(stageCategory)
+      ) {
+        continue;
+      }
+      const stageKey = stage.toLowerCase();
+      const subKey = subStageName.toLowerCase();
+      const label = presalesMode
+        ? subStageName && !subKey.includes(stageKey)
+          ? `${subStageName} (${stage})`
+          : subStageName || stage
+        : subStageName || stage;
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({ label, stage, stageCategory, subStageName });
     }
     return rows;
-  }, [feedbackMappings]);
+  }, [
+    feedbackMappings,
+    presalesMode,
+    presalesLeadVerified,
+    presalesHandedOff,
+  ]);
+  const budgetOptions = useMemo(() => {
+    const normalizedBudget = (lead.budget ?? "").trim();
+    return normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
+      ? [normalizedBudget, ...BUDGET_OPTIONS]
+      : BUDGET_OPTIONS;
+  }, [lead.budget]);
+
   const feedbackSelectEnabled = !feedbackLoading && feedbackOptions.length > 0;
+  const feedbackPlaceholder = feedbackLoading
+    ? "Loading feedback options…"
+    : feedbackOptions.length > 0
+      ? "Select feedback"
+      : feedbackError
+        ? "Could not load options"
+        : "No feedback options for this stage";
   useEffect(() => {
     const selected = feedbackOptions.find((m) => m.label === feedback);
     if (selected) {
@@ -395,17 +630,60 @@ export default function CompleteTaskModal({
       if (path) setPath("");
     }
   }, [feedback, feedbackOptions, path, status]);
+  const selectedFeedbackOption = useMemo(
+    () => feedbackOptions.find((m) => m.label === feedback),
+    [feedback, feedbackOptions],
+  );
+  const verifyHandoffMode = Boolean(
+    presalesMode &&
+      presalesVerifyAvailable &&
+      onPresalesVerify &&
+      !presalesLeadVerified &&
+      !presalesHandedOff &&
+      selectedFeedbackOption &&
+      isPresalesVerifyHandoffSelection({
+        stage: selectedFeedbackOption.stage,
+        category: selectedFeedbackOption.stageCategory,
+        subStage: selectedFeedbackOption.subStageName,
+        feedbackLabel: feedback,
+      }),
+  );
   const reasonRequired = requiresResoneField(path, feedback);
+  const isClosedWonCustomer =
+    !presalesMode &&
+    status.trim() === "Closed" &&
+    path.trim() === "Closed Won" &&
+    (feedback.trim() === "Booking Done (Booking)" ||
+      feedback.trim() === "Token Done");
+  const noFollowUpRequired = presalesMode
+    ? isLostCategory(path) || verifyHandoffMode
+    : reasonRequired || isClosedWonCustomer;
+
   const nextCallDateMissing =
     !scheduleMode &&
     !cancelMode &&
-    !reasonRequired &&
+    !noFollowUpRequired &&
+    !verifyHandoffMode &&
     nextCallDate.trim().length === 0;
+  const verifyPincodeMissing = verifyHandoffMode && verifyPincode.trim().length === 0;
   const resoneMissing = Boolean(
-    onApiComplete && reasonRequired && lostReason.trim().length === 0,
+    (onApiComplete || presalesMode) && reasonRequired && lostReason.trim().length === 0,
   );
   const noteMissing = note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
+
+  const needsLeadPropertyGate = useMemo(() => {
+    return requiresLeadPropertyGateForCompleteTask({
+      currentMilestoneStage: lead.stageBlock?.milestoneStage,
+      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
+      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+      currentStatus: lead.status,
+      newMilestoneStage: status,
+      newStageCategory: path,
+      cancelMode,
+    });
+  }, [lead, status, path, cancelMode]);
+
   const meetingFieldsMissing =
     scheduleMode &&
     (!meetingDesigner.trim() ||
@@ -418,6 +696,28 @@ export default function CompleteTaskModal({
 
   if (!open) {
     return null;
+  }
+
+  if (presalesMode && presalesHandedOff) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 backdrop-blur-[2px]">
+        <div className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-6 shadow-xl">
+          <h2 className="text-[16px] font-semibold text-[var(--crm-text-primary)]">
+            Complete Task
+          </h2>
+          <p className="mt-3 text-[13px] text-[var(--crm-text-secondary)]">
+            This lead has been handed off to sales. No further updates allowed.
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-5 w-full rounded-xl bg-[var(--crm-accent)] py-2.5 text-[13px] font-semibold text-white"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const handleSave = async () => {
@@ -455,26 +755,25 @@ export default function CompleteTaskModal({
       return;
     }
 
-    const needsLeadPropertyGate = requiresLeadPropertyGateForCompleteTask({
-      currentMilestoneStage: lead.stageBlock?.milestoneStage,
-      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
-      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
-      currentStatus: lead.status,
-      newMilestoneStage: status,
-      newStageCategory: path,
-      cancelMode,
+
+
+    const effectivelyMissingFields = missingLeadPropertyGateFields({
+      budget: modalBudget,
+      propertyNotes: modalPropertyNotes,
+      configuration: modalConfiguration,
     });
-    if (needsLeadPropertyGate) {
-      const missing = missingLeadPropertyGateFields(lead);
-      if (missing.length > 0) {
-        const toConnection = status.trim().toLowerCase() === "connection";
-        const popupMessage = toConnection
-          ? "Fill all the details (Budget, Property notes, Configuration) before you update the milestone to Connection."
-          : leadPropertyGateErrorMessage(missing);
-        setApiError(popupMessage);
-        setGatePopupMessage(popupMessage);
-        return;
+
+    if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
+      const msg = presalesMode
+        ? leadPropertyGateErrorMessage(effectivelyMissingFields)
+        : `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`;
+      if (!presalesMode) {
+        setApiError(msg);
+      } else {
+        setGatePopupMessage(msg);
+        setApiError(msg);
       }
+      return;
     }
 
     if (resoneMissing) {
@@ -488,6 +787,71 @@ export default function CompleteTaskModal({
       return;
     }
 
+    if (presalesMode && verifyHandoffMode && onPresalesVerify) {
+      if (verifyPincodeMissing) {
+        return;
+      }
+      setApiBusy(true);
+      setApiError("");
+      try {
+        const salesExecutiveId = Number(verifySalesExecutiveId);
+        await onPresalesVerify({
+          pincode: verifyPincode.trim(),
+          salesExecutiveId:
+            Number.isFinite(salesExecutiveId) && salesExecutiveId > 0
+              ? salesExecutiveId
+              : undefined,
+          note: note.trim(),
+        });
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Could not verify lead");
+      } finally {
+        setApiBusy(false);
+      }
+      return;
+    }
+
+    if (presalesMode && onPresalesApiComplete) {
+      const selected = feedbackOptions.find((o) => o.label === feedback);
+      const substageToSave = selected?.subStageName.trim() || feedback.trim();
+      const stageToSave = (selected?.stage ?? status).trim();
+      const catToSave = (selected?.stageCategory ?? path).trim();
+      if (
+        !presalesLeadVerified &&
+        selected &&
+        (isWonCategory(catToSave) ||
+          isPresalesVerifyHandoffSelection({
+            stage: stageToSave,
+            category: catToSave,
+            subStage: substageToSave,
+            feedbackLabel: feedback,
+          }))
+      ) {
+        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+        return;
+      }
+      setApiBusy(true);
+      setApiError("");
+      try {
+        await onPresalesApiComplete({
+          presalesMilestoneStage: stageToSave,
+          presalesMilestoneCategory: catToSave,
+          presalesMilestoneSubStage: substageToSave,
+          feedback: substageToSave,
+          note: note.trim(),
+          nextCallDateLocal: nextCallDate,
+          lostReason: reasonRequired ? lostReason.trim() : undefined,
+        });
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : "Could not save");
+      } finally {
+        setApiBusy(false);
+      }
+      return;
+    }
+
     if (onApiComplete) {
       setApiBusy(true);
       setApiError("");
@@ -497,8 +861,11 @@ export default function CompleteTaskModal({
           milestoneStage: status,
           milestoneStageCategory: path,
           note,
-          nextCallDateLocal: scheduleMode ? "" : nextCallDate,
+          nextCallDateLocal: scheduleMode || noFollowUpRequired ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
+          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
+          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
+          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
           meetingAppointment: scheduleMode
             ? {
                 designerName: meetingDesigner.trim(),
@@ -635,14 +1002,15 @@ export default function CompleteTaskModal({
             </div>
             <div className="space-y-3">
               {/* Next Call Date */}
+              {!verifyHandoffMode ? (
               <div>
                 <div className=" flex items-center gap-2">
                   <FieldLabel
-                    required={!scheduleMode && !cancelMode && !reasonRequired}
+                    required={!scheduleMode && !cancelMode && !noFollowUpRequired}
                   >
                     Next call date
                   </FieldLabel>
-                  {!scheduleMode && !cancelMode && !reasonRequired ? (
+                  {!scheduleMode && !cancelMode && !noFollowUpRequired ? (
                     <span className="text-[12px] text-[var(--crm-danger)]">
                       required
                     </span>
@@ -656,16 +1024,18 @@ export default function CompleteTaskModal({
                 <Input
                   type="datetime-local"
                   min={minNextCallDate}
-                  value={nextCallDate}
+                  value={noFollowUpRequired ? "" : nextCallDate}
                   onChange={(e) => setNextCallDate(e.target.value)}
+                  disabled={noFollowUpRequired}
                   onClick={(event) => {
+                    if (noFollowUpRequired) return;
                     const input = event.currentTarget as HTMLInputElement & {
                       showPicker?: () => void;
                     };
                     input.showPicker?.();
                   }}
-                  missing={showErrors && nextCallDateMissing && !reasonRequired}
-                  className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                  missing={showErrors && nextCallDateMissing && !noFollowUpRequired}
+                  className={["h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]", noFollowUpRequired ? "opacity-60 cursor-not-allowed" : ""].join(" ")}
                 />
 
                 <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
@@ -673,16 +1043,18 @@ export default function CompleteTaskModal({
                     ? isDesignRefinementSchedulingSubstage(feedback)
                       ? "For refinement meetings, the Hub appointment time will be used as follow-up."
                       : "For Meeting Scheduled / Rescheduled (and fix-appointment scheduling), the Hub appointment time will be used as follow-up."
-                    : "Click the field to open calendar and time picker."}
+                    : noFollowUpRequired
+                      ? "Follow-up is not required for this path."
+                      : "Click the field to open calendar and time picker."}
                 </p>
-                {showErrors && nextCallDateMissing && (
+                {showErrors && nextCallDateMissing && !noFollowUpRequired && (
                   <p className="mt-1 text-[12px] text-red-500">
                     Next call date is required unless a reason (resone) applies
-                    below (LOST / closure substages) or you use meeting
-                    scheduling only.
+                    below (LOST / closure substages) or for Closed Won customers.
                   </p>
                 )}
               </div>
+              ) : null}
 
               {/* Status */}
               <div>
@@ -722,11 +1094,7 @@ export default function CompleteTaskModal({
                       : "",
                   ].join(" ")}
                 >
-                  <option value="">
-                    {feedbackSelectEnabled
-                      ? "Select feedback"
-                      : "Wait..."}
-                  </option>
+                  <option value="">{feedbackPlaceholder}</option>
                   {feedbackOptions.map((option) => (
                     <option
                       key={`${option.stage}-${option.stageCategory}-${option.label}`}
@@ -753,9 +1121,105 @@ export default function CompleteTaskModal({
                     Feedback is required.
                   </p>
                 )}
+                {presalesOnFreshData ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
+                    You can move to{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Data Discovery
+                    </strong>{" "}
+                    or skip to{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Data Conversion
+                    </strong>
+                    . Sales handoff (Won / Assigned) uses{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Verify Lead
+                    </strong>{" "}
+                    on unverified leads.
+                  </p>
+                ) : null}
+                {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
+                  <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
+                    Data Conversion → Won paths are hidden until the lead is verified.
+                  </p>
+                ) : null}
               </div>
 
-              {scheduleMode ? (
+              {verifyHandoffMode ? (
+                <PresalesVerifyPanel
+                  handoffLabel={feedback}
+                  pincode={verifyPincode}
+                  onPincodeChange={setVerifyPincode}
+                  salesExecutiveId={verifySalesExecutiveId}
+                  onSalesExecutiveIdChange={setVerifySalesExecutiveId}
+                  salesExecutiveOptions={salesExecutiveOptions}
+                  salesExecutivesLoading={salesExecutivesLoading}
+                  salesExecutivesError={salesExecutivesError}
+                  salesExecutiveLabel={salesExecutiveLabel}
+                  showErrors={showErrors}
+                  pincodeMissing={verifyPincodeMissing}
+                />
+              ) : null}
+
+              {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
+              {presalesMode || scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
+                <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/10 text-blue-500">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
+                      Required Details for Connection
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-[var(--crm-text-muted)] leading-relaxed">
+                    The Connection milestone requires these property details. Fill them below to proceed without leaving this task.
+                  </p>
+                  
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <FieldLabel required>Budget</FieldLabel>
+                      <Select
+                        value={modalBudget}
+                        onChange={(e) => setModalBudget(e.target.value)}
+                        missing={showErrors && !modalBudget.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      >
+                        <option value="">Select Budget</option>
+                        {budgetOptions.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel required>Configuration</FieldLabel>
+                      <Input
+                        value={modalConfiguration}
+                        onChange={(e) => setModalConfiguration(e.target.value)}
+                        placeholder="e.g. 3 BHK"
+                        missing={showErrors && !modalConfiguration.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <FieldLabel required>Property Notes</FieldLabel>
+                    <Textarea
+                      value={modalPropertyNotes}
+                      onChange={(e) => setModalPropertyNotes(e.target.value)}
+                      placeholder="Add property notes..."
+                      missing={showErrors && !modalPropertyNotes.trim()}
+                      className="rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] min-h-[80px]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {!presalesMode && scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
                     {meetingSchedulePanelTitle(feedback)}
@@ -869,7 +1333,7 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
-              {onApiComplete && reasonRequired ? (
+              {(onApiComplete || presalesMode) && reasonRequired ? (
                 <div>
                   <FieldLabel required>Reason (resone)</FieldLabel>
                   <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
@@ -895,7 +1359,7 @@ export default function CompleteTaskModal({
                 </div>
               ) : null}
 
-              {cancelMode ? (
+              {!presalesMode && cancelMode ? (
                 <div className="rounded-[14px] border border-amber-200/80 bg-amber-50/90 dark:border-amber-900/50 dark:bg-amber-950/40 p-3.5">
                   <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-100">
                     Cancel meeting
@@ -942,7 +1406,7 @@ export default function CompleteTaskModal({
             </div>
           </div>
 
-          {onApiComplete && showLeadPropertyGateFooterHint ? (
+          {!presalesMode && onApiComplete && showLeadPropertyGateFooterHint ? (
             <p className="border-t border-[var(--crm-border)] px-4 py-2 text-[11px] leading-snug text-[var(--crm-text-muted)] md:px-5">
               For{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}
@@ -988,7 +1452,13 @@ export default function CompleteTaskModal({
                 </svg>
               }
             >
-              {apiBusy ? "Saving..." : "Save note"}
+              {apiBusy
+                ? verifyHandoffMode
+                  ? "Verifying..."
+                  : "Saving..."
+                : verifyHandoffMode
+                  ? "Verify & hand off to sales"
+                  : "Save note"}
             </Button>
           </div>
         </div>

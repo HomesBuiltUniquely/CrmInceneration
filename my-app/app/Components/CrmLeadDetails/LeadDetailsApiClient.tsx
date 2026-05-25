@@ -16,6 +16,7 @@ import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
+  mergePresalesMilestoneIntoDetail,
   mergeSecondBoxIntoDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -31,6 +32,8 @@ import ActivityTimeline from "./ActivityTimeline";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
+  type PresalesCompleteTaskApiPayload,
+  type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
 import {
   createAppointment,
@@ -64,12 +67,21 @@ import {
   sendEmailNotification,
 } from "@/lib/email-request-builder";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
-import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import { fetchCrmPipeline, isLostCategory } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import {
+  isClosedWonBookingDoneSubstage,
+  isClosedWonCustomerSubstage,
+} from "@/lib/milestone-substage-map";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import {
+  isLeadHandedOffToSales,
+  isPresalesHandedOffReadOnly,
+} from "@/lib/presales-milestone";
+import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
 
 type SalesExecutiveOption = {
   id: number;
@@ -573,10 +585,41 @@ function truncateLabel(label: string, max = 80): string {
 
 function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boolean {
   return (
-    (stageBlock?.milestoneStage ?? "").trim() === "Closed" &&
-    (stageBlock?.milestoneStageCategory ?? "").trim() === "Closed Won" &&
-    (stageBlock?.milestoneSubStage ?? "").trim() === "Booking Done (Booking)"
+    (stageBlock?.milestoneStage ?? "").trim().toLowerCase() === "closed" &&
+    (stageBlock?.milestoneStageCategory ?? "").trim().toLowerCase() ===
+      "closed won" &&
+    isClosedWonBookingDoneSubstage(stageBlock?.milestoneSubStage ?? "")
   );
+}
+
+/**
+ * Returns true when the next stage requires NO future follow-up and the
+ * follow-up date should be cleared on save:
+ *   • Any LOST path category (e.g. "Discovery Lost", "Connection Lost")
+ *   • Closed → Closed Won → Booking Done (Booking)  ← lead is now a customer
+ *   • Closed → Closed Won → Token Done              ← lead is now a customer
+ */
+function isNoFollowUpRequired(args: {
+  milestoneStage: string;
+  milestoneStageCategory: string;
+  milestoneSubStage: string;
+}): boolean {
+  // LOST path — any stage category containing the word "lost"
+  if (isLostCategory(args.milestoneStageCategory)) return true;
+
+  // Closed Won customer milestones
+  const stage    = args.milestoneStage.trim();
+  const category = args.milestoneStageCategory.trim();
+  const sub      = args.milestoneSubStage.trim();
+  if (
+    stage.toLowerCase() === "closed" &&
+    category.toLowerCase() === "closed won" &&
+    isClosedWonCustomerSubstage(sub)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function readTextValue(value: unknown): string {
@@ -637,11 +680,6 @@ export default function LeadDetailsApiClient({
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingSecondBox, setSavingSecondBox] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [verifyModalOpen, setVerifyModalOpen] = useState(false);
-  const [verifyPincode, setVerifyPincode] = useState("");
-  /** Selected sales executive user id as string; empty = do not send assignment. */
-  const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
   const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<
     SalesExecutiveOption[]
   >([]);
@@ -779,49 +817,6 @@ export default function LeadDetailsApiClient({
       cancelled = true;
     };
   }, [validLeadType]);
-
-  useEffect(() => {
-    if (!verifyModalOpen) return;
-    let cancelled = false;
-    const token =
-      typeof window !== "undefined"
-        ? (window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "")
-        : "";
-    if (!token.trim()) {
-      setSalesExecutiveOptions([]);
-      setSalesExecutivesError("You don't have access to this resource.");
-      return;
-    }
-    setSalesExecutivesLoading(true);
-    setSalesExecutivesError(null);
-    void fetchSalesExecutivesForPicker(token)
-      .then((list) => {
-        if (!cancelled) {
-          setSalesExecutiveOptions(list);
-          setSalesExecutivesError(null);
-        }
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setSalesExecutiveOptions([]);
-          const msg = e instanceof Error ? e.message : "";
-          if (msg.includes("SALES_EXEC_FETCH_FAILED:403")) {
-            setSalesExecutivesError("You don't have access to this resource.");
-            console.warn("Sales executive picker permission denied (403).");
-          } else {
-            setSalesExecutivesError(
-              "Could not load the list. You can still verify with pincode only.",
-            );
-          }
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setSalesExecutivesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [verifyModalOpen]);
 
   const patchLead = useCallback((patch: Partial<Lead>) => {
     setLead((prev) => ({ ...prev, ...patch }));
@@ -1468,12 +1463,6 @@ export default function LeadDetailsApiClient({
     validLeadType,
   ]);
 
-  const handleOpenVerify = useCallback(() => {
-    setVerifyPincode((lead.pincode ?? "").trim());
-    setVerifySalesExecutiveId("");
-    setVerifyModalOpen(true);
-  }, [lead.pincode]);
-
   const handleSaveSecondBox = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
@@ -1517,55 +1506,6 @@ export default function LeadDetailsApiClient({
     maybeOpenSalesClosureAfterWon,
     validLeadType,
     notifySuccess,
-  ]);
-
-  const handleVerify = useCallback(async () => {
-    if (!validLeadType) return;
-    const pincode = verifyPincode.trim();
-    if (!pincode) {
-      notifyError("Pincode is required to verify this lead.");
-      return;
-    }
-
-    const payload: Record<string, unknown> = { pincode };
-    const salesExecutiveId = Number(verifySalesExecutiveId);
-    if (Number.isFinite(salesExecutiveId) && salesExecutiveId > 0) {
-      payload.salesExecutiveId = salesExecutiveId;
-    }
-
-    const lt = leadTypeParam as CrmLeadType;
-    setVerifying(true);
-    try {
-      const raw = await postVerifyLead(lt, leadId, payload);
-      const resObj =
-        raw && typeof raw === "object" && !Array.isArray(raw)
-          ? (raw as Record<string, unknown>)
-          : null;
-      const baseMsg =
-        resObj && typeof resObj.message === "string" && resObj.message.trim()
-          ? resObj.message.trim()
-          : "Lead verified successfully.";
-      const assigned =
-        resObj && typeof resObj.assignedTo === "string" && resObj.assignedTo.trim()
-          ? ` Assigned to ${String(resObj.assignedTo).trim()}.`
-          : "";
-      notifySuccess(`${baseMsg}${assigned}`);
-      setVerifyModalOpen(false);
-      await load();
-    } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Verify failed");
-    } finally {
-      setVerifying(false);
-    }
-  }, [
-    leadId,
-    leadTypeParam,
-    load,
-    notifyError,
-    notifySuccess,
-    validLeadType,
-    verifyPincode,
-    verifySalesExecutiveId,
   ]);
 
   const handleSendQuote = useCallback(async () => {
@@ -1843,6 +1783,175 @@ export default function LeadDetailsApiClient({
     [leadId, leadTypeParam, refreshActivities, validLeadType],
   );
 
+  const presalesHandedOff = useMemo(
+    () => isPresalesHandedOffReadOnly(verifyLeadRecord, viewerRoleKey),
+    [verifyLeadRecord, viewerRoleKey],
+  );
+  const inSalesPhase = useMemo(
+    () => isLeadHandedOffToSales(lead) || isLeadHandedOffToSales(verifyLeadRecord),
+    [lead, verifyLeadRecord],
+  );
+  /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
+  const usePresalesCompleteTask = useMemo(
+    () =>
+      !inSalesPhase &&
+      (isPresalesRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey)),
+    [inSalesPhase, viewerRoleKey],
+  );
+
+  useEffect(() => {
+    if (!completeTaskOpen || !usePresalesCompleteTask || !canVerifyCurrentLead) return;
+    let cancelled = false;
+    const token =
+      typeof window !== "undefined"
+        ? (window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "")
+        : "";
+    if (!token.trim()) {
+      setSalesExecutiveOptions([]);
+      setSalesExecutivesError("You don't have access to this resource.");
+      return;
+    }
+    setSalesExecutivesLoading(true);
+    setSalesExecutivesError(null);
+    void fetchSalesExecutivesForPicker(token)
+      .then((list) => {
+        if (!cancelled) {
+          setSalesExecutiveOptions(list);
+          setSalesExecutivesError(null);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setSalesExecutiveOptions([]);
+          const msg = e instanceof Error ? e.message : "";
+          if (msg.includes("SALES_EXEC_FETCH_FAILED:403")) {
+            setSalesExecutivesError("You don't have access to this resource.");
+            console.warn("Sales executive picker permission denied (403).");
+          } else {
+            setSalesExecutivesError(
+              "Could not load the list. You can still verify with pincode only.",
+            );
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSalesExecutivesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [completeTaskOpen, canVerifyCurrentLead, usePresalesCompleteTask]);
+
+  const handlePresalesVerifyFromCompleteTask = useCallback(
+    async (args: PresalesVerifyFromCompleteTaskPayload) => {
+      if (!validLeadType) return;
+      const pincode = args.pincode.trim();
+      if (!pincode) {
+        throw new Error("Pincode is required to verify this lead.");
+      }
+
+      const payload: Record<string, unknown> = { pincode };
+      if (args.salesExecutiveId && args.salesExecutiveId > 0) {
+        payload.salesExecutiveId = args.salesExecutiveId;
+      }
+
+      const lt = leadTypeParam as CrmLeadType;
+      await postVerifyLead(lt, leadId, payload);
+      notifySuccess("Lead successfully handed off to sales team.");
+      setLead((prev) => ({
+        ...prev,
+        verified: true,
+        stageBlock: {
+          ...prev.stageBlock,
+          presalesMilestoneStage: "Data Conversion",
+          presalesMilestoneCategory: "Won",
+          presalesMilestoneSubStage: "Assigned",
+        },
+      }));
+      setBaseDetail((prev) =>
+        mergePresalesMilestoneIntoDetail(prev, {
+          presalesMilestoneStage: "Data Conversion",
+          presalesMilestoneCategory: "Won",
+          presalesMilestoneSubStage: "Assigned",
+        }),
+      );
+      if (args.note.trim()) {
+        await postManualActivity(lt, leadId, "NOTE", args.note.trim());
+      }
+      await load();
+      void refreshActivities();
+    },
+    [
+      leadId,
+      leadTypeParam,
+      load,
+      notifySuccess,
+      refreshActivities,
+      validLeadType,
+    ],
+  );
+
+  const handlePresalesCompleteTaskApi = async (args: PresalesCompleteTaskApiPayload) => {
+    if (!validLeadType) return;
+    if (presalesHandedOff) {
+      throw new Error(
+        "This lead has been handed off to sales. No further updates allowed.",
+      );
+    }
+    const lt = leadTypeParam as CrmLeadType;
+    const isFreshData =
+      args.presalesMilestoneStage.trim().toLowerCase() === "fresh data";
+    const persistedCategory = isFreshData ? "" : args.presalesMilestoneCategory.trim();
+    const persistedSubStage = isFreshData
+      ? ""
+      : (args.presalesMilestoneSubStage.trim() || args.feedback.trim());
+
+    const noFollowUpNeeded = isLostCategory(persistedCategory);
+    const followUpDate = noFollowUpNeeded
+      ? ""
+      : (args.nextCallDateLocal.trim() || lead.followUpDate);
+
+    const nextPresalesStage = {
+      presalesMilestoneStage: args.presalesMilestoneStage.trim(),
+      presalesMilestoneCategory: persistedCategory,
+      presalesMilestoneSubStage: persistedSubStage,
+    };
+
+    const leadForSave: Lead = {
+      ...lead,
+      followUpDate,
+      status: persistedSubStage || lead.status,
+      lostReason: args.lostReason?.trim()
+        ? args.lostReason.trim()
+        : lead.lostReason,
+      stageBlock: {
+        ...lead.stageBlock,
+        ...nextPresalesStage,
+      },
+    };
+
+    const body = mergeLeadIntoDetail(
+      mergePresalesMilestoneIntoDetail(baseDetail, nextPresalesStage),
+      leadForSave,
+    );
+    const updated = await putLeadDetail(lt, leadId, body);
+    setBaseDetail(updated);
+    setLead((prev) => ({
+      ...detailJsonToLead(updated, lt),
+      id: leadId,
+      activities: prev.activities,
+      followUpDate: leadForSave.followUpDate,
+      lostReason: leadForSave.lostReason,
+      stageBlock: {
+        ...prev.stageBlock,
+        ...nextPresalesStage,
+      },
+    }));
+    notifySuccess("Saved");
+    void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
+    void refreshActivities();
+  };
+
   const handleCompleteTaskApi = async (args: CompleteTaskApiPayload) => {
       if (!validLeadType) return;
       if (!leadId.trim()) {
@@ -1861,6 +1970,9 @@ export default function LeadDetailsApiClient({
         milestoneStage: args.milestoneStage.trim(),
         milestoneStageCategory: args.milestoneStageCategory.trim(),
         feedback: args.feedback.trim(),
+        budget: args.budget,
+        configuration: args.configuration,
+        propertyNotes: args.propertyNotes,
       });
       if (!discoveryGate.valid) {
         throw new Error(discoveryGate.message);
@@ -1882,7 +1994,16 @@ export default function LeadDetailsApiClient({
           ? ""
           : args.milestoneStageCategory;
 
-        let followUpDate = args.nextCallDateLocal.trim() || lead.followUpDate;
+        // For LOST-path leads and Closed-Won customer milestones (Booking Done / Token Done),
+        // clear the follow-up date so these leads never appear as overdue.
+        const noFollowUpNeeded = isNoFollowUpRequired({
+          milestoneStage:         args.milestoneStage,
+          milestoneStageCategory: args.milestoneStageCategory,
+          milestoneSubStage:      args.feedback,
+        });
+        let followUpDate = noFollowUpNeeded
+          ? ""
+          : (args.nextCallDateLocal.trim() || lead.followUpDate);
         let designerName = lead.designerName;
 
         if (args.meetingAppointment) {
@@ -1955,6 +2076,9 @@ export default function LeadDetailsApiClient({
           meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
           status: persistedSubstage,
           stageBlock: nextStage,
+          budget: args.budget ?? lead.budget,
+          propertyNotes: args.propertyNotes ?? lead.propertyNotes,
+          configuration: args.configuration ?? lead.configuration,
           lostReason: args.lostReason?.trim()
             ? args.lostReason.trim()
             : lead.lostReason,
@@ -2055,7 +2179,16 @@ export default function LeadDetailsApiClient({
         />
         <LeadHeader
           lead={lead}
-          onCompleteTask={() => setCompleteTaskOpen(true)}
+          userRole={viewerRoleKey}
+          presalesHandedOff={presalesHandedOff}
+          onCompleteTask={() => {
+            if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
+            setCompleteTaskOpen(true);
+          }}
+          completeTaskDisabled={
+            (presalesHandedOff && isPresalesRole(viewerRoleKey)) ||
+            (inSalesPhase && isPresalesRole(viewerRoleKey))
+          }
           onGetQuote={() => void handleGetQuote()}
           quoteFetching={quoteFetching}
           showGetQuote={canShowGetQuote}
@@ -2063,7 +2196,9 @@ export default function LeadDetailsApiClient({
           showCallClosed={
             canClosedLeadHeader &&
             (lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "decision" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed") &&
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience & design" ||
+              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience and design") &&
             !isClosedWonBookingDone(lead.stageBlock)
           }
           canStageRollback={isSuperAdmin}
@@ -2122,18 +2257,28 @@ export default function LeadDetailsApiClient({
         {secondBoxError ? (
           <p className="mt-2 text-[12px] text-rose-600">{secondBoxError}</p>
         ) : null}
-        <FooterActions
-          onSave={handleSave}
-          saving={saving}
-          onVerify={canVerifyCurrentLead ? handleOpenVerify : undefined}
-          verifying={verifying}
-        />
+        <FooterActions onSave={handleSave} saving={saving} />
       </div>
       <CompleteTaskModal
         lead={lead}
         open={completeTaskOpen}
         onClose={() => setCompleteTaskOpen(false)}
-        onApiComplete={handleCompleteTaskApi}
+        onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
+        onPresalesApiComplete={
+          usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined
+        }
+        onPresalesVerify={
+          usePresalesCompleteTask && canVerifyCurrentLead
+            ? handlePresalesVerifyFromCompleteTask
+            : undefined
+        }
+        presalesVerifyAvailable={usePresalesCompleteTask && canVerifyCurrentLead}
+        salesExecutiveOptions={salesExecutiveOptions}
+        salesExecutivesLoading={salesExecutivesLoading}
+        salesExecutivesError={salesExecutivesError}
+        salesExecutiveLabel={salesExecutiveLabel}
+        userRole={viewerRoleKey}
+        presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
       />
       {rollbackOpen ? (
@@ -2235,87 +2380,6 @@ export default function LeadDetailsApiClient({
                 disabled={rollbackBusy}
               >
                 {rollbackBusy ? "Submitting..." : "Rollback Stage"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {verifyModalOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-xl">
-            <h3 className="text-[15px] font-semibold text-[var(--crm-text-primary)]">
-              Verify Lead
-            </h3>
-            <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
-              Pincode is mandatory. Optionally assign a sales executive by name
-              when verifying this lead.
-            </p>
-            <div className="mt-4 space-y-3">
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Pincode *
-                </span>
-                <input
-                  value={verifyPincode}
-                  onChange={(e) => setVerifyPincode(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  placeholder="Enter pincode"
-                />
-              </label>
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Sales Executive (optional)
-                </span>
-                <div className="relative mt-1">
-                  <select
-                    value={verifySalesExecutiveId}
-                    onChange={(e) => setVerifySalesExecutiveId(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 pr-9 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                    disabled={salesExecutivesLoading}
-                  >
-                    <option value="">— No assignment —</option>
-                    {salesExecutiveOptions.map((u) => (
-                      <option key={u.id} value={String(u.id)}>
-                        {salesExecutiveLabel(u)}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[var(--crm-text-muted)]">
-                    ▾
-                  </span>
-                </div>
-                {salesExecutivesLoading ? (
-                  <span className="mt-1 block text-[11px] text-[var(--crm-text-muted)]">
-                    Loading sales executives…
-                  </span>
-                ) : salesExecutivesError ? (
-                  <span className="mt-1 block text-[11px] text-amber-700">
-                    {salesExecutivesError}
-                  </span>
-                ) : salesExecutiveOptions.length === 0 ? (
-                  <span className="mt-1 block text-[11px] text-amber-700">
-                    Could not load the list. You can still verify with pincode
-                    only.
-                  </span>
-                ) : null}
-              </label>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--crm-border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--crm-text-secondary)]"
-                onClick={() => setVerifyModalOpen(false)}
-                disabled={verifying}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-[var(--crm-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-60"
-                onClick={() => void handleVerify()}
-                disabled={verifying}
-              >
-                {verifying ? "Verifying..." : "Verify"}
               </button>
             </div>
           </div>

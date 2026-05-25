@@ -7,7 +7,6 @@ import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
-import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -20,7 +19,17 @@ import {
   normalizeRole,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
-import { readStoredCrmToken } from "@/lib/crm-client-auth";
+import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
+import {
+  appendWorkspaceMilestoneFilterQuery,
+  defaultLeadsVerificationStatus,
+  sidebarSectionsForViewer,
+  workspaceFromPathname,
+} from "@/lib/crm-workspace";
+import {
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+} from "@/lib/hierarchy-user-display";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
@@ -48,11 +57,6 @@ function readHeaderPersistedState(): HeaderPersistedState {
     const nav = window.performance.getEntriesByType("navigation")[0] as
       | PerformanceNavigationTiming
       | undefined;
-    if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-      return {};
-    }
     const raw = window.sessionStorage.getItem(HEADER_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as HeaderPersistedState;
@@ -65,12 +69,18 @@ function readHeaderPersistedState(): HeaderPersistedState {
 export default function Header() {
   const pathname = usePathname() ?? "";
   const router = useRouter();
+  const leadsWorkspace = workspaceFromPathname(pathname);
+  const isPresalesLeadsPage = leadsWorkspace === "presales";
   const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
     if (typeof window === "undefined") return "SUPER_ADMIN";
     const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
     return normalizeRole(stored);
   });
+  const sidebarSections = useMemo(
+    () => sidebarSectionsForViewer(leadsWorkspace, currentRole),
+    [leadsWorkspace, currentRole],
+  );
   const [currentUserName, setCurrentUserName] = useState(() => {
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
@@ -130,11 +140,16 @@ export default function Header() {
 
   useEffect(() => {
     if (!authResolved) return;
-    if (!pathname.startsWith("/presales-leads")) return;
-    if (normalizeRole(currentRole) !== "SUPER_ADMIN") {
+    const r = normalizeRole(currentRole);
+    if (r === "SUPER_ADMIN") return;
+    if (isPresalesLeadsPage && (r === "SALES_EXECUTIVE" || r === "SALES_MANAGER")) {
       router.replace("/Leads");
+      return;
     }
-  }, [authResolved, pathname, currentRole, router]);
+    if (!isPresalesLeadsPage && isPresalesRole(currentRole)) {
+      router.replace("/presales-leads");
+    }
+  }, [authResolved, currentRole, isPresalesLeadsPage, router]);
 
   useEffect(() => {
     let cancelled = false;
@@ -242,7 +257,7 @@ export default function Header() {
   useEffect(() => {
     if (!isPresalesRole(currentRole)) return;
     if (isLeadTypeAllowedForRole(currentRole, leadType)) return;
-    setLeadType("formlead");
+    setLeadType("all");
   }, [currentRole, leadType]);
 
   const isDesignRole =
@@ -262,17 +277,42 @@ export default function Header() {
       setManagerTeamNames([]);
       return;
     }
-    void fetchSalesExecutivesForManager(token)
-      .then((users) => {
+    void (async () => {
+      try {
+        const [users, legacyRes] = await Promise.all([
+          fetchSalesExecutivesForManager(token),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
+        ]);
         if (cancelled) return;
-        const names = users
-          .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
-          .filter(Boolean);
-        setManagerTeamNames(names);
-      })
-      .catch(() => {
+        const names = new Set<string>();
+        for (const u of users) {
+          const n = hierarchyUserDisplayName(u as { fullName?: string; name?: string; username?: string });
+          if (n) names.add(n);
+        }
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            const rec = row as Record<string, unknown>;
+            if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
+            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
+            if (n) names.add(n);
+          }
+        }
+        setManagerTeamNames([...names]);
+      } catch {
         if (!cancelled) setManagerTeamNames([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -313,13 +353,22 @@ export default function Header() {
     setPresalesSummaryTab(null);
   }, [authResolved, currentRole, isSuperAdminPresalesWorkspace, superAdminPresalesNames.length]);
 
-  const presalesVerificationStatus = useMemo(() => {
+  const listVerificationStatus = useMemo(() => {
+    if (!isPresalesLeadsPage) {
+      return defaultLeadsVerificationStatus("sales", undefined, currentRole);
+    }
     const superAdminPresalesCards =
       isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
     if (!isPresalesRole(currentRole) && !superAdminPresalesCards) return "";
     if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") return "verified";
-    return "";
-  }, [currentRole, presalesSummaryTab, isSuperAdminPresalesWorkspace, superAdminPresalesNames.length]);
+    return "unverified";
+  }, [
+    currentRole,
+    presalesSummaryTab,
+    isSuperAdminPresalesWorkspace,
+    superAdminPresalesNames.length,
+    isPresalesLeadsPage,
+  ]);
 
   const heatmapFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
@@ -337,11 +386,15 @@ export default function Header() {
       (superAdminPresalesCards && presalesSummaryTab !== null);
     if (presalesMonthCards) q.set("crmMonthWindow", "current");
     else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
-    if (milestoneStage.trim()) q.set("milestoneStage", milestoneStage.trim());
-    if (milestoneStageCategory.trim()) q.set("milestoneStageCategory", milestoneStageCategory.trim());
-    if (milestoneSubStage.trim()) q.set("milestoneSubStage", milestoneSubStage.trim());
+    appendWorkspaceMilestoneFilterQuery(
+      q,
+      leadsWorkspace,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+    );
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
-    if (presalesVerificationStatus.trim()) q.set("verificationStatus", presalesVerificationStatus.trim());
+    if (listVerificationStatus.trim()) q.set("verificationStatus", listVerificationStatus.trim());
     return q.toString();
   }, [
     search,
@@ -355,7 +408,8 @@ export default function Header() {
     heatmapToolbarAssignee,
     heatmapToolbarAssigneeScope,
     reinquiry,
-    presalesVerificationStatus,
+    listVerificationStatus,
+    leadsWorkspace,
     currentRole,
     presalesSummaryTab,
     isSuperAdminPresalesWorkspace,
@@ -427,6 +481,20 @@ export default function Header() {
     reinquiry,
   ]);
 
+  const handleResetAll = useCallback(() => {
+    setSearch("");
+    setLeadType("all");
+    setSort("updatedAt,desc");
+    setAssignee("");
+    setDateFrom("");
+    setDateTo("");
+    setMilestoneStage("");
+    setMilestoneStageCategory("");
+    setMilestoneSubStage("");
+    setReinquiry("");
+    setPresalesSummaryTab(isPresalesRole(currentRole) ? "total" : null);
+  }, [currentRole]);
+
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="xl:grid xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
@@ -435,7 +503,7 @@ export default function Header() {
             appBadge="LD"
             appName="Lead"
             appTagline="workspace"
-            sections={dashboardSidebarSections}
+            sections={sidebarSections}
             profileName={currentRole.replace(/_/g, " ")}
             profileRole={currentRole}
             profileInitials="AD"
@@ -454,6 +522,7 @@ export default function Header() {
           ) : (
             <>
               <JourneyPhaseHeatmap
+                leadsWorkspace={leadsWorkspace}
                 milestoneFilterQuery={heatmapFilterQuery}
                 currentRole={currentRole}
                 leadView="default"
@@ -490,7 +559,8 @@ export default function Header() {
                 milestoneStageCategory={milestoneStageCategory}
                 milestoneSubStage={milestoneSubStage}
                 reinquiry={reinquiry}
-                verificationStatus={presalesVerificationStatus}
+                verificationStatus={listVerificationStatus}
+                leadsWorkspace={leadsWorkspace}
                 crmMonthWindow={
                   (isPresalesRole(currentRole) && presalesSummaryTab) ||
                   (isSuperAdminPresalesWorkspace &&
@@ -515,6 +585,7 @@ export default function Header() {
                   setLeadType(next);
                 }}
                 onSortChange={setSort}
+                onResetAll={handleResetAll}
                 onAssigneeChange={(next) => {
                   if (
                     currentRole === "SALES_EXECUTIVE" ||

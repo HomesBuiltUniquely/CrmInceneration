@@ -4,6 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
+import { isLeadHandedOffToSales } from "@/lib/presales-milestone";
+import {
+  canViewBothMilestonePipelines,
+  isPresalesRole,
+  isSalesRole,
+} from "@/lib/roleUtils";
 
 function WonTrophyIcon({ className }: { className?: string }) {
   return (
@@ -44,6 +50,9 @@ function WonTrophyIcon({ className }: { className?: string }) {
 
 export default function LeadHeader({
   lead,
+  userRole = "",
+  presalesHandedOff = false,
+  completeTaskDisabled = false,
   onCompleteTask,
   onOpenStageRollback,
   canStageRollback = false,
@@ -61,6 +70,9 @@ export default function LeadHeader({
   showGetQuote = false,
 }: {
   lead: Lead;
+  userRole?: string;
+  presalesHandedOff?: boolean;
+  completeTaskDisabled?: boolean;
   onCompleteTask: () => void;
   onOpenStageRollback?: () => void;
   canStageRollback?: boolean;
@@ -83,6 +95,20 @@ export default function LeadHeader({
     () => createdTimelineOptions.find((x) => x.value === createdTimelineValue) ?? null,
     [createdTimelineOptions, createdTimelineValue]
   );
+  const inSalesPhase = isLeadHandedOffToSales(lead);
+  const showPresalesMilestone =
+    !inSalesPhase &&
+    (isPresalesRole(userRole) || canViewBothMilestonePipelines(userRole));
+  const showSalesMilestone = inSalesPhase || !showPresalesMilestone;
+  const milestoneStageLabel = showPresalesMilestone
+    ? lead.stageBlock?.presalesMilestoneStage?.trim() || "Fresh Data"
+    : lead.stageBlock?.milestoneStage?.trim() || "—";
+  const milestoneSubLabel = showPresalesMilestone
+    ? lead.stageBlock?.presalesMilestoneSubStage?.trim() ||
+      lead.stageBlock?.presalesMilestoneCategory?.trim() ||
+      "—"
+    : lead.stageBlock?.milestoneSubStage?.trim() || "—";
+
   const firstCallAt = useMemo(() => {
     if (lead.firstCallAt?.trim()) {
       return formatCrmDateTime(lead.firstCallAt.trim());
@@ -140,16 +166,31 @@ export default function LeadHeader({
           ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2.5">
-          <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
-            <span>
-              Stage: {lead.stageBlock?.milestoneStage?.trim() || "—"}
+          {showPresalesMilestone ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-orange-200 bg-orange-50 px-3 text-[11px] font-semibold text-orange-800">
+              Presales Pipeline
             </span>
-          </span>
-          <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
-            <span>
-              Sub-stage: {lead.stageBlock?.milestoneSubStage?.trim() || "—"}
+          ) : null}
+          {showSalesMilestone && !showPresalesMilestone ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-blue-200 bg-blue-50 px-3 text-[11px] font-semibold text-blue-800">
+              Sales Pipeline
             </span>
-          </span>
+          ) : null}
+          {presalesHandedOff && showPresalesMilestone ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-slate-200 bg-slate-100 px-3 text-[11px] font-semibold text-slate-700">
+              Handed Off — Read Only
+            </span>
+          ) : null}
+          {(showPresalesMilestone || showSalesMilestone) && (
+            <>
+              <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
+                <span>Stage: {milestoneStageLabel}</span>
+              </span>
+              <span className="inline-flex h-6 items-center rounded-full border border-black/25 bg-amber-50 px-3 text-[11px] font-semibold text-amber-800">
+                <span>Sub-stage: {milestoneSubLabel}</span>
+              </span>
+            </>
+          )}
         </div>
         <div className="mt-2" ref={timelineWrapRef}>
           <button
@@ -265,7 +306,13 @@ export default function LeadHeader({
         {/* Complete Task */}
         <button
           onClick={onCompleteTask}
-          className="group relative inline-flex cursor-pointer items-center gap-3 overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-sky-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-[0_14px_30px_rgba(37,99,235,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(37,99,235,0.28)]"
+          disabled={completeTaskDisabled}
+          title={
+            completeTaskDisabled
+              ? "This lead has been handed off to sales. No further updates allowed."
+              : undefined
+          }
+          className="group relative inline-flex cursor-pointer items-center gap-3 overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-600 to-sky-500 px-4 py-2.5 text-[13px] font-semibold text-white shadow-[0_14px_30px_rgba(37,99,235,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_36px_rgba(37,99,235,0.28)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
         >
           <span className="absolute inset-0 bg-[linear-gradient(120deg,transparent_10%,rgba(255,255,255,0.24)_45%,transparent_80%)] translate-x-[-140%] transition-transform duration-700 group-hover:translate-x-[140%]" />
           <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white/18 text-[19px] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] ring-1 ring-white/25 backdrop-blur-sm">

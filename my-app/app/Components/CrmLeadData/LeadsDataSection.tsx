@@ -1,9 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
 import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
-import { asCrmLeadType, crmLeadTopLevelStage, isCrmLeadVerified, mapApiLeadToRow } from "@/lib/leads-filter";
+import {
+  asCrmLeadType,
+  crmLeadAssigneeLabel,
+  crmLeadTopLevelStage,
+  isCrmLeadVerified,
+  mapApiLeadToRow,
+} from "@/lib/leads-filter";
+import {
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+  resolveAssigneeScopeForDisplayName,
+} from "@/lib/hierarchy-user-display";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import {
+  appendLeadPoolQuery,
+  appendWorkspaceMilestoneFilterQuery,
+  defaultLeadsVerificationStatus,
+  pipelineRoleForWorkspace,
+  type CrmWorkspace,
+} from "@/lib/crm-workspace";
+import { crmPipelineRoleParam } from "@/lib/roleUtils";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
@@ -18,6 +38,7 @@ import {
 } from "@/lib/auth/api";
 import { isPresalesRole } from "@/lib/crm-role-access";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
+import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -32,11 +53,9 @@ import {
   countSalesManagerMineVsTeam,
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
+import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
-  applyNewCrmCutoff,
-  getEffectiveNewCrmEndDate,
-  getEffectiveNewCrmStartDate,
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
 
@@ -86,6 +105,10 @@ type Props = {
   onInsightTableModeChange?: (mode: InsightTableMode) => void;
   /** Super-admin `/presales-leads`: restrict merged list + counts to these assignee display names (PM + PE). */
   superAdminPresalesAssigneeNames?: string[];
+  /** Resets search and all header filters (passed up to Header). */
+  onResetAll?: () => void;
+  /** Route workspace: sales `/Leads` vs presales `/presales-leads`. */
+  leadsWorkspace?: CrmWorkspace;
 };
 
 type SubStatusResp = {
@@ -94,6 +117,7 @@ type SubStatusResp = {
 type HierarchyUser = {
   id: number;
   fullName?: string;
+  name?: string;
   username?: string;
   managerId?: number | null;
   role?: string;
@@ -122,13 +146,6 @@ type LeadsViewPersistedState = {
 function readLeadsViewPersistedState(): LeadsViewPersistedState {
   if (typeof window === "undefined") return {};
   try {
-    const nav = window.performance.getEntriesByType("navigation")[0] as
-      | PerformanceNavigationTiming
-      | undefined;
-    if (nav?.type === "reload") {
-      window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
-      return {};
-    }
     const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as LeadsViewPersistedState;
@@ -136,6 +153,65 @@ function readLeadsViewPersistedState(): LeadsViewPersistedState {
   } catch {
     return {};
   }
+}
+
+function isHierarchyAdminRole(role?: string): boolean {
+  const r = normalizeRole(role ?? "");
+  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+}
+
+async function fetchMergedSalesExecutivesForFilters(
+  authHeaders: HeadersInit,
+): Promise<HierarchyUser[]> {
+  const authBase = getAuthApiBaseUrl();
+  const [byRoleRes, legacyRes] = await Promise.all([
+    fetch(`${authBase}/api/auth/users-by-role?role=${encodeURIComponent("SALES_EXECUTIVE")}`, {
+      cache: "no-store",
+      headers: authHeaders,
+      credentials: "include",
+    }),
+    fetch(`/api/sales-executive/all`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ Accept: "application/json" }),
+    }),
+  ]);
+
+  const byRoleRows: HierarchyUser[] = [];
+  if (byRoleRes.ok) {
+    const j = (await byRoleRes.json().catch(() => [])) as unknown;
+    byRoleRows.push(...(Array.isArray(j) ? (j as HierarchyUser[]) : []));
+  }
+
+  const legacyRows: HierarchyUser[] = [];
+  if (legacyRes.ok) {
+    const j = (await legacyRes.json().catch(() => [])) as unknown;
+    const raw = Array.isArray(j)
+      ? j
+      : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+        ? ((j as { data: unknown[] }).data ?? [])
+        : [];
+    for (const row of raw) {
+      if (!row || typeof row !== "object") continue;
+      legacyRows.push(normalizeLegacyHierarchyUser(row as Record<string, unknown>));
+    }
+  }
+
+  const byId = new Map<number, HierarchyUser>();
+  for (const row of [...byRoleRows, ...legacyRows]) {
+    const id = Number(row.id ?? 0);
+    if (id <= 0) continue;
+    const prev = byId.get(id);
+    byId.set(id, {
+      ...prev,
+      ...row,
+      id,
+      fullName: hierarchyUserDisplayName(row) || prev?.fullName,
+      name: row.name ?? prev?.name,
+      username: row.username ?? prev?.username,
+    });
+  }
+  return [...byId.values()];
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -199,7 +275,7 @@ function buildHierarchyScopedAssignees(args: {
   if (salesManagerName) {
     const selectedManagerNorm = normText(salesManagerName);
     const selectedManager = args.salesManagers.find((u) => {
-      const n = normText(String(u.fullName ?? u.username ?? ""));
+      const n = normText(hierarchyUserDisplayName(u));
       return n === selectedManagerNorm;
     });
     if (selectedManager && Number(selectedManager.id ?? 0) > 0) {
@@ -222,7 +298,7 @@ function buildHierarchyScopedAssignees(args: {
   } else if (presalesManagerName) {
     const selectedPresalesManagerNorm = normText(presalesManagerName);
     const selectedPresalesManager = args.presalesManagers.find((u) => {
-      const n = normText(String(u.fullName ?? u.username ?? ""));
+      const n = normText(hierarchyUserDisplayName(u));
       return n === selectedPresalesManagerNorm;
     });
     if (selectedPresalesManager && Number(selectedPresalesManager.id ?? 0) > 0) {
@@ -240,9 +316,9 @@ function buildHierarchyScopedAssignees(args: {
     new Set(
       [
         ...managerNames,
-        ...salesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
-        ...presalesMgrUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
-        ...presalesExecUnderManager.map((u) => String(u.fullName ?? u.username ?? "").trim()),
+        ...salesExecUnderManager.map((u) => hierarchyUserDisplayName(u)),
+        ...presalesMgrUnderManager.map((u) => hierarchyUserDisplayName(u)),
+        ...presalesExecUnderManager.map((u) => hierarchyUserDisplayName(u)),
       ].filter(Boolean),
     ),
   );
@@ -375,15 +451,17 @@ async function fetchMergedPage(
   reinquiry: string,
   leadView: "default" | "my" | "team" | "combined" = "default",
   verificationStatus = "",
-  crmMonthWindow = ""
+  crmMonthWindow = "",
+  leadsWorkspace: CrmWorkspace = "sales",
+  viewerRole = "",
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   const normalizedLeadType = leadType.trim().toLowerCase();
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const shouldMerge =
     usesRoleEndpoint || leadView === "combined" || normalizedLeadType === "all" || normalizedLeadType === "verified";
-  const effectiveDateFrom = getEffectiveNewCrmStartDate(dateFrom);
-  const effectiveDateTo = getEffectiveNewCrmEndDate(dateFrom, dateTo);
+  const effectiveDateFrom = dateFrom.trim() || null;
+  const effectiveDateTo = dateTo.trim() || null;
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
   qs.set("mergeAll", shouldMerge ? "1" : "0");
   qs.set("page", usesRoleEndpoint ? "0" : String(page));
@@ -399,13 +477,22 @@ async function fetchMergedPage(
     if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
     if (effectiveDateTo) qs.set("dateTo", effectiveDateTo);
   }
-  if (milestoneStage.trim()) qs.set("milestoneStage", milestoneStage.trim());
-  if (milestoneStageCategory.trim()) qs.set("milestoneStageCategory", milestoneStageCategory.trim());
-  if (milestoneSubStage.trim()) qs.set("milestoneSubStage", milestoneSubStage.trim());
+  appendWorkspaceMilestoneFilterQuery(
+    qs,
+    leadsWorkspace,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+  );
   if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
-  if (normalizedLeadType === "verified") qs.set("verificationStatus", "verified");
-  else if (verificationStatus.trim()) qs.set("verificationStatus", verificationStatus.trim());
+  const resolvedVerification =
+    normalizedLeadType === "verified"
+      ? "verified"
+      : verificationStatus.trim() ||
+        defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
+  if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
   if (usesRoleEndpoint) qs.set("roleView", leadView);
+  appendLeadPoolQuery(qs, leadsWorkspace);
 
   const res = await fetch(
     `/api/crm/leads?${qs.toString()}`,
@@ -424,11 +511,14 @@ async function fetchMergedPage(
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
   return {
     ...pageJson,
-    content: applyNewCrmCutoff(Array.isArray(pageJson.content) ? pageJson.content : [], true),
+    content: Array.isArray(pageJson.content) ? pageJson.content : [],
   };
 }
 
-async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combined" = "default"): Promise<{
+async function fetchFilterOptions(
+  leadView: "default" | "my" | "team" | "combined" = "default",
+  viewerRole = "",
+): Promise<{
   assignees: string[];
   stages: string[];
   categories: string[];
@@ -436,6 +526,7 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
 }> {
   const leadsQs = new URLSearchParams({
     mergeAll: "1",
+    milestoneScope: "crm",
     page: "0",
     size: "250",
     sort: "updatedAt,desc",
@@ -445,13 +536,17 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
     leadsQs.set("roleView", leadView);
   }
   // "combined" uses merged filter without roleView (same as default)
+  const pipelineRole = crmPipelineRoleParam(normalizeRole(viewerRole));
+  const subStatusQs = new URLSearchParams({ resource: "sub-status" });
+  if (pipelineRole) subStatusQs.set("role", pipelineRole);
+
   const [leadsRes, subRes] = await Promise.all([
     fetch(`/api/crm/leads?${leadsQs.toString()}`, {
       cache: "no-store",
       credentials: "include",
       headers: getCrmAuthHeaders(),
     }),
-    fetch("/api/milestone-count?resource=sub-status", {
+    fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
       cache: "no-store",
       credentials: "include",
       headers: getCrmAuthHeaders(),
@@ -462,8 +557,7 @@ async function fetchFilterOptions(leadView: "default" | "my" | "team" | "combine
   if (leadsRes.ok) {
     const leads = (await leadsRes.json()) as SpringPage<ApiLead>;
     for (const lead of leads.content ?? []) {
-      const a = typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name;
-      const t = (a ?? "").trim();
+      const t = crmLeadAssigneeLabel(lead);
       if (t) assignees.add(t);
     }
   }
@@ -597,6 +691,7 @@ export default function LeadsDataSection({
   authRole: authRoleProp,
   verificationStatus: verificationStatusProp = "",
   crmMonthWindow: crmMonthWindowProp = "",
+  leadsWorkspace = "sales",
   onPresalesSummaryClear,
   presalesTeamExecutivesOnly = false,
   presalesTeamExecDisplayNames = [],
@@ -614,6 +709,7 @@ export default function LeadsDataSection({
   onHeatmapSummarySync,
   onInsightTableModeChange,
   superAdminPresalesAssigneeNames,
+  onResetAll,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -627,6 +723,7 @@ export default function LeadsDataSection({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SpringPage<ApiLead> | null>(null);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [stageOrder, setStageOrder] = useState<string[]>([]);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
   const [assigneeOptions, setAssigneeOptions] = useState<string[]>([]);
@@ -695,6 +792,65 @@ export default function LeadsDataSection({
   const [rowAssignError, setRowAssignError] = useState("");
   const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
+  const [relativeTime, setRelativeTime] = useState<string>("Never");
+  const [isMinimized, setIsMinimized] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const isFirstMountRef = useRef(true);
+
+  const formatRelativeTime = useCallback((date: Date | null): string => {
+    if (!date) return "Never";
+    const now = new Date();
+    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (diffInSeconds < 5) return "just now";
+    if (diffInSeconds < 60) return `${diffInSeconds} seconds ago`;
+
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    if (diffInMinutes === 1) return "1 minute ago";
+    if (diffInMinutes < 60) return `${diffInMinutes} minutes ago`;
+
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    if (diffInHours === 1) return "1 hour ago";
+    if (diffInHours < 24) return `${diffInHours} hours ago`;
+
+    const diffInDays = Math.floor(diffInHours / 24);
+    if (diffInDays === 1) return "Yesterday";
+    return `${diffInDays} days ago`;
+  }, []);
+
+  useEffect(() => {
+    const update = () => setRelativeTime(formatRelativeTime(lastRefreshTime));
+    update();
+    const timer = setInterval(update, 10000); 
+    
+    const activityTimer = setInterval(() => {
+      if (!isMinimized && Date.now() - lastActivityRef.current > 5000) {
+        setIsMinimized(true);
+      }
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(activityTimer);
+    };
+  }, [lastRefreshTime, formatRelativeTime, isMinimized]);
+
+  const handleActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    if (isMinimized) setIsMinimized(false);
+  }, [isMinimized]);
+
+  const handleResetAll = useCallback(() => {
+    setPage(0);
+    setSize(20);
+    setInsightTableMode(null);
+    setSalesAdminFilter("");
+    setSalesManagerFilter("");
+    setSalesExecFilter("");
+    setPresalesManagerFilter("");
+    setPresalesExecFilter("");
+    onResetAll?.();
+  }, [onResetAll]);
 
   const loadAssignableUsers = useCallback(async () => {
     if (!canLoadAllUsers(currentRole)) {
@@ -735,6 +891,10 @@ export default function LeadsDataSection({
   }, []);
 
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
     setPage(0);
   }, [
     assignee,
@@ -771,17 +931,42 @@ export default function LeadsDataSection({
       setManagerTeamNames([]);
       return;
     }
-    void fetchSalesExecutivesForManager(token)
-      .then((users) => {
+    void (async () => {
+      try {
+        const [users, legacyRes] = await Promise.all([
+          fetchSalesExecutivesForManager(token),
+          fetch(`/api/sales-executive/all`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders({ Accept: "application/json" }),
+          }),
+        ]);
         if (cancelled) return;
-        const names = users
-          .map((u) => String(u.fullName ?? u.name ?? u.username ?? "").trim())
-          .filter(Boolean);
-        setManagerTeamNames(names);
-      })
-      .catch(() => {
+        const names = new Set<string>();
+        for (const u of users) {
+          const n = hierarchyUserDisplayName(u as HierarchyUser);
+          if (n) names.add(n);
+        }
+        if (legacyRes.ok) {
+          const j = (await legacyRes.json().catch(() => [])) as unknown;
+          const raw = Array.isArray(j)
+            ? j
+            : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+              ? ((j as { data: unknown[] }).data ?? [])
+              : [];
+          for (const row of raw) {
+            if (!row || typeof row !== "object") continue;
+            const rec = row as Record<string, unknown>;
+            if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
+            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
+            if (n) names.add(n);
+          }
+        }
+        setManagerTeamNames([...names]);
+      } catch {
         if (!cancelled) setManagerTeamNames([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -917,32 +1102,39 @@ export default function LeadsDataSection({
         cancelled = true;
       };
     }
-    void Promise.all(
-      rolesToFetch.map(async (roleName) => {
-        try {
-          const res = await fetch(
-            `${authBase}/api/auth/users-by-role?role=${encodeURIComponent(roleName)}`,
-            { cache: "no-store", headers: auth, credentials: "include" },
-          );
-          if (res.status === 403) {
-            console.warn(`[RBAC] users-by-role 403 role=${roleName}, viewerRole=${currentRole}`);
-            return [roleName, [] as HierarchyUser[]] as const;
-          }
-          if (!res.ok) {
-            console.warn(`[RBAC] users-by-role failed role=${roleName}, status=${res.status}`);
-            return [roleName, [] as HierarchyUser[]] as const;
-          }
-          const j = (await res.json().catch(() => [])) as unknown;
-          const rows = Array.isArray(j) ? (j as HierarchyUser[]) : [];
-          return [roleName, rows] as const;
-        } catch (err) {
-          console.warn(`[RBAC] users-by-role request failed role=${roleName}`, err);
-          return [roleName, [] as HierarchyUser[]] as const;
-        }
-      }),
-    )
-      .then((pairs) => {
+    void (async () => {
+      try {
+        const pairs = await Promise.all(
+          rolesToFetch.map(async (roleName) => {
+            try {
+              const res = await fetch(
+                `${authBase}/api/auth/users-by-role?role=${encodeURIComponent(roleName)}`,
+                { cache: "no-store", headers: auth, credentials: "include" },
+              );
+              if (res.status === 403) {
+                console.warn(`[RBAC] users-by-role 403 role=${roleName}, viewerRole=${currentRole}`);
+                return [roleName, [] as HierarchyUser[]] as const;
+              }
+              if (!res.ok) {
+                console.warn(`[RBAC] users-by-role failed role=${roleName}, status=${res.status}`);
+                return [roleName, [] as HierarchyUser[]] as const;
+              }
+              const j = (await res.json().catch(() => [])) as unknown;
+              const rows = Array.isArray(j) ? (j as HierarchyUser[]) : [];
+              return [roleName, rows] as const;
+            } catch (err) {
+              console.warn(`[RBAC] users-by-role request failed role=${roleName}`, err);
+              return [roleName, [] as HierarchyUser[]] as const;
+            }
+          }),
+        );
         if (cancelled) return;
+
+        let mergedSalesExecs: HierarchyUser[] = [];
+        if (isHierarchyAdminRole(currentRole)) {
+          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(auth);
+        }
+
         const byRole = new Map<string, HierarchyUser[]>(pairs);
         const saJ = byRole.get("SALES_ADMIN") ?? [];
         const smJ = byRole.get("SALES_MANAGER") ?? [];
@@ -950,24 +1142,30 @@ export default function LeadsDataSection({
         const pmJ = byRole.get("PRESALES_MANAGER") ?? [];
         const peJ = byRole.get("PRESALES_EXECUTIVE") ?? [];
         const preJ = byRole.get("PRE_SALES") ?? [];
+
+        const salesExecList =
+          mergedSalesExecs.length > 0
+            ? mergedSalesExecs
+            : seJ;
+
         setSalesAdmins(saJ.filter((u) => u.active !== false));
         setSalesManagers(smJ.filter((u) => u.active !== false));
-        setSalesExecs(seJ.filter((u) => u.active !== false));
+        setSalesExecs(salesExecList);
         setPresalesManagers(pmJ.filter((u) => u.active !== false));
         const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
         setPresalesExecs(dedupedPresalesExecs);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
         setSalesAdmins([]);
         setSalesManagers([]);
         setSalesExecs([]);
         setPresalesManagers([]);
         setPresalesExecs([]);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -1038,7 +1236,7 @@ export default function LeadsDataSection({
     };
   }, [currentRole, currentUserId]);
 
-  const userName = (u: HierarchyUser) => (u.fullName ?? u.username ?? "").trim();
+  const userName = hierarchyUserDisplayName;
   const meNorm = (currentUserName ?? "").trim().toLowerCase();
   const meAliasSet = useMemo(
     () =>
@@ -1110,9 +1308,14 @@ export default function LeadsDataSection({
       }
 
       if (roleKey === "PRESALES_MANAGER") {
-        const presalesTeamSet = new Set(
-          presalesExecs.map((u) => userName(u).trim().toLowerCase()).filter(Boolean)
-        );
+        const teamFromHeader = presalesTeamExecDisplayNames
+          .map((n) => n.trim().toLowerCase())
+          .filter(Boolean);
+        const teamFromHierarchy = presalesExecs
+          .filter((u) => Number(u.managerId ?? 0) === Number(currentUserId))
+          .map((u) => userName(u).trim().toLowerCase())
+          .filter(Boolean);
+        const presalesTeamSet = new Set([...teamFromHeader, ...teamFromHierarchy]);
         if (presalesTeamSet.size === 0) return isSelf;
         for (const alias of leadAliases) {
           if (presalesTeamSet.has(alias)) return true;
@@ -1126,12 +1329,46 @@ export default function LeadsDataSection({
       managerTeamNames,
       managerTeamNamesFromHeader,
       presalesExecs,
+      presalesTeamExecDisplayNames,
       currentUserId,
       verificationStatusProp,
       leadAssignedToSelf,
     ]
   );
   const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const managerTeamRoster =
+    managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
+  const salesExecOptionsResolved = useMemo(() => {
+    const fromHierarchy = salesExecs.map(userName).filter(Boolean);
+    const fromAssigneeUsers = assigneeUsers
+      .filter((u) => u.role === "SALES_EXECUTIVE")
+      .map((u) => u.name.trim())
+      .filter(Boolean);
+    const fromUsers =
+      fromHierarchy.length > 0
+        ? fromHierarchy
+        : fromAssigneeUsers.length > 0
+          ? fromAssigneeUsers
+          : [];
+
+    const isSalesManagerScope =
+      clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
+    const isAdminScope = isHierarchyAdminRole(clientScopeRoleKey);
+
+    if (isSalesManagerScope || isAdminScope) {
+      return Array.from(
+        new Set([
+          ...fromUsers,
+          ...(isSalesManagerScope ? managerTeamRoster : []),
+          ...(isAdminScope ? assigneeOptions : []),
+        ]),
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    }
+
+    if (fromUsers.length > 0) return fromUsers;
+    if (fromAssigneeUsers.length > 0) return fromAssigneeUsers;
+    return assigneeOptions;
+  }, [salesExecs, assigneeUsers, managerTeamRoster, clientScopeRoleKey, assigneeOptions]);
   const requiresClientScopedDataset =
     clientScopeRoleKey === "SALES_MANAGER" ||
     clientScopeRoleKey === "MANAGER" ||
@@ -1149,10 +1386,8 @@ export default function LeadsDataSection({
       ),
     [superAdminPresalesAssigneeNames],
   );
-  const superAdminPresalesPoolActive =
-    clientScopeRoleKey === "SUPER_ADMIN" &&
-    superAdminPresalesPoolSet.size > 0 &&
-    !isGlobalSearchActive;
+  /** Hub `presales-search` scopes presales; client assignee-name filter dropped wrong rows. */
+  const superAdminPresalesPoolActive = false;
   const leadViewKey: "default" | "my" | "team" | "combined" =
     leadView === "my" || leadView === "team" || leadView === "combined" ? leadView : "default";
   const filterOptionsView =
@@ -1189,12 +1424,30 @@ export default function LeadsDataSection({
       presalesExecs,
     ],
   );
+  const singleExecScopedAssignees = useMemo(() => {
+    if (hierarchyScopedAssignees.length > 0) return [];
+    if (salesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(salesExecFilter, salesExecs);
+    }
+    if (presalesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(presalesExecFilter, presalesExecs);
+    }
+    return [];
+  }, [
+    hierarchyScopedAssignees,
+    salesExecFilter,
+    presalesExecFilter,
+    salesExecs,
+    presalesExecs,
+  ]);
   const effectiveAssigneeScope = useMemo(
     () =>
       hierarchyScopedAssignees.length > 0
         ? hierarchyScopedAssignees
-        : EMPTY_ASSIGNEE_SCOPE,
-    [hierarchyScopedAssignees],
+        : singleExecScopedAssignees.length > 0
+          ? singleExecScopedAssignees
+          : EMPTY_ASSIGNEE_SCOPE,
+    [hierarchyScopedAssignees, singleExecScopedAssignees],
   );
 
   useEffect(() => {
@@ -1235,11 +1488,12 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     let cancelled = false;
+    const pipelineRole = pipelineRoleForWorkspace(leadsWorkspace);
     void (async () => {
       try {
         const [o, p] = await Promise.all([
-          fetchFilterOptions(filterOptionsView),
-          fetchCrmPipeline(true),
+          fetchFilterOptions(filterOptionsView, authRoleProp ?? currentRole),
+          fetchCrmPipeline({ nested: true, role: pipelineRole }),
         ]);
         if (cancelled) return;
         setAssigneeOptions(o.assignees);
@@ -1255,7 +1509,7 @@ export default function LeadsDataSection({
     return () => {
       cancelled = true;
     };
-  }, [filterOptionsView]);
+  }, [authRoleProp, currentRole, filterOptionsView, leadsWorkspace]);
 
   useEffect(() => {
     if (pipelineNested.length === 0) return;
@@ -1323,6 +1577,8 @@ export default function LeadsDataSection({
           leadViewKey,
           verificationStatusProp,
           crmMonthWindowProp,
+          leadsWorkspace,
+          clientScopeRoleKey,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -1346,6 +1602,8 @@ export default function LeadsDataSection({
               leadViewKey,
               verificationStatusProp,
               crmMonthWindowProp,
+              leadsWorkspace,
+              clientScopeRoleKey,
             ),
           ),
         );
@@ -1356,16 +1614,20 @@ export default function LeadsDataSection({
         return allLeads;
       };
       const buildVisiblePage = (allLeads: ApiLead[]): SpringPage<ApiLead> => {
+        const trustPresalesScope =
+          trustPresalesUpstreamLeadScope(clientScopeRoleKey) ||
+          (leadsWorkspace === "presales" &&
+            (clientScopeRoleKey === "SUPER_ADMIN" || clientScopeRoleKey === "ADMIN"));
         let roleScopedLeads =
-          requiresClientScopedDataset && !isGlobalSearchActive
+          requiresClientScopedDataset && !isGlobalSearchActive && !trustPresalesScope
             ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
             : allLeads;
         if (superAdminPresalesPoolActive) {
-          roleScopedLeads = allLeads.filter((lead) =>
+          roleScopedLeads = roleScopedLeads.filter((lead) =>
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
           );
         }
-        const visibleMerged = applyNewCrmCutoff(roleScopedLeads, true).sort((a, b) => {
+        const visibleMerged = roleScopedLeads.sort((a, b) => {
           const at = Date.parse(a.updatedAt ?? "");
           const bt = Date.parse(b.updatedAt ?? "");
           return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
@@ -1404,6 +1666,8 @@ export default function LeadsDataSection({
             leadViewKey,
             verificationStatusProp,
             crmMonthWindowProp,
+            leadsWorkspace,
+            clientScopeRoleKey,
           );
         }
         const allLeads = await fetchAllPagesForAssignee(effectiveAssigneeScope[0] ?? effectiveAssignee);
@@ -1443,6 +1707,7 @@ export default function LeadsDataSection({
       leadViewKey,
       verificationStatusProp,
       crmMonthWindowProp,
+      leadsWorkspace,
     ],
   );
 
@@ -1471,6 +1736,8 @@ export default function LeadsDataSection({
           leadViewKey,
           verificationStatusProp,
           crmMonthWindowProp,
+          leadsWorkspace,
+          clientScopeRoleKey,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -1494,6 +1761,8 @@ export default function LeadsDataSection({
               leadViewKey,
               verificationStatusProp,
               crmMonthWindowProp,
+              leadsWorkspace,
+              clientScopeRoleKey,
             ),
           ),
         );
@@ -1530,7 +1799,9 @@ export default function LeadsDataSection({
       );
     },
     [
+      authRoleProp,
       crmMonthWindowProp,
+      currentRole,
       dateFrom,
       dateTo,
       debouncedSearch,
@@ -1544,6 +1815,7 @@ export default function LeadsDataSection({
       verificationStatusProp,
       superAdminPresalesPoolActive,
       superAdminPresalesPoolSet,
+      leadsWorkspace,
     ],
   );
 
@@ -1570,9 +1842,10 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const scoped = isGlobalSearchActive
-          ? raw
-          : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+        const scoped =
+          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
+            ? raw
+            : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
         setVisibleFilteredTotal(scoped.length);
@@ -1606,9 +1879,18 @@ export default function LeadsDataSection({
           dateFrom,
           dateTo,
         });
+        const milestoneTiles = computeMilestoneTileCounts(scoped, {
+          viewerRole: insightViewerRole,
+          currentUserName: currentUserName ?? "",
+          managerTeamNames: scopedTeam,
+          leadView: insightLeadViewForRole,
+          dateFrom,
+          dateTo,
+        });
         setLeadTypeCounts({
           ...base,
           ...insights,
+          ...milestoneTiles,
           managerMine: smMineTeam.managerMine,
           team: smMineTeam.teamLeads,
         });
@@ -1664,6 +1946,11 @@ export default function LeadsDataSection({
             all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
           }));
         }
+        if (pageJson.accessDeniedLeadTypes?.length) {
+          notifyError(
+            `Could not load lead types: ${pageJson.accessDeniedLeadTypes.join(", ")}. Check your role or sign in again.`,
+          );
+        }
         if (usePageMetaForUi) {
           onHeatmapSummarySync?.(pageJson.summaryTotals ?? null);
         }
@@ -1677,7 +1964,8 @@ export default function LeadsDataSection({
         effectiveAssigneeScope.length > 1 ||
         !requiresClientScopedDataset ||
         isGlobalSearchActive ||
-        insightModeActive;
+        insightModeActive ||
+        trustPresalesUpstreamLeadScope(normalizeRole(authRoleProp ?? currentRole));
       const requested = {
         page: requestPage,
         size: requestSize,
@@ -1749,11 +2037,19 @@ export default function LeadsDataSection({
     crmMonthWindowProp,
     onHeatmapSummarySync,
     superAdminPresalesPoolActive,
+    notifyError,
   ]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const handleRefresh = useCallback(async () => {
+    setError(null);
+    handleResetAll();
+    await load();
+    setLastRefreshTime(new Date());
+  }, [load, handleResetAll]);
 
   const contentFromApi = data?.content ?? [];
   const scopedTeamForInsight =
@@ -1768,11 +2064,11 @@ export default function LeadsDataSection({
   );
 
   const isClientScopedRole = requiresClientScopedDataset;
-  const content = isClientScopedRole && !isGlobalSearchActive
-    ? contentFromApi.filter((lead) =>
-        canViewLeadByRole(lead, clientScopeRoleKey),
-      )
-    : contentFromApi;
+  const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
+  const content =
+    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
+      ? contentFromApi.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+      : contentFromApi;
   const insightOpts = {
     viewerRole: normalizeRole(authRoleProp ?? currentRole),
     currentUserName: currentUserName ?? "",
@@ -1787,7 +2083,17 @@ export default function LeadsDataSection({
     insightOpts,
   );
   const baseRows = insightFilteredContent.map((lead) => ({
-    ...mapApiLeadToRow(lead, asCrmLeadType(lead.leadType, "formlead"), stageOrder),
+    ...mapApiLeadToRow(
+      lead,
+      asCrmLeadType(
+        lead.leadType,
+        (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+          ? "formlead"
+          : leadType.trim().toLowerCase()) as any
+      ),
+      stageOrder,
+      scopeRoleKey,
+    ),
     callDelayed: isFirstCallDelayedLead(lead),
   }));
   const norm = (v: string) => v.trim().toLowerCase();
@@ -2089,7 +2395,17 @@ export default function LeadsDataSection({
               ? "Overdue follow-ups"
           : insightTableMode === "teamLeads"
             ? "Team leads — assigned to your sales executives"
-            : null;
+            : insightTableMode === "meetingScheduled"
+              ? "Meeting Scheduled — substage filter"
+              : insightTableMode === "meetingRescheduled"
+                ? "Meeting Rescheduled — substage filter"
+                : insightTableMode === "meetingCancelled"
+                  ? "Meeting Cancelled — substage filter"
+                  : insightTableMode === "quoteSent"
+                    ? "Quote Sent — meeting done, quotation shared"
+                    : insightTableMode === "quoteDue"
+                      ? "Quote Due — Meeting Done but Quote Pending"
+                      : null;
 
   const insightBannerFollowUpNote =
     insightTableMode === "followUpActive" ||
@@ -2159,13 +2475,7 @@ export default function LeadsDataSection({
               ? assigneeUsers.filter((u) => u.role === "SALES_MANAGER").map((u) => u.name)
               : assigneeOptions
         }
-        salesExecOptions={
-          salesExecs.length
-            ? salesExecs.map((u) => userName(u)).filter(Boolean)
-            : assigneeUsers.filter((u) => u.role === "SALES_EXECUTIVE").map((u) => u.name).length
-              ? assigneeUsers.filter((u) => u.role === "SALES_EXECUTIVE").map((u) => u.name)
-              : assigneeOptions
-        }
+        salesExecOptions={salesExecOptionsResolved}
         presalesManagerOptions={
           presalesManagers.length
             ? presalesManagers.map((u) => userName(u)).filter(Boolean)
@@ -2188,6 +2498,7 @@ export default function LeadsDataSection({
         pipelineNested={pipelineNested}
         onLeadTypeChange={onLeadTypeChange}
         onSortChange={onSortChange}
+        onResetAll={handleResetAll}
         onAssigneeChange={(next) => {
           setSalesAdminFilter("");
           setSalesManagerFilter("");
@@ -2675,6 +2986,51 @@ export default function LeadsDataSection({
           </div>
         </div>
       ) : null}
+
+      <div
+        className={cn(
+          "fixed bottom-10 z-[100] transition-all duration-500 ease-in-out",
+          isMinimized ? "-right-6 opacity-60 hover:opacity-100" : "right-10 opacity-100"
+        )}
+        onMouseEnter={handleActivity}
+        onClick={handleActivity}
+      >
+        <button
+          onClick={(e) => {
+            if (isMinimized) {
+              e.stopPropagation();
+              setIsMinimized(false);
+              handleActivity();
+            } else {
+              handleRefresh();
+            }
+          }}
+          title={isMinimized ? "Expand Refresh Button" : (lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads")}
+          className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group",
+            isMinimized ? "cursor-e-resize" : "cursor-pointer"
+          )}
+        >
+          {isMinimized ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="h-4 w-4 -ml-4">
+              <path d="m15 18-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`h-5 w-5 ${loading ? "animate-spin" : ""}`}
+            >
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          )}
+        </button>
+      </div>
     </>
   );
 }

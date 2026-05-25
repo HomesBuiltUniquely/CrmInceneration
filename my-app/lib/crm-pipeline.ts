@@ -5,12 +5,26 @@ import type {
   MilestonePathItem,
 } from "@/types/crm-pipeline";
 import { BASE_URL } from "@/lib/base-url";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { PRESALES_PIPELINE_STAGE_ORDER } from "@/lib/presales-milestone";
 
 type FetchCrmPipelineOptions = {
   nested?: boolean;
   forCompleteTask?: boolean;
   currentStage?: string;
+  /** Hub pipeline variant, e.g. `PRESALES_EXECUTIVE` | `SALES_EXECUTIVE`. */
+  role?: string;
 };
+
+function presalesPipelineFallback(): CrmPipelineResponse {
+  return {
+    entries: [],
+    nested: PRESALES_PIPELINE_STAGE_ORDER.map((stage) => ({
+      stage,
+      categories: [],
+    })),
+  };
+}
 
 export async function fetchCrmPipeline(
   options: boolean | FetchCrmPipelineOptions = true
@@ -21,17 +35,33 @@ export async function fetchCrmPipeline(
   if (opts.nested !== false) q.set("nested", "true");
   if (opts.forCompleteTask) q.set("forCompleteTask", "true");
   if (opts.currentStage?.trim()) q.set("currentStage", opts.currentStage.trim());
+  if (opts.role?.trim()) q.set("role", opts.role.trim());
   const qs = q.toString();
   const suffix = qs ? `?${qs}` : "";
-  const urls = [
-    `${BASE_URL}/v1/Leads/crm-pipeline${suffix}`,
-    `${BASE_URL}/Leads/crm-pipeline${suffix}`,
-  ];
+  const useBrowserProxy = typeof window !== "undefined";
+  const urls = useBrowserProxy
+    ? [`/api/crm/crm-pipeline${suffix}`]
+    : [
+        `${BASE_URL}/v1/Leads/crm-pipeline${suffix}`,
+        `${BASE_URL}/Leads/crm-pipeline${suffix}`,
+      ];
   let lastStatus = 0;
   for (const url of urls) {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, {
+      cache: "no-store",
+      credentials: useBrowserProxy ? "include" : undefined,
+      headers: useBrowserProxy ? getCrmAuthHeaders({ Accept: "application/json" }) : undefined,
+    });
     if (res.ok) return res.json();
     lastStatus = res.status;
+    const roleKey = (opts.role ?? "").trim().toUpperCase();
+    const isPresalesRole =
+      roleKey === "PRESALES_EXECUTIVE" ||
+      roleKey === "PRE_SALES" ||
+      roleKey === "PRESALES_MANAGER";
+    if (isPresalesRole && (lastStatus === 403 || lastStatus === 404)) {
+      return presalesPipelineFallback();
+    }
   }
   throw new Error(`CRM pipeline failed: HTTP ${lastStatus || 502}`);
 }

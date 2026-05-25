@@ -110,8 +110,8 @@ function stageObj(detail: Record<string, unknown>): Record<string, unknown> | nu
 function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
   const v = detail.additionalLeadSources ?? (
     detail.dynamicFields &&
-    typeof detail.dynamicFields === "object" &&
-    !Array.isArray(detail.dynamicFields)
+      typeof detail.dynamicFields === "object" &&
+      !Array.isArray(detail.dynamicFields)
       ? (detail.dynamicFields as Record<string, unknown>).additionalLeadSources
       : undefined
   );
@@ -226,6 +226,31 @@ function pickConfigurationFromDetail(
     if (directDf) return directDf;
   }
 
+  /** `propertyDetails` stored as JSON string (common for Mlead after merged saves). */
+  const pdStr = detail.propertyDetails;
+  if (typeof pdStr === "string" && pdStr.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(pdStr) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const fromJson = pickStr(
+          parsed,
+          "interior_setup",
+          "interiorSetup",
+          "configuration",
+          "propertyConfiguration",
+          "property_configuration",
+          "bhk",
+          "propertyType",
+          "unitType",
+          "property_type",
+        );
+        if (fromJson) return fromJson;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   return "";
 }
 
@@ -334,16 +359,89 @@ function pickPropertyNotesFromDetail(
   return "";
 }
 
+/**
+ * Merge Lead configuration + notes into backend `propertyDetails` (object) for non–Add Lead entities.
+ * Add Lead (`addlead`) uses `propertyDetails` as a **string** in Java; that path does not call this.
+ */
+function mergePropertyDetailsBlock(
+  base: Record<string, unknown>,
+  lead: Lead,
+): Record<string, unknown> {
+  const prev = base.propertyDetails;
+  let bag: Record<string, unknown> = {};
+
+  if (prev && typeof prev === "object" && !Array.isArray(prev)) {
+    bag = { ...(prev as Record<string, unknown>) };
+  } else if (typeof prev === "string" && prev.trim()) {
+    const raw = prev.trim();
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          bag = { ...parsed };
+        }
+      } catch {
+        bag = { propertyNotes: raw, property_detail: raw };
+      }
+    } else {
+      bag = { propertyNotes: raw, property_detail: raw };
+    }
+  }
+
+  const cfg = lead.configuration.trim();
+  bag.interiorSetup = cfg;
+
+  const notes = lead.propertyNotes.trim();
+  bag.propertyNotes = notes;
+  bag.property_detail = notes;
+
+  return bag;
+}
+
+/** Ads / dynamic payloads sometimes keep a parallel copy under `dynamicFields`. */
+function mergeDynamicFieldsInterior(
+  next: Record<string, unknown>,
+  configuration: string,
+): void {
+  const cfg = configuration.trim();
+  const df = next.dynamicFields;
+  if (!df || typeof df !== "object" || Array.isArray(df)) return;
+  const dfo = { ...(df as Record<string, unknown>) };
+  const pdInDf = dfo.propertyDetails;
+  if (pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)) {
+    dfo.propertyDetails = {
+      ...(pdInDf as Record<string, unknown>),
+      interiorSetup: cfg,
+    };
+  } else {
+    dfo.interiorSetup = cfg;
+  }
+  next.dynamicFields = dfo;
+}
+
 export function extractStage(detail: Record<string, unknown>) {
   const st = stageObj(detail);
   const substage =
     st?.substage && typeof st.substage === "object" && st.substage !== null
       ? (st.substage as { substage?: string | null }).substage
       : undefined;
+  const root = detail;
   return {
     milestoneStage: (st?.milestoneStage as string | null | undefined) ?? null,
     milestoneStageCategory: (st?.milestoneStageCategory as string | null | undefined) ?? null,
     milestoneSubStage: (st?.milestoneSubStage as string | null | undefined) ?? null,
+    presalesMilestoneStage:
+      (pickStr(root, "presalesMilestoneStage") as string | null) ??
+      (st?.presalesMilestoneStage as string | null | undefined) ??
+      null,
+    presalesMilestoneCategory:
+      (pickStr(root, "presalesMilestoneCategory") as string | null) ??
+      (st?.presalesMilestoneCategory as string | null | undefined) ??
+      null,
+    presalesMilestoneSubStage:
+      (pickStr(root, "presalesMilestoneSubStage") as string | null) ??
+      (st?.presalesMilestoneSubStage as string | null | undefined) ??
+      null,
     legacyStage: (st?.stage as string | null | undefined) ?? null,
     legacySubstage: substage ?? null,
   };
@@ -424,14 +522,51 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     agentName: pickStr(detail, "agentName", "agent") || "",
     activities: [],
     leadType,
+    verified: (() => {
+      const v = detail.verified ?? detail.isVerified;
+      if (typeof v === "boolean") return v;
+      const vs = String(detail.verificationStatus ?? "").trim().toLowerCase();
+      return vs === "verified" || vs === "true";
+    })(),
     stageBlock: {
       milestoneStage: st.milestoneStage,
       milestoneStageCategory: st.milestoneStageCategory,
       milestoneSubStage: st.milestoneSubStage,
+      presalesMilestoneStage: st.presalesMilestoneStage,
+      presalesMilestoneCategory: st.presalesMilestoneCategory,
+      presalesMilestoneSubStage: st.presalesMilestoneSubStage,
       stage: st.legacyStage ?? "Initial Stage",
       substage: { substage: st.legacySubstage ?? null },
     },
   };
+}
+
+export type PresalesMilestoneUpdate = {
+  presalesMilestoneStage: string;
+  presalesMilestoneCategory: string;
+  presalesMilestoneSubStage: string;
+};
+
+/** PUT presales milestone fields only — does not change sales `milestoneStage`. */
+export function mergePresalesMilestoneIntoDetail(
+  base: Record<string, unknown>,
+  update: PresalesMilestoneUpdate,
+): Record<string, unknown> {
+  const next = { ...base };
+  next.presalesMilestoneStage = update.presalesMilestoneStage.trim();
+  next.presalesMilestoneCategory = update.presalesMilestoneCategory.trim();
+  next.presalesMilestoneSubStage = update.presalesMilestoneSubStage.trim();
+  const prevStage =
+    next.stage && typeof next.stage === "object" && !Array.isArray(next.stage)
+      ? (next.stage as Record<string, unknown>)
+      : {};
+  next.stage = {
+    ...prevStage,
+    presalesMilestoneStage: update.presalesMilestoneStage.trim(),
+    presalesMilestoneCategory: update.presalesMilestoneCategory.trim(),
+    presalesMilestoneSubStage: update.presalesMilestoneSubStage.trim(),
+  };
+  return next;
 }
 
 /** Merge UI Lead + existing GET body for PUT (preserves unknown backend fields). */
@@ -491,13 +626,18 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   }
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
-  next.propertyDetails = lead.propertyNotes.trim();
+  if (mergedLt === "addlead") {
+    next.propertyDetails = lead.propertyNotes.trim();
+  } else {
+    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+  }
+  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
   next.propertyType = lead.configuration;
   next.configuration = lead.configuration;
   next.propertyConfiguration = lead.configuration;
@@ -526,9 +666,22 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
     milestoneStage: sb?.milestoneStage ?? prevStage.milestoneStage,
     milestoneStageCategory: sb?.milestoneStageCategory ?? prevStage.milestoneStageCategory,
     milestoneSubStage: sb?.milestoneSubStage ?? prevStage.milestoneSubStage,
+    presalesMilestoneStage: sb?.presalesMilestoneStage ?? prevStage.presalesMilestoneStage,
+    presalesMilestoneCategory:
+      sb?.presalesMilestoneCategory ?? prevStage.presalesMilestoneCategory,
+    presalesMilestoneSubStage: sb?.presalesMilestoneSubStage ?? prevStage.presalesMilestoneSubStage,
     stage: sb?.stage ?? prevStage.stage ?? "Initial Stage",
     substage: sb?.substage ?? prevStage.substage ?? { substage: null },
   };
+  if (sb?.presalesMilestoneStage) {
+    next.presalesMilestoneStage = sb.presalesMilestoneStage;
+  }
+  if (sb?.presalesMilestoneCategory) {
+    next.presalesMilestoneCategory = sb.presalesMilestoneCategory;
+  }
+  if (sb?.presalesMilestoneSubStage) {
+    next.presalesMilestoneSubStage = sb.presalesMilestoneSubStage;
+  }
 
   return next;
 }
@@ -548,13 +701,18 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   }
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
-  next.propertyDetails = lead.propertyNotes.trim();
+  if (boxLt === "addlead") {
+    next.propertyDetails = lead.propertyNotes.trim();
+  } else {
+    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+  }
+  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
   next.meetingType = lead.meetingType;
   next.agentName = lead.agentName;
-  // Backend-confirmed mapping: UI `configuration` -> root `propertyType` (+ `interiorSetup`).
+  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
   next.propertyType = lead.configuration;
   next.configuration = lead.configuration;
   next.propertyConfiguration = lead.configuration;

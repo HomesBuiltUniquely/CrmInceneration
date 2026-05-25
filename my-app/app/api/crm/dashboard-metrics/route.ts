@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
+import {
+  appendWorkspaceMilestoneFilterQuery,
+  type CrmWorkspace,
+} from "@/lib/crm-workspace";
 
 type CountsRow = { key: string; count: number };
 type CountsResponse = {
@@ -93,23 +97,44 @@ function leadBudgetInInr(lead: ApiLead): number {
   );
 }
 
-function buildLeadsQuery(search: URLSearchParams, assignee?: string): URLSearchParams {
+function resolveWorkspace(search: URLSearchParams): CrmWorkspace {
+  return search.get("workspace")?.trim().toLowerCase() === "presales" ? "presales" : "sales";
+}
+
+function buildLeadsQuery(
+  search: URLSearchParams,
+  workspace: CrmWorkspace,
+  assignee?: string,
+): URLSearchParams {
   const q = new URLSearchParams();
   q.set("mergeAll", "1");
+  q.set("milestoneScope", "crm");
   q.set("page", "0");
   q.set("size", "1000");
   q.set("sort", "updatedAt,desc");
   q.set("leadType", "all");
   const assigneeValue = (assignee ?? search.get("assignee") ?? "").trim();
   if (assigneeValue) q.set("assignee", assigneeValue);
-  for (const key of ["dateFrom", "dateTo", "milestoneStage", "milestoneStageCategory", "milestoneSubStage"] as const) {
+  appendWorkspaceMilestoneFilterQuery(
+    q,
+    workspace,
+    search.get("milestoneStage") ?? "",
+    search.get("milestoneStageCategory") ?? "",
+    search.get("milestoneSubStage") ?? "",
+  );
+  for (const key of ["dateFrom", "dateTo"] as const) {
     const value = (search.get(key) ?? "").trim();
     if (value) q.set(key, value);
   }
+  const verification = (search.get("verificationStatus") ?? "").trim();
+  q.set(
+    "verificationStatus",
+    verification || (workspace === "presales" ? "unverified" : "verified"),
+  );
   return q;
 }
 
-async function resolveLeads(req: NextRequest): Promise<ApiLead[]> {
+async function resolveLeads(req: NextRequest, workspace: CrmWorkspace): Promise<ApiLead[]> {
   const resolveAllPages = async (query: URLSearchParams): Promise<ApiLead[]> => {
     const fetchPage = async (page: number) => {
       const pagedQuery = new URLSearchParams(query);
@@ -142,7 +167,10 @@ async function resolveLeads(req: NextRequest): Promise<ApiLead[]> {
 
   const search = new URLSearchParams(req.nextUrl.searchParams);
   const assignees = [...new Set((search.get("assignees") ?? "").split(",").map((v) => v.trim()).filter(Boolean))];
-  const queries = assignees.length > 0 ? assignees.map((a) => buildLeadsQuery(search, a)) : [buildLeadsQuery(search)];
+  const queries =
+    assignees.length > 0
+      ? assignees.map((a) => buildLeadsQuery(search, workspace, a))
+      : [buildLeadsQuery(search, workspace)];
   const leadById = new Map<string, ApiLead>();
   for (const query of queries) {
     const leads = await resolveAllPages(query);
@@ -236,10 +264,51 @@ async function resolveCounts(req: NextRequest): Promise<CountsResponse> {
   };
 }
 
+function presalesVerifiedCount(leads: ApiLead[]): number {
+  return leads.filter((lead) => {
+    const r = lead as Record<string, unknown>;
+    if (r.verified === true) return true;
+    const status = String(r.verificationStatus ?? "").trim().toLowerCase();
+    return status === "verified" || status === "true";
+  }).length;
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const [counts, mappings, leads] = await Promise.all([resolveCounts(req), resolveSubStatusMappings(req), resolveLeads(req)]);
+    const workspace = resolveWorkspace(new URLSearchParams(req.nextUrl.searchParams));
+    const [counts, mappings, leads] = await Promise.all([
+      resolveCounts(req),
+      resolveSubStatusMappings(req),
+      resolveLeads(req, workspace),
+    ]);
     const totalLeads = leads.length || Number(counts.totalCrmLeads ?? 0) || sumRows(counts.countsByMilestoneStage);
+
+    if (workspace === "presales") {
+      const conversionStageLeads = (counts.countsByMilestoneStage ?? [])
+        .filter((row) => norm(row.key) === "data conversion")
+        .reduce((sum, row) => sum + Number(row.count ?? 0), 0);
+      const verifiedFromPool = presalesVerifiedCount(leads);
+      const convertedLeads =
+        conversionStageLeads > 0 ? conversionStageLeads : verifiedFromPool;
+      const overallConversion = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
+      const discoveryLeads = (counts.countsByMilestoneStage ?? [])
+        .filter((row) => norm(row.key) === "data discovery")
+        .reduce((sum, row) => sum + Number(row.count ?? 0), 0);
+      const leadToMeeting = totalLeads > 0 ? (discoveryLeads / totalLeads) * 100 : 0;
+      const totalPipelineValueInr = leads.reduce((sum, lead) => sum + leadBudgetInInr(lead), 0);
+      return NextResponse.json({
+        workspace,
+        totalLeads,
+        convertedLeads,
+        overallConversion,
+        discoveryLeads,
+        leadToMeeting,
+        totalPipelineValueInr,
+        formula: "dataConversionOrVerified / totalPresalesLeads * 100",
+        leadToMeetingFormula: "dataDiscovery / totalPresalesLeads * 100",
+      });
+    }
+
     const closedStageLeads = (counts.countsByMilestoneStage ?? [])
       .filter((row) => norm(row.key) === "closed")
       .reduce((sum, row) => sum + Number(row.count ?? 0), 0);
@@ -266,6 +335,7 @@ export async function GET(req: NextRequest) {
       .reduce((sum, lead) => sum + leadBudgetInInr(lead), 0);
 
     return NextResponse.json({
+      workspace,
       totalLeads,
       closedLeads,
       overallConversion,

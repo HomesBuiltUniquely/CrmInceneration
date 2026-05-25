@@ -2,6 +2,14 @@
 
 import { computeMilestoneProgress, normalizeStageKey } from "@/lib/milestone-progress";
 import { getLeadDisplayName } from "@/lib/lead-display";
+import {
+  formatPresalesListStatusLabel,
+  getListDisplayMilestone,
+  isPresalesHandedOffReadOnly,
+  PRESALES_PIPELINE_STAGE_ORDER,
+  presalesTopLevelStage,
+  shouldUsePresalesListDisplay,
+} from "@/lib/presales-milestone";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
@@ -22,6 +30,8 @@ export type SpringPage<T> = {
   size: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
+  /** Present when mergeAll could not load one or more lead types (e.g. Hub 403). */
+  accessDeniedLeadTypes?: CrmLeadType[];
 };
 
 /** Minimal lead fields from backend; extend as entity stabilizes. */
@@ -58,10 +68,16 @@ export type ApiLead = {
   /** Next follow-up (string in API; parse client-side for “today” / overdue). */
   followUpDate?: string | null;
   additionalLeadSources?: string | string[] | null;
+  presalesMilestoneStage?: string | null;
+  presalesMilestoneCategory?: string | null;
+  presalesMilestoneSubStage?: string | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
     milestoneSubStage?: string | null;
+    presalesMilestoneStage?: string | null;
+    presalesMilestoneCategory?: string | null;
+    presalesMilestoneSubStage?: string | null;
     stage?: string | null;
     substage?: { substage?: string | null } | null;
   } | null;
@@ -87,6 +103,9 @@ export type LeadRowModel = {
   owner: { name: string };
   engagement: { time: string; action: string; tone?: "ok" | "late" };
   actionIcon?: "bolt" | "alert";
+  /** Orange = presales pipeline, blue = sales pipeline (list journey column). */
+  pipelineBadge?: "presales" | "sales";
+  handedOffReadOnly?: boolean;
 };
 
 function pickLeadScalar(lead: ApiLead, keys: string[]): unknown {
@@ -162,13 +181,81 @@ function hasReinquiry(lead: ApiLead): boolean {
   return typeof src === "string" && src.trim().length > 0;
 }
 
-/** Same fields the list uses for “owner”; includes `username` when name/fullName missing. */
-export function crmLeadAssigneeLabel(lead: ApiLead): string {
-  const a = lead.assignee ?? lead.salesOwner;
-  if (!a) return "";
-  if (typeof a === "string") return a.trim();
-  const o = a as { name?: string; fullName?: string; username?: string };
+function pickLeadAssigneeFlatString(lead: ApiLead): string {
+  const r = lead as Record<string, unknown>;
+  const keys = [
+    "salesExecutive",
+    "assignedTo",
+    "assignedToName",
+    "salesOwnerName",
+    "executiveName",
+    "ownerName",
+    "salesRepName",
+    "rmName",
+    "relationshipManager",
+  ];
+  for (const k of keys) {
+    const v = r[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+function pickPersonAssigneeString(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const o = value as { name?: string; fullName?: string; username?: string };
   return String(o.name ?? o.fullName ?? o.username ?? "").trim();
+}
+
+/** Same fields the list uses for “owner”; flat + nested assignee fields. */
+export function crmLeadAssigneeLabel(lead: ApiLead): string {
+  const flat = pickLeadAssigneeFlatString(lead);
+  if (flat) return flat;
+  const r = lead as Record<string, unknown>;
+  for (const key of ["assignee", "salesOwner", "assignedTo", "assignedUser", "owner"]) {
+    const picked = pickPersonAssigneeString(r[key]);
+    if (picked) return picked;
+  }
+  const a = lead.assignee ?? lead.salesOwner;
+  return pickPersonAssigneeString(a);
+}
+
+/** Lowercase tokens for matching filters / team scope (all assignee-like fields on the lead). */
+export function crmLeadAssigneeAliasNorms(lead: ApiLead): Set<string> {
+  const out = new Set<string>();
+  const add = (s: string) => {
+    const n = s.trim().toLowerCase();
+    if (n) out.add(n);
+  };
+  const r = lead as Record<string, unknown>;
+  const flatKeys = [
+    "salesExecutive",
+    "assignedTo",
+    "assignedToName",
+    "salesOwnerName",
+    "executiveName",
+    "ownerName",
+    "salesRepName",
+    "rmName",
+    "relationshipManager",
+  ];
+  for (const k of flatKeys) {
+    const v = r[k];
+    if (typeof v === "string") add(v);
+  }
+  for (const key of ["assignee", "salesOwner", "assignedTo", "assignedUser", "owner"]) {
+    const v = r[key];
+    if (typeof v === "string") add(v);
+    else if (v && typeof v === "object" && !Array.isArray(v)) {
+      const o = v as { name?: string; fullName?: string; username?: string };
+      add(String(o.name ?? ""));
+      add(String(o.fullName ?? ""));
+      add(String(o.username ?? ""));
+    }
+  }
+  add(crmLeadAssigneeLabel(lead));
+  return out;
 }
 
 function assigneeName(lead: ApiLead): string {
@@ -245,21 +332,30 @@ export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): C
 export function mapApiLeadToRow(
   lead: ApiLead,
   sourceLeadType: CrmLeadType,
-  orderedPipelineStages: string[] = []
+  orderedPipelineStages: string[] = [],
+  userRole = "",
 ): LeadRowModel {
+  const usePresalesDisplay = shouldUsePresalesListDisplay(lead, userRole);
+  const display = getListDisplayMilestone(lead, userRole);
   const st = lead.stage;
-  const statusLabel =
-    st?.milestoneSubStage?.trim() ||
-    st?.milestoneStage?.trim() ||
-    st?.substage?.substage?.trim() ||
-    undefined;
+  const pipelineOrder = usePresalesDisplay
+    ? [...PRESALES_PIPELINE_STAGE_ORDER]
+    : orderedPipelineStages;
 
-  const ms = crmLeadTopLevelStage(lead);
-  const prog = computeMilestoneProgress(ms, orderedPipelineStages);
-  const fallbackJourney =
-    (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
+  const statusLabel = usePresalesDisplay
+    ? formatPresalesListStatusLabel(display)
+    : st?.milestoneSubStage?.trim() ||
+      st?.milestoneStage?.trim() ||
+      st?.substage?.substage?.trim() ||
+      undefined;
+
+  const ms = usePresalesDisplay ? presalesTopLevelStage(lead) : crmLeadTopLevelStage(lead);
+  const prog = computeMilestoneProgress(ms, pipelineOrder);
+  const fallbackJourney = usePresalesDisplay
+    ? (display.stage || "Fresh Data").trim()
+    : (st?.milestoneStageCategory ?? ms ?? "PIPELINE").trim() || "PIPELINE";
   const journeyStage =
-    orderedPipelineStages.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
+    pipelineOrder.length > 0 ? prog.stageLabel : fallbackJourney.toUpperCase();
 
   return {
     id: String(lead.id ?? ""),
@@ -272,8 +368,8 @@ export function mapApiLeadToRow(
     reinquiry: hasReinquiry(lead),
     journey: {
       stage: journeyStage,
-      progressLabel: orderedPipelineStages.length > 0 ? prog.progressLabel : "—",
-      progressPct: orderedPipelineStages.length > 0 ? prog.pct : 0,
+      progressLabel: pipelineOrder.length > 0 ? prog.progressLabel : "—",
+      progressPct: pipelineOrder.length > 0 ? prog.pct : 0,
     },
     owner: { name: assigneeName(lead) },
     engagement: {
@@ -282,5 +378,7 @@ export function mapApiLeadToRow(
       tone: "ok",
     },
     actionIcon: "bolt",
+    pipelineBadge: usePresalesDisplay ? "presales" : "sales",
+    handedOffReadOnly: isPresalesHandedOffReadOnly(lead, userRole),
   };
 }

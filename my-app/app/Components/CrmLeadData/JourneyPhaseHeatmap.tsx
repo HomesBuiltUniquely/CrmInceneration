@@ -3,8 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { isPresalesRole } from "@/lib/crm-role-access";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { crmLeadTopLevelStage } from "@/lib/leads-filter";
+import { normalizeStageKey } from "@/lib/milestone-progress";
+import { presalesTopLevelStage } from "@/lib/presales-milestone";
 import {
   assigneeAliasNorms,
   filterLeadsForInsightMode,
@@ -16,10 +19,9 @@ import {
   leadAssignedToPresalesExecNameSet,
 } from "@/lib/presales-heatmap-helpers";
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
-import {
-  applyNewCrmCutoff,
-  setEffectiveNewCrmDateRange,
-} from "@/lib/new-crm-cutoff";
+import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
+import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
+import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type Phase = {
   phaseLabel: string;
@@ -57,6 +59,8 @@ export type JourneyPhaseHeatmapProps = {
   onPresalesSummaryTabChange?: (tab: "total" | "verified" | "teamVerified") => void;
   /** Fast top summary totals from the lead table dataset. */
   summaryTotalsOverride?: { lead: number; opportunity: number } | null;
+  /** Sales `/Leads` vs presales `/presales-leads` — drives phase labels and pool scope. */
+  leadsWorkspace?: CrmWorkspace;
 };
 
 function normName(s: string) {
@@ -71,21 +75,35 @@ function toneByCount(count: number, max: number): Phase["tone"] {
   return "critical";
 }
 
-function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
+function mergeLeadsById(leads: ApiLead[]): ApiLead[] {
+  const byId = new Map<string, ApiLead>();
+  for (const lead of leads) {
+    const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+    if (!id || byId.has(id)) continue;
+    byId.set(id, lead);
+  }
+  return [...byId.values()];
+}
+
+function mapLeadsToPhases(
+  leads: ApiLead[],
+  defaults: Phase[],
+  getTopLevelStage: (lead: ApiLead) => string,
+): Phase[] {
   const counts = new Map<string, number>();
   for (const lead of leads) {
-    const stage = crmLeadTopLevelStage(lead).trim();
+    const stage = getTopLevelStage(lead).trim();
     if (!stage) continue;
-    counts.set(stage, (counts.get(stage) ?? 0) + 1);
+    const key = normalizeStageKey(stage);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
   const max = Math.max(...counts.values(), 0);
   return defaults.map((phase) => {
-    const count = [...counts.entries()].find(([k]) => normName(k) === normName(phase.name))?.[1] ?? 0;
+    const count = counts.get(normalizeStageKey(phase.name)) ?? 0;
     return {
       ...phase,
       count,
-      sharePct: total > 0 ? Math.round((count / total) * 100) : 0,
+      sharePct: 0,
       tone: toneByCount(count, max),
       note: {
         icon: phase.note.icon,
@@ -93,6 +111,16 @@ function mapLeadsToPhases(leads: ApiLead[], defaults: Phase[]): Phase[] {
       },
     };
   });
+}
+
+function phasesWithShareDenominator(phases: Phase[], denominator: number): Phase[] {
+  const max = Math.max(...phases.map((p) => p.count), 0);
+  const total = denominator > 0 ? denominator : phases.reduce((sum, p) => sum + p.count, 0);
+  return phases.map((p) => ({
+    ...p,
+    sharePct: total > 0 ? Math.round((p.count / total) * 100) : 0,
+    tone: toneByCount(p.count, max),
+  }));
 }
 
 function pickPhase(phases: Phase[], name: string): Phase | undefined {
@@ -265,6 +293,7 @@ function PhaseCard({
           <div className={`text-[10px] font-semibold ${shareText}`}>
             {p.sharePct}% of total
           </div>
+
         </div>
       </div>
       <div className="mt-3 h-1.5 w-full rounded-full bg-[var(--crm-surface)]/70">
@@ -349,6 +378,34 @@ function PresalesSummaryCard({
   );
 }
 
+/** Presales pipeline — `presalesMilestoneStage` on each lead. */
+const PRESALES_DEFAULT_PHASES: Phase[] = [
+  {
+    phaseLabel: "PHASE 00",
+    name: "Fresh Data",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "New intake — not yet in discovery" },
+  },
+  {
+    phaseLabel: "PHASE 01",
+    name: "Data Discovery",
+    count: 0,
+    sharePct: 0,
+    tone: "healthy",
+    note: { icon: "clock", text: "Qualifying and enriching lead data" },
+  },
+  {
+    phaseLabel: "PHASE 02",
+    name: "Data Conversion",
+    count: 0,
+    sharePct: 0,
+    tone: "warning",
+    note: { icon: "check", text: "Ready for verify / sales handoff" },
+  },
+];
+
 const DEFAULT_PHASES: Phase[] = [
   {
     phaseLabel: "PHASE 00",
@@ -417,6 +474,7 @@ export default function JourneyPhaseHeatmap({
   presalesSummaryTab = null,
   onPresalesSummaryTabChange,
   summaryTotalsOverride = null,
+  leadsWorkspace = "sales",
 }: JourneyPhaseHeatmapProps = {}) {
   const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -446,10 +504,6 @@ export default function JourneyPhaseHeatmap({
     [poolLeads, insightTableMode, insightOpts],
   );
 
-  const phases = useMemo(() => {
-    return mapLeadsToPhases(filteredInsightLeads, DEFAULT_PHASES);
-  }, [filteredInsightLeads]);
-
   const roleKeyUi = normalizeRole(currentRole);
   const aggregateNormSet = useMemo(
     () =>
@@ -460,12 +514,11 @@ export default function JourneyPhaseHeatmap({
       ),
     [aggregatePresalesAssigneeNames],
   );
-  const usePresalesSummaryUi =
-    roleKeyUi === "PRESALES_EXECUTIVE" ||
-    roleKeyUi === "PRESALES_MANAGER" ||
-    (roleKeyUi === "SUPER_ADMIN" && aggregateNormSet.size > 0);
+  const usePresalesSummaryUi = leadsWorkspace === "presales";
   const showPresalesManagerTeamVerifiedCard =
-    roleKeyUi === "PRESALES_MANAGER" && aggregateNormSet.size === 0;
+    leadsWorkspace === "presales" &&
+    roleKeyUi === "PRESALES_MANAGER" &&
+    aggregateNormSet.size === 0;
 
   const presalesIdentity = useMemo(() => {
     const myAliases = new Set(
@@ -522,23 +575,83 @@ export default function JourneyPhaseHeatmap({
     return { totalMonth, verifiedMonth, teamVerifiedMonth };
   }, [aggregateNormSet.size, poolLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
 
-  const maxCount = Math.max(...phases.map((phase) => phase.count), 0);
+  /** Presales journey phases must match Total / Verified / Team summary cards (this-month assigned pool). */
+  const presalesPhaseLeads = useMemo(() => {
+    if (!usePresalesSummaryUi || presalesSummaryTab === null) {
+      return filteredInsightLeads;
+    }
+    let leads = filterLeadsCurrentMonthAssignedPool(filteredInsightLeads);
+    if (presalesSummaryTab === "verified") {
+      return leads.filter((l) => isLeadVerifiedForPresales(l));
+    }
+    if (presalesSummaryTab === "teamVerified") {
+      const execNorms = new Set(
+        presalesTeamNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
+      );
+      return leads.filter(
+        (l) =>
+          isLeadVerifiedForPresales(l) &&
+          !presalesIdentity.isSelfLead(l) &&
+          leadAssignedToPresalesExecNameSet(l, execNorms),
+      );
+    }
+    return leads;
+  }, [
+    usePresalesSummaryUi,
+    presalesSummaryTab,
+    filteredInsightLeads,
+    presalesTeamNames,
+    presalesIdentity,
+  ]);
+
+  const phases = useMemo(() => {
+    const defaults = usePresalesSummaryUi ? PRESALES_DEFAULT_PHASES : DEFAULT_PHASES;
+    const getStage = usePresalesSummaryUi ? presalesTopLevelStage : crmLeadTopLevelStage;
+    const sourceLeads = usePresalesSummaryUi ? presalesPhaseLeads : filteredInsightLeads;
+    const mapped = mapLeadsToPhases(sourceLeads, defaults, getStage);
+    if (!usePresalesSummaryUi) return mapped;
+    const shareDenominator =
+      presalesSummaryTab === "verified"
+        ? presalesMonthMetrics.verifiedMonth
+        : presalesSummaryTab === "teamVerified"
+          ? presalesMonthMetrics.teamVerifiedMonth
+          : presalesSummaryTab === "total"
+            ? presalesMonthMetrics.totalMonth
+            : mapped.reduce((sum, p) => sum + p.count, 0);
+    return phasesWithShareDenominator(mapped, shareDenominator);
+  }, [
+    filteredInsightLeads,
+    presalesPhaseLeads,
+    usePresalesSummaryUi,
+    presalesSummaryTab,
+    presalesMonthMetrics.totalMonth,
+    presalesMonthMetrics.verifiedMonth,
+    presalesMonthMetrics.teamVerifiedMonth,
+  ]);
+
   const freshLeadPhase = pickPhase(phases, "Fresh Lead");
   const discoveryPhase = pickPhase(phases, "Discovery");
   const connectionPhase = pickPhase(phases, "Connection");
   const expDesignPhase = pickPhase(phases, "Experience & Design");
   const decisionPhase = pickPhase(phases, "Decision");
   const closedPhase = pickPhase(phases, "Closed");
-  const leadPhases = [freshLeadPhase, discoveryPhase, connectionPhase].filter(
+  const leadPhasesRaw = [freshLeadPhase, discoveryPhase, connectionPhase].filter(
     (p): p is Phase => Boolean(p),
   );
-  const opportunityPhases = [expDesignPhase, decisionPhase, closedPhase].filter(
+  const opportunityPhasesRaw = [expDesignPhase, decisionPhase, closedPhase].filter(
     (p): p is Phase => Boolean(p),
   );
-  const leadTotal = leadPhases.reduce((sum, p) => sum + p.count, 0);
-  const opportunityTotal = opportunityPhases.reduce((sum, p) => sum + p.count, 0);
+  const leadTotal = leadPhasesRaw.reduce((sum, p) => sum + p.count, 0);
+  const opportunityTotal = opportunityPhasesRaw.reduce((sum, p) => sum + p.count, 0);
   const summaryLeadTotal = summaryTotalsOverride?.lead ?? leadTotal;
   const summaryOpportunityTotal = summaryTotalsOverride?.opportunity ?? opportunityTotal;
+  const leadPhases = phasesWithShareDenominator(leadPhasesRaw, summaryLeadTotal);
+  const opportunityPhases = phasesWithShareDenominator(opportunityPhasesRaw, summaryOpportunityTotal);
+  const maxCount = Math.max(
+    ...leadPhases.map((phase) => phase.count),
+    ...opportunityPhases.map((phase) => phase.count),
+    0,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -551,16 +664,19 @@ export default function JourneyPhaseHeatmap({
         const filtered = milestoneFilterQuery?.trim();
         const query = new URLSearchParams(filtered ?? "");
         const verificationStatusFromQuery = (query.get("verificationStatus") ?? "").trim();
-        // Heatmap pool drives presales Total + Verified counts; never shrink the fetch with
-        // verificationStatus (table below uses its own filtered request).
-        query.delete("verificationStatus");
+        // Presales month cards need full pool; sales heatmap must match verified table scope.
+        if (leadsWorkspace === "presales") {
+          query.delete("verificationStatus");
+        }
         // Presales month cards derive "this month" from assignment timestamps in client helper.
         // Avoid server-side updatedAt month filtering here, otherwise assignment-month counts can drift.
         query.delete("crmMonthWindow");
         setEffectiveNewCrmDateRange(query, query.get("dateFrom"), query.get("dateTo"));
         query.set("mergeAll", "1");
+        query.set("milestoneScope", "crm");
+        appendLeadPoolQuery(query, leadsWorkspace);
         query.set("page", "0");
-        query.set("size", "250");
+        query.set("size", "500");
         query.set("sort", "updatedAt,desc");
         const firstRes = await fetch(`/api/crm/leads?${query.toString()}`, {
           cache: "no-store",
@@ -594,7 +710,7 @@ export default function JourneyPhaseHeatmap({
           const rest = await Promise.all(followUps);
           for (const chunk of rest) allLeads.push(...chunk);
         }
-        const visibleLeads = applyNewCrmCutoff(allLeads, true);
+        const visibleLeads = mergeLeadsById(allLeads);
 
         const roleKey = normalizeRole(currentRole);
         const myAliases = new Set(
@@ -643,6 +759,13 @@ export default function JourneyPhaseHeatmap({
           return false;
         };
         const roleScopedLeads = visibleLeads.filter((lead) => {
+          if (trustPresalesUpstreamLeadScope(roleKey)) return true;
+          if (
+            leadsWorkspace === "presales" &&
+            (roleKey === "SUPER_ADMIN" || roleKey === "ADMIN" || roleKey === "SALES_ADMIN")
+          ) {
+            return true;
+          }
           if (roleKey === "SUPER_ADMIN" && aggregateNormSet.size > 0) {
             return leadAssignedToPresalesExecNameSet(lead, aggregateNormSet);
           }
@@ -706,6 +829,7 @@ export default function JourneyPhaseHeatmap({
     assigneeScopeSet,
     presalesTeamNames,
     aggregateNormSet,
+    leadsWorkspace,
   ]);
 
   return (

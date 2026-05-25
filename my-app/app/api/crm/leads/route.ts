@@ -7,7 +7,9 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { applyNewCrmCutoff } from "@/lib/new-crm-cutoff";
+import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
+import { isPresalesRole } from "@/lib/roleUtils";
+import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -122,190 +124,90 @@ async function resolveViewerRole(req: NextRequest): Promise<string> {
   }
 }
 
-export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const effDates = effectiveDateRangeFromRequest(url);
-  const mergeAll = url.searchParams.get("mergeAll") === "1";
-  const roleView = (url.searchParams.get("roleView") ?? "").trim().toLowerCase();
-  const page = url.searchParams.get("page") ?? "0";
-  const size = url.searchParams.get("size") ?? "20";
-  const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
-  const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
-  const search = (url.searchParams.get("search") ?? "").trim();
-  const viewerRole = await resolveViewerRole(req);
-  const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
-  const newCrmGlobalSearch = (url.searchParams.get("newCrmGlobalSearch") ?? "").trim().toLowerCase() === "true";
-  const viewerRoleKey = normalizeRole(viewerRole);
-  const isNewCrmGlobalSearchMode =
-    milestoneScope === "crm" &&
-    newCrmGlobalSearch &&
-    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRoleKey);
-  const allowedLeadTypes = isNewCrmGlobalSearchMode
-    ? [...CRM_LEAD_TYPES]
-    : getAllowedLeadTypesForRole(viewerRoleKey);
+const LEADS_EXTRA_PARAMS = [
+  "stage",
+  "substage",
+  "result",
+  "dateFrom",
+  "dateTo",
+  "assignee",
+  "milestoneStage",
+  "milestoneStageCategory",
+  "milestoneSubStage",
+  "presalesMilestoneStage",
+  "presalesMilestoneCategory",
+  "presalesMilestoneSubStage",
+  "verificationStatus",
+  "reinquiry",
+] as const;
 
-  const extraParams = [
-    "stage",
-    "substage",
-    "result",
-    "dateFrom",
-    "dateTo",
-    "assignee",
-    "milestoneStage",
-    "milestoneStageCategory",
-    "milestoneSubStage",
-    "verificationStatus",
-    "reinquiry",
-  ] as const;
-
-  const managerEndpoint =
-    roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
-
-  if (!mergeAll && managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
-    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
-      return NextResponse.json(
-        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
-        { status: 403 }
-      );
-    }
-    const upstream = new URL(`${BASE_URL}${managerEndpoint}`);
-    upstream.searchParams.set("leadType", leadType);
-    upstream.searchParams.set("page", page);
-    upstream.searchParams.set("size", size);
-    upstream.searchParams.set("sort", sort);
-    if (search) upstream.searchParams.set("search", search);
-    if (isNewCrmGlobalSearchMode) {
-      upstream.searchParams.set("milestoneScope", "crm");
-      upstream.searchParams.set("newCrmGlobalSearch", "true");
-    }
-    for (const key of extraParams) {
-      const v = extraParamValue(url, key, effDates);
-      if (v) upstream.searchParams.set(key, v);
-    }
-
-    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
-    const text = await res.text();
-    return new NextResponse(text, {
-      status: res.status,
-      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
-    });
-  }
-
-  if (!mergeAll && !managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
-    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
-      return NextResponse.json(
-        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
-        { status: 403 }
-      );
-    }
-    const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
-    upstream.searchParams.set("leadType", leadType);
-    upstream.searchParams.set("milestoneScope", "crm");
-    if (isNewCrmGlobalSearchMode) {
-      upstream.searchParams.set("newCrmGlobalSearch", "true");
-    }
-    upstream.searchParams.set("page", page);
-    upstream.searchParams.set("size", size);
-    upstream.searchParams.set("sort", sort);
-    if (search) upstream.searchParams.set("search", search);
-    const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
-    const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
-    if (mStage) upstream.searchParams.set("stage", mStage);
-    if (mSub) upstream.searchParams.set("substage", mSub);
-    for (const key of extraParams) {
-      const v = extraParamValue(url, key, effDates);
-      if (v) upstream.searchParams.set(key, v);
-    }
-
-    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
-    const text = await res.text();
-    return new NextResponse(text, {
-      status: res.status,
-      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
-    });
-  }
-
-  const selectedTypes =
-    leadTypeParam === "all"
-      ? allowedLeadTypes
-      : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
-          : []
-        : allowedLeadTypes;
-
-  if (selectedTypes.length === 0) {
-    return NextResponse.json(
-      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
-      { status: 403 }
-    );
-  }
-
-  const perType = Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
-  const fetches = selectedTypes.map(async (leadType) => {
-    const buildUpstream = (pageNum: number) => {
-      const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
-      upstream.searchParams.set("leadType", leadType);
-      if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
-      if (!managerEndpoint && isNewCrmGlobalSearchMode) {
-        upstream.searchParams.set("newCrmGlobalSearch", "true");
-      }
-      upstream.searchParams.set("page", String(pageNum));
-      upstream.searchParams.set("size", String(perType));
-      upstream.searchParams.set("sort", sort);
-      if (search) upstream.searchParams.set("search", search);
-      for (const key of extraParams) {
-        const v = extraParamValue(url, key, effDates);
-        if (v) upstream.searchParams.set(key, v);
-      }
-      return upstream;
-    };
-
-    try {
-      const allLeads: ApiLead[] = [];
-      for (let pageNum = 0; pageNum < 100; pageNum += 1) {
-        const res = await fetch(buildUpstream(pageNum).toString(), {
-          headers: upstreamAuthHeaders(req),
-          cache: "no-store",
-        });
-        if (!res.ok) break;
-        const pageData = (await res.json()) as SpringPage<ApiLead>;
-        const chunk = Array.isArray(pageData.content) ? pageData.content : [];
-        if (chunk.length === 0) break;
-        allLeads.push(...chunk);
-        if (chunk.length < perType) break;
-      }
-      return allLeads;
-    } catch {
-      return [] as ApiLead[];
-    }
-  });
-
-  const chunks = await Promise.all(fetches);
+/** Hub presales inbox — JWT-scoped list; forwards same filters as `/v1/leads/filter`. */
+async function fetchPresalesSearchLeads(
+  req: NextRequest,
+  url: URL,
+  effDates: { from: string; to: string },
+  sort: string,
+  search: string,
+): Promise<ApiLead[]> {
+  const searchSize = 500;
   const byId = new Map<string, ApiLead>();
-  for (let i = 0; i < chunks.length; i++) {
-    const sourceType = selectedTypes[i];
-    for (const lead of chunks[i]) {
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-      if (!id) continue;
-      if (!byId.has(id)) {
-        byId.set(id, { ...lead, leadType: sourceType });
-      }
+  for (let pageNum = 0; pageNum < 200; pageNum += 1) {
+    const upstream = new URL(`${BASE_URL}/v1/leads/presales-search`);
+    upstream.searchParams.set("page", String(pageNum));
+    upstream.searchParams.set("size", String(searchSize));
+    upstream.searchParams.set("sort", sort);
+    if (search) upstream.searchParams.set("search", search);
+    for (const key of LEADS_EXTRA_PARAMS) {
+      const v = extraParamValue(url, key, effDates);
+      if (v) upstream.searchParams.set(key, v);
     }
+    const res = await fetch(upstream.toString(), {
+      headers: upstreamAuthHeaders(req),
+      cache: "no-store",
+    });
+    if (!res.ok) break;
+    const pageData = (await res.json()) as {
+      content?: Array<{ type?: string; lead?: ApiLead }>;
+      totalPages?: number;
+    };
+    const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+    if (chunk.length === 0) break;
+    for (const item of chunk) {
+      const lt = String(item.type ?? "").trim().toLowerCase();
+      const lead = item.lead;
+      if (!lead || typeof lead !== "object") continue;
+      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      if (!id || byId.has(id)) continue;
+      const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
+        ? (lt as (typeof CRM_LEAD_TYPES)[number])
+        : "formlead";
+      byId.set(id, { ...lead, leadType: typed });
+    }
+    const totalPages = Math.max(1, Number(pageData.totalPages ?? 1));
+    if (pageNum + 1 >= totalPages) break;
+    if (chunk.length < searchSize) break;
   }
+  return [...byId.values()];
+}
 
+function filterAndSortMergedLeads(
+  leads: ApiLead[],
+  url: URL,
+  effDates: { from: string; to: string },
+  usePresalesMilestoneFilters: boolean,
+  search: string,
+): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
+  const psStage = (url.searchParams.get("presalesMilestoneStage") ?? "").trim();
+  const psCat = (url.searchParams.get("presalesMilestoneCategory") ?? "").trim();
+  const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
-  const shouldApplyCutoff = milestoneScope === "crm";
 
-  const merged = applyNewCrmCutoff(
-    [...byId.values()]
+  return leads
     .filter((lead) => {
       if (search) {
         const needle = search.toLowerCase();
@@ -353,7 +255,6 @@ export async function GET(req: NextRequest) {
           .join(" ");
         const matchesPhone = Boolean(needleDigits && phoneLike.includes(needleDigits));
 
-        // Global visible-record fallback search for old/new CRM parity.
         const deepHay = JSON.stringify(lead).toLowerCase();
         const matchesDeep = deepHay.includes(needle);
         if (!matchesText && !matchesPhone && !matchesDeep) return false;
@@ -367,15 +268,244 @@ export async function GET(req: NextRequest) {
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      if (!inDateRange(readLeadCreatedAtRaw(lead), dateFrom, dateTo)) return false;
+      const dateFieldRaw =
+        dateFrom || dateTo
+          ? usePresalesMilestoneFilters
+            ? (() => {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              })()
+            : readLeadCreatedAtRaw(lead)
+          : "";
+      if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
 
-      if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
-      if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
-      if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
+      if (usePresalesMilestoneFilters) {
+        const ps = readPresalesMilestoneFromLead(lead);
+        if (psStage && norm(ps.stage) !== norm(psStage)) return false;
+        if (psCat && norm(ps.category) !== norm(psCat)) return false;
+        if (psSub && norm(ps.subStage) !== norm(psSub)) return false;
+      } else {
+        if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
+        if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
+        if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
+      }
       return true;
     })
-    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a)),
-    shouldApplyCutoff,
+    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
+}
+
+export async function GET(req: NextRequest) {
+  const url = new URL(req.url);
+  const effDates = effectiveDateRangeFromRequest(url);
+  const mergeAll = url.searchParams.get("mergeAll") === "1";
+  const roleView = (url.searchParams.get("roleView") ?? "").trim().toLowerCase();
+  const page = url.searchParams.get("page") ?? "0";
+  const size = url.searchParams.get("size") ?? "20";
+  const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
+  const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
+  const search = (url.searchParams.get("search") ?? "").trim();
+  const viewerRole = await resolveViewerRole(req);
+  const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
+  const newCrmGlobalSearch = (url.searchParams.get("newCrmGlobalSearch") ?? "").trim().toLowerCase() === "true";
+  const viewerRoleKey = normalizeRole(viewerRole);
+  const isNewCrmGlobalSearchMode =
+    milestoneScope === "crm" &&
+    newCrmGlobalSearch &&
+    NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRoleKey);
+  const allowedLeadTypes = isNewCrmGlobalSearchMode
+    ? [...CRM_LEAD_TYPES]
+    : getAllowedLeadTypesForRole(viewerRoleKey);
+
+  const leadPool = (url.searchParams.get("leadPool") ?? "").trim().toLowerCase();
+  const usePresalesSearchPool = isPresalesRole(viewerRoleKey) || leadPool === "presales";
+  const usePresalesMilestoneFilters = usePresalesSearchPool;
+
+  const managerEndpoint =
+    roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
+
+  if (!mergeAll && managerEndpoint) {
+    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+      return NextResponse.json(
+        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
+        { status: 403 }
+      );
+    }
+    const upstream = new URL(`${BASE_URL}${managerEndpoint}`);
+    upstream.searchParams.set("leadType", leadType);
+    upstream.searchParams.set("page", page);
+    upstream.searchParams.set("size", size);
+    upstream.searchParams.set("sort", sort);
+    if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("milestoneScope", "crm");
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
+    for (const key of LEADS_EXTRA_PARAMS) {
+      const v = extraParamValue(url, key, effDates);
+      if (v) upstream.searchParams.set(key, v);
+    }
+
+    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
+    const text = await res.text();
+    return new NextResponse(text, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    });
+  }
+
+  if (!mergeAll && !managerEndpoint) {
+    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+      return NextResponse.json(
+        { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
+        { status: 403 }
+      );
+    }
+    const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
+    upstream.searchParams.set("leadType", leadType);
+    upstream.searchParams.set("milestoneScope", "crm");
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
+    upstream.searchParams.set("page", page);
+    upstream.searchParams.set("size", size);
+    upstream.searchParams.set("sort", sort);
+    if (search) upstream.searchParams.set("search", search);
+    const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
+    const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
+    if (mStage) upstream.searchParams.set("stage", mStage);
+    if (mSub) upstream.searchParams.set("substage", mSub);
+    for (const key of LEADS_EXTRA_PARAMS) {
+      const v = extraParamValue(url, key, effDates);
+      if (v) upstream.searchParams.set(key, v);
+    }
+
+    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
+    const text = await res.text();
+    return new NextResponse(text, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    });
+  }
+
+  if (mergeAll && usePresalesSearchPool) {
+    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    const merged = filterAndSortMergedLeads(
+      presalesRows,
+      url,
+      effDates,
+      usePresalesMilestoneFilters,
+      search,
+    );
+    const pageNum = Number.parseInt(page, 10) || 0;
+    const pageSize = Number.parseInt(size, 10) || 20;
+    const start = pageNum * pageSize;
+    const slice = merged.slice(start, start + pageSize);
+    const body: SpringPage<ApiLead> = {
+      content: slice,
+      totalElements: merged.length,
+      totalPages: Math.max(1, Math.ceil(merged.length / pageSize)),
+      number: pageNum,
+      size: pageSize,
+      sourceCounts: computeSourceCounts(merged),
+      summaryTotals: computeSummaryTotals(merged),
+    };
+    return NextResponse.json(body);
+  }
+
+  const selectedTypes =
+    leadTypeParam === "all"
+      ? allowedLeadTypes
+      : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+          : []
+        : allowedLeadTypes;
+
+  if (selectedTypes.length === 0) {
+    return NextResponse.json(
+      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { status: 403 }
+    );
+  }
+
+  const isPresalesPool = isPresalesRole(viewerRoleKey);
+  const perType = isPresalesPool
+    ? 1000
+    : Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
+  const maxPagesPerType = isPresalesPool ? 200 : 100;
+  const fetches = selectedTypes.map(async (leadType) => {
+    const buildUpstream = (pageNum: number) => {
+      const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
+      upstream.searchParams.set("leadType", leadType);
+      if (!managerEndpoint) upstream.searchParams.set("milestoneScope", "crm");
+      if (!managerEndpoint && isNewCrmGlobalSearchMode) {
+        upstream.searchParams.set("newCrmGlobalSearch", "true");
+      }
+      upstream.searchParams.set("page", String(pageNum));
+      upstream.searchParams.set("size", String(perType));
+      upstream.searchParams.set("sort", sort);
+      if (search) upstream.searchParams.set("search", search);
+      for (const key of LEADS_EXTRA_PARAMS) {
+        const v = extraParamValue(url, key, effDates);
+        if (v) upstream.searchParams.set(key, v);
+      }
+      return upstream;
+    };
+
+    try {
+      const allLeads: ApiLead[] = [];
+      let accessDenied = false;
+      let upstreamTotalPages = 1;
+      for (let pageNum = 0; pageNum < maxPagesPerType; pageNum += 1) {
+        const res = await fetch(buildUpstream(pageNum).toString(), {
+          headers: upstreamAuthHeaders(req),
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          if (res.status === 403) accessDenied = true;
+          break;
+        }
+        const pageData = (await res.json()) as SpringPage<ApiLead>;
+        upstreamTotalPages = Math.max(1, Number(pageData.totalPages ?? 1));
+        const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+        if (chunk.length === 0) break;
+        allLeads.push(...chunk);
+        if (pageNum + 1 >= upstreamTotalPages) break;
+        if (chunk.length < perType) break;
+      }
+      return { leads: allLeads, accessDenied };
+    } catch {
+      return { leads: [] as ApiLead[], accessDenied: false };
+    }
+  });
+
+  const fetchResults = await Promise.all(fetches);
+  const accessDeniedLeadTypes = fetchResults
+    .map((r, i) => (r.accessDenied ? selectedTypes[i] : null))
+    .filter((t): t is (typeof CRM_LEAD_TYPES)[number] => t !== null);
+  const chunks = fetchResults.map((r) => r.leads);
+  const byId = new Map<string, ApiLead>();
+  for (let i = 0; i < chunks.length; i++) {
+    const sourceType = selectedTypes[i];
+    for (const lead of chunks[i]) {
+      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      if (!id) continue;
+      if (!byId.has(id)) {
+        byId.set(id, { ...lead, leadType: sourceType });
+      }
+    }
+  }
+
+  const merged = filterAndSortMergedLeads(
+    [...byId.values()],
+    url,
+    effDates,
+    usePresalesMilestoneFilters,
+    search,
   );
 
   const pageNum = Number.parseInt(page, 10) || 0;
@@ -395,6 +525,9 @@ export async function GET(req: NextRequest) {
     size: pageSize,
     sourceCounts,
     summaryTotals,
+    ...(accessDeniedLeadTypes.length > 0
+      ? { accessDeniedLeadTypes: [...new Set(accessDeniedLeadTypes)] }
+      : {}),
   };
 
   return NextResponse.json(body);

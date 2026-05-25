@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 
-const CRM_PIPELINE_URL = `${BASE_URL}/Leads/crm-pipeline?nested=true`;
+function crmPipelineUrl(role?: string): string {
+  const q = new URLSearchParams({ nested: "true" });
+  const r = role?.trim();
+  if (r) q.set("role", r);
+  return `${BASE_URL}/Leads/crm-pipeline?${q.toString()}`;
+}
 
 /** Optional legacy milestone microservice (often not running locally → avoid 500). */
 const COUNT_URL =
@@ -168,20 +173,88 @@ function normalizeMappingsFromPipeline(data: unknown): SubStatusMapping[] {
   return result;
 }
 
-async function fetchPipelineMappings(): Promise<SubStatusMapping[]> {
-  const pipelineResponse = await fetch(CRM_PIPELINE_URL, {
+function flattenNestedMappings(data: unknown): SubStatusMapping[] {
+  if (!data || typeof data !== "object" || !("nested" in data)) {
+    return [];
+  }
+  const nested = (data as { nested?: unknown }).nested;
+  if (!Array.isArray(nested)) return [];
+
+  const seen = new Set<string>();
+  const result: SubStatusMapping[] = [];
+
+  for (const node of nested) {
+    if (!node || typeof node !== "object") continue;
+    const stage =
+      ("stage" in node && typeof node.stage === "string" && node.stage.trim()) || "";
+    const categories =
+      "categories" in node && Array.isArray(node.categories) ? node.categories : [];
+    for (const cat of categories) {
+      if (!cat || typeof cat !== "object") continue;
+      const stageCategory =
+        ("stageCategory" in cat &&
+          typeof cat.stageCategory === "string" &&
+          cat.stageCategory.trim()) ||
+        ("categoryName" in cat &&
+          typeof cat.categoryName === "string" &&
+          cat.categoryName.trim()) ||
+        "";
+      const subStages =
+        "subStages" in cat && Array.isArray(cat.subStages)
+          ? cat.subStages
+          : "substages" in cat && Array.isArray(cat.substages)
+            ? cat.substages
+            : [];
+      for (const sub of subStages) {
+        const subStageName = typeof sub === "string" ? sub.trim() : "";
+        if (!subStageName) continue;
+        const key = `${stage}|${stageCategory}|${subStageName}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({ stage, stageCategory, subStageName });
+      }
+    }
+  }
+
+  return result;
+}
+
+function pipelineToMappings(data: unknown): SubStatusMapping[] {
+  const fromEntries = normalizeMappingsFromPipeline(data);
+  if (fromEntries.length > 0) return fromEntries;
+  return flattenNestedMappings(data);
+}
+
+function mergeSubStatusMappings(
+  primary: SubStatusMapping[],
+  extra: SubStatusMapping[],
+): SubStatusMapping[] {
+  const seen = new Set<string>();
+  const result: SubStatusMapping[] = [];
+  for (const m of [...primary, ...extra]) {
+    const key = `${m.stage}|${m.stageCategory}|${m.subStageName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(m);
+  }
+  return result;
+}
+
+async function fetchPipelineMappings(role?: string): Promise<SubStatusMapping[]> {
+  const pipelineResponse = await fetch(crmPipelineUrl(role), {
     method: "GET",
     cache: "no-store",
     headers: { Accept: "application/json" },
   });
   if (!pipelineResponse.ok) return [];
   const pipelineRaw: unknown = await pipelineResponse.json();
-  return normalizeMappingsFromPipeline(pipelineRaw);
+  return pipelineToMappings(pipelineRaw);
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const resource = searchParams.get("resource");
+  const pipelineRole = (searchParams.get("role") ?? "").trim();
   const isSubStatusRequest = resource === "sub-status";
   const backendUrl = isSubStatusRequest ? SUB_STATUS_URL : COUNT_URL;
 
@@ -207,16 +280,31 @@ export async function GET(request: Request) {
     }
 
     if (isSubStatusRequest) {
-      const subStatuses = normalizeSubStatuses(rawData);
       let mappings = normalizeSubStatusMappings(rawData);
 
-      if (mappings.length === 0) {
+      if (pipelineRole) {
+        try {
+          const pipelineMappings = await fetchPipelineMappings(pipelineRole);
+          if (pipelineMappings.length > 0) {
+            mappings = mergeSubStatusMappings(mappings, pipelineMappings);
+          }
+        } catch {
+          // ignore
+        }
+      } else if (mappings.length === 0) {
         try {
           mappings = await fetchPipelineMappings();
         } catch {
           // ignore
         }
       }
+
+      const subStatuses = [
+        ...new Set([
+          ...normalizeSubStatuses(rawData),
+          ...mappings.map((m) => m.subStageName).filter(Boolean),
+        ]),
+      ];
       return NextResponse.json({ subStatuses, mappings });
     }
 
@@ -226,7 +314,7 @@ export async function GET(request: Request) {
     /** Legacy :9090 down or not JSON — degrade gracefully so the Leads page still loads. */
     if (isSubStatusRequest) {
       try {
-        const mappings = await fetchPipelineMappings();
+        const mappings = await fetchPipelineMappings(pipelineRole || undefined);
         const subStatuses = mappings.map((m) => m.subStageName);
         return NextResponse.json({ subStatuses, mappings });
       } catch {

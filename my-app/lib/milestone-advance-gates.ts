@@ -64,12 +64,12 @@ export function leadPropertyGateErrorMessage(
   missing: Array<"Budget" | "Property notes" | "Configuration">,
 ): string {
   if (missing.length === 0) return "";
-  return `Fill ${missing.join(", ")} on the Lead tab (required for Discovery → Connection; cannot be empty).`;
+  return `Fill ${missing.join(", ")} on the Lead tab (required before Connection; cannot be empty).`;
 }
 
 /**
  * Budget, Property notes, and Configuration are required when:
- * - Moving **Discovery** → **Connection**.
+ * - Moving **Fresh Lead** or **Discovery** → **Connection**.
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {
@@ -88,12 +88,16 @@ export function requiresLeadPropertyGateForCompleteTask(args: {
   const cur = args.currentMilestoneStage ?? "";
   const next = args.newMilestoneStage ?? "";
 
-  const discoveryToConnection =
-    matchesMilestoneStage(cur, DISCOVERY_STAGE) &&
-    matchesMilestoneStage(next, CONNECTION_STAGE);
-  if (discoveryToConnection) return true;
+  const toConnection = matchesMilestoneStage(next, CONNECTION_STAGE);
+  if (!toConnection) return false;
 
-  return false;
+  if (matchesMilestoneStage(cur, DISCOVERY_STAGE)) return true;
+
+  return isFreshLeadMilestonePosition(
+    args.currentMilestoneStage,
+    args.currentMilestoneSubStage,
+    args.currentMilestoneStageCategory,
+  );
 }
 
 /** @deprecated Use {@link requiresLeadPropertyGateForCompleteTask}. */
