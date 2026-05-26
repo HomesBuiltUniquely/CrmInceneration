@@ -177,6 +177,7 @@ async function fetchSalesExecutivesForPicker(
 const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   id,
   leadId: "",
+  externalReferenceId: "",
   name: "—",
   customerId: "—",
   status: "—",
@@ -1152,9 +1153,13 @@ export default function LeadDetailsApiClient({
       rawName: latestDetail.name ?? latestDetail.fullName ?? latestDetail.customerName,
       rawEmail: latestDetail.email ?? latestDetail.emailAddress ?? latestDetail.mail,
       rawPhone: latestDetail.phone ?? latestDetail.phoneNumber ?? latestDetail.mobile,
+      rawUniqueId: latestDetail.uniqueId,
+      rawLeadIdentifier: latestDetail.lead_identifier,
+      rawExternalReferenceId: latestDetail.externalReferenceId,
     });
     console.info("[sales-closure] mapped lead prefill fields", {
       leadId: latestLead.leadId,
+      externalReferenceId: latestLead.externalReferenceId,
       name: latestLead.name,
       email: latestLead.email,
       phone: latestLead.phone,
@@ -1174,7 +1179,6 @@ export default function LeadDetailsApiClient({
   }, [leadId, leadType]);
 
   const buildStrictSalesClosureUrl = useCallback(async () => {
-    const currentLeadId = lead.leadId?.trim() || leadId;
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set("salesClosureReturned", "1");
     const [latestLeadResult, authUserResult] = await Promise.allSettled([
@@ -1205,7 +1209,6 @@ export default function LeadDetailsApiClient({
       role: latestAuthUser ? getRoleFromUser(latestAuthUser) : "",
     });
     return buildSalesClosureUrl({
-      leadId: latestLead.leadId?.trim() || currentLeadId,
       leadTypeLabel: crmLeadTypeToApiLabel(leadType),
       returnUrl: returnUrl.toString(),
       lead: latestLead,
@@ -1385,7 +1388,6 @@ export default function LeadDetailsApiClient({
         statusCandidates,
         currentUser: salesClosureAuthUser,
         openUrl: buildSalesClosureUrl({
-          leadId: lead.leadId?.trim() || leadId,
           leadTypeLabel: crmLeadTypeToApiLabel(leadType),
           returnUrl: window.location.href,
           lead,

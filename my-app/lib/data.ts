@@ -40,6 +40,8 @@ export interface Lead {
   id: string;
   /** Business lead identifier used by Design QA APIs (example: GL-2026-00123). */
   leadId?: string;
+  /** External lead identifier from backend `lead_identifier`, forwarded to Sales Closure. */
+  externalReferenceId?: string;
   name: string;
   customerId: string;
   status: string;
