@@ -8,7 +8,7 @@ The Hub app should read these on initial load (same names as below). All values 
 
 | Query param | Description |
 |-------------|-------------|
-| `leadId` | Business lead id from CRM |
+| `externalReferenceId` | External reference id from CRM lead detail (`uniqueId`) |
 | `leadType` | e.g. `Add Lead`, `G Lead`, … |
 | `returnUrl` | CRM page to return to after completion |
 

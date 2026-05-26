@@ -67,6 +67,7 @@ function setSalesClosurePrefillPayload(
     property_configuration: lead.configuration?.trim() ?? "",
     sales_lead_name: lead.assignee?.trim() ?? "",
     designer_name: lead.designerName?.trim() ?? "",
+    externalReferenceId: lead.externalReferenceId?.trim() ?? "",
   };
   u.searchParams.set("prefill", JSON.stringify(payload));
   u.searchParams.set("salesClosurePrefill", JSON.stringify(payload));
@@ -93,6 +94,7 @@ export function appendSalesClosurePrefillFromLead(u: URL, lead: Lead): void {
   setAliases(["possession"], lead.possessionDate || lead.configuration);
   setAliases(["sales_lead_name"], lead.assignee);
   setAliases(["designer_name"], lead.designerName);
+  setAliases(["externalReferenceId"], lead.externalReferenceId);
 }
 
 /**
@@ -138,7 +140,6 @@ export function appendSalesClosurePrefillFromAuthUser(
 
 /** §12 Sales Closure — external flow (opens in new tab or full redirect). */
 export function buildSalesClosureUrl(params: {
-  leadId: string;
   leadTypeLabel: string;
   /** Current CRM URL so Hub can send the user back. */
   returnUrl?: string;
@@ -148,7 +149,6 @@ export function buildSalesClosureUrl(params: {
   authUser?: Record<string, unknown> | null;
 }): string {
   const u = new URL(`${SALES_CLOSURE_ORIGIN}/SalesClosure`);
-  u.searchParams.set("leadId", params.leadId);
   u.searchParams.set("leadType", params.leadTypeLabel);
 
   if (params.lead) {
