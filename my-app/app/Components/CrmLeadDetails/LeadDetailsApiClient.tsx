@@ -2227,7 +2227,7 @@ export default function LeadDetailsApiClient({
               lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed" ||
               lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience & design" ||
               lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience and design") &&
-            !isClosedWonBookingDone(lead.stageBlock)
+            !isClosedWonCustomerSubstage(lead.stageBlock?.milestoneSubStage ?? "")
           }
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}

@@ -164,6 +164,16 @@ export default function LeadHeader({
               <span>First Call {firstCallAt}</span>
             </span>
           ) : null}
+          {lead.salesclouserfill ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-800">
+              Sales Closure Submitted
+            </span>
+          ) : null}
+          {lead.paymentReceived ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-teal-200 bg-teal-50 px-3 text-[11px] font-semibold text-teal-800">
+              Payment {lead.paymentReceived}
+            </span>
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2.5">
           {showPresalesMilestone ? (

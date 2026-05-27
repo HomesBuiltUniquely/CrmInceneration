@@ -81,6 +81,10 @@ export interface Lead {
   stageBlock?: LeadStageBlock;
   /** Presales handoff — when true, presales users see read-only milestone actions. */
   verified?: boolean;
+  /** Backend `salesclouserfill` — true after Design Module confirms Sales Closure submit. */
+  salesclouserfill?: boolean;
+  /** Backend `paymentReceived` from Sales Closure (`FULL_10%`, `PARTIAL`, `TOKEN`). */
+  paymentReceived?: string;
   /** Backend field `resone` — required when substage is LOST (legacy spelling). */
   lostReason?: string;
   /** Quote / proposal link for `POST /v1/quote/send`. */
