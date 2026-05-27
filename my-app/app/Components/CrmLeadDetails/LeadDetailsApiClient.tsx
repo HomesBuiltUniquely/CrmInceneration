@@ -75,6 +75,7 @@ import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import {
   isClosedWonBookingDoneSubstage,
   isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
@@ -610,8 +611,7 @@ function truncateLabel(label: string, max = 80): string {
 function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boolean {
   return (
     (stageBlock?.milestoneStage ?? "").trim().toLowerCase() === "closed" &&
-    (stageBlock?.milestoneStageCategory ?? "").trim().toLowerCase() ===
-      "closed won" &&
+    isClosedWonPathCategory(stageBlock?.milestoneStageCategory ?? "") &&
     isClosedWonBookingDoneSubstage(stageBlock?.milestoneSubStage ?? "")
   );
 }
@@ -637,7 +637,7 @@ function isNoFollowUpRequired(args: {
   const sub      = args.milestoneSubStage.trim();
   if (
     stage.toLowerCase() === "closed" &&
-    category.toLowerCase() === "closed won" &&
+    isClosedWonPathCategory(category) &&
     isClosedWonCustomerSubstage(sub)
   ) {
     return true;
