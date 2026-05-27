@@ -3,7 +3,7 @@ import { getRoleFromUser, normalizeRole } from "@/lib/auth/api";
 
 export const SALES_CLOSURE_ORIGIN = (
   process.env.NEXT_PUBLIC_SALES_CLOSURE_ORIGIN?.trim() ||
-  "http://localhost:3000"
+  "https://design.hubinterior.com"
 ).replace(/\/+$/, "");
 
 /** Avoid oversized URLs when property notes are long. */
