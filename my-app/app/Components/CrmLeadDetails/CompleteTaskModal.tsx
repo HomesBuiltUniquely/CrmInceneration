@@ -35,6 +35,8 @@ import {
   meetingSchedulePanelTitle,
   pipelineSubStageLabel,
   resolveSubStageFromCompleteTaskFeedback,
+  isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -654,12 +656,13 @@ export default function CompleteTaskModal({
       }),
   );
   const reasonRequired = requiresResoneField(path, feedback);
+  const customerSubstage =
+    selectedFeedbackOption?.subStageName.trim() || feedback.trim();
   const isClosedWonCustomer =
     !presalesMode &&
     status.trim() === "Closed" &&
-    path.trim() === "Closed Won" &&
-    (feedback.trim() === "Booking Done (Booking)" ||
-      feedback.trim() === "Token Done");
+    isClosedWonPathCategory(path) &&
+    isClosedWonCustomerSubstage(customerSubstage);
   const noFollowUpRequired = presalesMode
     ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
