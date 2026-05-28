@@ -11,6 +11,9 @@ import {
   postStageRollback,
   postVerifyLead,
   putLeadDetail,
+  getLeadFloorPlanMeta,
+  removeLeadFloorPlan,
+  uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
 import {
   detailJsonToLead,
@@ -43,7 +46,10 @@ import {
 } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
-import { normalizeMilestoneSubStageForApi } from "@/lib/milestone-substage-map";
+import {
+  isMeetingScheduleSubstage,
+  normalizeMilestoneSubStageForApi,
+} from "@/lib/milestone-substage-map";
 import {
   buildSalesClosureUrl,
   canAccessClosedLeadHeaderActions,
@@ -248,13 +254,7 @@ function pickCityForExternalIntake(
       return candidate.trim();
   }
 
-  const location = lead.propertyLocation?.trim() ?? "";
-  if (!location) return "";
-  const parts = location
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  return parts.length ? parts[parts.length - 1] : location;
+  return "";
 }
 
 function parseBudgetForExternalIntake(rawBudget: string): number | string {
@@ -502,6 +502,15 @@ async function postExternalIntakeLead(args: {
     if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
     const scheduleDesignerName = normalizeOptionalPersonField(designerName?.trim() || "");
     if (scheduleDesignerName) payload.designerName = scheduleDesignerName;
+
+    const floorPlanPublicLink =
+      args.lead.floorPlanPublicLink?.trim() ||
+      pickText(args.baseDetail.floorPlanPublicLink) ||
+      pickText(args.baseDetail.publicUrl);
+    if (floorPlanPublicLink) {
+      payload.floorPlanPublicLink = floorPlanPublicLink;
+      payload.floorPlanUrl = floorPlanPublicLink;
+    }
   }
 
   if (!payload.externalLeadId) {
@@ -531,6 +540,10 @@ async function postExternalIntakeLead(args: {
     ),
     hasPropertyNotes: Boolean(propertyNotes),
     hasConfiguration: Boolean(configuration),
+    hasFloorPlanLink: Boolean(
+      typeof payload.floorPlanPublicLink === "string" &&
+        payload.floorPlanPublicLink.trim(),
+    ),
   });
 
   const res = await fetch("/api/crm/external-intake", {
@@ -704,6 +717,8 @@ export default function LeadDetailsApiClient({
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [savingSecondBox, setSavingSecondBox] = useState(false);
+  const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [floorPlanRemoving, setFloorPlanRemoving] = useState(false);
   const [salesExecutiveOptions, setSalesExecutiveOptions] = useState<
     SalesExecutiveOption[]
   >([]);
@@ -770,6 +785,24 @@ export default function LeadDetailsApiClient({
       setBaseDetail(detailJson);
       const mapped = detailJsonToLead(detailJson, lt);
       setLead((prev) => ({ ...mapped, id: leadId, activities: prev.activities }));
+      void getLeadFloorPlanMeta(lt, leadId).then((meta) => {
+        if (meta) {
+          setLead((prev) => ({
+            ...prev,
+            floorPlan: meta.s3Key,
+            floorPlanPublicLink: meta.publicLink || undefined,
+            floorPlanViewPath: meta.viewPath,
+            floorPlanOpenPath: meta.openPath,
+          }));
+          return;
+        }
+        setLead((prev) => ({
+          ...prev,
+          floorPlan: "",
+          floorPlanViewPath: undefined,
+          floorPlanOpenPath: undefined,
+        }));
+      });
       setLoading(false);
       void getLeadActivities(lt, leadId)
         .then((actJson) => {
@@ -845,6 +878,77 @@ export default function LeadDetailsApiClient({
   const patchLead = useCallback((patch: Partial<Lead>) => {
     setLead((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  const handleFloorPlanUpload = useCallback(
+    async (file: File) => {
+      if (!validLeadType) return;
+      setFloorPlanUploading(true);
+      try {
+        const state = await uploadLeadFloorPlan(leadType, leadId, file);
+        patchLead({
+          floorPlan: state.s3Key,
+          floorPlanPublicLink: state.publicLink || undefined,
+          floorPlanViewPath: state.viewPath,
+          floorPlanOpenPath: state.openPath,
+        });
+        setBaseDetail((prev) => ({
+          ...prev,
+          floorPlanUrl: state.s3Key,
+          floorPlanS3Key: state.s3Key,
+          ...(state.publicLink
+            ? {
+                floorPlanPublicLink: state.publicLink,
+                publicUrl: state.publicLink,
+              }
+            : {}),
+        }));
+      } finally {
+        setFloorPlanUploading(false);
+      }
+    },
+    [validLeadType, leadType, leadId, patchLead],
+  );
+
+  const handleFloorPlanMissing = useCallback(() => {
+    patchLead({
+      floorPlan: "",
+      floorPlanPublicLink: undefined,
+      floorPlanViewPath: undefined,
+      floorPlanOpenPath: undefined,
+    });
+    setBaseDetail((prev) => {
+      const next = { ...prev };
+      next.floorPlanUrl = null;
+      next.floorPlanS3Key = null;
+      next.floorPlan = null;
+      next.floorPlanPublicLink = null;
+      next.publicUrl = null;
+      return next;
+    });
+  }, [patchLead]);
+
+  const handleFloorPlanRemove = useCallback(async () => {
+    if (!validLeadType) return;
+    setFloorPlanRemoving(true);
+    try {
+      await removeLeadFloorPlan(leadType, leadId, baseDetail, lead);
+      handleFloorPlanMissing();
+      notifySuccess("Floor plan removed");
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not remove floor plan.");
+    } finally {
+      setFloorPlanRemoving(false);
+    }
+  }, [
+    validLeadType,
+    leadType,
+    leadId,
+    baseDetail,
+    lead,
+    handleFloorPlanMissing,
+    notifySuccess,
+    notifyError,
+  ]);
 
   async function buildCreatedTimeline(
     detailJson: Record<string, unknown>,
@@ -2029,6 +2133,7 @@ export default function LeadDetailsApiClient({
         let followUpDate = noFollowUpNeeded
           ? ""
           : (args.nextCallDateLocal.trim() || lead.followUpDate);
+        let meetingDate = lead.meetingDate;
         let designerName = lead.designerName;
 
         if (args.meetingAppointment) {
@@ -2044,8 +2149,12 @@ export default function LeadDetailsApiClient({
           });
           if (typeof appt.startTime === "string" && appt.startTime.trim()) {
             followUpDate = appt.startTime;
+            meetingDate = appt.startTime;
           } else if (typeof appt.endTime === "string" && appt.endTime.trim()) {
             followUpDate = appt.endTime;
+            meetingDate = appt.endTime;
+          } else if (args.meetingAppointment.date.trim()) {
+            meetingDate = args.meetingAppointment.date.trim();
           }
           designerName = args.meetingAppointment.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
@@ -2074,6 +2183,14 @@ export default function LeadDetailsApiClient({
           });
         }
 
+        if (
+          isMeetingScheduleSubstage(persistedSubstage) &&
+          followUpDate.trim() &&
+          !meetingDate.trim()
+        ) {
+          meetingDate = followUpDate;
+        }
+
         const nextStage = {
           milestoneStage: args.milestoneStage,
           milestoneStageCategory: persistedCategory,
@@ -2099,6 +2216,7 @@ export default function LeadDetailsApiClient({
         }
         const leadForSave: Lead = {
           ...lead,
+          meetingDate,
           followUpDate,
           designerName,
           meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
@@ -2257,6 +2375,11 @@ export default function LeadDetailsApiClient({
           <LeadInfoTab
             lead={lead}
             onLeadChange={patchLead}
+            onFloorPlanUpload={handleFloorPlanUpload}
+            onFloorPlanMissing={handleFloorPlanMissing}
+            onFloorPlanRemove={handleFloorPlanRemove}
+            floorPlanUploading={floorPlanUploading}
+            floorPlanRemoving={floorPlanRemoving}
             onAdditionalInfoSave={handleSaveSecondBox}
             onLogCall={handlePhoneCallLog}
             onDesignQaLinkCopied={handleDesignQaLinkCopied}

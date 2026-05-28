@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
     hasConfiguration: Boolean(
       typeof parsed?.configuration === "string" && parsed.configuration.trim(),
     ),
+    hasFloorPlanLink: Boolean(
+      typeof parsed?.floorPlanPublicLink === "string" &&
+        parsed.floorPlanPublicLink.trim(),
+    ),
     contactNoMasked: maskValue(parsed?.contactNo),
     clientEmailMasked: maskValue(parsed?.clientEmail),
   });

@@ -10,6 +10,7 @@ import {
 } from "@/lib/lead-display";
 import { applyLostReasonToDetailPayload, readLostReasonFromDetail } from "@/lib/lead-lost-fields";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { normalizeFloorPlanS3Key, pickFloorPlanPublicLink } from "@/lib/floor-plan";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -509,7 +510,15 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       "",
     pincode: getLeadDisplayPincode(detail),
     configuration: pickConfigurationFromDetail(detail, leadType),
-    floorPlan: pickStr(detail, "floorPlan", "floorplan") || "",
+    floorPlan:
+      normalizeFloorPlanS3Key(
+        pickStr(detail, "floorPlanS3Key", "floorPlanUrl", "floorPlan", "floorplan") || "",
+      ),
+    floorPlanPublicLink: pickFloorPlanPublicLink({
+      publicUrl: pickStr(detail, "publicUrl", "floorPlanPublicLink"),
+      floorPlanPublicLink: pickStr(detail, "floorPlanPublicLink"),
+      floorPlanUrl: pickStr(detail, "floorPlanUrl", "floorPlan"),
+    }),
     possessionDate: pickStr(detail, "possessionDate", "possession", "possessionTime") || "",
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
@@ -575,6 +584,20 @@ export function mergePresalesMilestoneIntoDetail(
     presalesMilestoneSubStage: update.presalesMilestoneSubStage.trim(),
   };
   return next;
+}
+
+/** Clear all floor-plan fields on PUT body (remove PDF/JPG/PNG from lead). */
+export function mergeClearFloorPlanInDetail(
+  base: Record<string, unknown>,
+  lead: Lead,
+): Record<string, unknown> {
+  return mergeLeadIntoDetail(base, {
+    ...lead,
+    floorPlan: "",
+    floorPlanPublicLink: undefined,
+    floorPlanViewPath: undefined,
+    floorPlanOpenPath: undefined,
+  });
 }
 
 /** Merge UI Lead + existing GET body for PUT (preserves unknown backend fields). */
@@ -653,7 +676,22 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.interiorSetup = lead.configuration;
   next.interior_setup = lead.configuration;
   if (mergedLt === "addlead") next.property_type = lead.configuration;
-  next.floorPlan = lead.floorPlan;
+  const floorPlanValue = lead.floorPlan.trim();
+  const floorPlanPublic = lead.floorPlanPublicLink?.trim() ?? "";
+  if (!floorPlanValue && !floorPlanPublic) {
+    next.floorPlanUrl = null;
+    next.floorPlan = null;
+    next.floorPlanS3Key = null;
+    next.floorPlanPublicLink = null;
+    next.publicUrl = null;
+  } else {
+    next.floorPlanUrl = floorPlanValue || floorPlanPublic;
+    next.floorPlan = floorPlanValue || floorPlanPublic;
+    if (floorPlanPublic) {
+      next.floorPlanPublicLink = floorPlanPublic;
+      next.publicUrl = floorPlanPublic;
+    }
+  }
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
   next.language = lead.language;
@@ -739,7 +777,22 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (boxLt === "addlead") {
     next.property_type = lead.configuration;
   }
-  next.floorPlan = lead.floorPlan;
+  const floorPlanValue = lead.floorPlan.trim();
+  const floorPlanPublic = lead.floorPlanPublicLink?.trim() ?? "";
+  if (!floorPlanValue && !floorPlanPublic) {
+    next.floorPlanUrl = null;
+    next.floorPlan = null;
+    next.floorPlanS3Key = null;
+    next.floorPlanPublicLink = null;
+    next.publicUrl = null;
+  } else {
+    next.floorPlanUrl = floorPlanValue || floorPlanPublic;
+    next.floorPlan = floorPlanValue || floorPlanPublic;
+    if (floorPlanPublic) {
+      next.floorPlanPublicLink = floorPlanPublic;
+      next.publicUrl = floorPlanPublic;
+    }
+  }
   next.possessionDate = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
   next.propertyPincode = lead.pincode;
