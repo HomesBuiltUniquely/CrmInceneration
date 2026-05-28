@@ -427,9 +427,9 @@ export default function LeadsTable({
             No leads found.
           </div>
         ) : (
-          rows.map((r) => (
+          rows.map((r, idx) => (
             <LeadRowAction
-              key={r.id}
+              key={`${r.id}:${r.leadType}:${idx}`}
               row={r}
               selected={selectedRowIds.includes(r.id)}
               onToggleSelected={(checked) => {

@@ -9,7 +9,7 @@ import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { isPresalesRole } from "@/lib/roleUtils";
-import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
+import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -282,14 +282,17 @@ function filterAndSortMergedLeads(
       if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
 
       if (usePresalesMilestoneFilters) {
-        const ps = readPresalesMilestoneFromLead(lead);
-        if (psStage && norm(ps.stage) !== norm(psStage)) return false;
-        if (psCat && norm(ps.category) !== norm(psCat)) return false;
-        if (psSub && norm(ps.subStage) !== norm(psSub)) return false;
-      } else {
-        if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
-        if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
-        if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
+        if (
+          (psStage || psCat || psSub) &&
+          !leadMatchesWorkspaceMilestoneFilter(lead, "presales", psStage, psCat, psSub)
+        ) {
+          return false;
+        }
+      } else if (
+        (mStage || mCat || mSub) &&
+        !leadMatchesWorkspaceMilestoneFilter(lead, "sales", mStage, mCat, mSub)
+      ) {
+        return false;
       }
       return true;
     })
@@ -321,6 +324,11 @@ export async function GET(req: NextRequest) {
   const leadPool = (url.searchParams.get("leadPool") ?? "").trim().toLowerCase();
   const usePresalesSearchPool = isPresalesRole(viewerRoleKey) || leadPool === "presales";
   const usePresalesMilestoneFilters = usePresalesSearchPool;
+  const includePresalesInGlobalSearch =
+    isNewCrmGlobalSearchMode &&
+    viewerRoleKey === "SUPER_ADMIN" &&
+    !usePresalesSearchPool &&
+    search.length > 0;
 
   const managerEndpoint =
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
@@ -497,6 +505,14 @@ export async function GET(req: NextRequest) {
       if (!byId.has(id)) {
         byId.set(id, { ...lead, leadType: sourceType });
       }
+    }
+  }
+  if (includePresalesInGlobalSearch) {
+    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    for (const lead of presalesRows) {
+      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      if (!id || byId.has(id)) continue;
+      byId.set(id, lead);
     }
   }
 

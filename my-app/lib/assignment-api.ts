@@ -2,6 +2,21 @@ import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 
 type AnyJson = Record<string, unknown>;
 
+export type AssignLeadPayload = {
+  leadType: string;
+  leadId: number;
+  salesExecutiveId: number;
+  reassignReason?: string;
+};
+
+export type BulkAssignPayload = {
+  leadType: string;
+  leadIds: number[];
+  assignmentMode: string;
+  assignees: Array<{ userId: number; percentage?: number }>;
+  reassignReason?: string;
+};
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api/assignment/${path}`, {
     ...init,
@@ -22,10 +37,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const assignmentApi = {
-  assign: (payload: AnyJson) => call<AnyJson>("assign", { method: "POST", body: JSON.stringify(payload) }),
-  bulkAssign: (payload: AnyJson) => call<AnyJson>("bulk-assign", { method: "POST", body: JSON.stringify(payload) }),
+  assign: (payload: AssignLeadPayload) =>
+    call<AnyJson>("assign", { method: "POST", body: JSON.stringify(payload) }),
+  bulkAssign: (payload: BulkAssignPayload) =>
+    call<AnyJson>("bulk-assign", { method: "POST", body: JSON.stringify(payload) }),
   unassignedLeads: (params?: URLSearchParams | string) =>
     call<AnyJson>(`unassigned-leads${params ? `?${params.toString()}` : ""}`),
-  bulkAssignPreview: (payload: AnyJson) => call<AnyJson>("bulk-assign-preview", { method: "POST", body: JSON.stringify(payload) }),
-  bulkAssignExecute: (payload: AnyJson) => call<AnyJson>("bulk-assign-execute", { method: "POST", body: JSON.stringify(payload) }),
+  bulkAssignPreview: (payload: BulkAssignPayload) =>
+    call<AnyJson>("bulk-assign-preview", { method: "POST", body: JSON.stringify(payload) }),
+  bulkAssignExecute: (payload: BulkAssignPayload) =>
+    call<AnyJson>("bulk-assign-execute", { method: "POST", body: JSON.stringify(payload) }),
 };

@@ -1,6 +1,10 @@
 /** CRM `/v1/leads/filter` + merged list helpers (Project-ERP contract). */
 
 import { computeMilestoneProgress, normalizeStageKey } from "@/lib/milestone-progress";
+import {
+  isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
+} from "@/lib/milestone-substage-map";
 import { getLeadDisplayName } from "@/lib/lead-display";
 import {
   formatPresalesListStatusLabel,
@@ -9,7 +13,9 @@ import {
   PRESALES_PIPELINE_STAGE_ORDER,
   presalesTopLevelStage,
   shouldUsePresalesListDisplay,
+  usePresalesListDisplayForWorkspace,
 } from "@/lib/presales-milestone";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
 
 export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
 
@@ -30,6 +36,9 @@ export type SpringPage<T> = {
   size: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
+  /** SUPER_ADMIN cross-pool search: per-pool match counts (not deduped across pools). */
+  salesSearchTotal?: number;
+  presalesSearchTotal?: number;
   /** Present when mergeAll could not load one or more lead types (e.g. Hub 403). */
   accessDeniedLeadTypes?: CrmLeadType[];
 };
@@ -71,6 +80,8 @@ export type ApiLead = {
   presalesMilestoneStage?: string | null;
   presalesMilestoneCategory?: string | null;
   presalesMilestoneSubStage?: string | null;
+  /** Hub admin pool rows: assignee's CRM role (SALES_EXECUTIVE, PRESALES_EXECUTIVE, …). */
+  assigneeRole?: string | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
@@ -270,10 +281,55 @@ function companyFallback(lead: ApiLead): string {
   return lead.companyName ?? "—";
 }
 
+/** RDS / admin pool: count by `stage.milestoneStage` only (no category/substage inference). */
+export const SALES_POOL_NO_MILESTONE = "No milestone";
+
+const SALES_POOL_STAGES = [
+  "Fresh Lead",
+  "Discovery",
+  "Connection",
+  "Experience & Design",
+  "Decision",
+  "Closed",
+] as const;
+
+function readSalesMilestoneStageRaw(lead: ApiLead): string {
+  const fromStage = String(lead.stage?.milestoneStage ?? "").trim();
+  if (fromStage) return fromStage;
+  const r = lead as Record<string, unknown>;
+  const fromRoot = String(r.milestoneStage ?? r.milestone_stage ?? "").trim();
+  if (fromRoot) return fromRoot;
+  const picked = pickLeadScalar(lead, ["milestoneStage", "milestone_stage"]);
+  return typeof picked === "string" ? picked.trim() : "";
+}
+
+export function salesPoolMilestoneStage(lead: ApiLead): string {
+  const raw = readSalesMilestoneStageRaw(lead);
+  if (!raw) return "";
+  const key = normalizeStageKey(raw);
+  for (const phase of SALES_POOL_STAGES) {
+    if (normalizeStageKey(phase) === key) return phase;
+  }
+  return raw;
+}
+
 export function crmLeadTopLevelStage(lead: ApiLead): string {
   const stage = String(lead.stage?.milestoneStage ?? "").trim();
   const stageCategory = String(lead.stage?.milestoneStageCategory ?? "").trim();
   const subStage = String(lead.stage?.milestoneSubStage ?? lead.stage?.substage?.substage ?? "").trim();
+  const stageKey = normalizeStageKey(stage);
+  const categoryKey = normalizeStageKey(stageCategory);
+
+  // Won / booking / token paths often keep a non-Closed `milestoneStage` on the API.
+  if (
+    stageKey === "closed" ||
+    categoryKey.includes("closed") ||
+    isClosedWonPathCategory(stageCategory) ||
+    isClosedWonCustomerSubstage(subStage)
+  ) {
+    return "Closed";
+  }
+
   const looksFreshLead = [stage, stageCategory, subStage].some((value) => {
     const normalized = normalizeStageKey(value);
     return normalized === "fresh lead" || normalized === "fresh leads" || /^fresh\s+leads?$/.test(normalized);
@@ -334,8 +390,13 @@ export function mapApiLeadToRow(
   sourceLeadType: CrmLeadType,
   orderedPipelineStages: string[] = [],
   userRole = "",
+  leadsWorkspace: CrmWorkspace = "sales",
 ): LeadRowModel {
-  const usePresalesDisplay = shouldUsePresalesListDisplay(lead, userRole);
+  const usePresalesDisplay = usePresalesListDisplayForWorkspace(
+    leadsWorkspace,
+    lead,
+    userRole,
+  );
   const display = getListDisplayMilestone(lead, userRole);
   const st = lead.stage;
   const pipelineOrder = usePresalesDisplay

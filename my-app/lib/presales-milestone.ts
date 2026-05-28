@@ -1,3 +1,4 @@
+import type { CrmWorkspace } from "@/lib/crm-workspace";
 import type { Lead } from "@/lib/data";
 import type { ApiLead } from "@/lib/leads-filter";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
@@ -25,6 +26,17 @@ export function shouldUsePresalesListDisplay(
 ): boolean {
   if (!isPresalesRole(userRole)) return false;
   return !isLeadHandedOffToSales(lead);
+}
+
+/** `/presales-leads` vs `/Leads` controls row badge + journey (not viewer role alone). */
+export function usePresalesListDisplayForWorkspace(
+  workspace: CrmWorkspace,
+  lead: ApiLead | Record<string, unknown>,
+  userRole: string,
+): boolean {
+  if (workspace === "presales") return true;
+  if (workspace === "sales") return false;
+  return shouldUsePresalesListDisplay(lead, userRole);
 }
 
 /** Milestone fields shown on presales lead list rows. */

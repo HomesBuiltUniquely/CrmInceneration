@@ -33,6 +33,7 @@ import {
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
+import { usesAdminLeadsApi } from "@/lib/admin-leads-api";
 import { fetchAllPresalesAssigneeDisplayNames } from "@/lib/fetch-all-presales-assignee-names";
 
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
@@ -118,6 +119,14 @@ export default function Header() {
     lead: number;
     opportunity: number;
   } | null>(null);
+  const [adminMilestoneCounts, setAdminMilestoneCounts] = useState<
+    Record<string, number> | null
+  >(null);
+  const [adminPresalesSummary, setAdminPresalesSummary] = useState<{
+    totalMonth: number;
+    verifiedMonth: number;
+    teamVerifiedMonth: number;
+  } | null>(null);
   /** Insight tile filter (Team Leads, Follow ups today, etc.) — heatmap uses same subset as the grid. */
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(null);
   const [presalesSummaryTab, setPresalesSummaryTab] = useState<
@@ -134,6 +143,53 @@ export default function Header() {
   const [superAdminPresalesNames, setSuperAdminPresalesNames] = useState<string[]>([]);
   const presalesSummaryTabRef = useRef(presalesSummaryTab);
   presalesSummaryTabRef.current = presalesSummaryTab;
+
+  const handleHeatmapSummarySync = useCallback(
+    (summary: { lead: number; opportunity: number } | null) => {
+      setHeatmapSummaryTotals((prev) => {
+        if (!summary && !prev) return prev;
+        if (
+          summary &&
+          prev &&
+          summary.lead === prev.lead &&
+          summary.opportunity === prev.opportunity
+        ) {
+          return prev;
+        }
+        return summary;
+      });
+    },
+    [],
+  );
+
+  const adminMilestoneCountsKeyRef = useRef("");
+  const handleAdminMilestoneCountsSync = useCallback(
+    (_counts: Record<string, number> | undefined) => {
+      const next = _counts ?? null;
+      const key = next ? JSON.stringify(next) : "";
+      if (adminMilestoneCountsKeyRef.current === key) return;
+      adminMilestoneCountsKeyRef.current = key;
+      setAdminMilestoneCounts(next);
+    },
+    [],
+  );
+
+  const handleAdminPresalesSummarySync = useCallback(
+    (metrics: { totalMonth: number; verifiedMonth: number; teamVerifiedMonth: number }) => {
+      setAdminPresalesSummary((prev) => {
+        if (
+          prev &&
+          prev.totalMonth === metrics.totalMonth &&
+          prev.verifiedMonth === metrics.verifiedMonth &&
+          prev.teamVerifiedMonth === metrics.teamVerifiedMonth
+        ) {
+          return prev;
+        }
+        return metrics;
+      });
+    },
+    [],
+  );
 
   const isSuperAdminPresalesWorkspace =
     pathname === "/presales-leads" && normalizeRole(currentRole) === "SUPER_ADMIN";
@@ -338,8 +394,15 @@ export default function Header() {
     };
   }, [isPresalesManager, currentUserId]);
 
+  const viewerUsesAdminLeadsApi = usesAdminLeadsApi(normalizeRole(currentRole));
+
   useEffect(() => {
     if (!authResolved) return;
+    // Admin presales menu = full assignee pool (RDS); skip exec month-tab defaults.
+    if (viewerUsesAdminLeadsApi) {
+      setPresalesSummaryTab(null);
+      return;
+    }
     if (isPresalesRole(currentRole)) {
       setPresalesSummaryTab((prev) => (prev === null ? "total" : prev));
       return;
@@ -351,11 +414,23 @@ export default function Header() {
       return;
     }
     setPresalesSummaryTab(null);
-  }, [authResolved, currentRole, isSuperAdminPresalesWorkspace, superAdminPresalesNames.length]);
+  }, [
+    authResolved,
+    currentRole,
+    isSuperAdminPresalesWorkspace,
+    superAdminPresalesNames.length,
+    viewerUsesAdminLeadsApi,
+  ]);
 
   const listVerificationStatus = useMemo(() => {
     if (!isPresalesLeadsPage) {
       return defaultLeadsVerificationStatus("sales", undefined, currentRole);
+    }
+    if (viewerUsesAdminLeadsApi) {
+      if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") {
+        return "verified";
+      }
+      return "";
     }
     const superAdminPresalesCards =
       isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
@@ -368,6 +443,7 @@ export default function Header() {
     isSuperAdminPresalesWorkspace,
     superAdminPresalesNames.length,
     isPresalesLeadsPage,
+    viewerUsesAdminLeadsApi,
   ]);
 
   const heatmapFilterQuery = useMemo(() => {
@@ -376,14 +452,15 @@ export default function Header() {
     if (forcedLeadType && forcedLeadType !== "all") q.set("leadType", forcedLeadType);
     const assigneeForHeatmap =
       heatmapToolbarAssignee.trim() || forcedAssignee.trim();
-    if (assigneeForHeatmap && heatmapToolbarAssigneeScope.length === 0) {
+    if (assigneeForHeatmap) {
       q.set("assignee", assigneeForHeatmap);
     }
     const superAdminPresalesCards =
       isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
     const presalesMonthCards =
-      (isPresalesRole(currentRole) && presalesSummaryTab !== null) ||
-      (superAdminPresalesCards && presalesSummaryTab !== null);
+      !viewerUsesAdminLeadsApi &&
+      ((isPresalesRole(currentRole) && presalesSummaryTab !== null) ||
+        (superAdminPresalesCards && presalesSummaryTab !== null));
     if (presalesMonthCards) q.set("crmMonthWindow", "current");
     else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
     appendWorkspaceMilestoneFilterQuery(
@@ -414,6 +491,7 @@ export default function Header() {
     presalesSummaryTab,
     isSuperAdminPresalesWorkspace,
     superAdminPresalesNames.length,
+    viewerUsesAdminLeadsApi,
   ]);
 
   const handlePhaseFilterToggle = (stageName: string) => {
@@ -524,6 +602,8 @@ export default function Header() {
               <JourneyPhaseHeatmap
                 leadsWorkspace={leadsWorkspace}
                 milestoneFilterQuery={heatmapFilterQuery}
+                adminMilestoneCounts={adminMilestoneCounts}
+                adminPresalesSummary={adminPresalesSummary}
                 currentRole={currentRole}
                 leadView="default"
                 currentUserName={currentUserName}
@@ -562,12 +642,14 @@ export default function Header() {
                 verificationStatus={listVerificationStatus}
                 leadsWorkspace={leadsWorkspace}
                 crmMonthWindow={
-                  (isPresalesRole(currentRole) && presalesSummaryTab) ||
-                  (isSuperAdminPresalesWorkspace &&
-                    superAdminPresalesNames.length > 0 &&
-                    presalesSummaryTab)
-                    ? "current"
-                    : ""
+                  viewerUsesAdminLeadsApi
+                    ? ""
+                    : (isPresalesRole(currentRole) && presalesSummaryTab) ||
+                        (isSuperAdminPresalesWorkspace &&
+                          superAdminPresalesNames.length > 0 &&
+                          presalesSummaryTab)
+                      ? "current"
+                      : ""
                 }
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
@@ -603,7 +685,9 @@ export default function Header() {
                 onReinquiryChange={setReinquiry}
                 onHeatmapAssigneeSync={setHeatmapToolbarAssignee}
                 onHeatmapAssigneeScopeSync={setHeatmapToolbarAssigneeScope}
-                onHeatmapSummarySync={setHeatmapSummaryTotals}
+                onHeatmapSummarySync={handleHeatmapSummarySync}
+                onAdminMilestoneCountsSync={handleAdminMilestoneCountsSync}
+                onAdminPresalesSummarySync={handleAdminPresalesSummarySync}
                 onInsightTableModeChange={setInsightTableMode}
               />
             </>

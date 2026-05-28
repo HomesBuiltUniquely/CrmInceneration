@@ -11,7 +11,12 @@ import {
 } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
+import type { LeadSourceCounts } from "@/lib/leads-filter";
 import { normalizeRole } from "@/lib/auth/api";
+import { isSalesPoolNoMilestoneFilter, type CrmWorkspace } from "@/lib/crm-workspace";
+import { SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
+import { normalizeStageKey } from "@/lib/milestone-progress";
+import { isAdminRole } from "@/lib/roleUtils";
 
 function meetingQuoteLeadTypeTiles(
   counts: Record<string, number>,
@@ -46,10 +51,15 @@ function insightKeyForLeadTypeLabel(
 function Pill({
   label,
   value,
+  secondaryValue,
+  secondaryTitle = "All rows (with duplicates)",
   active,
 }: {
   label: string;
   value?: number | string;
+  /** Shown to the right of `value` (e.g. all rows with duplicates). */
+  secondaryValue?: number | string;
+  secondaryTitle?: string;
   active?: boolean;
 }) {
   return (
@@ -67,6 +77,18 @@ function Pill({
           className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${active ? "bg-[var(--crm-accent)] text-white" : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]"}`}
         >
           {value}
+        </span>
+      ) : null}
+      {secondaryValue !== undefined ? (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+            active
+              ? "bg-[var(--crm-surface)] text-[var(--crm-text-secondary)] ring-1 ring-[var(--crm-border)]"
+              : "bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]"
+          }`}
+          title={secondaryTitle}
+        >
+          {secondaryValue}
         </span>
       ) : null}
     </button>
@@ -149,6 +171,17 @@ type LeadsToolbarProps = {
   rangeEnd?: number;
   loading?: boolean;
   leadTypeCounts?: Record<string, number>;
+  /** Admin: primary-source unique per lead type (Lead Types tiles). */
+  leadTypeCountsPrimary?: LeadSourceCounts;
+  /** Admin: all Hub rows per lead type (duplicates). */
+  leadTypeCountsAllRows?: LeadSourceCounts;
+  /** Temporary override for right badge on Total Leads pill. */
+  totalLeadsSecondaryOverride?: number;
+  totalLeadsSecondaryTitle?: string;
+  /** SUPER_ADMIN search only: separate Sales / Presales pool match counts. */
+  superAdminSearchPoolTotals?: { sales: number; presales: number };
+  /** True while SUPER_ADMIN has active cross-pool search (show Sales/Presales pills). */
+  superAdminCrossPoolSearchActive?: boolean;
   /** When set (e.g. from `Header`), used for badge / role checks on first paint so exec assignee scoping is not counted as a filter. */
   authRole?: string;
   viewerRole?: string;
@@ -198,6 +231,7 @@ type LeadsToolbarProps = {
   /** Clear presales month summary when user resets filters from the toolbar. */
   onResetPresalesSummary?: () => void;
   onResetAll?: () => void;
+  leadsWorkspace?: CrmWorkspace;
 };
 
 export default function LeadsToolbar({
@@ -206,6 +240,12 @@ export default function LeadsToolbar({
   rangeEnd,
   loading,
   leadTypeCounts = {},
+  leadTypeCountsPrimary,
+  leadTypeCountsAllRows,
+  totalLeadsSecondaryOverride,
+  totalLeadsSecondaryTitle,
+  superAdminSearchPoolTotals,
+  superAdminCrossPoolSearchActive = false,
   authRole = "",
   viewerRole = "",
   leadType,
@@ -252,9 +292,8 @@ export default function LeadsToolbar({
   hideTotalLeadsPill = false,
   onResetPresalesSummary,
   onResetAll,
+  leadsWorkspace = "sales",
 }: LeadsToolbarProps) {
-  const countLabel =
-    loading || totalCount === undefined ? "—" : totalCount.toLocaleString();
   const [openFilter, setOpenFilter] = useState(false);
   const [openSort, setOpenSort] = useState(false);
   const [openLeadTypes, setOpenLeadTypes] = useState(false);
@@ -274,22 +313,71 @@ export default function LeadsToolbar({
       ? leadTypeCounts.totalCalls ?? 0
       : leadTypeCounts.callDelayed ?? 0;
   const role = normalizeRole(authRole || viewerRole);
+  const isSuperAdmin = role === "SUPER_ADMIN";
   const isSalesManager = role === "SALES_MANAGER";
   const isSalesAdmin = role === "SALES_ADMIN";
+  const isAdminPoolViewer = isAdminRole(role) || isSalesAdmin;
+  /** SUPER_ADMIN only: primary + all-rows totals side by side. */
+  const showAdminPoolDualTotals =
+    isSuperAdmin &&
+    isAdminPoolViewer &&
+    leadTypeCountsPrimary !== undefined &&
+    leadTypeCountsAllRows !== undefined &&
+    (leadTypeCountsPrimary.all > 0 || leadTypeCountsAllRows.all > 0);
+  /** Admin pool (and other roles): milestone/source tiles use primary-source dedupe when available. */
+  const adminPoolUsesPrimaryCounts =
+    isAdminPoolViewer &&
+    leadTypeCountsPrimary !== undefined &&
+    leadTypeCountsPrimary.all > 0;
+  const adminSourceLeadTypeTiles = useMemo((): Array<[string, number]> => {
+    const counts =
+      adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
+        ? leadTypeCountsPrimary
+        : leadTypeCounts;
+    return [
+      ["External Lead", counts.formlead ?? 0],
+      ["Google Ads", counts.glead ?? 0],
+      ["Meta Ads", counts.mlead ?? 0],
+      ["Add Lead", counts.addlead ?? 0],
+      ["Website Lead", counts.websitelead ?? 0],
+    ];
+  }, [adminPoolUsesPrimaryCounts, leadTypeCounts, leadTypeCountsPrimary]);
+  const adminPoolPrimaryTotal =
+    adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
+      ? leadTypeCountsPrimary.all
+      : undefined;
+  const adminPoolAllRowsTotal =
+    showAdminPoolDualTotals && leadTypeCountsAllRows ? leadTypeCountsAllRows.all : undefined;
+  const totalLeadsPillPrimary =
+    adminPoolPrimaryTotal !== undefined ? adminPoolPrimaryTotal : totalCount;
+  const totalLeadsPillSecondary =
+    totalLeadsSecondaryOverride !== undefined
+      ? totalLeadsSecondaryOverride
+      : adminPoolAllRowsTotal !== undefined &&
+          adminPoolPrimaryTotal !== undefined &&
+          adminPoolAllRowsTotal !== adminPoolPrimaryTotal
+        ? adminPoolAllRowsTotal
+        : undefined;
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
+  const isSalesWorkspace = leadsWorkspace === "sales";
+  const isPresalesWorkspace = leadsWorkspace === "presales";
   const showMeetingQuoteTiles = isSalesManager || isSalesExecutive || isSalesAdmin;
   const meetingQuoteTiles = showMeetingQuoteTiles
     ? meetingQuoteLeadTypeTiles(leadTypeCounts)
     : [];
   const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
 
-  const milestoneStageOptions = useMemo(
-    () => milestoneStageOptionsFromNested(pipelineNested),
-    [pipelineNested],
-  );
+  const milestoneStageOptions = useMemo(() => {
+    const base = milestoneStageOptionsFromNested(pipelineNested);
+    if (!isAdminPoolViewer || isPresalesRole(role)) return base;
+    const hasNoMilestone = base.some(
+      (s) => normalizeStageKey(s) === normalizeStageKey(SALES_POOL_NO_MILESTONE),
+    );
+    return hasNoMilestone ? base : [...base, SALES_POOL_NO_MILESTONE];
+  }, [pipelineNested, isAdminPoolViewer, role]);
   const milestoneStageCategoryOptions = useMemo(
     () => milestoneCategoryOptionsForStage(pipelineNested, milestoneStage),
     [pipelineNested, milestoneStage],
@@ -303,6 +391,7 @@ export default function LeadsToolbar({
       ),
     [pipelineNested, milestoneStage, milestoneStageCategory],
   );
+  const salesNoMilestoneFilterActive = isSalesPoolNoMilestoneFilter(milestoneStage);
 
   useEffect(() => {
     setDraftDateFrom(dateFrom);
@@ -334,11 +423,11 @@ export default function LeadsToolbar({
     if (salesAdminFilter) c += 1;
     if (salesManagerFilter) c += 1;
     if (salesExecFilter) c += 1;
-    if (presalesManagerFilter) c += 1;
-    if (presalesExecFilter) c += 1;
+    if (isSalesWorkspace && presalesManagerFilter) c += 1;
+    if (isSalesWorkspace && presalesExecFilter) c += 1;
     if (dateFrom) c += 1;
     if (dateTo) c += 1;
-    if (reinquiry) c += 1;
+    if (isPresalesWorkspace && reinquiry) c += 1;
     return c;
   }, [
     assignee,
@@ -351,6 +440,8 @@ export default function LeadsToolbar({
     milestoneSubStage,
     presalesExecFilter,
     presalesManagerFilter,
+    isPresalesWorkspace,
+    isSalesWorkspace,
     salesAdminFilter,
     salesExecFilter,
     salesManagerFilter,
@@ -435,7 +526,45 @@ export default function LeadsToolbar({
               <span className="text-[13px]">#</span>
               <span>Lead Types</span>
             </button>
-            {hideTotalLeadsPill ? null : <Pill label="Total Leads" value={countLabel} active />}
+            {hideTotalLeadsPill ? null : isSuperAdmin &&
+            (superAdminCrossPoolSearchActive || superAdminSearchPoolTotals) ? (
+              <>
+                <Pill
+                  label="Sales"
+                  value={
+                    loading || !superAdminSearchPoolTotals
+                      ? "—"
+                      : superAdminSearchPoolTotals.sales.toLocaleString()
+                  }
+                  active
+                />
+                <Pill
+                  label="Presales"
+                  value={
+                    loading || !superAdminSearchPoolTotals
+                      ? "—"
+                      : superAdminSearchPoolTotals.presales.toLocaleString()
+                  }
+                  active
+                />
+              </>
+            ) : (
+              <Pill
+                label="Total Leads"
+                value={
+                  loading || totalLeadsPillPrimary === undefined
+                    ? "—"
+                    : totalLeadsPillPrimary.toLocaleString()
+                }
+                secondaryValue={
+                  loading || totalLeadsPillSecondary === undefined
+                    ? undefined
+                    : totalLeadsPillSecondary.toLocaleString()
+                }
+                secondaryTitle={totalLeadsSecondaryTitle}
+                active
+              />
+            )}
             {showDeleteAllButton ? (
               <button
                 type="button"
@@ -488,12 +617,8 @@ export default function LeadsToolbar({
                       ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                       ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                       ...meetingQuoteTiles,
-                      ["External Lead", leadTypeCounts.formlead ?? 0],
-                      ["Google Ads", leadTypeCounts.glead ?? 0],
-                      ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                      ["Add Lead", leadTypeCounts.addlead ?? 0],
-                      ["Website Lead", leadTypeCounts.websitelead ?? 0],
-                    ]
+                        ...adminSourceLeadTypeTiles,
+                      ]
                   : isSalesAdmin
                     ? [
                         [callsTileLabel, callsTileValue],
@@ -502,27 +627,18 @@ export default function LeadsToolbar({
                         ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                         ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                         ...meetingQuoteTiles,
-                        ["External Lead", leadTypeCounts.formlead ?? 0],
-                        ["Google Ads", leadTypeCounts.glead ?? 0],
-                        ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                        ["Add Lead", leadTypeCounts.addlead ?? 0],
-                        ["Website Lead", leadTypeCounts.websitelead ?? 0],
+                        ...adminSourceLeadTypeTiles,
                       ]
                   : isPresalesRole(role)
-                    ? [
-                        ["External Lead", leadTypeCounts.formlead ?? 0],
-                        ["Google Ads", leadTypeCounts.glead ?? 0],
-                        ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                        ["Add Lead", leadTypeCounts.addlead ?? 0],
-                        ["Website Lead", leadTypeCounts.websitelead ?? 0],
-                      ]
+                    ? [...adminSourceLeadTypeTiles]
                   : [
-                      ["My Assigned Leads", leadTypeCounts.all ?? 0],
-                      ["External Lead", leadTypeCounts.formlead ?? 0],
-                      ["Google Ads", leadTypeCounts.glead ?? 0],
-                      ["Meta Ads", leadTypeCounts.mlead ?? 0],
-                      ["Add Lead", leadTypeCounts.addlead ?? 0],
-                      ["Website Lead", leadTypeCounts.websitelead ?? 0],
+                      [
+                        isAdminPoolViewer ? "Sales pool (all assignees)" : "My Assigned Leads",
+                        adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
+                          ? leadTypeCountsPrimary.all
+                          : (leadTypeCounts.all ?? 0),
+                      ],
+                      ...adminSourceLeadTypeTiles,
                     ]).map(([label, value]) => {
                 const tileLabel = String(label);
                 const insightKey = insightKeyForLeadTypeLabel(tileLabel);
@@ -585,7 +701,7 @@ export default function LeadsToolbar({
               </button>
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {(viewerRole === "ADMIN" || viewerRole === "SUPER_ADMIN") && (
+              {isSalesWorkspace && (viewerRole === "ADMIN" || viewerRole === "SUPER_ADMIN") && (
                 <SelectField label="Sales Admin" value={salesAdminFilter} onChange={onSalesAdminFilterChange}>
                   <option value="">All</option>
                   {salesAdminOptions.map((v) => (
@@ -595,7 +711,7 @@ export default function LeadsToolbar({
                   ))}
                 </SelectField>
               )}
-              {!isSalesExecutive && !isPresalesFlow ? (
+              {isSalesWorkspace && !isSalesExecutive && !isPresalesFlow ? (
                 <SelectField label="Sales Exec" value={salesExecFilter} onChange={onSalesExecFilterChange}>
                   <option value="">All</option>
                   {salesExecOptions.map((v) => (
@@ -605,7 +721,7 @@ export default function LeadsToolbar({
                   ))}
                 </SelectField>
               ) : null}
-              {!isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
+              {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
                 <>
                   <SelectField label="Sales Mgr" value={salesManagerFilter} onChange={onSalesManagerFilterChange}>
                     <option value="">All</option>
@@ -615,33 +731,9 @@ export default function LeadsToolbar({
                       </option>
                     ))}
                   </SelectField>
-                  <SelectField
-                    label="Presales Mgr"
-                    value={presalesManagerFilter}
-                    onChange={onPresalesManagerFilterChange}
-                  >
-                    <option value="">All</option>
-                    {presalesManagerOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </SelectField>
-                  <SelectField
-                    label="Presales Exec"
-                    value={presalesExecFilter}
-                    onChange={onPresalesExecFilterChange}
-                  >
-                    <option value="">All</option>
-                    {presalesExecOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </SelectField>
                 </>
               ) : null}
-              {isPresalesManager ? (
+              {isSalesWorkspace && isPresalesManager ? (
                 <SelectField
                   label="Presales Exec"
                   value={presalesExecFilter}
@@ -662,7 +754,7 @@ export default function LeadsToolbar({
                   </option>
                 ))}
               </SelectField>
-              {!isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
+              {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
                 <SelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
                   <option value="">All</option>
                   {assigneeOptions.map((v) => (
@@ -753,10 +845,14 @@ export default function LeadsToolbar({
                       onMilestoneStageCategoryChange(v);
                       onMilestoneSubStageChange("");
                     }}
-                    disabled={!milestoneStage.trim()}
+                    disabled={!milestoneStage.trim() || salesNoMilestoneFilterActive}
                   >
                     <option value="">
-                      {milestoneStage.trim() ? "All" : "Select stage first"}
+                      {salesNoMilestoneFilterActive
+                        ? "N/A for No milestone"
+                        : milestoneStage.trim()
+                          ? "All"
+                          : "Select stage first"}
                     </option>
                     {milestoneStageCategoryOptions.map((v) => (
                       <option key={v} value={v}>
@@ -768,14 +864,20 @@ export default function LeadsToolbar({
                     label="Sub Stage"
                     value={milestoneSubStage}
                     onChange={onMilestoneSubStageChange}
-                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                    disabled={
+                      salesNoMilestoneFilterActive ||
+                      !milestoneStage.trim() ||
+                      !milestoneStageCategory.trim()
+                    }
                   >
                     <option value="">
-                      {milestoneStage.trim() && milestoneStageCategory.trim()
-                        ? "All"
-                        : milestoneStage.trim()
-                          ? "Select category first"
-                          : "Select stage first"}
+                      {salesNoMilestoneFilterActive
+                        ? "N/A for No milestone"
+                        : milestoneStage.trim() && milestoneStageCategory.trim()
+                          ? "All"
+                          : milestoneStage.trim()
+                            ? "Select category first"
+                            : "Select stage first"}
                     </option>
                     {milestoneSubStageOptions.map((v) => (
                       <option key={v} value={v}>
@@ -785,11 +887,13 @@ export default function LeadsToolbar({
                   </SelectField>
                 </>
               )}
-              <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
-                <option value="">All</option>
-                <option value="true">Reinquiry only</option>
-                <option value="false">Non-reinquiry only</option>
-              </SelectField>
+              {isPresalesWorkspace ? (
+                <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
+                  <option value="">All</option>
+                  <option value="true">Reinquiry only</option>
+                  <option value="false">Non-reinquiry only</option>
+                </SelectField>
+              ) : null}
               <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
                 <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">From</span>
                 <input

@@ -10,7 +10,21 @@ import {
   logout as apiLogout,
 } from "@/lib/auth/api";
 import { cn } from "@/lib/cn";
+import { isAdminRole } from "@/lib/roleUtils";
 import ThemeToggle from "./ThemeToggle";
+
+/** `/` must not match every route via `startsWith` (e.g. `/presales-leads`). */
+function pathnameMatchesSidebarHref(pathname: string, href: string): boolean {
+  const path = (pathname ?? "").split("?")[0]?.split("#")[0] ?? "/";
+  const base = href.trim();
+  if (!base) return false;
+  if (base === "/") return path === "/" || path === "";
+  return path === base || path.startsWith(`${base}/`);
+}
+
+function sidebarHrefMatchLength(href: string): number {
+  return href.trim() === "/" ? 1 : href.trim().length;
+}
 
 export type QuickAccessSubItem = {
   id: string;
@@ -530,21 +544,21 @@ export default function QuickAccessSidebar({
     const isDesigner = role === "DESIGNER";
     const isDesignRole = isTerritoryDesignManager || isDesignManager || isDesigner;
     const isSuperAdmin = role === "SUPER_ADMIN";
+    const isHubAdmin = isAdminRole(role) || role === "SALES_ADMIN";
 
     return sections
       .filter((section) => {
-        if (section.id === "presales") return isSuperAdmin;
+        if (section.id === "presales") {
+          return isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive;
+        }
         if (section.id === "booking-token") return isSuperAdmin;
         if (isDesignRole) {
           return section.id === "design";
         }
-        if (
-          isSalesAdmin ||
-          isSalesManager ||
-          isPresalesManager ||
-          isSalesExecutive ||
-          isPresalesExecutive
-        ) {
+        if (isPresalesManager || isPresalesExecutive) {
+          return section.id === "presales";
+        }
+        if (isSalesAdmin || isSalesManager || isSalesExecutive) {
           return section.id === "crm";
         }
         return true;
@@ -588,21 +602,28 @@ export default function QuickAccessSidebar({
     setCurrentInitials(nextInitials);
   }, [profileInitials, profileName, profileRole]);
 
-  // Set active item based on current pathname
+  // Longest href wins so `/` (CRM dashboard) does not steal `/presales-leads`, etc.
   useEffect(() => {
+    let best: { sectionId: string; itemId: string; matchLen: number } | null = null;
+
     for (const section of filteredSections) {
       for (const item of section.items) {
-        if (item.href && pathname.startsWith(item.href)) {
-          if (section.id === "design" || section.id === "admin") {
-            setActiveSubItemId("");
-          } else {
-            setActiveSubItemId(item.id);
-          }
-          setOpenParentId(section.id);
-          return;
+        if (!item.href || !pathnameMatchesSidebarHref(pathname, item.href)) continue;
+        const matchLen = sidebarHrefMatchLength(item.href);
+        if (!best || matchLen > best.matchLen) {
+          best = { sectionId: section.id, itemId: item.id, matchLen };
         }
       }
     }
+
+    if (!best) return;
+
+    if (best.sectionId === "design" || best.sectionId === "admin") {
+      setActiveSubItemId("");
+    } else {
+      setActiveSubItemId(best.itemId);
+    }
+    setOpenParentId(best.sectionId);
   }, [filteredSections, pathname]);
 
   const openParent = useMemo(
@@ -674,7 +695,7 @@ export default function QuickAccessSidebar({
         return;
       }
 
-      if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {
+      if (pathnameMatchesSidebarHref(pathname, item.href)) {
         return;
       }
       router.push(item.href);

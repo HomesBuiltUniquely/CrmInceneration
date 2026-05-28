@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { isPresalesRole } from "@/lib/crm-role-access";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
-import { crmLeadTopLevelStage } from "@/lib/leads-filter";
+import { crmLeadTopLevelStage, SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import { presalesTopLevelStage } from "@/lib/presales-milestone";
 import {
@@ -21,6 +21,15 @@ import {
 import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-visibility";
 import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
+import {
+  adminFilterInputFromQueryString,
+  fetchAdminLeadsHeatmapData,
+  milestoneCountForPhase,
+  milestoneCountsFromLeads,
+  presalesSummaryMetricsFromLeads,
+  salesJourneySummaryFromMilestoneCounts,
+  usesAdminLeadsApi,
+} from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type Phase = {
@@ -59,6 +68,13 @@ export type JourneyPhaseHeatmapProps = {
   onPresalesSummaryTabChange?: (tab: "total" | "verified" | "teamVerified") => void;
   /** Fast top summary totals from the lead table dataset. */
   summaryTotalsOverride?: { lead: number; opportunity: number } | null;
+  /** Admin pool milestone breakdown from LeadsDataSection (one shared /counts call). */
+  adminMilestoneCounts?: Record<string, number> | null;
+  adminPresalesSummary?: {
+    totalMonth: number;
+    verifiedMonth: number;
+    teamVerifiedMonth: number;
+  } | null;
   /** Sales `/Leads` vs presales `/presales-leads` — drives phase labels and pool scope. */
   leadsWorkspace?: CrmWorkspace;
 };
@@ -111,6 +127,30 @@ function mapLeadsToPhases(
       },
     };
   });
+}
+
+function phasesFromMilestoneCountMap(
+  defaults: Phase[],
+  counts: Record<string, number> | undefined,
+  shareDenominator: number,
+): Phase[] {
+  const mapped = defaults.map((phase) => {
+    const count = milestoneCountForPhase(counts, phase.name);
+    return {
+      ...phase,
+      count,
+      sharePct: 0,
+      tone: toneByCount(count, 0),
+      note: {
+        icon: phase.note.icon,
+        text:
+          count === 0 ? "No leads in this stage." : `${count} lead${count === 1 ? "" : "s"} in this stage.`,
+      },
+    };
+  });
+  const max = Math.max(...mapped.map((p) => p.count), 0);
+  const withTone = mapped.map((p) => ({ ...p, tone: toneByCount(p.count, max) }));
+  return phasesWithShareDenominator(withTone, shareDenominator);
 }
 
 function phasesWithShareDenominator(phases: Phase[], denominator: number): Phase[] {
@@ -272,7 +312,7 @@ function PhaseCard({
     <button
       type="button"
       onClick={onClick}
-      className={`relative w-full rounded-2xl border px-5 py-4 text-left transition-all ${
+      className={`relative flex h-full min-h-[168px] w-full flex-col rounded-2xl border px-4 py-4 text-left transition-all sm:px-5 ${
         active
           ? "border-[var(--crm-accent-ring)] ring-2 ring-[var(--crm-accent-ring)]"
           : "border-[var(--crm-border)]"
@@ -282,27 +322,26 @@ function PhaseCard({
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
         {p.phaseLabel}
       </div>
-      <div className="mt-2 flex items-start justify-between">
-        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
+      <div className="mt-2 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 text-[15px] font-bold leading-snug text-[var(--crm-text-primary)] sm:text-[17px]">
           {p.name}
         </div>
-        <div className="text-right">
-          <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">
+        <div className="shrink-0 text-right">
+          <div className="text-[20px] font-semibold leading-none text-[var(--crm-text-primary)]">
             {p.count}
           </div>
-          <div className={`text-[10px] font-semibold ${shareText}`}>
+          <div className={`mt-1 whitespace-nowrap text-[10px] font-semibold ${shareText}`}>
             {p.sharePct}% of total
           </div>
-
         </div>
       </div>
-      <div className="mt-3 h-1.5 w-full rounded-full bg-[var(--crm-surface)]/70">
+      <div className="mt-3 h-1.5 w-full shrink-0 rounded-full bg-[var(--crm-surface)]/70">
         <div
           className={`h-1.5 rounded-full ${bar}`}
           style={{ width: `${Math.min(100, barWidth)}%` }}
         />
       </div>
-      <div className="mt-3 flex items-center gap-2 text-[10px] font-semibold text-[var(--crm-text-muted)]">
+      <div className="mt-auto flex items-center gap-2 pt-3 text-[10px] font-semibold text-[var(--crm-text-muted)]">
         <Icon kind={p.note.icon} />
         <span>{p.note.text}</span>
       </div>
@@ -315,19 +354,19 @@ function PhaseCard({
 
 function SummaryCard({ label, total }: { label: string; total: number }) {
   return (
-    <div className="relative min-h-[132px] rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-4">
+    <div className="relative flex h-[136px] w-full flex-col justify-between rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-4 py-4 sm:px-5">
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
         SUMMARY
       </div>
-      <div className="mt-2 flex items-start justify-between">
-        <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0 flex-1 text-[17px] font-bold leading-snug text-[var(--crm-text-primary)] sm:text-[18px]">
           {label}
         </div>
-        <div className="text-right">
-          <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">
-            {total}
+        <div className="shrink-0 text-right">
+          <div className="text-[20px] font-semibold leading-none text-[var(--crm-text-primary)]">
+            {total.toLocaleString()}
           </div>
-          <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">
+          <div className="mt-1 whitespace-nowrap text-[10px] font-semibold text-[var(--crm-warning-text)]">
             total leads
           </div>
         </div>
@@ -474,11 +513,23 @@ export default function JourneyPhaseHeatmap({
   presalesSummaryTab = null,
   onPresalesSummaryTabChange,
   summaryTotalsOverride = null,
+  adminMilestoneCounts = null,
+  adminPresalesSummary = null,
   leadsWorkspace = "sales",
 }: JourneyPhaseHeatmapProps = {}) {
   const [poolLeads, setPoolLeads] = useState<ApiLead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [adminCountsLocal, setAdminCountsLocal] = useState<Record<string, number> | null>(
+    null,
+  );
+  const [adminPoolTotalLocal, setAdminPoolTotalLocal] = useState<number | null>(null);
+  const [adminPresalesSummaryLocal, setAdminPresalesSummaryLocal] = useState<{
+    totalMonth: number;
+    verifiedMonth: number;
+    teamVerifiedMonth: number;
+  } | null>(null);
+  const adminCountsFetchKeyRef = useRef("");
   const [leadOpen, setLeadOpen] = useState(false);
   const [opportunityOpen, setOpportunityOpen] = useState(false);
   const [presalesPhasesOpen, setPresalesPhasesOpen] = useState(false);
@@ -493,9 +544,14 @@ export default function JourneyPhaseHeatmap({
     }),
     [currentRole, currentUserName, managerTeamNames, leadView],
   );
+  const assigneeScopeKey = assigneeScope
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("\0");
   const assigneeScopeSet = useMemo(
-    () => new Set(assigneeScope.map((v) => v.trim().toLowerCase()).filter(Boolean)),
-    [assigneeScope],
+    () => new Set(assigneeScopeKey ? assigneeScopeKey.split("\0") : []),
+    [assigneeScopeKey],
   );
 
   const filteredInsightLeads = useMemo(
@@ -505,15 +561,17 @@ export default function JourneyPhaseHeatmap({
   );
 
   const roleKeyUi = normalizeRole(currentRole);
+  const aggregateNormKey = (aggregatePresalesAssigneeNames ?? [])
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join("\0");
   const aggregateNormSet = useMemo(
-    () =>
-      new Set(
-        (aggregatePresalesAssigneeNames ?? [])
-          .map((v) => v.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    [aggregatePresalesAssigneeNames],
+    () => new Set(aggregateNormKey ? aggregateNormKey.split("\0") : []),
+    [aggregateNormKey],
   );
+  const isAdminHeatmapViewer =
+    usesAdminLeadsApi(roleKeyUi) && leadView !== "my" && leadView !== "team";
   const usePresalesSummaryUi = leadsWorkspace === "presales";
   const showPresalesManagerTeamVerifiedCard =
     leadsWorkspace === "presales" &&
@@ -556,6 +614,8 @@ export default function JourneyPhaseHeatmap({
   }, [currentUserName, currentUserAliases, currentUserId]);
 
   const presalesMonthMetrics = useMemo(() => {
+    if (isAdminHeatmapViewer && adminPresalesSummaryLocal) return adminPresalesSummaryLocal;
+    if (adminPresalesSummary && usesAdminLeadsApi(roleKeyUi)) return adminPresalesSummary;
     // Summary counts must reflect full presales pool, not an insight-tile drill-down subset.
     const monthPool = filterLeadsCurrentMonthAssignedPool(poolLeads);
     const totalMonth = monthPool.length;
@@ -573,7 +633,16 @@ export default function JourneyPhaseHeatmap({
           ).length
         : 0;
     return { totalMonth, verifiedMonth, teamVerifiedMonth };
-  }, [aggregateNormSet.size, poolLeads, presalesTeamNames, roleKeyUi, presalesIdentity]);
+  }, [
+    adminPresalesSummary,
+    adminPresalesSummaryLocal,
+    isAdminHeatmapViewer,
+    aggregateNormSet.size,
+    poolLeads,
+    presalesTeamNames,
+    roleKeyUi,
+    presalesIdentity,
+  ]);
 
   /** Presales journey phases must match Total / Verified / Team summary cards (this-month assigned pool). */
   const presalesPhaseLeads = useMemo(() => {
@@ -604,8 +673,80 @@ export default function JourneyPhaseHeatmap({
     presalesIdentity,
   ]);
 
+  const assigneeScopedAdminCounts =
+    assigneeScope.length > 0 || summaryTotalsOverride != null;
+  const adminCountsEffective = useMemo(() => {
+    if (!isAdminHeatmapViewer) return null;
+    if (assigneeScopedAdminCounts) {
+      if (adminMilestoneCounts && Object.keys(adminMilestoneCounts).length > 0) {
+        return adminMilestoneCounts;
+      }
+      return adminCountsLocal ?? adminMilestoneCounts;
+    }
+    if (adminCountsLocal && Object.keys(adminCountsLocal).length > 0) return adminCountsLocal;
+    if (adminMilestoneCounts && Object.keys(adminMilestoneCounts).length > 0) {
+      return adminMilestoneCounts;
+    }
+    return adminCountsLocal ?? adminMilestoneCounts;
+  }, [
+    isAdminHeatmapViewer,
+    assigneeScopedAdminCounts,
+    adminCountsLocal,
+    adminMilestoneCounts,
+  ]);
+
+  const adminSummaryFromCounts = useMemo(
+    () => salesJourneySummaryFromMilestoneCounts(adminCountsEffective ?? undefined),
+    [adminCountsEffective],
+  );
+
   const phases = useMemo(() => {
     const defaults = usePresalesSummaryUi ? PRESALES_DEFAULT_PHASES : DEFAULT_PHASES;
+    if (isAdminHeatmapViewer && adminCountsEffective && Object.keys(adminCountsEffective).length > 0) {
+      if (usePresalesSummaryUi) {
+        const mapped = mapLeadsToPhases(poolLeads, defaults, presalesTopLevelStage);
+        return phasesWithShareDenominator(mapped, presalesMonthMetrics.totalMonth);
+      }
+      const counts = adminCountsEffective;
+      const poolTotal =
+        adminPoolTotalLocal ??
+        Object.values(counts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      const phaseDefaults =
+        (counts[SALES_POOL_NO_MILESTONE] ?? 0) > 0
+          ? [
+              ...defaults,
+              {
+                phaseLabel: "—",
+                name: SALES_POOL_NO_MILESTONE,
+                count: 0,
+                sharePct: 0,
+                tone: "warning" as const,
+                note: {
+                  icon: "alert" as const,
+                  text: "Sales assignee but milestone_stage empty (legacy)",
+                },
+              },
+            ]
+          : defaults;
+      return phasesFromMilestoneCountMap(phaseDefaults, counts, poolTotal);
+    }
+    if (adminCountsEffective && Object.keys(adminCountsEffective).length > 0) {
+      const shareDenominator = usePresalesSummaryUi
+        ? presalesSummaryTab === "verified"
+          ? presalesMonthMetrics.verifiedMonth
+          : presalesSummaryTab === "teamVerified"
+            ? presalesMonthMetrics.teamVerifiedMonth
+            : presalesSummaryTab === "total"
+              ? presalesMonthMetrics.totalMonth
+              : Object.values(adminCountsEffective).reduce((s, n) => s + (Number(n) || 0), 0)
+        : (() => {
+            const combined = adminSummaryFromCounts.lead + adminSummaryFromCounts.opportunity;
+            return combined > 0
+              ? combined
+              : Object.values(adminCountsEffective).reduce((s, n) => s + (Number(n) || 0), 0);
+          })();
+      return phasesFromMilestoneCountMap(defaults, adminCountsEffective, shareDenominator);
+    }
     const getStage = usePresalesSummaryUi ? presalesTopLevelStage : crmLeadTopLevelStage;
     const sourceLeads = usePresalesSummaryUi ? presalesPhaseLeads : filteredInsightLeads;
     const mapped = mapLeadsToPhases(sourceLeads, defaults, getStage);
@@ -620,6 +761,12 @@ export default function JourneyPhaseHeatmap({
             : mapped.reduce((sum, p) => sum + p.count, 0);
     return phasesWithShareDenominator(mapped, shareDenominator);
   }, [
+    adminCountsEffective,
+    adminPoolTotalLocal,
+    adminSummaryFromCounts.lead,
+    adminSummaryFromCounts.opportunity,
+    isAdminHeatmapViewer,
+    poolLeads,
     filteredInsightLeads,
     presalesPhaseLeads,
     usePresalesSummaryUi,
@@ -627,6 +774,8 @@ export default function JourneyPhaseHeatmap({
     presalesMonthMetrics.totalMonth,
     presalesMonthMetrics.verifiedMonth,
     presalesMonthMetrics.teamVerifiedMonth,
+    summaryTotalsOverride?.lead,
+    summaryTotalsOverride?.opportunity,
   ]);
 
   const freshLeadPhase = pickPhase(phases, "Fresh Lead");
@@ -635,25 +784,132 @@ export default function JourneyPhaseHeatmap({
   const expDesignPhase = pickPhase(phases, "Experience & Design");
   const decisionPhase = pickPhase(phases, "Decision");
   const closedPhase = pickPhase(phases, "Closed");
-  const leadPhasesRaw = [freshLeadPhase, discoveryPhase, connectionPhase].filter(
-    (p): p is Phase => Boolean(p),
-  );
+  const noMilestonePhase = pickPhase(phases, SALES_POOL_NO_MILESTONE);
+  const leadPhasesRaw = [
+    freshLeadPhase,
+    discoveryPhase,
+    connectionPhase,
+    isAdminHeatmapViewer && noMilestonePhase && (noMilestonePhase.count ?? 0) > 0
+      ? noMilestonePhase
+      : null,
+  ].filter((p): p is Phase => Boolean(p));
   const opportunityPhasesRaw = [expDesignPhase, decisionPhase, closedPhase].filter(
     (p): p is Phase => Boolean(p),
   );
   const leadTotal = leadPhasesRaw.reduce((sum, p) => sum + p.count, 0);
   const opportunityTotal = opportunityPhasesRaw.reduce((sum, p) => sum + p.count, 0);
-  const summaryLeadTotal = summaryTotalsOverride?.lead ?? leadTotal;
-  const summaryOpportunityTotal = summaryTotalsOverride?.opportunity ?? opportunityTotal;
-  const leadPhases = phasesWithShareDenominator(leadPhasesRaw, summaryLeadTotal);
-  const opportunityPhases = phasesWithShareDenominator(opportunityPhasesRaw, summaryOpportunityTotal);
+  const adminSummaryFromCountsLocal = useMemo(
+    () => salesJourneySummaryFromMilestoneCounts(adminCountsEffective ?? undefined),
+    [adminCountsEffective],
+  );
+  const adminLeadSummaryTotal =
+    adminSummaryFromCountsLocal.lead + (adminCountsEffective?.[SALES_POOL_NO_MILESTONE] ?? 0);
+  const adminOppSummaryTotal = adminSummaryFromCountsLocal.opportunity;
+  const summaryLeadTotal = isAdminHeatmapViewer
+    ? usePresalesSummaryUi
+      ? leadTotal
+      : summaryTotalsOverride?.lead ?? adminLeadSummaryTotal
+    : (summaryTotalsOverride?.lead ?? leadTotal);
+  const summaryOpportunityTotal = isAdminHeatmapViewer
+    ? usePresalesSummaryUi
+      ? opportunityTotal
+      : summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal
+    : (summaryTotalsOverride?.opportunity ?? opportunityTotal);
+  const adminGrandTotal =
+    isAdminHeatmapViewer && !usePresalesSummaryUi
+      ? summaryTotalsOverride != null
+        ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
+        : (adminPoolTotalLocal ?? adminLeadSummaryTotal + adminOppSummaryTotal)
+      : 0;
+  const shareGrandTotal =
+    adminGrandTotal > 0 ? adminGrandTotal : summaryLeadTotal + summaryOpportunityTotal;
+  const leadPhases = phasesWithShareDenominator(
+    leadPhasesRaw,
+    isAdminHeatmapViewer && !usePresalesSummaryUi ? shareGrandTotal : summaryLeadTotal,
+  );
+  const opportunityPhases = phasesWithShareDenominator(
+    opportunityPhasesRaw,
+    isAdminHeatmapViewer && !usePresalesSummaryUi ? shareGrandTotal : summaryOpportunityTotal,
+  );
   const maxCount = Math.max(
     ...leadPhases.map((phase) => phase.count),
     ...opportunityPhases.map((phase) => phase.count),
     0,
   );
 
+  /** Admin pools: one `/counts` call per filter signature (deduped in admin-leads-api). */
   useEffect(() => {
+    if (!isAdminHeatmapViewer) {
+      adminCountsFetchKeyRef.current = "";
+      return;
+    }
+    if (assigneeScope.length > 0 || summaryTotalsOverride != null) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const input = adminFilterInputFromQueryString(
+      milestoneFilterQuery?.trim() ?? "",
+      leadsWorkspace,
+      presalesSummaryTab,
+    );
+    const fetchKey = `${leadsWorkspace}:${JSON.stringify(input)}`;
+    if (adminCountsFetchKeyRef.current === fetchKey) {
+      setLoading(false);
+      return;
+    }
+
+    void (async () => {
+      setLoading(true);
+      setError("");
+      setPoolLeads((prev) => (prev.length === 0 ? prev : []));
+      try {
+        const data = await fetchAdminLeadsHeatmapData(input, getCrmAuthHeaders());
+        if (cancelled) return;
+        adminCountsFetchKeyRef.current = fetchKey;
+        setAdminCountsLocal(data.milestoneCounts);
+        setAdminPoolTotalLocal(
+          data.uniquePrimaryTotal ?? data.pipelineTotal ?? data.totalElements,
+        );
+        setPoolLeads(data.leads);
+        if (leadsWorkspace === "presales") {
+          setAdminPresalesSummaryLocal(
+            data.leads.length > 0
+              ? presalesSummaryMetricsFromLeads(data.leads)
+              : {
+                  totalMonth: data.totalElements,
+                  verifiedMonth: data.verifiedCount,
+                  teamVerifiedMonth: 0,
+                },
+          );
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load admin counts.");
+          setAdminCountsLocal(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isAdminHeatmapViewer,
+    milestoneFilterQuery,
+    leadsWorkspace,
+    presalesSummaryTab,
+    assigneeScopeKey,
+    summaryTotalsOverride?.lead,
+    summaryTotalsOverride?.opportunity,
+  ]);
+
+  useEffect(() => {
+    if (isAdminHeatmapViewer) return;
+
     let cancelled = false;
 
     async function loadMilestoneCounts() {
@@ -711,8 +967,8 @@ export default function JourneyPhaseHeatmap({
           for (const chunk of rest) allLeads.push(...chunk);
         }
         const visibleLeads = mergeLeadsById(allLeads);
+        const roleKey = roleKeyUi;
 
-        const roleKey = normalizeRole(currentRole);
         const myAliases = new Set(
           [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
         );
@@ -819,6 +1075,7 @@ export default function JourneyPhaseHeatmap({
       cancelled = true;
     };
   }, [
+    isAdminHeatmapViewer,
     milestoneFilterQuery,
     currentRole,
     leadView,
@@ -826,10 +1083,11 @@ export default function JourneyPhaseHeatmap({
     currentUserAliases,
     currentUserId,
     managerTeamNames,
-    assigneeScopeSet,
+    assigneeScopeKey,
     presalesTeamNames,
-    aggregateNormSet,
+    aggregateNormKey,
     leadsWorkspace,
+    presalesSummaryTab,
   ]);
 
   return (
@@ -918,9 +1176,9 @@ export default function JourneyPhaseHeatmap({
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
             <div
-              className={`self-start rounded-2xl transition-all ${
+              className={`flex h-full flex-col rounded-2xl transition-all ${
                 leadOpen
                   ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
                   : "border-0 bg-transparent p-0 shadow-none"
@@ -929,10 +1187,10 @@ export default function JourneyPhaseHeatmap({
               <button
                 type="button"
                 onClick={() => setLeadOpen((v) => !v)}
-                className="w-full text-left"
+                className="w-full shrink-0 text-left"
                 aria-expanded={leadOpen}
               >
-                <div className="relative">
+                <div className="relative w-full">
                   <SummaryCard label="Lead" total={summaryLeadTotal} />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {leadOpen ? "Hide" : "Open"}
@@ -940,21 +1198,24 @@ export default function JourneyPhaseHeatmap({
                 </div>
               </button>
               {leadOpen ? (
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="mt-3 grid flex-1 grid-cols-1 gap-3 md:auto-rows-fr md:grid-cols-3">
                   {leadPhases.map((p) => (
                     <PhaseCard
                       key={`${p.phaseLabel}-${p.name}`}
                       p={p}
                       maxCount={maxCount}
                       active={normName(activeStageFilter) === normName(p.name)}
-                      onClick={() => onPhaseFilterToggle?.(p.name)}
+                      onClick={() => {
+                        if (!leadOpen) setLeadOpen(true);
+                        onPhaseFilterToggle?.(p.name);
+                      }}
                     />
                   ))}
                 </div>
               ) : null}
             </div>
             <div
-              className={`self-start rounded-2xl transition-all ${
+              className={`flex h-full flex-col rounded-2xl transition-all ${
                 opportunityOpen
                   ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
                   : "border-0 bg-transparent p-0 shadow-none"
@@ -963,10 +1224,10 @@ export default function JourneyPhaseHeatmap({
               <button
                 type="button"
                 onClick={() => setOpportunityOpen((v) => !v)}
-                className="w-full text-left"
+                className="w-full shrink-0 text-left"
                 aria-expanded={opportunityOpen}
               >
-                <div className="relative">
+                <div className="relative w-full">
                   <SummaryCard label="Opportunity" total={summaryOpportunityTotal} />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {opportunityOpen ? "Hide" : "Open"}
@@ -974,7 +1235,7 @@ export default function JourneyPhaseHeatmap({
                 </div>
               </button>
               {opportunityOpen ? (
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="mt-3 grid flex-1 grid-cols-1 gap-3 md:auto-rows-fr md:grid-cols-3">
                   {opportunityPhases.map((p) => (
                     <PhaseCard
                       key={`${p.phaseLabel}-${p.name}`}
