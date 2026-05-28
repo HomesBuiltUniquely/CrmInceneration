@@ -436,7 +436,8 @@ export default function Header() {
       isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
     if (!isPresalesRole(currentRole) && !superAdminPresalesCards) return "";
     if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") return "verified";
-    return "unverified";
+    // "Total" tab should not force unverified-only filter.
+    return "";
   }, [
     currentRole,
     presalesSummaryTab,
@@ -641,16 +642,7 @@ export default function Header() {
                 reinquiry={reinquiry}
                 verificationStatus={listVerificationStatus}
                 leadsWorkspace={leadsWorkspace}
-                crmMonthWindow={
-                  viewerUsesAdminLeadsApi
-                    ? ""
-                    : (isPresalesRole(currentRole) && presalesSummaryTab) ||
-                        (isSuperAdminPresalesWorkspace &&
-                          superAdminPresalesNames.length > 0 &&
-                          presalesSummaryTab)
-                      ? "current"
-                      : ""
-                }
+                crmMonthWindow=""
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
                   isPresalesManager && presalesSummaryTab === "teamVerified"

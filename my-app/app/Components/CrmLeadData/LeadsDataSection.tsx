@@ -448,11 +448,14 @@ async function fetchMergedPage(
   const normalizedLeadType = leadType.trim().toLowerCase();
   const normalizedViewerRole = normalizeRole(viewerRole);
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
+  const explicitVerification = verificationStatus.trim();
   const resolvedVerification =
     normalizedLeadType === "verified"
       ? "verified"
-      : verificationStatus.trim() ||
-        defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
+      : leadsWorkspace === "presales"
+        ? explicitVerification
+        : explicitVerification ||
+          defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
 
   if (
     (normalizedViewerRole === "SALES_MANAGER" || normalizedViewerRole === "MANAGER") &&
