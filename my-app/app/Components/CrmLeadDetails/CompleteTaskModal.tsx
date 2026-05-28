@@ -17,6 +17,7 @@ import {
 } from "@/lib/complete-task-pipeline";
 import {
   isPresalesVerifyHandoffSelection,
+  PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
@@ -141,6 +142,8 @@ export default function CompleteTaskModal({
   userRole = "",
   presalesHandedOff = false,
   presalesVerifyAvailable = false,
+  /** Opened from footer Verify — show handoff panel without picking Assigned first. */
+  forcePresalesVerifyPanel = false,
   salesExecutiveOptions = [],
   salesExecutivesLoading = false,
   salesExecutivesError = null,
@@ -164,6 +167,7 @@ export default function CompleteTaskModal({
   presalesHandedOff?: boolean;
   /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
   presalesVerifyAvailable?: boolean;
+  forcePresalesVerifyPanel?: boolean;
   salesExecutiveOptions?: PresalesSalesExecutiveOption[];
   salesExecutivesLoading?: boolean;
   salesExecutivesError?: string | null;
@@ -627,13 +631,26 @@ export default function CompleteTaskModal({
       onPresalesVerify &&
       !presalesLeadVerified &&
       !presalesHandedOff &&
-      selectedFeedbackOption &&
-      isPresalesVerifyHandoffSelection({
-        stage: selectedFeedbackOption.stage,
-        category: selectedFeedbackOption.stageCategory,
-        subStage: selectedFeedbackOption.subStageName,
-        feedbackLabel: feedback,
-      }),
+      (forcePresalesVerifyPanel ||
+        (selectedFeedbackOption &&
+          isPresalesVerifyHandoffSelection({
+            stage: selectedFeedbackOption.stage,
+            category: selectedFeedbackOption.stageCategory,
+            subStage: selectedFeedbackOption.subStageName,
+            feedbackLabel: feedback,
+          }))),
+  );
+  const presalesDataConversionWonVisible = useMemo(
+    () =>
+      presalesMode &&
+      !presalesLeadVerified &&
+      !presalesHandedOff &&
+      feedbackOptions.some(
+        (o) =>
+          normalizeStageKey(o.stage) === "data conversion" &&
+          isWonCategory(o.stageCategory),
+      ),
+    [feedbackOptions, presalesHandedOff, presalesLeadVerified, presalesMode],
   );
   const reasonRequired = requiresResoneField(path, feedback);
   const isClosedWonCustomer =
@@ -770,7 +787,14 @@ export default function CompleteTaskModal({
       return;
     }
 
-    if (nextCallDateMissing || noteMissing || feedbackMissing) {
+    const verifyOnlyFromFooter = Boolean(
+      presalesMode && verifyHandoffMode && forcePresalesVerifyPanel,
+    );
+    if (
+      nextCallDateMissing ||
+      noteMissing ||
+      (feedbackMissing && !verifyOnlyFromFooter)
+    ) {
       return;
     }
 
@@ -804,6 +828,19 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
+      if (
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        isPresalesVerifyHandoffSelection({
+          stage: stageToSave,
+          category: catToSave,
+          subStage: substageToSave,
+          feedbackLabel: feedback,
+        })
+      ) {
+        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+        return;
+      }
       setApiBusy(true);
       setApiError("");
       try {
@@ -1104,18 +1141,31 @@ export default function CompleteTaskModal({
                     <strong className="font-medium text-[var(--crm-text-secondary)]">
                       Data Conversion
                     </strong>
-                    . Sales handoff (Won / Assigned) uses{" "}
+                    . Data Conversion Won substages are listed below;{" "}
                     <strong className="font-medium text-[var(--crm-text-secondary)]">
-                      Verify Lead
+                      Assigned
                     </strong>{" "}
-                    on unverified leads.
+                    hands off via verify (pincode), not a normal save.
+                  </p>
+                ) : null}
+                {presalesDataConversionWonVisible && !presalesOnFreshData ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
+                    Data Conversion Won substages are available. Choose{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Assigned
+                    </strong>{" "}
+                    to open verify and hand off to sales, or pick another Won/Lost
+                    substage to update the milestone.
                   </p>
                 ) : null}
               </div>
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
-                  handoffLabel={feedback}
+                  handoffLabel={
+                    feedback.trim() ||
+                    "Data Conversion → Won → Assigned"
+                  }
                   pincode={verifyPincode}
                   onPincodeChange={setVerifyPincode}
                   salesExecutiveId={verifySalesExecutiveId}
