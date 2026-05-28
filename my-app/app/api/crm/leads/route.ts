@@ -149,6 +149,35 @@ async function fetchPresalesSearchLeads(
   sort: string,
   search: string,
 ): Promise<ApiLead[]> {
+  const parseChunk = (json: unknown): Array<{ type?: string; lead?: ApiLead }> => {
+    if (!json || typeof json !== "object") return [];
+    const rec = json as Record<string, unknown>;
+    if (Array.isArray(rec.content)) return rec.content as Array<{ type?: string; lead?: ApiLead }>;
+    const data =
+      rec.data && typeof rec.data === "object" && !Array.isArray(rec.data)
+        ? (rec.data as Record<string, unknown>)
+        : null;
+    if (data && Array.isArray(data.content)) {
+      return data.content as Array<{ type?: string; lead?: ApiLead }>;
+    }
+    if (Array.isArray(rec.items)) return rec.items as Array<{ type?: string; lead?: ApiLead }>;
+    if (Array.isArray(json)) return json as Array<{ type?: string; lead?: ApiLead }>;
+    return [];
+  };
+
+  const parseTotalPages = (json: unknown): number => {
+    if (!json || typeof json !== "object") return 1;
+    const rec = json as Record<string, unknown>;
+    const direct = Number(rec.totalPages ?? 1);
+    if (Number.isFinite(direct) && direct > 0) return Math.floor(direct);
+    const data =
+      rec.data && typeof rec.data === "object" && !Array.isArray(rec.data)
+        ? (rec.data as Record<string, unknown>)
+        : null;
+    const nested = Number(data?.totalPages ?? 1);
+    return Number.isFinite(nested) && nested > 0 ? Math.floor(nested) : 1;
+  };
+
   const searchSize = 500;
   const byId = new Map<string, ApiLead>();
   for (let pageNum = 0; pageNum < 200; pageNum += 1) {
@@ -166,28 +195,78 @@ async function fetchPresalesSearchLeads(
       cache: "no-store",
     });
     if (!res.ok) break;
-    const pageData = (await res.json()) as {
-      content?: Array<{ type?: string; lead?: ApiLead }>;
-      totalPages?: number;
-    };
-    const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+    const pageData = (await res.json().catch(() => ({}))) as unknown;
+    const chunk = parseChunk(pageData);
     if (chunk.length === 0) break;
     for (const item of chunk) {
       const lt = String(item.type ?? "").trim().toLowerCase();
       const lead = item.lead;
       if (!lead || typeof lead !== "object") continue;
       const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-      if (!id || byId.has(id)) continue;
+      const fallbackKey = `noid:${String(
+        lead.customerId ??
+          lead.phone ??
+          lead.phoneNumber ??
+          lead.mobile ??
+          lead.mobileNumber ??
+          lead.email ??
+          lead.createdAt ??
+          lead.createdDate ??
+          "",
+      )
+        .trim()
+        .toLowerCase()}`;
+      const key = id || fallbackKey;
+      if (byId.has(key)) continue;
       const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
         ? (lt as (typeof CRM_LEAD_TYPES)[number])
         : "formlead";
-      byId.set(id, { ...lead, leadType: typed });
+      byId.set(key, { ...lead, leadType: typed });
     }
-    const totalPages = Math.max(1, Number(pageData.totalPages ?? 1));
+    const totalPages = Math.max(1, parseTotalPages(pageData));
     if (pageNum + 1 >= totalPages) break;
     if (chunk.length < searchSize) break;
   }
-  return [...byId.values()];
+  const fromSearch = [...byId.values()];
+  if (fromSearch.length > 0) return fromSearch;
+
+  // Fallback: some deployments return empty from presales-search for exec JWT scope.
+  // In that case, query filter flow across all lead types and merge.
+  const fallbackById = new Map<string, ApiLead>();
+  let noIdSeq = 0;
+  const pageSize = 500;
+  for (const leadType of CRM_LEAD_TYPES) {
+    for (let pageNum = 0; pageNum < 200; pageNum += 1) {
+      const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
+      upstream.searchParams.set("leadType", leadType);
+      upstream.searchParams.set("page", String(pageNum));
+      upstream.searchParams.set("size", String(pageSize));
+      upstream.searchParams.set("sort", sort);
+      if (search) upstream.searchParams.set("search", search);
+      for (const key of LEADS_EXTRA_PARAMS) {
+        const v = extraParamValue(url, key, effDates);
+        if (v) upstream.searchParams.set(key, v);
+      }
+      const res = await fetch(upstream.toString(), {
+        headers: upstreamAuthHeaders(req),
+        cache: "no-store",
+      });
+      if (!res.ok) break;
+      const pageData = (await res.json().catch(() => ({}))) as SpringPage<ApiLead>;
+      const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+      if (chunk.length === 0) break;
+      for (const lead of chunk) {
+        const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+        const key = id || `fallback_noid_${noIdSeq++}`;
+        if (fallbackById.has(key)) continue;
+        fallbackById.set(key, { ...lead, leadType });
+      }
+      const totalPages = Math.max(1, Number(pageData.totalPages ?? 1));
+      if (pageNum + 1 >= totalPages) break;
+      if (chunk.length < pageSize) break;
+    }
+  }
+  return [...fallbackById.values()];
 }
 
 function filterAndSortMergedLeads(
