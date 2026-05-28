@@ -17,7 +17,6 @@ import {
 } from "@/lib/complete-task-pipeline";
 import {
   isPresalesVerifyHandoffSelection,
-  PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
 import { isWonCategory } from "@/lib/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
@@ -817,20 +816,6 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
-      if (
-        !presalesLeadVerified &&
-        selected &&
-        (isWonCategory(catToSave) ||
-          isPresalesVerifyHandoffSelection({
-            stage: stageToSave,
-            category: catToSave,
-            subStage: substageToSave,
-            feedbackLabel: feedback,
-          }))
-      ) {
-        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
-        return;
-      }
       setApiBusy(true);
       setApiError("");
       try {
@@ -1136,11 +1121,6 @@ export default function CompleteTaskModal({
                       Verify Lead
                     </strong>{" "}
                     on unverified leads.
-                  </p>
-                ) : null}
-                {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
-                  <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
-                    Data Conversion → Won paths are hidden until the lead is verified.
                   </p>
                 ) : null}
               </div>
