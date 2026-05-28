@@ -19,7 +19,7 @@ import {
   isPresalesVerifyHandoffSelection,
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
-import { isWonCategory } from "@/lib/crm-pipeline";
+// import { isWonCategory } from "@/lib/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
@@ -35,6 +35,8 @@ import {
   meetingSchedulePanelTitle,
   pipelineSubStageLabel,
   resolveSubStageFromCompleteTaskFeedback,
+  isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -585,15 +587,16 @@ export default function CompleteTaskModal({
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
-      if (
-        presalesMode &&
-        !presalesLeadVerified &&
-        !presalesHandedOff &&
-        normalizeStageKey(stage) === "data conversion" &&
-        isWonCategory(stageCategory)
-      ) {
-        continue;
-      }
+      // Data Conversion -> Won paths should stay visible even before lead verification.
+      // if (
+      //   presalesMode &&
+      //   !presalesLeadVerified &&
+      //   !presalesHandedOff &&
+      //   normalizeStageKey(stage) === "data conversion" &&
+      //   isWonCategory(stageCategory)
+      // ) {
+      //   continue;
+      // }
       const label = completeTaskFeedbackLabel(stage, subStageName, presalesMode);
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
@@ -653,12 +656,13 @@ export default function CompleteTaskModal({
       }),
   );
   const reasonRequired = requiresResoneField(path, feedback);
+  const customerSubstage =
+    selectedFeedbackOption?.subStageName.trim() || feedback.trim();
   const isClosedWonCustomer =
     !presalesMode &&
     status.trim() === "Closed" &&
-    path.trim() === "Closed Won" &&
-    (feedback.trim() === "Booking Done (Booking)" ||
-      feedback.trim() === "Token Done");
+    isClosedWonPathCategory(path) &&
+    isClosedWonCustomerSubstage(customerSubstage);
   const noFollowUpRequired = presalesMode
     ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
@@ -828,10 +832,11 @@ export default function CompleteTaskModal({
           subStage: substageToSave,
           feedbackLabel: feedback,
         });
-        const dataConversionWon =
-          normalizeStageKey(stageToSave) === "data conversion" &&
-          isWonCategory(catToSave);
-        if (verifyHandoff || dataConversionWon) {
+        // Data Conversion -> Won is allowed before lead verification.
+        // const dataConversionWon =
+        //   normalizeStageKey(stageToSave) === "data conversion" &&
+        //   isWonCategory(catToSave);
+        if (verifyHandoff) {
           setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
           return;
         }
@@ -1143,11 +1148,12 @@ export default function CompleteTaskModal({
                     on unverified leads.
                   </p>
                 ) : null}
-                {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
+                {/* Data Conversion -> Won paths are visible before lead verification. */}
+                {/* {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
                   <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
                     Data Conversion → Won paths are hidden until the lead is verified.
                   </p>
-                ) : null}
+                ) : null} */}
               </div>
 
               {verifyHandoffMode ? (

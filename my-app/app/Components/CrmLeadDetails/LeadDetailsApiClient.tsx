@@ -81,6 +81,7 @@ import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import {
   isClosedWonBookingDoneSubstage,
   isClosedWonCustomerSubstage,
+  isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
@@ -183,6 +184,7 @@ async function fetchSalesExecutivesForPicker(
 const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   id,
   leadId: "",
+  externalReferenceId: "",
   name: "—",
   customerId: "—",
   status: "—",
@@ -622,8 +624,7 @@ function truncateLabel(label: string, max = 80): string {
 function isClosedWonBookingDone(stageBlock: Lead["stageBlock"] | undefined): boolean {
   return (
     (stageBlock?.milestoneStage ?? "").trim().toLowerCase() === "closed" &&
-    (stageBlock?.milestoneStageCategory ?? "").trim().toLowerCase() ===
-      "closed won" &&
+    isClosedWonPathCategory(stageBlock?.milestoneStageCategory ?? "") &&
     isClosedWonBookingDoneSubstage(stageBlock?.milestoneSubStage ?? "")
   );
 }
@@ -649,7 +650,7 @@ function isNoFollowUpRequired(args: {
   const sub      = args.milestoneSubStage.trim();
   if (
     stage.toLowerCase() === "closed" &&
-    category.toLowerCase() === "closed won" &&
+    isClosedWonPathCategory(category) &&
     isClosedWonCustomerSubstage(sub)
   ) {
     return true;
@@ -1256,9 +1257,13 @@ export default function LeadDetailsApiClient({
       rawName: latestDetail.name ?? latestDetail.fullName ?? latestDetail.customerName,
       rawEmail: latestDetail.email ?? latestDetail.emailAddress ?? latestDetail.mail,
       rawPhone: latestDetail.phone ?? latestDetail.phoneNumber ?? latestDetail.mobile,
+      rawUniqueId: latestDetail.uniqueId,
+      rawLeadIdentifier: latestDetail.lead_identifier,
+      rawExternalReferenceId: latestDetail.externalReferenceId,
     });
     console.info("[sales-closure] mapped lead prefill fields", {
       leadId: latestLead.leadId,
+      externalReferenceId: latestLead.externalReferenceId,
       name: latestLead.name,
       email: latestLead.email,
       phone: latestLead.phone,
@@ -1278,7 +1283,6 @@ export default function LeadDetailsApiClient({
   }, [leadId, leadType]);
 
   const buildStrictSalesClosureUrl = useCallback(async () => {
-    const currentLeadId = lead.leadId?.trim() || leadId;
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set("salesClosureReturned", "1");
     const [latestLeadResult, authUserResult] = await Promise.allSettled([
@@ -1309,7 +1313,6 @@ export default function LeadDetailsApiClient({
       role: latestAuthUser ? getRoleFromUser(latestAuthUser) : "",
     });
     return buildSalesClosureUrl({
-      leadId: latestLead.leadId?.trim() || currentLeadId,
       leadTypeLabel: crmLeadTypeToApiLabel(leadType),
       returnUrl: returnUrl.toString(),
       lead: latestLead,
@@ -1489,7 +1492,6 @@ export default function LeadDetailsApiClient({
         statusCandidates,
         currentUser: salesClosureAuthUser,
         openUrl: buildSalesClosureUrl({
-          leadId: lead.leadId?.trim() || leadId,
           leadTypeLabel: crmLeadTypeToApiLabel(leadType),
           returnUrl: window.location.href,
           lead,

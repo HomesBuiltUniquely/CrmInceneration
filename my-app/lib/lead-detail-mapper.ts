@@ -479,6 +479,14 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
   return {
     id: pickNumStr(detail, "id"),
     leadId: pickScalar(detail, "leadId", "leadRef", "leadCode", "customerId"),
+    externalReferenceId: pickScalar(
+      detail,
+      "uniqueId",
+      "lead_identifier",
+      "leadIdentifier",
+      "externalReferenceId",
+      "external_reference_id",
+    ),
     name,
     customerId,
     status,
