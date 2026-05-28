@@ -19,7 +19,7 @@ import {
   isPresalesVerifyHandoffSelection,
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
-// import { isWonCategory } from "@/lib/crm-pipeline";
+import { isWonCategory } from "@/lib/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
@@ -30,13 +30,9 @@ import { isLostCategory } from "@/lib/crm-pipeline";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
-  completeTaskFeedbackLabel,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
   pipelineSubStageLabel,
-  resolveSubStageFromCompleteTaskFeedback,
-  isClosedWonCustomerSubstage,
-  isClosedWonPathCategory,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
 import {
@@ -218,25 +214,15 @@ export default function CompleteTaskModal({
     return d.toISOString().slice(0, 10);
   }, []);
 
-  const schedulingSubStageKey = useMemo(
-    () =>
-      resolveSubStageFromCompleteTaskFeedback(
-        feedback,
-        feedbackMappings,
-        presalesMode,
-      ),
-    [feedback, feedbackMappings, presalesMode],
-  );
-
   const scheduleMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingScheduleSubstage(schedulingSubStageKey),
+      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
   );
   const cancelMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingCancelledSubstage(schedulingSubStageKey),
+      isMeetingCancelledSubstage(pipelineSubStageLabel(feedback)),
   );
 
   /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
@@ -457,9 +443,11 @@ export default function CompleteTaskModal({
             if (preset) {
               const sub = preset.subStageName.trim();
               const st = preset.stage.trim();
-              setFeedback(
-                completeTaskFeedbackLabel(preset.stage, preset.subStageName, true),
-              );
+              const feedbackLabel =
+                sub && !sub.toLowerCase().includes(st.toLowerCase())
+                  ? `${sub} (${st})`
+                  : sub;
+              setFeedback(feedbackLabel);
               setStatus(preset.stage);
               setPath(preset.stageCategory);
             } else {
@@ -587,17 +575,22 @@ export default function CompleteTaskModal({
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
-      // Data Conversion -> Won paths should stay visible even before lead verification.
-      // if (
-      //   presalesMode &&
-      //   !presalesLeadVerified &&
-      //   !presalesHandedOff &&
-      //   normalizeStageKey(stage) === "data conversion" &&
-      //   isWonCategory(stageCategory)
-      // ) {
-      //   continue;
-      // }
-      const label = completeTaskFeedbackLabel(stage, subStageName, presalesMode);
+      if (
+        presalesMode &&
+        !presalesLeadVerified &&
+        !presalesHandedOff &&
+        normalizeStageKey(stage) === "data conversion" &&
+        isWonCategory(stageCategory)
+      ) {
+        continue;
+      }
+      const stageKey = stage.toLowerCase();
+      const subKey = subStageName.toLowerCase();
+      const label = presalesMode
+        ? subStageName && !subKey.includes(stageKey)
+          ? `${subStageName} (${stage})`
+          : subStageName || stage
+        : subStageName || stage;
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -656,13 +649,12 @@ export default function CompleteTaskModal({
       }),
   );
   const reasonRequired = requiresResoneField(path, feedback);
-  const customerSubstage =
-    selectedFeedbackOption?.subStageName.trim() || feedback.trim();
   const isClosedWonCustomer =
     !presalesMode &&
     status.trim() === "Closed" &&
-    isClosedWonPathCategory(path) &&
-    isClosedWonCustomerSubstage(customerSubstage);
+    path.trim() === "Closed Won" &&
+    (feedback.trim() === "Booking Done (Booking)" ||
+      feedback.trim() === "Token Done");
   const noFollowUpRequired = presalesMode
     ? isLostCategory(path) || verifyHandoffMode
     : reasonRequired || isClosedWonCustomer;
@@ -825,21 +817,19 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
-      if (!presalesLeadVerified && selected) {
-        const verifyHandoff = isPresalesVerifyHandoffSelection({
-          stage: stageToSave,
-          category: catToSave,
-          subStage: substageToSave,
-          feedbackLabel: feedback,
-        });
-        // Data Conversion -> Won is allowed before lead verification.
-        // const dataConversionWon =
-        //   normalizeStageKey(stageToSave) === "data conversion" &&
-        //   isWonCategory(catToSave);
-        if (verifyHandoff) {
-          setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
-          return;
-        }
+      if (
+        !presalesLeadVerified &&
+        selected &&
+        (isWonCategory(catToSave) ||
+          isPresalesVerifyHandoffSelection({
+            stage: stageToSave,
+            category: catToSave,
+            subStage: substageToSave,
+            feedbackLabel: feedback,
+          }))
+      ) {
+        setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+        return;
       }
       setApiBusy(true);
       setApiError("");
@@ -1050,7 +1040,7 @@ export default function CompleteTaskModal({
 
                 <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
                   {scheduleMode
-                    ? isDesignRefinementSchedulingSubstage(schedulingSubStageKey)
+                    ? isDesignRefinementSchedulingSubstage(feedback)
                       ? "For refinement meetings, the Hub appointment time will be used as follow-up."
                       : "For Meeting Scheduled / Rescheduled (and fix-appointment scheduling), the Hub appointment time will be used as follow-up."
                     : noFollowUpRequired
@@ -1148,12 +1138,11 @@ export default function CompleteTaskModal({
                     on unverified leads.
                   </p>
                 ) : null}
-                {/* Data Conversion -> Won paths are visible before lead verification. */}
-                {/* {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
+                {presalesMode && !presalesLeadVerified && !presalesHandedOff ? (
                   <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
                     Data Conversion → Won paths are hidden until the lead is verified.
                   </p>
-                ) : null} */}
+                ) : null}
               </div>
 
               {verifyHandoffMode ? (
@@ -1233,13 +1222,13 @@ export default function CompleteTaskModal({
               {!presalesMode && scheduleMode ? (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
-                    {meetingSchedulePanelTitle(schedulingSubStageKey)}
+                    {meetingSchedulePanelTitle(feedback)}
                   </p>
                   <p className="text-[11px] text-[var(--crm-text-muted)]">
                     Pick designer, date, and slot. Hub creates the booking; description uses:
                     Meeting with [Lead type] - Lead ID: [id].
                   </p>
-                  {isDesignRefinementSchedulingSubstage(schedulingSubStageKey) ? (
+                  {isDesignRefinementSchedulingSubstage(feedback) ? (
                     <p className="text-[11px] text-[var(--crm-text-muted)]">
                       Same flow as the first meeting. The server does{" "}
                       <strong className="font-medium text-[var(--crm-text-secondary)]">not</strong>{" "}

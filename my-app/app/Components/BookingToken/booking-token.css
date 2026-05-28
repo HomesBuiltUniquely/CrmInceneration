@@ -1,0 +1,22 @@
+/* Scoped tokens for Booking & Token module (StitchFlow-style UI) */
+.bt-root {
+  --bt-bg: #f4f5f7;
+  --bt-surface: #ffffff;
+  --bt-border: #e8eaed;
+  --bt-text: #0f172a;
+  --bt-muted: #64748b;
+  --bt-navy: #0b1220;
+  --bt-green: #00e676;
+  --bt-green-dark: #00c853;
+  --bt-green-soft: rgba(0, 230, 118, 0.12);
+  --bt-orange: #ff9f43;
+  --bt-orange-soft: rgba(255, 159, 67, 0.14);
+  --bt-red: #ef4444;
+  --bt-red-soft: rgba(239, 68, 68, 0.1);
+  --bt-sidebar-active: #fff7ed;
+  --bt-sidebar-accent: #f97316;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bt-bg);
+  color: var(--bt-text);
+  min-height: 100vh;
+}

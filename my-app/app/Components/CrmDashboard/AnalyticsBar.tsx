@@ -4,29 +4,41 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardFilterState } from "./LeadFilters";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
+import {
+  appendWorkspaceMilestoneFilterQuery,
+  type CrmWorkspace,
+} from "@/lib/crm-workspace";
 
 type Props = {
   filters?: DashboardFilterState;
+  workspace?: CrmWorkspace;
 };
 
-function toQueryString(filters?: DashboardFilterState): string {
+function toQueryString(filters?: DashboardFilterState, workspace: CrmWorkspace = "sales"): string {
   const q = new URLSearchParams();
+  q.set("workspace", workspace);
   if (!filters) return q.toString();
   if (filters.assignee.trim()) q.set("assignee", filters.assignee.trim());
   if ((filters.assignees ?? []).length > 0) q.set("assignees", (filters.assignees ?? []).join(","));
-  if (filters.milestoneStage.trim()) q.set("milestoneStage", filters.milestoneStage.trim());
-  if (filters.milestoneStageCategory.trim()) q.set("milestoneStageCategory", filters.milestoneStageCategory.trim());
-  if (filters.milestoneSubStage.trim()) q.set("milestoneSubStage", filters.milestoneSubStage.trim());
+  appendWorkspaceMilestoneFilterQuery(
+    q,
+    workspace,
+    filters.milestoneStage,
+    filters.milestoneStageCategory,
+    filters.milestoneSubStage,
+  );
+  if (workspace === "presales") q.set("verificationStatus", "unverified");
+  else q.set("verificationStatus", "verified");
   setEffectiveNewCrmDateRange(q, filters.dateFrom, filters.dateTo);
   return q.toString();
 }
 
-export default function AnalyticsBar({ filters }: Props) {
+export default function AnalyticsBar({ filters, workspace = "sales" }: Props) {
   const [overallConversion, setOverallConversion] = useState<number | null>(null);
   const [leadToMeeting, setLeadToMeeting] = useState<number | null>(null);
   const [totalPipelineValueInr, setTotalPipelineValueInr] = useState<number | null>(null);
 
-  const queryString = useMemo(() => toQueryString(filters), [filters]);
+  const queryString = useMemo(() => toQueryString(filters, workspace), [filters, workspace]);
 
   useEffect(() => {
     let cancelled = false;

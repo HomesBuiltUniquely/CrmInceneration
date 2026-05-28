@@ -14,35 +14,9 @@ function normSubstageLabel(s: string): string {
   return s.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
-/** Substage names where trailing `(…)` is part of the catalog label, not a stage suffix. */
-const SUBSTAGE_WITH_TRAILING_PAREN = new Set(
-  ["Design Refinement Round (Revisit)", "Booking Done (Booking)"].map(normSubstageLabel),
-);
-
-function isSubstageWithTrailingParen(label: string): boolean {
-  return SUBSTAGE_WITH_TRAILING_PAREN.has(normSubstageLabel(label));
-}
-
-/**
- * UI label → pipeline substage.
- * Strips stage suffix from Complete Task, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`.
- * Preserves substage-internal parens, e.g. `Design Refinement Round (Revisit)`.
- */
+/** UI label → pipeline substage, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`. */
 export function pipelineSubStageLabel(value: string): string {
-  let s = value.trim();
-  if (!s) return "";
-
-  while (true) {
-    const match = s.match(/^(.*)\s*\(([^)]+)\)\s*$/i);
-    if (!match) return s;
-    const base = match[1].trim();
-    const paren = match[2].trim();
-    const candidate = `${base} (${paren})`;
-    if (isSubstageWithTrailingParen(candidate)) {
-      return candidate;
-    }
-    s = base;
-  }
+  return value.replace(/\s*\([^)]+\)\s*$/i, "").trim();
 }
 
 /** True when selected feedback (substage) is one of the closer cancellation/refund substages. */
@@ -75,54 +49,14 @@ export function normalizeMilestoneSubStageForApi(pipelineLabel: string): string 
  * Sub-stages that use the same slot-based `POST /v1/Appointment` flow in Complete Task
  * (first design meeting, fix-appointment queue, or design refinement revisit — see E2E guide).
  */
-/** Dropdown label in Complete Task (sales may append stage when substage omits stage name). */
-export function completeTaskFeedbackLabel(
-  stage: string,
-  subStageName: string,
-  presalesMode: boolean,
-): string {
-  const st = stage.trim();
-  const sub = subStageName.trim();
-  if (!st) return sub;
-  const stageKey = st.toLowerCase();
-  const subKey = sub.toLowerCase();
-  if (sub && !subKey.includes(stageKey)) {
-    return `${sub} (${st})`;
-  }
-  return sub || st;
-}
-
-/** Map selected feedback label back to pipeline `subStageName` for rules (schedule, cancel, save). */
-export function resolveSubStageFromCompleteTaskFeedback(
-  feedback: string,
-  mappings: Array<{ stage: string; subStageName: string }>,
-  presalesMode: boolean,
-): string {
-  const trimmed = feedback.trim();
-  if (!trimmed) return "";
-  for (const m of mappings) {
-    const label = completeTaskFeedbackLabel(m.stage, m.subStageName, presalesMode);
-    if (label === trimmed) return m.subStageName.trim();
-  }
-  return pipelineSubStageLabel(trimmed);
-}
-
 export function isMeetingScheduleSubstage(subStageName: string): boolean {
   const s = pipelineSubStageLabel(subStageName);
-  const norm = normSubstageLabel(s);
-  if (
-    norm === "MEETING SCHEDULED" ||
-    norm === "MEETING RESCHEDULED" ||
-    norm === "DESIGN REFINEMENT ROUND (REVISIT)" ||
-    norm === "FIX APPOINTMENT"
-  ) {
-    return true;
-  }
-  const lower = s.toLowerCase();
-  if (lower.includes("design refinement") && lower.includes("revisit")) {
-    return true;
-  }
-  return false;
+  return (
+    s === "Meeting Scheduled" ||
+    s === "Meeting Rescheduled" ||
+    s === "Design Refinement Round (Revisit)" ||
+    s === "Fix Appointment"
+  );
 }
 
 export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {

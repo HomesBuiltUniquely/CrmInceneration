@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import AnalyticsBar from "./AnalyticsBar";
 import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
 import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
@@ -10,23 +10,32 @@ import CrmPipeline from "./CrmPipeline";
 import InsightsStrip from "./InsightsStrip";
 
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
-import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { sidebarSectionsForViewer, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type Props = {
   role?: "sales_admin" | "sales_manager" | "super_admin";
+  /** Sales dashboard (CRM menu) vs presales dashboard (Presales menu). */
+  workspace?: CrmWorkspace;
 };
 
-export default function Header({ role = "sales_admin" }: Props) {
+export default function Header({ role = "sales_admin", workspace = "sales" }: Props) {
+  const isPresalesWorkspace = workspace === "presales";
+  const leadsHref = isPresalesWorkspace ? "/presales-leads" : "/Leads";
+  const dashboardTitle = isPresalesWorkspace ? "Presales Journey" : "Lead Journey";
   const router = useRouter();
   const [currentRole] = useState(() => {
     if (typeof window === "undefined") return normalizeRole(role);
     const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? role;
     return normalizeRole(stored);
   });
-  const [activeDashboardView, setActiveDashboardView] = useState<
-    "overview" | "design-module"
-  >("overview");
+  const sidebarSections = useMemo(
+    () => sidebarSectionsForViewer(workspace, currentRole),
+    [workspace, currentRole],
+  );
+  const [activeDashboardView, setActiveDashboardView] = useState<"overview" | "design-module">(
+    "overview",
+  );
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilterState>({
     assignee: "",
     assignees: [],
@@ -38,7 +47,7 @@ export default function Header({ role = "sales_admin" }: Props) {
   });
 
   const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
-    const next = subItem.id === "design-module" ? "design-module" : "overview";
+    const next: "overview" | "design-module" = subItem.id === "design-module" ? "design-module" : "overview";
     setActiveDashboardView((prev) => (prev === next ? prev : next));
   }, []);
 
@@ -67,7 +76,7 @@ export default function Header({ role = "sales_admin" }: Props) {
             appBadge="HO WS"
             appName="Hows"
             appTagline="by HUB"
-            sections={dashboardSidebarSections}
+            sections={sidebarSections}
             profileName={currentRole.replace(/_/g, " ")}
             profileRole={currentRole}
             profileInitials="AD"
@@ -86,10 +95,10 @@ export default function Header({ role = "sales_admin" }: Props) {
                 />
               </div>
               <h1 className="xl:pl-3 xl:font-bold text-[var(--crm-text-primary)]">
-                Lead Journey
+                {dashboardTitle}
                 <button
                   type="button"
-                  onClick={() => router.push("/Leads")}
+                  onClick={() => router.push(leadsHref)}
                   className="ml-4 rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
                 >
                   Lead Management
@@ -125,9 +134,13 @@ export default function Header({ role = "sales_admin" }: Props) {
             </div>
           ) : (
             <div>
-              <LeadFilters role={role} onFiltersChange={handleFiltersChange} />
-              <AnalyticsBar filters={dashboardFilters} />
-              <CrmPipeline filters={dashboardFilters} />
+              <LeadFilters
+                role={role}
+                workspace={workspace}
+                onFiltersChange={handleFiltersChange}
+              />
+              <AnalyticsBar filters={dashboardFilters} workspace={workspace} />
+              <CrmPipeline filters={dashboardFilters} workspace={workspace} />
               <InsightsStrip />
             </div>
           )}

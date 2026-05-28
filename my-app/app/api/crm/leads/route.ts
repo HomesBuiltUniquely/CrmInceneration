@@ -7,10 +7,9 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { compareLeadsByRecencyDesc } from "@/lib/lead-recency";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { isPresalesRole } from "@/lib/roleUtils";
-import { readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
+import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -40,6 +39,13 @@ const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
   "PRESALES_MANAGER",
   "PRESALES_EXECUTIVE",
 ]);
+
+function parseUpdatedAt(a: ApiLead): number {
+  const u = a.updatedAt;
+  if (!u) return 0;
+  const t = Date.parse(u);
+  return Number.isNaN(t) ? 0 : t;
+}
 
 function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
@@ -90,8 +96,7 @@ function inDateRange(
 ): boolean {
   if (!from && !to) return true;
   const ts = leadDateRaw ? Date.parse(leadDateRaw) : Number.NaN;
-  // Include brand-new rows before the API backfills created/updated timestamps.
-  if (Number.isNaN(ts)) return true;
+  if (Number.isNaN(ts)) return false;
   const dayMs = 24 * 60 * 60 * 1000;
   if (from) {
     const fromTs = Date.parse(`${from}T00:00:00`);
@@ -119,6 +124,181 @@ async function resolveViewerRole(req: NextRequest): Promise<string> {
   }
 }
 
+const LEADS_EXTRA_PARAMS = [
+  "stage",
+  "substage",
+  "result",
+  "dateFrom",
+  "dateTo",
+  "assignee",
+  "milestoneStage",
+  "milestoneStageCategory",
+  "milestoneSubStage",
+  "presalesMilestoneStage",
+  "presalesMilestoneCategory",
+  "presalesMilestoneSubStage",
+  "verificationStatus",
+  "reinquiry",
+] as const;
+
+/** Hub presales inbox — JWT-scoped list; forwards same filters as `/v1/leads/filter`. */
+async function fetchPresalesSearchLeads(
+  req: NextRequest,
+  url: URL,
+  effDates: { from: string; to: string },
+  sort: string,
+  search: string,
+): Promise<ApiLead[]> {
+  const searchSize = 500;
+  const byId = new Map<string, ApiLead>();
+  for (let pageNum = 0; pageNum < 200; pageNum += 1) {
+    const upstream = new URL(`${BASE_URL}/v1/leads/presales-search`);
+    upstream.searchParams.set("page", String(pageNum));
+    upstream.searchParams.set("size", String(searchSize));
+    upstream.searchParams.set("sort", sort);
+    if (search) upstream.searchParams.set("search", search);
+    for (const key of LEADS_EXTRA_PARAMS) {
+      const v = extraParamValue(url, key, effDates);
+      if (v) upstream.searchParams.set(key, v);
+    }
+    const res = await fetch(upstream.toString(), {
+      headers: upstreamAuthHeaders(req),
+      cache: "no-store",
+    });
+    if (!res.ok) break;
+    const pageData = (await res.json()) as {
+      content?: Array<{ type?: string; lead?: ApiLead }>;
+      totalPages?: number;
+    };
+    const chunk = Array.isArray(pageData.content) ? pageData.content : [];
+    if (chunk.length === 0) break;
+    for (const item of chunk) {
+      const lt = String(item.type ?? "").trim().toLowerCase();
+      const lead = item.lead;
+      if (!lead || typeof lead !== "object") continue;
+      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      if (!id || byId.has(id)) continue;
+      const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
+        ? (lt as (typeof CRM_LEAD_TYPES)[number])
+        : "formlead";
+      byId.set(id, { ...lead, leadType: typed });
+    }
+    const totalPages = Math.max(1, Number(pageData.totalPages ?? 1));
+    if (pageNum + 1 >= totalPages) break;
+    if (chunk.length < searchSize) break;
+  }
+  return [...byId.values()];
+}
+
+function filterAndSortMergedLeads(
+  leads: ApiLead[],
+  url: URL,
+  effDates: { from: string; to: string },
+  usePresalesMilestoneFilters: boolean,
+  search: string,
+): ApiLead[] {
+  const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
+  const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
+  const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
+  const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
+  const psStage = (url.searchParams.get("presalesMilestoneStage") ?? "").trim();
+  const psCat = (url.searchParams.get("presalesMilestoneCategory") ?? "").trim();
+  const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
+  const dateFrom = effDates.from;
+  const dateTo = effDates.to;
+
+  return leads
+    .filter((lead) => {
+      if (search) {
+        const needle = search.toLowerCase();
+        const needleDigits = search.replace(/\D/g, "");
+        const assigneeText =
+          typeof lead.assignee === "string"
+            ? lead.assignee
+            : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
+        const dynamic =
+          lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+            ? (lead.dynamicFields as Record<string, unknown>)
+            : {};
+        const hay = [
+          lead.name,
+          lead.customerName,
+          lead.companyName,
+          lead.email,
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          lead.customerId,
+          dynamic.customerName,
+          dynamic.customerPhone,
+          dynamic.phone,
+          dynamic.customerEmail,
+          assigneeText,
+          lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        const matchesText = hay.includes(needle);
+
+        const phoneLike = [
+          lead.phone,
+          lead.phoneNumber,
+          lead.mobile,
+          lead.mobileNumber,
+          dynamic.customerPhone,
+          dynamic.phone,
+        ]
+          .map((v) => String(v ?? "").replace(/\D/g, ""))
+          .filter(Boolean)
+          .join(" ");
+        const matchesPhone = Boolean(needleDigits && phoneLike.includes(needleDigits));
+
+        const deepHay = JSON.stringify(lead).toLowerCase();
+        const matchesDeep = deepHay.includes(needle);
+        if (!matchesText && !matchesPhone && !matchesDeep) return false;
+      }
+
+      if (assignee) {
+        const a =
+          (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
+          (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
+          "";
+        if (!a.toLowerCase().includes(assignee)) return false;
+      }
+
+      const dateFieldRaw =
+        dateFrom || dateTo
+          ? usePresalesMilestoneFilters
+            ? (() => {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              })()
+            : readLeadCreatedAtRaw(lead)
+          : "";
+      if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
+
+      if (usePresalesMilestoneFilters) {
+        if (
+          (psStage || psCat || psSub) &&
+          !leadMatchesWorkspaceMilestoneFilter(lead, "presales", psStage, psCat, psSub)
+        ) {
+          return false;
+        }
+      } else if (
+        (mStage || mCat || mSub) &&
+        !leadMatchesWorkspaceMilestoneFilter(lead, "sales", mStage, mCat, mSub)
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
+}
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const effDates = effectiveDateRangeFromRequest(url);
@@ -141,22 +321,14 @@ export async function GET(req: NextRequest) {
     ? [...CRM_LEAD_TYPES]
     : getAllowedLeadTypesForRole(viewerRoleKey);
 
-  const extraParams = [
-    "stage",
-    "substage",
-    "result",
-    "dateFrom",
-    "dateTo",
-    "assignee",
-    "milestoneStage",
-    "milestoneStageCategory",
-    "milestoneSubStage",
-    "presalesMilestoneStage",
-    "presalesMilestoneCategory",
-    "presalesMilestoneSubStage",
-    "verificationStatus",
-    "reinquiry",
-  ] as const;
+  const leadPool = (url.searchParams.get("leadPool") ?? "").trim().toLowerCase();
+  const usePresalesSearchPool = isPresalesRole(viewerRoleKey) || leadPool === "presales";
+  const usePresalesMilestoneFilters = usePresalesSearchPool;
+  const includePresalesInGlobalSearch =
+    isNewCrmGlobalSearchMode &&
+    viewerRoleKey === "SUPER_ADMIN" &&
+    !usePresalesSearchPool &&
+    search.length > 0;
 
   const managerEndpoint =
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
@@ -179,7 +351,7 @@ export async function GET(req: NextRequest) {
       upstream.searchParams.set("milestoneScope", "crm");
       upstream.searchParams.set("newCrmGlobalSearch", "true");
     }
-    for (const key of extraParams) {
+    for (const key of LEADS_EXTRA_PARAMS) {
       const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
@@ -214,7 +386,7 @@ export async function GET(req: NextRequest) {
     const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
     if (mStage) upstream.searchParams.set("stage", mStage);
     if (mSub) upstream.searchParams.set("substage", mSub);
-    for (const key of extraParams) {
+    for (const key of LEADS_EXTRA_PARAMS) {
       const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
@@ -225,6 +397,31 @@ export async function GET(req: NextRequest) {
       status: res.status,
       headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
     });
+  }
+
+  if (mergeAll && usePresalesSearchPool) {
+    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    const merged = filterAndSortMergedLeads(
+      presalesRows,
+      url,
+      effDates,
+      usePresalesMilestoneFilters,
+      search,
+    );
+    const pageNum = Number.parseInt(page, 10) || 0;
+    const pageSize = Number.parseInt(size, 10) || 20;
+    const start = pageNum * pageSize;
+    const slice = merged.slice(start, start + pageSize);
+    const body: SpringPage<ApiLead> = {
+      content: slice,
+      totalElements: merged.length,
+      totalPages: Math.max(1, Math.ceil(merged.length / pageSize)),
+      number: pageNum,
+      size: pageSize,
+      sourceCounts: computeSourceCounts(merged),
+      summaryTotals: computeSummaryTotals(merged),
+    };
+    return NextResponse.json(body);
   }
 
   const selectedTypes =
@@ -260,7 +457,7 @@ export async function GET(req: NextRequest) {
       upstream.searchParams.set("size", String(perType));
       upstream.searchParams.set("sort", sort);
       if (search) upstream.searchParams.set("search", search);
-      for (const key of extraParams) {
+      for (const key of LEADS_EXTRA_PARAMS) {
         const v = extraParamValue(url, key, effDates);
         if (v) upstream.searchParams.set(key, v);
       }
@@ -310,139 +507,22 @@ export async function GET(req: NextRequest) {
       }
     }
   }
-
-  if (isPresalesPool) {
-    const searchSize = 500;
-    for (let pageNum = 0; pageNum < 200; pageNum += 1) {
-      const upstream = new URL(`${BASE_URL}/v1/leads/presales-search`);
-      upstream.searchParams.set("page", String(pageNum));
-      upstream.searchParams.set("size", String(searchSize));
-      try {
-        const res = await fetch(upstream.toString(), {
-          headers: upstreamAuthHeaders(req),
-          cache: "no-store",
-        });
-        if (!res.ok) break;
-        const pageData = (await res.json()) as { content?: Array<{ type?: string; lead?: ApiLead }> };
-        const chunk = Array.isArray(pageData.content) ? pageData.content : [];
-        if (chunk.length === 0) break;
-        for (const item of chunk) {
-          const lt = String(item.type ?? "").trim().toLowerCase();
-          const lead = item.lead;
-          if (!lead || typeof lead !== "object") continue;
-          const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-          if (!id) continue;
-          const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
-            ? (lt as (typeof CRM_LEAD_TYPES)[number])
-            : "formlead";
-          if (!byId.has(id)) {
-            byId.set(id, { ...lead, leadType: typed });
-          }
-        }
-        if (chunk.length < searchSize) break;
-      } catch {
-        break;
-      }
+  if (includePresalesInGlobalSearch) {
+    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    for (const lead of presalesRows) {
+      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      if (!id || byId.has(id)) continue;
+      byId.set(id, lead);
     }
   }
 
-  const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
-  const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
-  const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
-  const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
-  const psStage = (url.searchParams.get("presalesMilestoneStage") ?? "").trim();
-  const psCat = (url.searchParams.get("presalesMilestoneCategory") ?? "").trim();
-  const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
-  const dateFrom = effDates.from;
-  const dateTo = effDates.to;
-  const merged = [...byId.values()]
-    .filter((lead) => {
-      if (search) {
-        const needle = search.toLowerCase();
-        const needleDigits = search.replace(/\D/g, "");
-        const assigneeText =
-          typeof lead.assignee === "string"
-            ? lead.assignee
-            : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
-        const dynamic =
-          lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
-            ? (lead.dynamicFields as Record<string, unknown>)
-            : {};
-        const hay = [
-          lead.name,
-          lead.customerName,
-          lead.companyName,
-          lead.email,
-          lead.phone,
-          lead.phoneNumber,
-          lead.mobile,
-          lead.mobileNumber,
-          lead.customerId,
-          dynamic.customerName,
-          dynamic.customerPhone,
-          dynamic.phone,
-          dynamic.customerEmail,
-          assigneeText,
-          lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        const matchesText = hay.includes(needle);
-
-        const phoneLike = [
-          lead.phone,
-          lead.phoneNumber,
-          lead.mobile,
-          lead.mobileNumber,
-          dynamic.customerPhone,
-          dynamic.phone,
-        ]
-          .map((v) => String(v ?? "").replace(/\D/g, ""))
-          .filter(Boolean)
-          .join(" ");
-        const matchesPhone = Boolean(needleDigits && phoneLike.includes(needleDigits));
-
-        // Global visible-record fallback search for old/new CRM parity.
-        const deepHay = JSON.stringify(lead).toLowerCase();
-        const matchesDeep = deepHay.includes(needle);
-        if (!matchesText && !matchesPhone && !matchesDeep) return false;
-      }
-
-      if (assignee) {
-        const a =
-          (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
-          (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
-          "";
-        if (!a.toLowerCase().includes(assignee)) return false;
-      }
-
-      const dateFieldRaw =
-        dateFrom || dateTo
-          ? isPresalesRole(viewerRoleKey)
-            ? (() => {
-                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-                return assignedTs > 0
-                  ? new Date(assignedTs).toISOString()
-                  : readLeadCreatedAtRaw(lead);
-              })()
-            : readLeadCreatedAtRaw(lead)
-          : "";
-      if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
-
-      if (isPresalesRole(viewerRoleKey)) {
-        const ps = readPresalesMilestoneFromLead(lead);
-        if (psStage && norm(ps.stage) !== norm(psStage)) return false;
-        if (psCat && norm(ps.category) !== norm(psCat)) return false;
-        if (psSub && norm(ps.subStage) !== norm(psSub)) return false;
-      } else {
-        if (mStage && norm(lead.stage?.milestoneStage) !== norm(mStage)) return false;
-        if (mCat && norm(lead.stage?.milestoneStageCategory) !== norm(mCat)) return false;
-        if (mSub && norm(lead.stage?.milestoneSubStage) !== norm(mSub)) return false;
-      }
-      return true;
-    })
-    .sort(compareLeadsByRecencyDesc);
+  const merged = filterAndSortMergedLeads(
+    [...byId.values()],
+    url,
+    effDates,
+    usePresalesMilestoneFilters,
+    search,
+  );
 
   const pageNum = Number.parseInt(page, 10) || 0;
   const pageSize = Number.parseInt(size, 10) || 20;

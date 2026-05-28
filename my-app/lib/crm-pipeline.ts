@@ -6,6 +6,7 @@ import type {
 } from "@/types/crm-pipeline";
 import { BASE_URL } from "@/lib/base-url";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { PRESALES_PIPELINE_STAGE_ORDER } from "@/lib/presales-milestone";
 
 type FetchCrmPipelineOptions = {
   nested?: boolean;
@@ -14,6 +15,16 @@ type FetchCrmPipelineOptions = {
   /** Hub pipeline variant, e.g. `PRESALES_EXECUTIVE` | `SALES_EXECUTIVE`. */
   role?: string;
 };
+
+function presalesPipelineFallback(): CrmPipelineResponse {
+  return {
+    entries: [],
+    nested: PRESALES_PIPELINE_STAGE_ORDER.map((stage) => ({
+      stage,
+      categories: [],
+    })),
+  };
+}
 
 export async function fetchCrmPipeline(
   options: boolean | FetchCrmPipelineOptions = true
@@ -43,6 +54,14 @@ export async function fetchCrmPipeline(
     });
     if (res.ok) return res.json();
     lastStatus = res.status;
+    const roleKey = (opts.role ?? "").trim().toUpperCase();
+    const isPresalesRole =
+      roleKey === "PRESALES_EXECUTIVE" ||
+      roleKey === "PRE_SALES" ||
+      roleKey === "PRESALES_MANAGER";
+    if (isPresalesRole && (lastStatus === 403 || lastStatus === 404)) {
+      return presalesPipelineFallback();
+    }
   }
   throw new Error(`CRM pipeline failed: HTTP ${lastStatus || 502}`);
 }

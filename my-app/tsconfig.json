@@ -19,7 +19,19 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@shell/*": ["./app/Components/Shared/*"],
+      "@crm/lead-management/*": ["./app/Components/CrmLeadData/*"],
+      "@crm/dashboard/*": ["./app/Components/CrmDashboard/*"],
+      "@crm/lead-details/*": ["./app/Components/CrmLeadDetails/*"],
+      "@crm/create-lead/*": ["./app/Components/CrmCreateLead/*"],
+      "@crm/import-leads/*": ["./app/Components/CrmImportLeads/*"],
+      "@design/workspace/*": ["./app/Components/DesignDashboard/*"],
+      "@design/appointment/*": ["./app/Components/Appointment/*"],
+      "@admin/panel/*": ["./app/Components/AdminPanel/*"],
+      "@calendar/hub/*": ["./app/Components/HubCalender/*"],
+      "@booking-token/*": ["./app/Components/BookingToken/*"],
+      "@app-core/*": ["./app/Components/*"]
     }
   },
   "include": [
