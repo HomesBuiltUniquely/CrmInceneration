@@ -18,7 +18,6 @@ import {
 import {
   isPresalesVerifyHandoffSelection,
 } from "@/lib/presales-milestone-ui";
-import { isWonCategory } from "@/lib/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
@@ -574,15 +573,6 @@ export default function CompleteTaskModal({
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
-      if (
-        presalesMode &&
-        !presalesLeadVerified &&
-        !presalesHandedOff &&
-        normalizeStageKey(stage) === "data conversion" &&
-        isWonCategory(stageCategory)
-      ) {
-        continue;
-      }
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();
       const label = presalesMode
@@ -599,8 +589,6 @@ export default function CompleteTaskModal({
   }, [
     feedbackMappings,
     presalesMode,
-    presalesLeadVerified,
-    presalesHandedOff,
   ]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
