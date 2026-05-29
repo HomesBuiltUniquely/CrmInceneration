@@ -178,6 +178,8 @@ type LeadsToolbarProps = {
   /** Temporary override for right badge on Total Leads pill. */
   totalLeadsSecondaryOverride?: number;
   totalLeadsSecondaryTitle?: string;
+  /** SALES_ADMIN / SUPER_ADMIN: "X customers (Y rows)" on Total Leads pill. */
+  adminTotalLeadsDisplay?: { uniquePrimary: number; totalRows: number };
   /** SUPER_ADMIN search only: separate Sales / Presales pool match counts. */
   superAdminSearchPoolTotals?: { sales: number; presales: number };
   /** True while SUPER_ADMIN has active cross-pool search (show Sales/Presales pills). */
@@ -244,6 +246,7 @@ export default function LeadsToolbar({
   leadTypeCountsAllRows,
   totalLeadsSecondaryOverride,
   totalLeadsSecondaryTitle,
+  adminTotalLeadsDisplay,
   superAdminSearchPoolTotals,
   superAdminCrossPoolSearchActive = false,
   authRole = "",
@@ -359,6 +362,11 @@ export default function LeadsToolbar({
           adminPoolAllRowsTotal !== adminPoolPrimaryTotal
         ? adminPoolAllRowsTotal
         : undefined;
+  const showAdminCustomersRowsPill =
+    (isSuperAdmin || isSalesAdmin) && adminTotalLeadsDisplay !== undefined;
+  const totalLeadsPillLabel = showAdminCustomersRowsPill
+    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} customers (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
+    : undefined;
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
@@ -553,12 +561,15 @@ export default function LeadsToolbar({
               <Pill
                 label="Total Leads"
                 value={
-                  loading || totalLeadsPillPrimary === undefined
+                  loading
                     ? "—"
-                    : totalLeadsPillPrimary.toLocaleString()
+                    : totalLeadsPillLabel ??
+                      (totalLeadsPillPrimary === undefined
+                        ? "—"
+                        : totalLeadsPillPrimary.toLocaleString())
                 }
                 secondaryValue={
-                  loading || totalLeadsPillSecondary === undefined
+                  showAdminCustomersRowsPill || loading || totalLeadsPillSecondary === undefined
                     ? undefined
                     : totalLeadsPillSecondary.toLocaleString()
                 }

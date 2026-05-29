@@ -41,6 +41,7 @@ export type AdminLeadsListResponse = {
   pool?: string;
   content?: AdminLeadListEnvelope[];
   totalElements?: number;
+  uniquePrimaryTotal?: number;
   totalPages?: number;
   number?: number;
   size?: number;
@@ -67,6 +68,8 @@ export type AdminLeadsFilterInput = {
   sort?: string;
   search?: string;
   assignee?: string;
+  /** Exact hierarchy aliases — forwarded to admin list BFF for server-side scope. */
+  assigneeAliasSet?: string[];
   dateFrom?: string;
   dateTo?: string;
   crmMonthWindow?: string;
@@ -91,6 +94,17 @@ export type AdminLeadsFilterInput = {
 export function usesAdminLeadsApi(role: string): boolean {
   const r = normalizeRole(role);
   return isAdminRole(r) || r === "SALES_ADMIN";
+}
+
+/** Sales manager filtering a named exec — same Hub admin pool as SUPER_ADMIN/SALES_ADMIN. */
+export function usesAdminSalesPoolForAssigneeScope(
+  role: string,
+  workspace: CrmWorkspace,
+  assigneeAliasCount: number,
+): boolean {
+  if (workspace !== "sales" || assigneeAliasCount <= 0) return false;
+  const r = normalizeRole(role);
+  return r === "SALES_MANAGER" || r === "MANAGER";
 }
 
 export function adminListApiPath(workspace: CrmWorkspace): string {
@@ -595,7 +609,15 @@ export function appendAdminLeadsFilters(qs: URLSearchParams, input: AdminLeadsFi
   if (vs) qs.set("verificationStatus", vs);
 
   if (input.search?.trim()) qs.set("search", input.search.trim());
-  if (input.assignee?.trim()) qs.set("assignee", input.assignee.trim());
+  if (input.assigneeAliasSet && input.assigneeAliasSet.length > 0) {
+    const aliasJoined = input.assigneeAliasSet
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .join("\0");
+    if (aliasJoined) qs.set("assigneeAliasSet", aliasJoined);
+  } else if (input.assignee?.trim()) {
+    qs.set("assignee", input.assignee.trim());
+  }
   if (input.reinquiry?.trim()) qs.set("reinquiry", input.reinquiry.trim());
 
   appendWorkspaceMilestoneFilterQuery(
@@ -677,11 +699,16 @@ export async function fetchAdminLeadsPage(
   }
 
   const content = flattenAdminListContent(json.content);
-  const totalElements = Number(json.totalElements ?? content.length);
+  const totalRowCount = Number(json.totalElements ?? content.length);
+  const uniquePrimaryTotal = Number(json.uniquePrimaryTotal);
 
   return {
     content,
-    totalElements,
+    totalElements: totalRowCount,
+    totalRowCount,
+    ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
+      ? { uniquePrimaryTotal }
+      : {}),
     totalPages: Math.max(1, Number(json.totalPages ?? 1)),
     number: Number(json.number ?? input.page),
     size: Number(json.size ?? input.size),

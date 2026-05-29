@@ -12,6 +12,7 @@ import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heat
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
+import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -279,6 +280,10 @@ function filterAndSortMergedLeads(
   search: string,
 ): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
+  const assigneeAliasSet = parseAssigneeAliasSetQuery(
+    url.searchParams.get("assigneeAliasSet"),
+  );
+  const skipAssigneeSubstringFilter = assigneeAliasSet.length > 0;
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
@@ -341,7 +346,7 @@ function filterAndSortMergedLeads(
         if (!matchesText && !matchesPhone && !matchesDeep) return false;
       }
 
-      if (assignee) {
+      if (assignee && !skipAssigneeSubstringFilter) {
         const a =
           (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
           (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
@@ -562,6 +567,19 @@ export async function GET(req: NextRequest) {
       for (const key of LEADS_EXTRA_PARAMS) {
         const v = extraParamValue(url, key, effDates);
         if (v) upstream.searchParams.set(key, v);
+      }
+      // When hierarchy aliasSet is present, assignee param is empty on the request.
+      // Extract the first alias as a display name hint and send to Hub so Hub
+      // pre-filters server-side. UI filterLeadsByAssigneeScope still does
+      // exact match after merge — this just reduces Hub returning unfiltered pool.
+      const aliasSetRaw = (url.searchParams.get("assigneeAliasSet") ?? "").trim();
+      const assigneeAlreadySet = (url.searchParams.get("assignee") ?? "").trim();
+      if (aliasSetRaw && !assigneeAlreadySet) {
+        const firstAlias = aliasSetRaw
+          .split("\0")
+          .map((s) => s.trim())
+          .filter(Boolean)[0] ?? "";
+        if (firstAlias) upstream.searchParams.set("assignee", firstAlias);
       }
       return upstream;
     };

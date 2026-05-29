@@ -125,9 +125,10 @@ export function defaultLeadsVerificationStatus(
   viewerRole?: string,
 ): string {
   if (explicit?.trim()) return explicit.trim();
+  if (workspace === "sales") return "verified";
   const r = normalizeRole(viewerRole ?? "");
   if (isAdminRole(r) || r === "SALES_ADMIN") return "";
-  return workspace === "sales" ? "verified" : "unverified";
+  return "unverified";
 }
 
 /** Presales routes use Hub `presales-search` (JWT-scoped), not sales filter merge only. */
