@@ -7,14 +7,18 @@ export const LEAD_TYPE_TO_BASE: Record<CrmLeadType, string> = {
   mlead: "/v1/MetaLead",
   addlead: "/v1/AddLead",
   websitelead: "/v1/WebsiteLead",
+  walkinlead: "/v1/WalkinLead",
 };
+
+export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
+  if (leadType === "walkinlead") {
+    return `${LEAD_TYPE_TO_BASE.walkinlead}/${id}`;
+  }
+  return `${LEAD_TYPE_TO_BASE[leadType]}/details/${id}`;
+}
 
 export function isCrmLeadType(s: string): s is CrmLeadType {
   return s in LEAD_TYPE_TO_BASE;
-}
-
-export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
-  return `${LEAD_TYPE_TO_BASE[leadType]}/details/${id}`;
 }
 
 export function activitiesUrl(leadType: CrmLeadType, id: string | number): string {

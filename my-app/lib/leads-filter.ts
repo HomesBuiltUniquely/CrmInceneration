@@ -17,7 +17,7 @@ import {
 } from "@/lib/presales-milestone";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 
-export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
+export const CRM_LEAD_TYPES = ["formlead", "glead", "mlead", "addlead", "websitelead", "walkinlead"] as const;
 
 export type CrmLeadType = (typeof CRM_LEAD_TYPES)[number];
 
@@ -433,7 +433,7 @@ function formatRelativeTime(iso?: string): string {
 
 export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): CrmLeadType {
   const t = (raw ?? "").trim().toLowerCase();
-  if (t === "formlead" || t === "glead" || t === "mlead" || t === "addlead" || t === "websitelead") {
+  if (t === "formlead" || t === "glead" || t === "mlead" || t === "addlead" || t === "websitelead" || t === "walkinlead") {
     return t;
   }
   return fallback;

@@ -7,7 +7,9 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
+import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
 
@@ -59,15 +61,15 @@ function emptySourceCounts(): LeadSourceCounts {
     mlead: 0,
     addlead: 0,
     websitelead: 0,
+    walkinlead: 0,
   };
 }
 
 function computeSourceCounts(leads: ApiLead[]): LeadSourceCounts {
   const counts = emptySourceCounts();
   for (const lead of leads) {
-    const leadType = String(lead.leadType ?? "").trim().toLowerCase();
-    if (!CRM_LEAD_TYPES.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) continue;
-    counts[leadType as keyof LeadSourceCounts] += 1;
+    const leadType = normalizeLeadTypeKey(lead.leadType);
+    counts[leadType] += 1;
     counts.all += 1;
   }
   return counts;
@@ -356,7 +358,7 @@ function filterAndSortMergedLeads(
                   ? new Date(assignedTs).toISOString()
                   : readLeadCreatedAtRaw(lead);
               })()
-            : readLeadCreatedAtRaw(lead)
+            : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim()
           : "";
       if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
 
@@ -524,7 +526,28 @@ export async function GET(req: NextRequest) {
     ? 1000
     : Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const maxPagesPerType = isPresalesPool ? 200 : 100;
+  const walkInExtraParams = LEADS_EXTRA_PARAMS.map((key) => ({
+    key,
+    value: extraParamValue(url, key, effDates),
+  }));
+
   const fetches = selectedTypes.map(async (leadType) => {
+    if (leadType === "walkinlead") {
+      try {
+        return await fetchWalkInLeadsForMerge({
+          req,
+          sort,
+          search,
+          effDates,
+          extraParams: walkInExtraParams,
+          perType,
+          maxPages: maxPagesPerType,
+        });
+      } catch {
+        return { leads: [] as ApiLead[], accessDenied: false };
+      }
+    }
+
     const buildUpstream = (pageNum: number) => {
       const upstream = new URL(`${BASE_URL}${managerEndpoint || "/v1/leads/filter"}`);
       upstream.searchParams.set("leadType", leadType);
@@ -582,7 +605,10 @@ export async function GET(req: NextRequest) {
       const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
       if (!id) continue;
       if (!byId.has(id)) {
-        byId.set(id, { ...lead, leadType: sourceType });
+        byId.set(id, {
+          ...lead,
+          leadType: normalizeLeadTypeKey(lead.leadType ?? sourceType),
+        });
       }
     }
   }

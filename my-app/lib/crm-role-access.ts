@@ -4,7 +4,7 @@ import { isPresalesRole as isPresalesRoleUtil } from "@/lib/roleUtils";
 
 export type LeadTypeFilterKey = "all" | CrmLeadType | "verified";
 
-const ALL_LEAD_TYPES: CrmLeadType[] = ["formlead", "glead", "mlead", "addlead", "websitelead"];
+const ALL_LEAD_TYPES: CrmLeadType[] = ["formlead", "glead", "mlead", "addlead", "websitelead", "walkinlead"];
 
 export function toRoleKey(role: string): string {
   return normalizeRole(role);
@@ -54,6 +54,7 @@ export function getLeadTypeFilterOptions(
       { value: "mlead", label: "Meta Ads" },
       { value: "addlead", label: "Add Lead" },
       { value: "websitelead", label: "Website Lead" },
+      { value: "walkinlead", label: "Walk-in Lead" },
     ];
   }
   return [
@@ -63,6 +64,7 @@ export function getLeadTypeFilterOptions(
     { value: "glead", label: "Google Ads" },
     { value: "mlead", label: "Meta Ads" },
     { value: "websitelead", label: "Website Lead" },
+    { value: "walkinlead", label: "Walk-in Lead" },
     ...(includeVerified ? [{ value: "verified" as const, label: "Verified Leads" }] : []),
   ];
 }

@@ -86,6 +86,7 @@ const LEAD_TYPES: { value: CrmLeadType; label: string }[] = [
   { value: "mlead", label: "M Lead" },
   { value: "addlead", label: "Add Lead" },
   { value: "websitelead", label: "Website Lead" },
+  { value: "walkinlead", label: "Walk-in Lead" },
 ];
 
 export default function AppointmentManagementClient() {

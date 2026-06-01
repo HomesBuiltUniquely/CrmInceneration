@@ -20,6 +20,10 @@ import { normalizeStageKey } from "@/lib/milestone-progress";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { isAdminRole } from "@/lib/roleUtils";
 import {
+  augmentLeadSourceCountsWithWalkIn,
+  mergeWalkInCountIntoSourceCounts,
+} from "@/lib/crm-walkin-leads";
+import {
   buildAdminPoolDualCounts,
   computeLeadTypeCountsFromRows,
   pickPrimarySourceRows,
@@ -130,6 +134,7 @@ export function adminByLeadTypeToSourceCounts(
     mlead: 0,
     addlead: 0,
     websitelead: 0,
+    walkinlead: 0,
   };
   if (!byLeadType) return counts;
   for (const t of CRM_LEAD_TYPES) {
@@ -506,6 +511,44 @@ export async function fetchAdminLeadsHeatmapData(
     }
     const verifiedPrimary = pool.primaryRows.filter((l) => isCrmLeadVerified(l)).length;
 
+    let leadTypeCountsForUi = leadTypeCounts;
+    let leadTypeAllRowsForUi = pool.leadTypeAllRows;
+    let leadTypePrimaryForUi = pool.leadTypePrimaryUnique;
+    if (input.workspace === "sales") {
+      const dateFrom = (poolInput.dateFrom ?? "").trim();
+      const dateTo = (poolInput.dateTo ?? "").trim();
+      const walkInCtx = {
+        headers,
+        sort: (poolInput.sort ?? "updatedAt,desc").trim() || "updatedAt,desc",
+        search: (poolInput.search ?? "").trim(),
+        effDates: { from: dateFrom, to: dateTo },
+        extraParams: [
+          { key: "verificationStatus", value: (poolInput.verificationStatus ?? "").trim() },
+          { key: "reinquiry", value: (poolInput.reinquiry ?? "").trim() },
+          { key: "assignee", value: (poolInput.assignee ?? "").trim() },
+          { key: "dateFrom", value: dateFrom },
+          { key: "dateTo", value: dateTo },
+        ],
+      };
+      try {
+        const augmented = await augmentLeadSourceCountsWithWalkIn(
+          leadTypeCounts,
+          walkInCtx,
+        );
+        leadTypeCountsForUi = augmented;
+        leadTypeAllRowsForUi = mergeWalkInCountIntoSourceCounts(
+          pool.leadTypeAllRows,
+          augmented.walkinlead,
+        );
+        leadTypePrimaryForUi = mergeWalkInCountIntoSourceCounts(
+          pool.leadTypePrimaryUnique,
+          augmented.walkinlead,
+        );
+      } catch {
+        // Walk-in augment is optional; admin pool must still load.
+      }
+    }
+
     return finalizeAdminHeatmapData(
       milestoneCounts,
       input.workspace,
@@ -514,9 +557,9 @@ export async function fetchAdminLeadsHeatmapData(
       countsJson?.verifiedCount !== undefined
         ? Number(countsJson.verifiedCount)
         : verifiedPrimary,
-      leadTypeCounts,
-      pool.leadTypeAllRows,
-      pool.leadTypePrimaryUnique,
+      leadTypeCountsForUi,
+      leadTypeAllRowsForUi,
+      leadTypePrimaryForUi,
       leads,
       pool.primaryRows,
       countsJson ? "counts" : "list",

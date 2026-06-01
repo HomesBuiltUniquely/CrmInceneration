@@ -80,6 +80,7 @@ import {
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { filterLeadsByAssigneeScope } from "@/lib/admin-assignee-match";
+import { WALKIN_HUB_API_UNAVAILABLE } from "@/lib/crm-walkin-leads";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   setEffectiveNewCrmStartDate,
@@ -763,6 +764,7 @@ function toAssignmentLeadType(leadType: string): string {
   if (leadType === "mlead") return "M Lead";
   if (leadType === "addlead") return "Add Lead";
   if (leadType === "websitelead") return "Website Lead";
+  if (leadType === "walkinlead") return "Walk-in Lead";
   return "Form Lead";
 }
 
@@ -771,6 +773,7 @@ function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "glead") return "bulk-delete-gleads";
   if (leadType === "mlead") return "bulk-delete-mleads";
   if (leadType === "addlead") return "bulk-delete-addleads";
+  if (leadType === "walkinlead") return "bulk-delete-walkinleads";
   return "bulk-delete-websiteleads";
 }
 
@@ -779,6 +782,7 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "glead") return "delete-all-gleads";
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
+  if (leadType === "walkinlead") return "delete-all-walkinleads";
   return "delete-all-websiteleads";
 }
 
@@ -3049,7 +3053,7 @@ export default function LeadsDataSection({
         if (!res.ok) throw new Error("Delete-all failed.");
         notifyInfo(deleteNoticeText(currentRole, `Delete All (${toAssignmentLeadType(leadType)})`));
       } else {
-        const targets = ["formlead", "glead", "mlead", "addlead", "websitelead"] as const;
+        const targets = ["formlead", "glead", "mlead", "addlead", "websitelead", "walkinlead"] as const;
         const results = await Promise.all(
           targets.map(async (t) => {
             const res = await fetch(`/api/admin/${toAdminDeleteAllPath(t)}`, {
@@ -3353,6 +3357,11 @@ export default function LeadsDataSection({
               <code className="rounded bg-[var(--crm-surface-subtle)] px-1">access_token</code>.
             </span>
           ) : null}
+        </div>
+      ) : null}
+      {!error && !loading && leadType === "walkinlead" && visibleRows.length === 0 ? (
+        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-text-muted)]">
+          {WALKIN_HUB_API_UNAVAILABLE}
         </div>
       ) : null}
       <LeadsTable

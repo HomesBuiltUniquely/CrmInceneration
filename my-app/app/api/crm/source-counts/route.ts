@@ -7,6 +7,8 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { getEffectiveNewCrmEndDate, getEffectiveNewCrmStartDate } from "@/lib/new-crm-cutoff";
+import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
+import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
 type SourceCountsResponse = Record<"all" | (typeof CRM_LEAD_TYPES)[number], number>;
 
@@ -72,6 +74,24 @@ function buildUpstreamUrl(
   return upstream;
 }
 
+function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+  if (!raw) return false;
+  const ts = Date.parse(raw);
+  if (Number.isNaN(ts)) return false;
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (from) {
+    const fromTs = Date.parse(`${from}T00:00:00`);
+    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
+  }
+  if (to) {
+    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
+    if (!Number.isNaN(toTs) && ts > toTs) return false;
+  }
+  return true;
+}
+
 async function countLeadType(
   req: NextRequest,
   reqUrl: URL,
@@ -79,6 +99,49 @@ async function countLeadType(
   assigneeScopes: string[],
   effDates: { from: string; to: string },
 ): Promise<number> {
+  if (leadType === "walkinlead") {
+    const sort = (reqUrl.searchParams.get("sort") ?? "updatedAt,desc").trim() || "updatedAt,desc";
+    const search = (reqUrl.searchParams.get("search") ?? "").trim();
+    const extraParams = [
+      { key: "milestoneStage", value: (reqUrl.searchParams.get("milestoneStage") ?? "").trim() },
+      {
+        key: "milestoneStageCategory",
+        value: (reqUrl.searchParams.get("milestoneStageCategory") ?? "").trim(),
+      },
+      { key: "milestoneSubStage", value: (reqUrl.searchParams.get("milestoneSubStage") ?? "").trim() },
+      { key: "verificationStatus", value: (reqUrl.searchParams.get("verificationStatus") ?? "").trim() },
+      { key: "reinquiry", value: (reqUrl.searchParams.get("reinquiry") ?? "").trim() },
+      { key: "assignee", value: (reqUrl.searchParams.get("assignee") ?? "").trim() },
+      { key: "dateFrom", value: effDates.from },
+      { key: "dateTo", value: effDates.to },
+    ];
+    const { leads } = await fetchWalkInLeadsForMerge({
+      req,
+      sort,
+      search,
+      effDates,
+      extraParams,
+      perType: 500,
+      maxPages: 100,
+    });
+    const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
+    const ids = new Set<string>();
+    for (const lead of leads) {
+      if (!leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
+      if (assigneeNorms.length > 0) {
+        const assigneeText =
+          typeof lead.assignee === "string"
+            ? lead.assignee
+            : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
+        const hay = assigneeText.trim().toLowerCase();
+        if (!assigneeNorms.some((a) => hay.includes(a))) continue;
+      }
+      const id = String(lead.id ?? "").trim();
+      if (id) ids.add(id);
+    }
+    return ids.size;
+  }
+
   const pageSize = 500;
   const scopes = assigneeScopes.length > 0 ? assigneeScopes : [""];
   const ids = new Set<string>();
@@ -131,6 +194,7 @@ export async function GET(req: NextRequest) {
     mlead: 0,
     addlead: 0,
     websitelead: 0,
+    walkinlead: 0,
   };
 
   const selectedTypes =

@@ -17,17 +17,39 @@ export function readFollowUpDateRaw(lead: ApiLead): string {
 
 export function readLeadCreatedAtRaw(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
-  return String(
-    lead.createdAt ??
-      lead.createdDate ??
-      lead.leadDate ??
-      lead.createdOn ??
-      r.createdAt ??
-      r.createdDate ??
-      r.leadDate ??
-      r.createdOn ??
-      "",
-  ).trim();
+  const df =
+    lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+      ? (lead.dynamicFields as Record<string, unknown>)
+      : {};
+  const candidates = [
+    lead.createdAt,
+    lead.createdDate,
+    lead.leadDate,
+    lead.createdOn,
+    r.createdAt,
+    r.created_at,
+    r.createdDate,
+    r.created_date,
+    r.leadDate,
+    r.lead_date,
+    r.createdOn,
+    r.created_on,
+    r.walkInDate,
+    r.walk_in_date,
+    r.walkinDate,
+    r.visitDate,
+    r.visit_date,
+    df.createdAt,
+    df.created_at,
+    df.createdDate,
+    df.walkInDate,
+    df.walk_in_date,
+  ];
+  for (const value of candidates) {
+    const s = String(value ?? "").trim();
+    if (s) return s;
+  }
+  return "";
 }
 
 export function isFirstCallDelayedLead(
