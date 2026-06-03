@@ -101,7 +101,10 @@ export async function GET(req: NextRequest) {
     if (chunk.length < batchSize) break;
   }
 
-<<<<<<< HEAD
+  const assigneeAliasScope = parseAssigneeAliasSetQuery(
+    params.get("assigneeAliasSet"),
+  );
+
   if (useMergeFallback) {
     try {
       const fallback = await fetchAdminSalesPoolViaMergeFallback(req, params);
@@ -112,11 +115,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-=======
-  const assigneeAliasScope = parseAssigneeAliasSetQuery(
-    params.get("assigneeAliasSet"),
-  );
->>>>>>> 09d97cf (all three phase changes)
   const assignee = (params.get("assignee") ?? "").trim();
   const filteredRows =
     assigneeAliasScope.length > 0
