@@ -25,7 +25,7 @@ import PresalesVerifyPanel, {
 } from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
-import { isLostCategory } from "@/lib/crm-pipeline";
+import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
