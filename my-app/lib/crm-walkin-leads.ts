@@ -23,7 +23,34 @@ export const WALKIN_FILTER_LEAD_TYPE_ALIASES = ["walkinlead", "WalkinLead"] as c
 const WALKIN_DIRECT_BASE_PATH = LEAD_TYPE_TO_BASE.walkinlead;
 
 const WALKIN_PROBE_TTL_MS = 5 * 60 * 1000;
-let walkInHubProbe: { unavailable: boolean; checkedAt: number } | null = null;
+const walkInHubProbeByOrigin = new Map<string, { unavailable: boolean; checkedAt: number }>();
+
+function isLocalHubOrigin(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname;
+    return host === "localhost" || host === "127.0.0.1";
+  } catch {
+    return /localhost|127\.0\.0\.1/i.test(origin);
+  }
+}
+
+/** Shown when Hub returns 404/no-resource for /v1/WalkinLead (usually wrong BASE_URL). */
+export function walkInHubUnavailableMessage(hubOrigin: string = BASE_URL): string {
+  if (isLocalHubOrigin(hubOrigin)) {
+    return (
+      `Walk-in API is not on your local Hub (${hubOrigin}). ` +
+      `Production has it at https://hows.hubinterior.com — set BASE_URL=https://hows.hubinterior.com in .env.local and restart npm run dev, ` +
+      `or merge walk-in into your local Spring branch.`
+    );
+  }
+  return (
+    `Could not load walk-in leads from ${hubOrigin}. ` +
+    `Check BASE_URL, log in (crm_token), and that GET /v1/WalkinLead is reachable.`
+  );
+}
+
+/** @deprecated Use walkInHubUnavailableMessage() — kept for existing imports. */
+export const WALKIN_HUB_API_UNAVAILABLE = walkInHubUnavailableMessage();
 
 function parseListPayload(json: unknown): { content: ApiLead[]; totalPages: number } {
   if (Array.isArray(json)) {
@@ -111,21 +138,14 @@ function resolveAuthHeaders(ctx: WalkInFetchContext): HeadersInit {
   return {};
 }
 
-async function isWalkInHubApiUnavailable(ctx: WalkInFetchContext): Promise<boolean> {
-  if (walkInHubProbe && Date.now() - walkInHubProbe.checkedAt < WALKIN_PROBE_TTL_MS) {
-    return walkInHubProbe.unavailable;
-  }
-  const probe = new URL(`${BASE_URL}${WALKIN_DIRECT_BASE_PATH}`);
-  probe.searchParams.set("page", "0");
-  probe.searchParams.set("size", "1");
-  const res = await fetch(probe.toString(), {
-    headers: resolveAuthHeaders(ctx),
-    cache: "no-store",
-  });
-  const text = await res.text();
-  const unavailable = isHubNoResourceResponse(res.status, text);
-  walkInHubProbe = { unavailable, checkedAt: Date.now() };
-  return unavailable;
+function cachedWalkInUnavailable(origin: string): boolean | null {
+  const hit = walkInHubProbeByOrigin.get(origin);
+  if (!hit || Date.now() - hit.checkedAt >= WALKIN_PROBE_TTL_MS) return null;
+  return hit.unavailable;
+}
+
+function setCachedWalkInUnavailable(origin: string, unavailable: boolean): void {
+  walkInHubProbeByOrigin.set(origin, { unavailable, checkedAt: Date.now() });
 }
 
 function appendWalkInQueryParams(
@@ -182,10 +202,12 @@ async function fetchWalkInFromDirectList(
     });
     const text = await res.text();
     if (isHubNoResourceResponse(res.status, text)) {
+      setCachedWalkInUnavailable(BASE_URL, true);
       return { leads: [], apiUnavailable: true };
     }
     if (!res.ok) break;
     gotOk = true;
+    setCachedWalkInUnavailable(BASE_URL, false);
     const json = (() => {
       try {
         return JSON.parse(text);
@@ -205,18 +227,13 @@ async function fetchWalkInFromDirectList(
   return { leads: [], apiUnavailable: false };
 }
 
-/**
- * Load walk-in rows when generic merge filter returns nothing (backend not wired yet).
- */
-export const WALKIN_HUB_API_UNAVAILABLE =
-  "Walk-in Lead API is not on this Hub branch yet. Merge walk-in from migration (POST/GET /v1/WalkinLead) or wait until that code is deployed.";
-
 export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise<{
   leads: ApiLead[];
   accessDenied: boolean;
   apiUnavailable?: boolean;
 }> {
-  if (await isWalkInHubApiUnavailable(ctx)) {
+  const cached = cachedWalkInUnavailable(BASE_URL);
+  if (cached === true) {
     return { leads: [], accessDenied: false, apiUnavailable: true };
   }
 
@@ -225,7 +242,6 @@ export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise
     return { leads: direct.leads, accessDenied: false };
   }
   if (direct.apiUnavailable) {
-    walkInHubProbe = { unavailable: true, checkedAt: Date.now() };
     return { leads: [], accessDenied: false, apiUnavailable: true };
   }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   fetchWalkInLeadsForMerge,
-  WALKIN_HUB_API_UNAVAILABLE,
+  walkInHubUnavailableMessage,
   type WalkInFetchContext,
 } from "@/lib/crm-walkin-leads";
 
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
       leads,
       accessDenied,
       apiUnavailable: apiUnavailable ?? false,
-      message: apiUnavailable ? WALKIN_HUB_API_UNAVAILABLE : undefined,
+      message: apiUnavailable ? walkInHubUnavailableMessage() : undefined,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Walk-in leads fetch failed";

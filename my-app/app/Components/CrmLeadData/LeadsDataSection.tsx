@@ -81,7 +81,7 @@ import {
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { filterLeadsByAssigneeScope,formatAssigneeAliasSetQuery} from "@/lib/admin-assignee-match";
-import { WALKIN_HUB_API_UNAVAILABLE } from "@/lib/crm-walkin-leads";
+import { walkInHubUnavailableMessage } from "@/lib/crm-walkin-leads";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   setEffectiveNewCrmStartDate,
@@ -3477,7 +3477,7 @@ export default function LeadsDataSection({
       ) : null}
       {!error && !loading && leadType === "walkinlead" && visibleRows.length === 0 ? (
         <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-text-muted)]">
-          {WALKIN_HUB_API_UNAVAILABLE}
+          {walkInHubUnavailableMessage()}
         </div>
       ) : null}
       <LeadsTable
