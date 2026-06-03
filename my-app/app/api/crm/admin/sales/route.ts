@@ -4,6 +4,15 @@ import { adminRowMatchesAssigneeQuery } from "@/lib/admin-assignee-match";
 import { fetchAdminSalesPoolViaMergeFallback } from "@/lib/admin-pool-merge-fallback";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import {
+  flattenAdminListContent,
+  type AdminLeadListEnvelope,
+} from "@/lib/admin-leads-api";
+import {
+  adminRowMatchesAssigneeScope,
+  parseAssigneeAliasSetQuery,
+} from "@/lib/admin-assignee-match";
+import { pickPrimarySourceRows } from "@/lib/primary-source-leads";
 
 function rowUpdatedAtMs(row: unknown): number {
   if (!row || typeof row !== "object") return 0;
@@ -92,6 +101,10 @@ export async function GET(req: NextRequest) {
     if (chunk.length < batchSize) break;
   }
 
+  const assigneeAliasScope = parseAssigneeAliasSetQuery(
+    params.get("assigneeAliasSet"),
+  );
+
   if (useMergeFallback) {
     try {
       const fallback = await fetchAdminSalesPoolViaMergeFallback(req, params);
@@ -103,11 +116,16 @@ export async function GET(req: NextRequest) {
   }
 
   const assignee = (params.get("assignee") ?? "").trim();
-  const filteredRows = assignee
-    ? rows.filter((row) => adminRowMatchesAssigneeQuery(row, assignee))
-    : rows;
+  const filteredRows =
+    assigneeAliasScope.length > 0
+      ? rows.filter((row) => adminRowMatchesAssigneeScope(row, assigneeAliasScope))
+      : assignee
+        ? rows.filter((row) => adminRowMatchesAssigneeQuery(row, assignee))
+        : rows;
 
   filteredRows.sort((a, b) => rowUpdatedAtMs(b) - rowUpdatedAtMs(a));
+  const flatLeads = flattenAdminListContent(filteredRows as AdminLeadListEnvelope[]);
+  const uniquePrimaryTotal = pickPrimarySourceRows(flatLeads).length;
   const start = requestedPage * requestedSize;
   const content = filteredRows.slice(start, start + requestedSize);
   return NextResponse.json({
@@ -115,6 +133,7 @@ export async function GET(req: NextRequest) {
     pool: "sales",
     content,
     totalElements: filteredRows.length,
+    uniquePrimaryTotal,
     totalPages: Math.max(1, Math.ceil(filteredRows.length / requestedSize)),
     number: requestedPage,
     size: requestedSize,

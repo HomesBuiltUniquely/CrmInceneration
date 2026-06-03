@@ -12,6 +12,7 @@ import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heat
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
+import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -51,6 +52,13 @@ function parseUpdatedAt(a: ApiLead): number {
 
 function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
+}
+
+function leadStableIdentifier(lead: ApiLead): string {
+  const row = lead as Record<string, unknown>;
+  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 function emptySourceCounts(): LeadSourceCounts {
@@ -204,7 +212,7 @@ async function fetchPresalesSearchLeads(
       const lt = String(item.type ?? "").trim().toLowerCase();
       const lead = item.lead;
       if (!lead || typeof lead !== "object") continue;
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead as ApiLead);
       const fallbackKey = `noid:${String(
         lead.customerId ??
           lead.phone ??
@@ -258,8 +266,8 @@ async function fetchPresalesSearchLeads(
       const chunk = Array.isArray(pageData.content) ? pageData.content : [];
       if (chunk.length === 0) break;
       for (const lead of chunk) {
-        const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-        const key = id || `fallback_noid_${noIdSeq++}`;
+        const leadIdentifier = leadStableIdentifier(lead);
+        const key = leadIdentifier || `fallback_noid_${noIdSeq++}`;
         if (fallbackById.has(key)) continue;
         fallbackById.set(key, { ...lead, leadType });
       }
@@ -279,6 +287,10 @@ function filterAndSortMergedLeads(
   search: string,
 ): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
+  const assigneeAliasSet = parseAssigneeAliasSetQuery(
+    url.searchParams.get("assigneeAliasSet"),
+  );
+  const skipAssigneeSubstringFilter = assigneeAliasSet.length > 0;
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
@@ -316,7 +328,7 @@ function filterAndSortMergedLeads(
           dynamic.phone,
           dynamic.customerEmail,
           assigneeText,
-          lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
+          leadStableIdentifier(lead),
         ]
           .filter(Boolean)
           .join(" ")
@@ -341,7 +353,7 @@ function filterAndSortMergedLeads(
         if (!matchesText && !matchesPhone && !matchesDeep) return false;
       }
 
-      if (assignee) {
+      if (assignee && !skipAssigneeSubstringFilter) {
         const a =
           (typeof lead.assignee === "string" ? lead.assignee : lead.assignee?.name) ??
           (typeof lead.salesOwner === "string" ? lead.salesOwner : lead.salesOwner?.name) ??
@@ -563,6 +575,19 @@ export async function GET(req: NextRequest) {
         const v = extraParamValue(url, key, effDates);
         if (v) upstream.searchParams.set(key, v);
       }
+      // When hierarchy aliasSet is present, assignee param is empty on the request.
+      // Extract the first alias as a display name hint and send to Hub so Hub
+      // pre-filters server-side. UI filterLeadsByAssigneeScope still does
+      // exact match after merge — this just reduces Hub returning unfiltered pool.
+      const aliasSetRaw = (url.searchParams.get("assigneeAliasSet") ?? "").trim();
+      const assigneeAlreadySet = (url.searchParams.get("assignee") ?? "").trim();
+      if (aliasSetRaw && !assigneeAlreadySet) {
+        const firstAlias = aliasSetRaw
+          .split("\0")
+          .map((s) => s.trim())
+          .filter(Boolean)[0] ?? "";
+        if (firstAlias) upstream.searchParams.set("assignee", firstAlias);
+      }
       return upstream;
     };
 
@@ -602,7 +627,7 @@ export async function GET(req: NextRequest) {
   for (let i = 0; i < chunks.length; i++) {
     const sourceType = selectedTypes[i];
     for (const lead of chunks[i]) {
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead);
       if (!id) continue;
       if (!byId.has(id)) {
         byId.set(id, {
@@ -615,7 +640,7 @@ export async function GET(req: NextRequest) {
   if (includePresalesInGlobalSearch) {
     const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
     for (const lead of presalesRows) {
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead);
       if (!id || byId.has(id)) continue;
       byId.set(id, lead);
     }

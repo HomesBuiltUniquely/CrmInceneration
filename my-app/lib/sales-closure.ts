@@ -43,6 +43,7 @@ function setSalesClosurePrefillPayload(
   lead: Lead,
   authUser?: Record<string, unknown> | null,
 ): void {
+  const externalReferenceId = lead.externalReferenceId?.trim() || lead.leadId?.trim() || "";
   const mail = authUser
     ? pickUserStr(
         authUser,
@@ -67,7 +68,7 @@ function setSalesClosurePrefillPayload(
     property_configuration: lead.configuration?.trim() ?? "",
     sales_lead_name: lead.assignee?.trim() ?? "",
     designer_name: lead.designerName?.trim() ?? "",
-    externalReferenceId: lead.externalReferenceId?.trim() ?? "",
+    externalReferenceId,
   };
   u.searchParams.set("prefill", JSON.stringify(payload));
   u.searchParams.set("salesClosurePrefill", JSON.stringify(payload));
@@ -94,7 +95,7 @@ export function appendSalesClosurePrefillFromLead(u: URL, lead: Lead): void {
   setAliases(["possession"], lead.possessionDate || lead.configuration);
   setAliases(["sales_lead_name"], lead.assignee);
   setAliases(["designer_name"], lead.designerName);
-  setAliases(["externalReferenceId"], lead.externalReferenceId);
+  setAliases(["externalReferenceId"], lead.externalReferenceId || lead.leadId);
 }
 
 /**

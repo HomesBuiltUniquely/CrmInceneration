@@ -33,6 +33,7 @@ import {
   presalesSummaryMetricsFromLeads,
   salesJourneySummaryFromMilestoneCounts,
   usesAdminLeadsApi,
+  usesAdminSalesPoolForAssigneeScope,
 } from "@/lib/admin-leads-api";
 import {
   appendLeadPoolQuery,
@@ -79,7 +80,7 @@ import {
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
-import { filterLeadsByAssigneeScope } from "@/lib/admin-assignee-match";
+import { filterLeadsByAssigneeScope,formatAssigneeAliasSetQuery} from "@/lib/admin-assignee-match";
 import { WALKIN_HUB_API_UNAVAILABLE } from "@/lib/crm-walkin-leads";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
@@ -400,12 +401,19 @@ function buildHierarchyScopedAssignees(args: {
 const LEAD_SUMMARY_STAGES = new Set(["fresh lead", "discovery", "connection"]);
 const OPPORTUNITY_SUMMARY_STAGES = new Set(["experience & design", "decision", "closed"]);
 
+function leadStableIdentifier(lead: ApiLead): string {
+  const row = lead as Record<string, unknown>;
+  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 function dedupeAdminPoolLeads(leads: ApiLead[]): ApiLead[] {
   const byId = new Map<string, ApiLead>();
   let noIdSeq = 0;
   for (const lead of leads) {
-    const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-    const key = id || `__noid_${noIdSeq++}`;
+    const leadIdentifier = leadStableIdentifier(lead);
+    const key = leadIdentifier || `__noid_${noIdSeq++}`;
     if (!byId.has(key)) byId.set(key, lead);
   }
   return [...byId.values()];
@@ -427,6 +435,18 @@ function computeJourneySummaryCounts(leads: ApiLead[]): { lead: number; opportun
   return { lead, opportunity };
 }
 
+function appendAssigneeFilterQuery(
+  qs: URLSearchParams,
+  assignee: string,
+  assigneeAliasSet?: string[],
+) {
+  if (assigneeAliasSet && assigneeAliasSet.length > 0) {
+    qs.set("assigneeAliasSet", formatAssigneeAliasSetQuery(assigneeAliasSet));
+  } else if (assignee.trim()) {
+    qs.set("assignee", assignee.trim());
+  }
+}
+
 async function fetchMergedPage(
   page: number,
   size: number,
@@ -445,6 +465,7 @@ async function fetchMergedPage(
   crmMonthWindow = "",
   leadsWorkspace: CrmWorkspace = "sales",
   viewerRole = "",
+  assigneeAliasSet?: string[],
 ): Promise<SpringPage<ApiLead>> {
   const normalizedLeadType = leadType.trim().toLowerCase();
   const normalizedViewerRole = normalizeRole(viewerRole);
@@ -476,7 +497,7 @@ async function fetchMergedPage(
         qs.set("milestoneScope", "crm");
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
-        if (assignee.trim()) qs.set("assignee", assignee.trim());
+        appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
         if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
         else {
           if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
@@ -519,8 +540,8 @@ async function fetchMergedPage(
     const byId = new Map<string, ApiLead>();
     let noIdSeq = 0;
     for (const row of [...myRows, ...teamRows]) {
-      const id = row.id !== undefined && row.id !== null ? String(row.id) : "";
-      const key = id || `__noid_${noIdSeq++}`;
+      const leadIdentifier = leadStableIdentifier(row);
+      const key = leadIdentifier || `__noid_${noIdSeq++}`;
       if (!byId.has(key)) byId.set(key, row);
     }
     const merged = [...byId.values()].sort((a, b) => {
@@ -528,20 +549,31 @@ async function fetchMergedPage(
       const bt = Date.parse(b.updatedAt ?? "");
       return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
     });
+    const countBasis = leadsWorkspace === "sales" ? pickPrimarySourceRows(merged) : merged;
     const start = Math.max(0, page * size);
-    const pageRows = merged.slice(start, start + size);
+    const pageRows = countBasis.slice(start, start + size);
     return {
       content: pageRows,
-      totalElements: merged.length,
-      totalPages: Math.max(1, Math.ceil(merged.length / Math.max(1, size))),
+      totalElements: countBasis.length,
+      uniquePrimaryTotal: countBasis.length,
+      totalRowCount: merged.length,
+      totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, size))),
       number: page,
       size,
-      sourceCounts: computeLeadTypeCountsFromRows(merged),
-      summaryTotals: computeJourneySummaryCounts(merged),
+      sourceCounts: computeLeadTypeCountsFromRows(countBasis),
+      summaryTotals: computeJourneySummaryCounts(countBasis),
     };
   }
 
-  if (usesAdminLeadsApi(viewerRole) && !usesRoleEndpoint) {
+  const managerAssigneePoolScope = usesAdminSalesPoolForAssigneeScope(
+    viewerRole,
+    leadsWorkspace,
+    assigneeAliasSet?.length ?? 0,
+  );
+  if (
+    (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
+    !usesRoleEndpoint
+  ) {
     const superAdminGlobalSearchAcrossPools =
       normalizeRole(viewerRole) === "SUPER_ADMIN" &&
       search.trim().length > 0;
@@ -590,11 +622,12 @@ async function fetchMergedPage(
       const deduped = new Map<string, ApiLead>();
       let noIdSeq = 0;
       for (const lead of [...primarySorted, ...secondarySorted]) {
-        const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-        const key = id || `__noid_${noIdSeq++}`;
+        const leadIdentifier = leadStableIdentifier(lead);
+        const key = leadIdentifier || `__noid_${noIdSeq++}`;
         if (!deduped.has(key)) deduped.set(key, lead);
       }
       const merged = [...deduped.values()];
+      const primaryMerged = pickPrimarySourceRows(merged);
       const salesPoolTotal =
         primaryWorkspace === "sales" ? primaryPoolLeads.length : secondaryPoolLeads.length;
       const presalesPoolTotal =
@@ -604,6 +637,8 @@ async function fetchMergedPage(
       return {
         content: pageRows,
         totalElements: merged.length,
+        uniquePrimaryTotal: primaryMerged.length,
+        totalRowCount: merged.length,
         totalPages: Math.max(1, Math.ceil(merged.length / Math.max(1, size))),
         number: page,
         size,
@@ -619,7 +654,8 @@ async function fetchMergedPage(
         size,
         sort,
         search,
-        assignee,
+        assignee: assigneeAliasSet?.[0]?.trim() || assignee,
+        assigneeAliasSet,
         dateFrom,
         dateTo,
         crmMonthWindow,
@@ -649,7 +685,7 @@ async function fetchMergedPage(
   qs.set("milestoneScope", "crm");
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
-  if (assignee.trim()) qs.set("assignee", assignee.trim());
+  appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
   if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
   else {
     if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
@@ -914,6 +950,10 @@ export default function LeadsDataSection({
     null,
   );
   const [visibleFilteredTotal, setVisibleFilteredTotal] = useState<number | null>(null);
+  const [adminPoolDisplayTotals, setAdminPoolDisplayTotals] = useState<{
+    uniquePrimary: number;
+    totalRows: number;
+  } | null>(null);
   const [superAdminSearchPoolTotals, setSuperAdminSearchPoolTotals] = useState<{
     sales: number;
     presales: number;
@@ -1689,7 +1729,7 @@ export default function LeadsDataSection({
         ? hierarchyScopedAssignees
         : singleExecScopedAssignees.length > 0
           ? singleExecScopedAssignees
-          : EMPTY_ASSIGNEE_SCOPE,
+            : EMPTY_ASSIGNEE_SCOPE,
     [hierarchyScopedAssignees, singleExecScopedAssignees],
   );
   const effectiveAssigneeScopeKey = effectiveAssigneeScope.join("\0");
@@ -1835,6 +1875,10 @@ export default function LeadsDataSection({
       targetLeadType: string,
       targetSort: string,
     ): Promise<SpringPage<ApiLead>> => {
+      const bffAssigneeAliasSet =
+        effectiveAssigneeScope.length > 0 ? effectiveAssigneeScope : undefined;
+      /** Many alias strings for one exec/manager — one fetch + client exact match, not N parallel fetches. */
+      const useUnifiedAssigneeScopeFetch = effectiveAssigneeScope.length > 0;
       const applyAssigneeScopeFilter = (leads: ApiLead[]) =>
         activeAssigneeScope.length > 0
           ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
@@ -1859,6 +1903,7 @@ export default function LeadsDataSection({
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
+          bffAssigneeAliasSet,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -1884,6 +1929,7 @@ export default function LeadsDataSection({
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
+              bffAssigneeAliasSet,
             ),
           ),
         );
@@ -1893,15 +1939,21 @@ export default function LeadsDataSection({
         }
         return applyAssigneeScopeFilter(allLeads);
       };
+      const assigneeFetchSeed =
+        effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
       const buildVisiblePage = (allLeads: ApiLead[]): SpringPage<ApiLead> => {
         const trustPresalesScope =
           trustPresalesUpstreamLeadScope(clientScopeRoleKey) ||
           (leadsWorkspace === "presales" &&
             (clientScopeRoleKey === "SUPER_ADMIN" || clientScopeRoleKey === "ADMIN"));
-        let roleScopedLeads =
-          requiresClientScopedDataset && !isGlobalSearchActive && !trustPresalesScope
-            ? allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-            : allLeads;
+        const skipClientRoleFilter =
+          useUnifiedAssigneeScopeFetch ||
+          trustPresalesScope ||
+          !requiresClientScopedDataset ||
+          isGlobalSearchActive;
+        let roleScopedLeads = skipClientRoleFilter
+          ? allLeads
+          : allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey));
         if (superAdminPresalesPoolActive) {
           roleScopedLeads = roleScopedLeads.filter((lead) =>
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
@@ -1912,13 +1964,18 @@ export default function LeadsDataSection({
           const bt = Date.parse(b.updatedAt ?? "");
           return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
         });
-        const countBasis = salesHierarchyFilterActive
-          ? pickPrimarySourceRows(visibleMerged)
-          : visibleMerged;
+        const scopedIdRows =
+          leadsWorkspace === "sales"
+            ? dedupeAdminPoolLeads(visibleMerged as ApiLead[])
+            : visibleMerged;
+        const primaryRows = pickPrimarySourceRows(scopedIdRows);
+        const countBasis = scopedIdRows;
         const start = targetPage * targetSize;
         return {
           content: visibleMerged.slice(start, start + targetSize),
           totalElements: countBasis.length,
+          uniquePrimaryTotal: primaryRows.length,
+          totalRowCount: visibleMerged.length,
           totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
           number: targetPage,
           size: targetSize,
@@ -1932,7 +1989,7 @@ export default function LeadsDataSection({
         (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500)) ||
         superAdminPresalesPoolActive;
 
-      if (activeAssigneeScope.length <= 1) {
+      if (activeAssigneeScope.length <= 1 || useUnifiedAssigneeScopeFetch) {
         if (!requiresFullyVisiblePage) {
           const pageJson = await fetchMergedPage(
             targetPage,
@@ -1940,7 +1997,7 @@ export default function LeadsDataSection({
             targetLeadType,
             targetSort,
             debouncedSearch,
-            activeAssigneeScope[0] ?? effectiveAssignee,
+            assigneeFetchSeed,
             dateFrom,
             dateTo,
             milestoneStage,
@@ -1952,20 +2009,26 @@ export default function LeadsDataSection({
             crmMonthWindowProp,
             leadsWorkspace,
             clientScopeRoleKey,
+            bffAssigneeAliasSet,
           );
           if (activeAssigneeScope.length === 0) return pageJson;
           const scopedContent = filterLeadsByAssigneeScope(
             Array.isArray(pageJson.content) ? pageJson.content : [],
             activeAssigneeScope,
           );
-          const countBasis = salesHierarchyFilterActive
-            ? pickPrimarySourceRows(scopedContent)
-            : scopedContent;
+          const scopedIdRows =
+            leadsWorkspace === "sales"
+              ? dedupeAdminPoolLeads(scopedContent as ApiLead[])
+              : scopedContent;
+          const primaryRows = pickPrimarySourceRows(scopedIdRows);
+          const countBasis = scopedIdRows;
           const start = targetPage * targetSize;
           return {
             ...pageJson,
-            content: scopedContent.slice(start, start + targetSize),
+            content: countBasis.slice(start, start + targetSize),
             totalElements: countBasis.length,
+            uniquePrimaryTotal: primaryRows.length,
+            totalRowCount: scopedContent.length,
             totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
             number: targetPage,
             size: targetSize,
@@ -1973,15 +2036,13 @@ export default function LeadsDataSection({
             summaryTotals: computeJourneySummaryCounts(countBasis),
           };
         }
-        const allLeads = await fetchAllPagesForAssignee(activeAssigneeScope[0] ?? effectiveAssignee);
+        const allLeads = await fetchAllPagesForAssignee(assigneeFetchSeed);
         return buildVisiblePage(allLeads);
       }
       const chunks = await Promise.all(
         activeAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
       );
-      const mergedScopeRows = usesAdminLeadsApi(clientScopeRoleKey)
-        ? (chunks.flat() as ApiLead[])
-        : dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
+      const mergedScopeRows = dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
       return buildVisiblePage(mergedScopeRows);
     },
     [
@@ -1994,6 +2055,7 @@ export default function LeadsDataSection({
       superAdminGlobalSearchActive,
       activeAssigneeScope,
       activeAssigneeScopeKey,
+      effectiveAssigneeScope,
       salesHierarchyFilterActive,
       superAdminPresalesPoolActive,
       superAdminPresalesPoolSet,
@@ -2014,6 +2076,9 @@ export default function LeadsDataSection({
 
   const fetchAllScopedMergedLeads = useCallback(
     async (targetLeadType: string, targetSort: string): Promise<ApiLead[]> => {
+      const bffAssigneeAliasSet =
+        effectiveAssigneeScope.length > 0 ? effectiveAssigneeScope : undefined;
+      const useUnifiedAssigneeScopeFetch = effectiveAssigneeScope.length > 0;
       const applyAssigneeScopeFilter = (leads: ApiLead[]) =>
         activeAssigneeScope.length > 0
           ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
@@ -2024,6 +2089,8 @@ export default function LeadsDataSection({
               leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
             )
           : list;
+      const assigneeFetchSeed =
+        effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
         const queryAssignee = superAdminGlobalSearchActive ? "" : assigneeName;
         const firstPage = await fetchMergedPage(
@@ -2044,6 +2111,7 @@ export default function LeadsDataSection({
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
+          bffAssigneeAliasSet,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -2069,6 +2137,7 @@ export default function LeadsDataSection({
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
+              bffAssigneeAliasSet,
             ),
           ),
         );
@@ -2082,18 +2151,14 @@ export default function LeadsDataSection({
         return applySuperAdminPool(await fetchAllPagesForAssignee(""));
       }
 
-      if (activeAssigneeScope.length <= 1) {
-        return applySuperAdminPool(
-          await fetchAllPagesForAssignee(activeAssigneeScope[0] ?? effectiveAssignee),
-        );
+      if (activeAssigneeScope.length <= 1 || useUnifiedAssigneeScopeFetch) {
+        return applySuperAdminPool(await fetchAllPagesForAssignee(assigneeFetchSeed));
       }
 
       const chunks = await Promise.all(
         activeAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
       );
-      const mergedScopeRows = usesAdminLeadsApi(clientScopeRoleKey)
-        ? (chunks.flat() as ApiLead[])
-        : dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
+      const mergedScopeRows = dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
       return applySuperAdminPool(
         mergedScopeRows.sort((a: ApiLead, b: ApiLead) => {
           const at = Date.parse(a.updatedAt ?? "");
@@ -2111,6 +2176,7 @@ export default function LeadsDataSection({
       debouncedSearch,
       effectiveAssignee,
       activeAssigneeScope,
+      effectiveAssigneeScope,
       leadViewKey,
       milestoneStage,
       milestoneStageCategory,
@@ -2126,7 +2192,13 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     const roleKey = normalizeRole(authRoleProp ?? currentRole);
-    if (!usesAdminLeadsApi(roleKey)) return;
+    if (!usesAdminLeadsApi(roleKey)) {
+      setAdminPoolDisplayTotals(null);
+      return;
+    }
+    if (roleKey !== "SUPER_ADMIN" && roleKey !== "SALES_ADMIN") {
+      setAdminPoolDisplayTotals(null);
+    }
 
     let cancelled = false;
     void (async () => {
@@ -2151,7 +2223,6 @@ export default function LeadsDataSection({
             ...baseCounts,
             verified: verifiedCount,
           });
-          setVisibleFilteredTotal(scopedPrimary.length);
           const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${scopedPrimary.length}`;
           if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
             lastHeatmapSummaryKeyRef.current = summaryKey;
@@ -2217,13 +2288,6 @@ export default function LeadsDataSection({
                 lead: heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
                 opportunity: 0,
               };
-        if (!milestoneToolbarActive) {
-          const displayTotal =
-            roleKey === "SUPER_ADMIN"
-              ? poolTotal
-              : heatmapData.uniquePrimaryTotal ?? primaryTypes?.all ?? poolTotal;
-          setVisibleFilteredTotal(displayTotal);
-        }
         const superAdminCrossPoolSearch =
           roleKey === "SUPER_ADMIN" && debouncedSearch.trim().length > 0;
         if (!superAdminCrossPoolSearch) {
@@ -2260,6 +2324,7 @@ export default function LeadsDataSection({
           setLeadTypeCounts({});
           setLeadTypeCountsPrimary(null);
           setLeadTypeCountsAllRows(null);
+          setAdminPoolDisplayTotals(null);
         }
       }
     })();
@@ -2339,7 +2404,14 @@ export default function LeadsDataSection({
         );
         if (cancelled) return;
         setAdminMilestoneTableLeads(leads);
+        const primaryRows = pickPrimarySourceRows(leads);
         setVisibleFilteredTotal(total);
+        if (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") {
+          setAdminPoolDisplayTotals({
+            uniquePrimary: primaryRows.length,
+            totalRows: total,
+          });
+        }
       } catch (e) {
         if (cancelled) return;
         const msg = e instanceof Error ? e.message : "Failed to load filtered leads";
@@ -2404,7 +2476,18 @@ export default function LeadsDataSection({
             : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
-        setVisibleFilteredTotal(scoped.length);
+        // Only update total from this effect when
+        // exec/hierarchy scope is active
+        // Otherwise load() already set correct total
+        if (
+          effectiveAssigneeScope.length === 0 &&
+          (roleKey === "SALES_MANAGER" || roleKey === "MANAGER")
+        ) {
+          // Manager all-team view — load() handles total
+          // do not overwrite here
+        } else {
+          setVisibleFilteredTotal(scoped.length);
+        }
         const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}`;
         if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
           lastHeatmapSummaryKeyRef.current = summaryKey;
@@ -2494,8 +2577,24 @@ export default function LeadsDataSection({
     setData(null);
     try {
       const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
-      const adminPoolUsesHeatmapTotal =
-        usesAdminLeadsApi(roleKeyForLoad) && leadViewKey !== "my" && leadViewKey !== "team";
+
+      const applyAdminTotalsFromTablePage = (pageJson: SpringPage<ApiLead>) => {
+        const totalRows = pageJson.totalRowCount ?? pageJson.totalElements ?? 0;
+        const uniquePrimary = pageJson.uniquePrimaryTotal ?? totalRows;
+        const assigneeScopedTotals = pageJson.uniquePrimaryTotal !== undefined;
+        setVisibleFilteredTotal(
+          assigneeScopedTotals ? uniquePrimary : (pageJson.totalElements ?? 0),
+        );
+        if (
+          assigneeScopedTotals &&
+          (roleKeyForLoad === "SUPER_ADMIN" ||
+            roleKeyForLoad === "SALES_ADMIN" ||
+            roleKeyForLoad === "SALES_MANAGER" ||
+            roleKeyForLoad === "MANAGER")
+        ) {
+          setAdminPoolDisplayTotals({ uniquePrimary, totalRows });
+        }
+      };
 
       const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>, usePageMetaForUi: boolean) => {
         setData(pageJson);
@@ -2509,8 +2608,16 @@ export default function LeadsDataSection({
         } else {
           setSuperAdminSearchPoolTotals(null);
         }
-        if (usePageMetaForUi && !adminPoolUsesHeatmapTotal) {
-          setVisibleFilteredTotal(pageJson.totalElements ?? 0);
+        if (usePageMetaForUi) {
+          if (
+            usesAdminLeadsApi(roleKeyForLoad) &&
+            leadViewKey !== "my" &&
+            leadViewKey !== "team"
+          ) {
+            applyAdminTotalsFromTablePage(pageJson);
+          } else {
+            setVisibleFilteredTotal(pageJson.totalElements ?? 0);
+          }
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
@@ -2597,6 +2704,7 @@ export default function LeadsDataSection({
       }
       setError(msg);
       setData(null);
+      setAdminPoolDisplayTotals(null);
     } finally {
       setLoading(false);
     }
@@ -3165,6 +3273,14 @@ export default function LeadsDataSection({
           normalizeRole(authRoleProp ?? currentRole) === "SUPER_ADMIN"
             ? leadTypeCountsAllRows ?? undefined
             : undefined
+        }
+        adminTotalLeadsDisplay={
+          (() => {
+            const rk = normalizeRole(authRoleProp ?? currentRole);
+            return rk === "SUPER_ADMIN" || rk === "SALES_ADMIN"
+              ? (adminPoolDisplayTotals ?? undefined)
+              : undefined;
+          })()
         }
         superAdminSearchPoolTotals={superAdminSearchPoolTotals ?? undefined}
         superAdminCrossPoolSearchActive={

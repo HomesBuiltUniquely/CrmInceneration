@@ -4,6 +4,11 @@ import { adminRowMatchesAssigneeQuery } from "@/lib/admin-assignee-match";
 import { fetchAdminPresalesPoolViaMergeFallback } from "@/lib/admin-pool-merge-fallback";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import {
+  flattenAdminListContent,
+  type AdminLeadListEnvelope,
+} from "@/lib/admin-leads-api";
+import { pickPrimarySourceRows } from "@/lib/primary-source-leads";
 
 function rowUpdatedAtMs(row: unknown): number {
   if (!row || typeof row !== "object") return 0;
@@ -108,6 +113,8 @@ export async function GET(req: NextRequest) {
     : rows;
 
   filteredRows.sort((a, b) => rowUpdatedAtMs(b) - rowUpdatedAtMs(a));
+  const flatLeads = flattenAdminListContent(filteredRows as AdminLeadListEnvelope[]);
+  const uniquePrimaryTotal = pickPrimarySourceRows(flatLeads).length;
   const start = requestedPage * requestedSize;
   const content = filteredRows.slice(start, start + requestedSize);
   return NextResponse.json({
@@ -115,6 +122,7 @@ export async function GET(req: NextRequest) {
     pool: "presales",
     content,
     totalElements: filteredRows.length,
+    uniquePrimaryTotal,
     totalPages: Math.max(1, Math.ceil(filteredRows.length / requestedSize)),
     number: requestedPage,
     size: requestedSize,
