@@ -54,6 +54,13 @@ function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
 }
 
+function leadStableIdentifier(lead: ApiLead): string {
+  const row = lead as Record<string, unknown>;
+  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 function emptySourceCounts(): LeadSourceCounts {
   return {
     all: 0,
@@ -205,7 +212,7 @@ async function fetchPresalesSearchLeads(
       const lt = String(item.type ?? "").trim().toLowerCase();
       const lead = item.lead;
       if (!lead || typeof lead !== "object") continue;
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead as ApiLead);
       const fallbackKey = `noid:${String(
         lead.customerId ??
           lead.phone ??
@@ -259,8 +266,8 @@ async function fetchPresalesSearchLeads(
       const chunk = Array.isArray(pageData.content) ? pageData.content : [];
       if (chunk.length === 0) break;
       for (const lead of chunk) {
-        const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-        const key = id || `fallback_noid_${noIdSeq++}`;
+        const leadIdentifier = leadStableIdentifier(lead);
+        const key = leadIdentifier || `fallback_noid_${noIdSeq++}`;
         if (fallbackById.has(key)) continue;
         fallbackById.set(key, { ...lead, leadType });
       }
@@ -321,7 +328,7 @@ function filterAndSortMergedLeads(
           dynamic.phone,
           dynamic.customerEmail,
           assigneeText,
-          lead.id !== undefined && lead.id !== null ? String(lead.id) : "",
+          leadStableIdentifier(lead),
         ]
           .filter(Boolean)
           .join(" ")
@@ -620,7 +627,7 @@ export async function GET(req: NextRequest) {
   for (let i = 0; i < chunks.length; i++) {
     const sourceType = selectedTypes[i];
     for (const lead of chunks[i]) {
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead);
       if (!id) continue;
       if (!byId.has(id)) {
         byId.set(id, {
@@ -633,7 +640,7 @@ export async function GET(req: NextRequest) {
   if (includePresalesInGlobalSearch) {
     const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
     for (const lead of presalesRows) {
-      const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
+      const id = leadStableIdentifier(lead);
       if (!id || byId.has(id)) continue;
       byId.set(id, lead);
     }

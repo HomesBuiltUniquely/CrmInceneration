@@ -56,9 +56,12 @@ export function parseLeadCreatedAtMs(lead: ApiLead): number {
 function dedupeGroupKey(lead: ApiLead, orphanSeq: number): string {
   const phone = leadPhoneDigits(lead);
   if (phone.length >= 8) return `p:${phone}`;
-  const id = String(lead.id ?? "").trim();
+  const row = lead as Record<string, unknown>;
+  const leadIdentifier = String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
   const lt = normalizeLeadTypeKey(lead.leadType);
-  return id ? `id:${id}:${lt}` : `__orphan_${orphanSeq}`;
+  return leadIdentifier ? `lid:${leadIdentifier}:${lt}` : `__orphan_${orphanSeq}`;
 }
 
 /** One row per phone (earliest created_at); orphan rows without phone stay separate. */

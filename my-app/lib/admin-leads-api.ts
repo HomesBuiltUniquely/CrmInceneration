@@ -319,12 +319,19 @@ export function milestoneCountsFromLeads(
   return out;
 }
 
+function leadStableIdentifier(lead: ApiLead): string {
+  const row = lead as Record<string, unknown>;
+  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 function mergeLeadsById(leads: ApiLead[]): ApiLead[] {
   const byId = new Map<string, ApiLead>();
   let noIdSeq = 0;
   for (const lead of leads) {
-    const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-    const key = id || `__noid_${noIdSeq++}`;
+    const leadIdentifier = leadStableIdentifier(lead);
+    const key = leadIdentifier || `__noid_${noIdSeq++}`;
     if (byId.has(key)) continue;
     byId.set(key, lead);
   }
@@ -698,13 +705,21 @@ export async function fetchAdminLeadsPage(
     throw new Error(parseAdminErrorMessage(json, `HTTP ${res.status}`));
   }
 
-  const content = flattenAdminListContent(json.content);
-  const totalRowCount = Number(json.totalElements ?? content.length);
+  const contentRaw = flattenAdminListContent(json.content);
+  const dedupedById = new Map<string, ApiLead>();
+  let noIdSeq = 0;
+  for (const lead of contentRaw) {
+    const leadIdentifier = leadStableIdentifier(lead);
+    const key = leadIdentifier || `__noid_${noIdSeq++}`;
+    if (!dedupedById.has(key)) dedupedById.set(key, lead);
+  }
+  const content = [...dedupedById.values()];
+  const totalRowCount = Number(json.totalElements ?? contentRaw.length);
   const uniquePrimaryTotal = Number(json.uniquePrimaryTotal);
 
   return {
     content,
-    totalElements: totalRowCount,
+    totalElements: content.length,
     totalRowCount,
     ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
       ? { uniquePrimaryTotal }

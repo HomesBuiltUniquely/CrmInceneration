@@ -401,12 +401,19 @@ function buildHierarchyScopedAssignees(args: {
 const LEAD_SUMMARY_STAGES = new Set(["fresh lead", "discovery", "connection"]);
 const OPPORTUNITY_SUMMARY_STAGES = new Set(["experience & design", "decision", "closed"]);
 
+function leadStableIdentifier(lead: ApiLead): string {
+  const row = lead as Record<string, unknown>;
+  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 function dedupeAdminPoolLeads(leads: ApiLead[]): ApiLead[] {
   const byId = new Map<string, ApiLead>();
   let noIdSeq = 0;
   for (const lead of leads) {
-    const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-    const key = id || `__noid_${noIdSeq++}`;
+    const leadIdentifier = leadStableIdentifier(lead);
+    const key = leadIdentifier || `__noid_${noIdSeq++}`;
     if (!byId.has(key)) byId.set(key, lead);
   }
   return [...byId.values()];
@@ -533,8 +540,8 @@ async function fetchMergedPage(
     const byId = new Map<string, ApiLead>();
     let noIdSeq = 0;
     for (const row of [...myRows, ...teamRows]) {
-      const id = row.id !== undefined && row.id !== null ? String(row.id) : "";
-      const key = id || `__noid_${noIdSeq++}`;
+      const leadIdentifier = leadStableIdentifier(row);
+      const key = leadIdentifier || `__noid_${noIdSeq++}`;
       if (!byId.has(key)) byId.set(key, row);
     }
     const merged = [...byId.values()].sort((a, b) => {
@@ -542,16 +549,19 @@ async function fetchMergedPage(
       const bt = Date.parse(b.updatedAt ?? "");
       return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
     });
+    const countBasis = leadsWorkspace === "sales" ? pickPrimarySourceRows(merged) : merged;
     const start = Math.max(0, page * size);
-    const pageRows = merged.slice(start, start + size);
+    const pageRows = countBasis.slice(start, start + size);
     return {
       content: pageRows,
-      totalElements: merged.length,
-      totalPages: Math.max(1, Math.ceil(merged.length / Math.max(1, size))),
+      totalElements: countBasis.length,
+      uniquePrimaryTotal: countBasis.length,
+      totalRowCount: merged.length,
+      totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, size))),
       number: page,
       size,
-      sourceCounts: computeLeadTypeCountsFromRows(merged),
-      summaryTotals: computeJourneySummaryCounts(merged),
+      sourceCounts: computeLeadTypeCountsFromRows(countBasis),
+      summaryTotals: computeJourneySummaryCounts(countBasis),
     };
   }
 
@@ -612,8 +622,8 @@ async function fetchMergedPage(
       const deduped = new Map<string, ApiLead>();
       let noIdSeq = 0;
       for (const lead of [...primarySorted, ...secondarySorted]) {
-        const id = lead.id !== undefined && lead.id !== null ? String(lead.id) : "";
-        const key = id || `__noid_${noIdSeq++}`;
+        const leadIdentifier = leadStableIdentifier(lead);
+        const key = leadIdentifier || `__noid_${noIdSeq++}`;
         if (!deduped.has(key)) deduped.set(key, lead);
       }
       const merged = [...deduped.values()];
@@ -1719,7 +1729,7 @@ export default function LeadsDataSection({
         ? hierarchyScopedAssignees
         : singleExecScopedAssignees.length > 0
           ? singleExecScopedAssignees
-          : EMPTY_ASSIGNEE_SCOPE,
+            : EMPTY_ASSIGNEE_SCOPE,
     [hierarchyScopedAssignees, singleExecScopedAssignees],
   );
   const effectiveAssigneeScopeKey = effectiveAssigneeScope.join("\0");
@@ -1954,10 +1964,12 @@ export default function LeadsDataSection({
           const bt = Date.parse(b.updatedAt ?? "");
           return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
         });
-        const primaryRows = pickPrimarySourceRows(visibleMerged);
-        const usePrimaryCountBasis =
-          useUnifiedAssigneeScopeFetch || salesHierarchyFilterActive;
-        const countBasis = usePrimaryCountBasis ? primaryRows : visibleMerged;
+        const scopedIdRows =
+          leadsWorkspace === "sales"
+            ? dedupeAdminPoolLeads(visibleMerged as ApiLead[])
+            : visibleMerged;
+        const primaryRows = pickPrimarySourceRows(scopedIdRows);
+        const countBasis = scopedIdRows;
         const start = targetPage * targetSize;
         return {
           content: visibleMerged.slice(start, start + targetSize),
@@ -2004,14 +2016,16 @@ export default function LeadsDataSection({
             Array.isArray(pageJson.content) ? pageJson.content : [],
             activeAssigneeScope,
           );
-          const primaryRows = pickPrimarySourceRows(scopedContent);
-          const usePrimaryCountBasis =
-            useUnifiedAssigneeScopeFetch || salesHierarchyFilterActive;
-          const countBasis = usePrimaryCountBasis ? primaryRows : scopedContent;
+          const scopedIdRows =
+            leadsWorkspace === "sales"
+              ? dedupeAdminPoolLeads(scopedContent as ApiLead[])
+              : scopedContent;
+          const primaryRows = pickPrimarySourceRows(scopedIdRows);
+          const countBasis = scopedIdRows;
           const start = targetPage * targetSize;
           return {
             ...pageJson,
-            content: scopedContent.slice(start, start + targetSize),
+            content: countBasis.slice(start, start + targetSize),
             totalElements: countBasis.length,
             uniquePrimaryTotal: primaryRows.length,
             totalRowCount: scopedContent.length,
@@ -2462,7 +2476,18 @@ export default function LeadsDataSection({
             : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
-        setVisibleFilteredTotal(scoped.length);
+        // Only update total from this effect when
+        // exec/hierarchy scope is active
+        // Otherwise load() already set correct total
+        if (
+          effectiveAssigneeScope.length === 0 &&
+          (roleKey === "SALES_MANAGER" || roleKey === "MANAGER")
+        ) {
+          // Manager all-team view — load() handles total
+          // do not overwrite here
+        } else {
+          setVisibleFilteredTotal(scoped.length);
+        }
         const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}`;
         if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
           lastHeatmapSummaryKeyRef.current = summaryKey;
