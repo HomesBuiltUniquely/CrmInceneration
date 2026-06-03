@@ -6,11 +6,16 @@ import type { DashboardFilterState } from "./LeadFilters";
 import {
   buildMilestoneStages,
   fetchCrmPipeline,
+  getNestedForStage,
   type MilestoneStage,
 } from "@/lib/crm-pipeline";
+import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { ApiLead, SpringPage } from "@/lib/leads-filter";
 import { crmLeadTopLevelStage } from "@/lib/leads-filter";
-import { presalesTopLevelStage } from "@/lib/presales-milestone";
+import {
+  presalesTopLevelStage,
+  readPresalesMilestoneFromLead,
+} from "@/lib/presales-milestone";
 import {
   appendWorkspaceMilestoneFilterQuery,
   pipelineRoleForWorkspace,
@@ -59,13 +64,43 @@ function leftAccent(i: number): MilestonePathItem["leftAccent"] {
   return order[i % order.length]!;
 }
 
+/** Presales dashboard: Won/Lost cards from Hub nested pipeline when sub-status mappings are empty. */
+function pathCardsFromNested(
+  nested: CrmNestedStage[] | undefined,
+  selectedStage: string,
+  bySub: Map<string, number>,
+  pickCategory: (cat: string) => boolean,
+): MilestonePathItem[] {
+  const node = getNestedForStage(nested, selectedStage);
+  if (!node) return [];
+  let accentIdx = 0;
+  const out: MilestonePathItem[] = [];
+  for (const cat of node.categories ?? []) {
+    const stageCategory = cat.stageCategory.trim();
+    if (!pickCategory(stageCategory)) continue;
+    for (const sub of cat.subStages ?? []) {
+      const subStageName = String(sub).trim();
+      if (!subStageName) continue;
+      out.push({
+        title: subStageName.toUpperCase(),
+        value: bySub.get(norm(subStageName)) ?? 0,
+        leftAccent: leftAccent(accentIdx++),
+      });
+    }
+  }
+  return out;
+}
+
 function stageFromLead(lead: ApiLead, workspace: CrmWorkspace): string {
   return workspace === "presales"
     ? presalesTopLevelStage(lead).trim()
     : crmLeadTopLevelStage(lead).trim();
 }
 
-function subStageFromLead(lead: ApiLead): string {
+function subStageFromLead(lead: ApiLead, workspace: CrmWorkspace): string {
+  if (workspace === "presales") {
+    return readPresalesMilestoneFromLead(lead).subStage;
+  }
   return String(lead.stage?.milestoneSubStage ?? "").trim();
 }
 
@@ -181,10 +216,12 @@ export default function CrmPipeline({ filters, workspace = "sales" }: Props) {
     void (async () => {
       try {
         const pipelineRole = pipelineRoleForWorkspace(workspace);
+        const subStatusQs = new URLSearchParams({ resource: "sub-status" });
+        subStatusQs.set("role", pipelineRole);
         const [salesPipeline, leads, subMapRes] = await Promise.all([
           fetchCrmPipeline({ nested: true, role: pipelineRole }),
           fetchDashboardLeads(sharedFilters, workspace),
-          fetch("/api/milestone-count?resource=sub-status", {
+          fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
             cache: "no-store",
             credentials: "include",
             headers: getCrmAuthHeaders(),
@@ -260,7 +297,7 @@ export default function CrmPipeline({ filters, workspace = "sales" }: Props) {
           (lead) => norm(stageFromLead(lead, workspace)) === norm(selectedStage),
         );
     const bySub = scopedLeads.reduce<Map<string, number>>((acc, lead) => {
-      const sub = subStageFromLead(lead);
+      const sub = subStageFromLead(lead, workspace);
       if (!sub) return acc;
       const key = norm(sub);
       acc.set(key, (acc.get(key) ?? 0) + 1);
@@ -281,6 +318,23 @@ export default function CrmPipeline({ filters, workspace = "sales" }: Props) {
       if (isWonCategory(m.stageCategory)) wonItems.push(item);
       if (isLostCategory(m.stageCategory)) lostItems.push(item);
     }
+    if (
+      !isTotalLeads &&
+      workspace === "presales" &&
+      data?.nested?.length
+    ) {
+      if (wonItems.length === 0) {
+        wonItems.push(
+          ...pathCardsFromNested(data.nested, selectedStage, bySub, isWonCategory),
+        );
+      }
+      if (lostItems.length === 0) {
+        lostItems.push(
+          ...pathCardsFromNested(data.nested, selectedStage, bySub, isLostCategory),
+        );
+      }
+    }
+
     const wonTotal = wonItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
     const lostTotal = lostItems.reduce((s, i) => s + (typeof i.value === "number" ? i.value : 0), 0);
     setPathData({
@@ -299,6 +353,7 @@ export default function CrmPipeline({ filters, workspace = "sales" }: Props) {
     filteredLeads,
     subMappings,
     workspace,
+    data,
   ]);
 
   if (error) {

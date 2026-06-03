@@ -34,6 +34,10 @@ export type SpringPage<T> = {
   totalPages: number;
   number: number;
   size: number;
+  /** Unique customers (primary-source phone dedupe) when list API provides it. */
+  uniquePrimaryTotal?: number;
+  /** Hub row count when it differs from `totalElements` (pagination basis). */
+  totalRowCount?: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
   /** SUPER_ADMIN cross-pool search: per-pool match counts (not deduped across pools). */

@@ -44,3 +44,20 @@ export function filterLeadsByAssigneeScope(leads: ApiLead[], scope: string[]): A
   if (scope.length === 0) return leads;
   return leads.filter((lead) => leadMatchesAssigneeScope(lead, scope));
 }
+
+/** `assigneeAliasSet` query param — exact hierarchy aliases (`\0`-joined). */
+export function parseAssigneeAliasSetQuery(raw: string | null | undefined): string[] {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return [];
+  return trimmed
+    .split("\0")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function formatAssigneeAliasSetQuery(aliases: string[]): string {
+  return aliases
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("\0");
+}

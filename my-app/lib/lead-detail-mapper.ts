@@ -31,6 +31,19 @@ function pickScalar(obj: Record<string, unknown>, ...keys: string[]): string {
   return "";
 }
 
+function pickBool(obj: Record<string, unknown>, ...keys: string[]): boolean | undefined {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string" && v.trim()) {
+      const normalized = v.trim().toLowerCase();
+      if (["true", "1", "yes"].includes(normalized)) return true;
+      if (["false", "0", "no"].includes(normalized)) return false;
+    }
+  }
+  return undefined;
+}
+
 function pickPersonNameFromNested(obj: Record<string, unknown> | null | undefined): string {
   if (!obj || typeof obj !== "object") return "";
   const o = obj as Record<string, unknown>;
@@ -545,6 +558,14 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       const vs = String(detail.verificationStatus ?? "").trim().toLowerCase();
       return vs === "verified" || vs === "true";
     })(),
+    salesclouserfill: pickBool(
+      detail,
+      "salesclouserfill",
+      "salesClosureFill",
+      "sales_clouser_fill",
+      "salesClosureSubmitted",
+    ),
+    paymentReceived: pickScalar(detail, "paymentReceived", "payment_received") || "",
     stageBlock: {
       milestoneStage: st.milestoneStage,
       milestoneStageCategory: st.milestoneStageCategory,
