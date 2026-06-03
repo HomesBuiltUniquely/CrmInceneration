@@ -56,9 +56,12 @@ function norm(v: string | null | undefined) {
 
 function leadStableIdentifier(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
-  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
-    .trim()
-    .toLowerCase();
+  const fromFields = String(
+    row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? row.uniqueId ?? "",
+  ).trim();
+  if (fromFields) return fromFields.toLowerCase();
+  if (lead.id !== undefined && lead.id !== null) return String(lead.id);
+  return "";
 }
 
 function emptySourceCounts(): LeadSourceCounts {
@@ -361,18 +364,21 @@ function filterAndSortMergedLeads(
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      const dateFieldRaw =
-        dateFrom || dateTo
-          ? usePresalesMilestoneFilters
-            ? (() => {
-                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-                return assignedTs > 0
-                  ? new Date(assignedTs).toISOString()
-                  : readLeadCreatedAtRaw(lead);
-              })()
-            : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim()
-          : "";
-      if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
+      const isWalkInRow = normalizeLeadTypeKey(lead.leadType) === "walkinlead";
+      if (!isWalkInRow) {
+        const dateFieldRaw =
+          dateFrom || dateTo
+            ? usePresalesMilestoneFilters
+              ? (() => {
+                  const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                  return assignedTs > 0
+                    ? new Date(assignedTs).toISOString()
+                    : readLeadCreatedAtRaw(lead);
+                })()
+              : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim()
+            : "";
+        if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
+      }
 
       if (usePresalesMilestoneFilters) {
         if (
@@ -382,6 +388,7 @@ function filterAndSortMergedLeads(
           return false;
         }
       } else if (
+        !isWalkInRow &&
         (mStage || mCat || mSub) &&
         !leadMatchesWorkspaceMilestoneFilter(lead, "sales", mStage, mCat, mSub)
       ) {

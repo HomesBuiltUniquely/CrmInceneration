@@ -22,9 +22,6 @@ export const WALKIN_FILTER_LEAD_TYPE_ALIASES = ["walkinlead", "WalkinLead"] as c
 /** Canonical list base — do not probe /v1/WalkIn or /v1/WalkInLead (404 on current branch). */
 const WALKIN_DIRECT_BASE_PATH = LEAD_TYPE_TO_BASE.walkinlead;
 
-const WALKIN_PROBE_TTL_MS = 5 * 60 * 1000;
-const walkInHubProbeByOrigin = new Map<string, { unavailable: boolean; checkedAt: number }>();
-
 function isLocalHubOrigin(origin: string): boolean {
   try {
     const host = new URL(origin).hostname;
@@ -138,15 +135,8 @@ function resolveAuthHeaders(ctx: WalkInFetchContext): HeadersInit {
   return {};
 }
 
-function cachedWalkInUnavailable(origin: string): boolean | null {
-  const hit = walkInHubProbeByOrigin.get(origin);
-  if (!hit || Date.now() - hit.checkedAt >= WALKIN_PROBE_TTL_MS) return null;
-  return hit.unavailable;
-}
-
-function setCachedWalkInUnavailable(origin: string, unavailable: boolean): void {
-  walkInHubProbeByOrigin.set(origin, { unavailable, checkedAt: Date.now() });
-}
+/** WalkinLead list does not use CRM filter query keys — only page/size/sort/search. */
+const WALKIN_LIST_QUERY_KEYS = new Set(["search"]);
 
 function appendWalkInQueryParams(
   upstream: URL,
@@ -158,7 +148,8 @@ function appendWalkInQueryParams(
   upstream.searchParams.set("sort", ctx.sort);
   if (ctx.search) upstream.searchParams.set("search", ctx.search);
   for (const { key, value } of ctx.extraParams) {
-    if (value) upstream.searchParams.set(key, value);
+    if (!value || !WALKIN_LIST_QUERY_KEYS.has(key)) continue;
+    upstream.searchParams.set(key, value);
   }
 }
 
@@ -202,12 +193,10 @@ async function fetchWalkInFromDirectList(
     });
     const text = await res.text();
     if (isHubNoResourceResponse(res.status, text)) {
-      setCachedWalkInUnavailable(BASE_URL, true);
       return { leads: [], apiUnavailable: true };
     }
     if (!res.ok) break;
     gotOk = true;
-    setCachedWalkInUnavailable(BASE_URL, false);
     const json = (() => {
       try {
         return JSON.parse(text);
@@ -221,7 +210,7 @@ async function fetchWalkInFromDirectList(
     if (pageNum + 1 >= totalPages) break;
     if (content.length < ctx.perType) break;
   }
-  if (gotOk && all.length > 0) {
+  if (gotOk) {
     return { leads: tagWalkInLeads(all), apiUnavailable: false };
   }
   return { leads: [], apiUnavailable: false };
@@ -232,11 +221,6 @@ export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise
   accessDenied: boolean;
   apiUnavailable?: boolean;
 }> {
-  const cached = cachedWalkInUnavailable(BASE_URL);
-  if (cached === true) {
-    return { leads: [], accessDenied: false, apiUnavailable: true };
-  }
-
   const direct = await fetchWalkInFromDirectList(ctx);
   if (direct.leads.length > 0) {
     return { leads: direct.leads, accessDenied: false };
@@ -309,10 +293,8 @@ export async function augmentLeadSourceCountsWithWalkIn(
       perType: ctx.perType ?? 100,
       maxPages: ctx.maxPages ?? 10,
     });
-    const dated = leads.filter((lead) =>
-      leadInCreatedDateRange(lead, ctx.effDates.from, ctx.effDates.to),
-    );
-    return mergeWalkInCountIntoSourceCounts(counts, dated.length);
+    // Hub WalkinLead list is not CRM-date-filtered; toolbar month must not zero counts.
+    return mergeWalkInCountIntoSourceCounts(counts, leads.length);
   } catch {
     return counts;
   }

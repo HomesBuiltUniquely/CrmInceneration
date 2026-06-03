@@ -81,7 +81,6 @@ import {
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { filterLeadsByAssigneeScope,formatAssigneeAliasSetQuery} from "@/lib/admin-assignee-match";
-import { walkInHubUnavailableMessage } from "@/lib/crm-walkin-leads";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   setEffectiveNewCrmStartDate,
@@ -403,9 +402,12 @@ const OPPORTUNITY_SUMMARY_STAGES = new Set(["experience & design", "decision", "
 
 function leadStableIdentifier(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
-  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
-    .trim()
-    .toLowerCase();
+  const fromFields = String(
+    row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? row.uniqueId ?? "",
+  ).trim();
+  if (fromFields) return fromFields.toLowerCase();
+  if (lead.id !== undefined && lead.id !== null) return String(lead.id);
+  return "";
 }
 
 function dedupeAdminPoolLeads(leads: ApiLead[]): ApiLead[] {
@@ -478,6 +480,50 @@ async function fetchMergedPage(
         ? explicitVerification
         : explicitVerification ||
           defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
+
+  /** Walk-in lives on `/v1/WalkinLead`, not the admin assignee pool — always use merge route. */
+  if (normalizedLeadType === "walkinlead") {
+    const qs = new URLSearchParams();
+    qs.set("mergeAll", "1");
+    qs.set("leadType", "walkinlead");
+    qs.set("milestoneScope", "crm");
+    qs.set("page", String(page));
+    qs.set("size", String(size));
+    qs.set("sort", sort);
+    if (search.trim()) qs.set("search", search.trim());
+    appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+    if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
+    else {
+      if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
+      if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
+    }
+    appendWorkspaceMilestoneFilterQuery(
+      qs,
+      leadsWorkspace,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+    );
+    if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
+    if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+    appendLeadPoolQuery(qs, leadsWorkspace);
+    const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders(),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 401) throw new Error("Session expired. Please login again.");
+      if (res.status === 403) throw new Error("You don't have access to this lead view.");
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    const pageJson = (await res.json()) as SpringPage<ApiLead>;
+    return {
+      ...pageJson,
+      content: Array.isArray(pageJson.content) ? pageJson.content : [],
+    };
+  }
 
   if (
     (normalizedViewerRole === "SALES_MANAGER" || normalizedViewerRole === "MANAGER") &&
@@ -2785,9 +2831,10 @@ export default function LeadsDataSection({
   const hasMilestoneFilter = Boolean(
     milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
   );
+  const walkInTableView = leadType.trim().toLowerCase() === "walkinlead";
   const content = adminMilestoneTableActive
     ? contentFromApi
-    : hasMilestoneFilter
+    : hasMilestoneFilter && !walkInTableView
       ? roleScopedContent.filter((lead) =>
           leadMatchesWorkspaceMilestoneFilter(
             lead,
@@ -3473,11 +3520,6 @@ export default function LeadsDataSection({
               <code className="rounded bg-[var(--crm-surface-subtle)] px-1">access_token</code>.
             </span>
           ) : null}
-        </div>
-      ) : null}
-      {!error && !loading && leadType === "walkinlead" && visibleRows.length === 0 ? (
-        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-text-muted)]">
-          {walkInHubUnavailableMessage()}
         </div>
       ) : null}
       <LeadsTable
