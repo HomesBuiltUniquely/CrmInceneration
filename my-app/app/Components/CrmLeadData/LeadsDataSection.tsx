@@ -1010,7 +1010,7 @@ export default function LeadsDataSection({
   );
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(() => {
     const mode = persistedView.insightTableMode;
-    return mode ?? null;
+    return (mode as InsightTableMode | null | undefined) ?? null;
   });
   const onHeatmapSummarySyncRef = useRef(onHeatmapSummarySync);
   onHeatmapSummarySyncRef.current = onHeatmapSummarySync;
