@@ -2,13 +2,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import type { NextConfig } from "next";
 
-/** App root (`my-app/`) — must match for Turbopack + Vercel file tracing. */
+/** App root (`my-app/`) — Turbopack scope when the repo has multiple lockfiles. */
 const appRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
-  outputFileTracingRoot: appRoot,
+  // Do not set `outputFileTracingRoot` here — Vercel sets it during deploy. Setting it
+  // locally caused ENOENT for `.next/routes-manifest-deterministic.json` at `/vercel/path0`.
   turbopack: {
-    // Keep Next/Turbopack scoped to this app folder when repo has multiple lockfiles.
     root: appRoot,
   },
   /** Expose `BASE_URL` to client bundles (same name as `.env.local`). */
