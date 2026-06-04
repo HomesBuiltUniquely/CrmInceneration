@@ -6,6 +6,8 @@ import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
+import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
+
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
 type Chip = { label: string; tone: ChipTone };
@@ -113,6 +115,11 @@ function AlertButton({
   );
 }
 
+function openLeadDetail(router: ReturnType<typeof useRouter>, row: LeadRowModel) {
+  persistLeadsListScrollBeforeNavigate();
+  router.push(`/Leads/${row.leadType}/${row.id}`, { scroll: false });
+}
+
 function LeadRowAction({
   row,
   selected,
@@ -127,7 +134,7 @@ function LeadRowAction({
   const critical = row.journey.status?.tone === "critical";
   return (
     <div
-      onClick={() => router.push(`/Leads/${row.leadType}/${row.id}`)}
+      onClick={() => openLeadDetail(router, row)}
       className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
@@ -136,7 +143,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          router.push(`/Leads/${row.leadType}/${row.id}`);
+          openLeadDetail(router, row);
         }
       }}
     >

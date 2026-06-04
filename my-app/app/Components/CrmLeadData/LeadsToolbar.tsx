@@ -11,6 +11,7 @@ import {
 } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
+import { LOST_SEGMENT_TILES } from "@/lib/lead-lost-segment";
 import type { LeadSourceCounts } from "@/lib/leads-filter";
 import { normalizeRole } from "@/lib/auth/api";
 import { isSalesPoolNoMilestoneFilter, type CrmWorkspace } from "@/lib/crm-workspace";
@@ -45,6 +46,11 @@ function insightKeyForLeadTypeLabel(
   if (label === "Meeting Cancelled") return "meetingCancelled";
   if (label === "Quote Sent") return "quoteSent";
   if (label === "Quote Due") return "quoteDue";
+  if (label === "Discovery Lost") return "lostDiscovery";
+  if (label === "Connection Lost") return "lostConnection";
+  if (label === "Experience & Design Lost") return "lostExperienceDesign";
+  if (label === "Decision Lost") return "lostDecision";
+  if (label === "Closed Lost") return "lostClosed";
   return null;
 }
 
@@ -593,7 +599,15 @@ export default function LeadsToolbar({
         {openLeadTypes ? (
           <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Lead Types</div>
+              <div>
+                <div className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Lead Types</div>
+                {isSalesAdmin ? (
+                  <p className="mt-0.5 text-[11px] font-normal text-[var(--crm-text-muted)]">
+                    Follow-up and overdue tiles count unique customers (one per phone), not the sum of each
+                    sales manager&apos;s team.
+                  </p>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={() => setOpenLeadTypes(false)}
@@ -695,6 +709,59 @@ export default function LeadsToolbar({
                 );
               })}
             </div>
+
+            {!isPresalesRole(role) ? (
+              <div className="mt-4 border-t border-[var(--crm-border)] pt-4">
+                <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.6px] text-[var(--crm-text-muted)]">
+                  Lost Segment
+                </div>
+                <p className="mb-3 text-[11px] text-[var(--crm-text-muted)]">
+                  Leads on a lost path by stage. These are excluded from Lead Overdue and
+                  Opportunity Overdue.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                  {LOST_SEGMENT_TILES.map(({ mode, label }) => {
+                    const tileLabel = label;
+                    const value = leadTypeCounts[mode] ?? 0;
+                    const insightKey = mode;
+                    const interactive = Boolean(onInsightNavigate);
+                    const isActive = insightActive === insightKey;
+                    const tileClass = `rounded-xl border px-3 py-4 text-center transition-colors ${
+                      isActive
+                        ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
+                        : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
+                    } ${interactive ? "cursor-pointer hover:bg-[var(--crm-surface)] w-full" : ""}`;
+                    const inner = (
+                      <>
+                        <div className="text-2xl font-extrabold text-[var(--crm-accent)]">
+                          {String(value)}
+                        </div>
+                        <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">
+                          {tileLabel}
+                        </div>
+                      </>
+                    );
+                    if (interactive) {
+                      return (
+                        <button
+                          key={tileLabel}
+                          type="button"
+                          onClick={() => onInsightNavigate?.(insightKey)}
+                          className={tileClass}
+                        >
+                          {inner}
+                        </button>
+                      );
+                    }
+                    return (
+                      <div key={tileLabel} className={tileClass}>
+                        {inner}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

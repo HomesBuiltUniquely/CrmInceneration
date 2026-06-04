@@ -4,6 +4,12 @@ import {
   isFollowUpOverdueLocal,
 } from "@/lib/follow-up-date";
 import { filterLeadsForMilestoneInsightMode } from "@/lib/lead-milestone-insight-tiles";
+import {
+  filterLeadsForLostSegmentMode,
+  isLostSegmentInsightMode,
+  isLostSegmentLead,
+  type LostSegmentMode,
+} from "@/lib/lead-lost-segment";
 
 export function readFollowUpDateRaw(lead: ApiLead): string {
   const r = lead as Record<string, unknown>;
@@ -97,6 +103,19 @@ export type InsightCountOpts = {
   dateTo?: string;
 };
 
+/** Admin / super-admin pool tiles use full-pool manager semantics. */
+export function normalizeInsightCountOpts(opts: InsightCountOpts): InsightCountOpts {
+  const role = opts.viewerRole.trim().toUpperCase();
+  if (role === "SALES_ADMIN" || role === "ADMIN" || role === "SUPER_ADMIN") {
+    return {
+      ...opts,
+      viewerRole: "SALES_MANAGER",
+      leadView: "default",
+    };
+  }
+  return opts;
+}
+
 function isCalledLead(lead: ApiLead): boolean {
   return String((lead.firstCallAt ?? "") as string).trim().length > 0;
 }
@@ -177,7 +196,7 @@ function bumpFollowUpsTodaySplit(
 
 export function computeFollowUpInsightCounts(
   leads: ApiLead[],
-  opts: InsightCountOpts,
+  optsInput: InsightCountOpts,
 ): {
   followup: number;
   followups: number;
@@ -190,6 +209,7 @@ export function computeFollowUpInsightCounts(
   totalCalls: number;
   team: number;
 } {
+  const opts = normalizeInsightCountOpts(optsInput);
   const norm = (s: string) => s.trim().toLowerCase();
   const me = norm(opts.currentUserName);
   const teamSet = new Set(opts.managerTeamNames.map(norm));
@@ -220,7 +240,7 @@ export function computeFollowUpInsightCounts(
         if (isFirstCallDelayedLead(lead)) {
           callDelayed += 1;
         }
-        if (isFollowUpOverdueLocal(fu)) {
+        if (isFollowUpOverdueLocal(fu) && !isLostSegmentLead(lead)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
           if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -246,7 +266,7 @@ export function computeFollowUpInsightCounts(
           if (isFirstCallDelayedLead(lead)) {
             callDelayed += 1;
           }
-          if (isFollowUpOverdueLocal(fu)) {
+          if (isFollowUpOverdueLocal(fu) && !isLostSegmentLead(lead)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
             if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -268,7 +288,7 @@ export function computeFollowUpInsightCounts(
           if (isFirstCallDelayedLead(lead)) {
             callDelayed += 1;
           }
-          if (isFollowUpOverdueLocal(fu)) {
+          if (isFollowUpOverdueLocal(fu) && !isLostSegmentLead(lead)) {
             overdue += 1;
             if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
             if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -289,7 +309,7 @@ export function computeFollowUpInsightCounts(
         if (isFirstCallDelayedLead(lead)) {
           callDelayed += 1;
         }
-        if (isFollowUpOverdueLocal(fu)) {
+        if (isFollowUpOverdueLocal(fu) && !isLostSegmentLead(lead)) {
           overdue += 1;
           if (matchesFollowUpMilestoneSegment(lead, "active")) overdueActive += 1;
           if (matchesFollowUpMilestoneSegment(lead, "closure")) overdueClosure += 1;
@@ -332,14 +352,19 @@ export type InsightTableMode =
   | "meetingRescheduled"
   | "meetingCancelled"
   | "quoteSent"
-  | "quoteDue";
+  | "quoteDue"
+  | LostSegmentMode;
 
 export function filterLeadsForInsightMode(
   leads: ApiLead[],
   mode: InsightTableMode,
-  opts: InsightCountOpts,
+  optsInput: InsightCountOpts,
 ): ApiLead[] {
+  const opts = normalizeInsightCountOpts(optsInput);
   if (!mode) return leads;
+  if (isLostSegmentInsightMode(mode)) {
+    return filterLeadsForLostSegmentMode(leads, mode, opts);
+  }
   if (
     mode === "meetingScheduled" ||
     mode === "meetingRescheduled" ||
@@ -403,6 +428,7 @@ export function filterLeadsForInsightMode(
     }
 
     if (mode === "overdue" || mode === "overdueActive" || mode === "overdueClosure") {
+      if (isLostSegmentLead(lead)) return false;
       if (!isFollowUpOverdueLocal(fu)) return false;
       if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")

@@ -588,7 +588,7 @@ export default function Header() {
             profileInitials="AD"
           />
         </div>
-        <div className="xl:h-screen xl:overflow-y-auto">
+        <div id="crm-leads-scroll-root" className="xl:h-screen xl:overflow-y-auto">
           <TopNav search={search} onSearchChange={setSearch} />
           {!authResolved ? (
             <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">

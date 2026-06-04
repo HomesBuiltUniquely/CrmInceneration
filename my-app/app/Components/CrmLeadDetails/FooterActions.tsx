@@ -42,7 +42,17 @@ export default function FooterActions({
         </Button>
       ) : null}
       <div className="ml-auto">
-        <Button variant="ghost" icon="✕" onClick={() => router.push("/Leads")}>
+        <Button
+          variant="ghost"
+          icon="✕"
+          onClick={() => {
+            if (typeof window !== "undefined" && window.history.length > 1) {
+              router.back();
+              return;
+            }
+            router.push("/Leads");
+          }}
+        >
           Close Window
         </Button>
       </div>

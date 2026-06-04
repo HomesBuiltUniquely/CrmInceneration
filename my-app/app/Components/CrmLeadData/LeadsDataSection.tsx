@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
@@ -73,14 +73,25 @@ import {
   computeFollowUpInsightCounts,
   filterLeadsForInsightMode,
   isFirstCallDelayedLead,
+  normalizeInsightCountOpts,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
+import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
+import {
+  mergeSalesPoolInsightCounts,
+  roleUsesAdminPoolInsightTiles,
+  salesAdminPoolInsightOpts,
+  salesInsightCountLeads,
+} from "@/lib/sales-admin-insight-tiles";
 import {
   countSalesManagerMineVsTeam,
   narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
-import { filterLeadsByAssigneeScope,formatAssigneeAliasSetQuery} from "@/lib/admin-assignee-match";
+import {
+  filterLeadsByAssigneeScope,
+  formatAssigneeAliasSetQuery,
+} from "@/lib/admin-assignee-match";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
   setEffectiveNewCrmStartDate,
@@ -168,30 +179,19 @@ type AssigneeUser = {
   role: string;
 };
 
-const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
-
-type LeadsViewPersistedState = {
-  page?: number;
-  size?: number;
-  salesAdminFilter?: string;
-  salesManagerFilter?: string;
-  salesExecFilter?: string;
-  presalesManagerFilter?: string;
-  presalesExecFilter?: string;
-  insightTableMode?: InsightTableMode;
-};
-
-function readLeadsViewPersistedState(): LeadsViewPersistedState {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.sessionStorage.getItem(LEADS_VIEW_PERSIST_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as LeadsViewPersistedState;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+import {
+  buildLeadsListCacheKey,
+  clearLeadsScrollRestoreFlag,
+  getLeadsScrollRoot,
+  getPersistedLeadsScrollY,
+  mergeLeadsViewPersistedState,
+  readLeadsListCache,
+  readLeadsViewPersistedState,
+  scheduleLeadsListScrollRestore,
+  shouldRestoreLeadsListScroll,
+  writeLeadsListCache,
+  type LeadsViewPersistedState,
+} from "@/lib/leads-view-persist";
 
 function isHierarchyAdminRole(role?: string): boolean {
   const r = normalizeRole(role ?? "");
@@ -1831,11 +1831,7 @@ export default function LeadsDataSection({
       presalesExecFilter,
       insightTableMode,
     };
-    try {
-      window.sessionStorage.setItem(LEADS_VIEW_PERSIST_KEY, JSON.stringify(payload));
-    } catch {
-      // Ignore storage failures.
-    }
+    mergeLeadsViewPersistedState(payload);
   }, [
     page,
     size,
@@ -1846,6 +1842,57 @@ export default function LeadsDataSection({
     presalesExecFilter,
     insightTableMode,
   ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let timer = 0;
+    let root: HTMLElement | null = null;
+
+    const onScroll = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const el = getLeadsScrollRoot();
+        const scrollY = el && el.scrollHeight > el.clientHeight + 1 ? el.scrollTop : window.scrollY;
+        mergeLeadsViewPersistedState({ scrollY });
+      }, 120);
+    };
+
+    const bind = () => {
+      root = getLeadsScrollRoot();
+      if (!root) return false;
+      root.addEventListener("scroll", onScroll, { passive: true });
+      window.addEventListener("scroll", onScroll, { passive: true });
+      return true;
+    };
+
+    let retryTimer = 0;
+    if (!bind()) {
+      retryTimer = window.setTimeout(() => bind(), 0);
+    }
+
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(retryTimer);
+      root?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!shouldRestoreLeadsListScroll()) return;
+    const scrollY = getPersistedLeadsScrollY();
+    if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
+  }, []);
+
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted || !shouldRestoreLeadsListScroll()) return;
+      const scrollY = getPersistedLeadsScrollY();
+      if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2265,8 +2312,25 @@ export default function LeadsDataSection({
           const milestoneMap = milestoneCountsFromLeads(scopedPrimary, "sales");
           setLeadTypeCountsPrimary(baseCounts);
           setLeadTypeCountsAllRows(baseCounts);
+          const adminInsightOpts = salesAdminPoolInsightOpts(
+            currentUserName ?? "",
+            activeAssigneeScope.length > 0
+              ? activeAssigneeScope
+              : managerTeamNamesFromHeader.length > 0
+                ? managerTeamNamesFromHeader
+                : managerTeamNames,
+            dateFrom,
+            dateTo,
+          );
+          const insightPool =
+            activeAssigneeScope.length > 0
+              ? filterLeadsByAssigneeScope(scopedPrimary, activeAssigneeScope)
+              : scopedPrimary;
+          const countsWithInsights = roleUsesAdminPoolInsightTiles(roleKey)
+            ? mergeSalesPoolInsightCounts(baseCounts, insightPool, adminInsightOpts)
+            : { ...baseCounts };
           setLeadTypeCounts({
-            ...baseCounts,
+            ...countsWithInsights,
             verified: verifiedCount,
           });
           const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${scopedPrimary.length}`;
@@ -2361,8 +2425,24 @@ export default function LeadsDataSection({
                 },
           );
         }
+        const adminInsightOpts = salesAdminPoolInsightOpts(
+          currentUserName ?? "",
+          managerTeamNamesFromHeader.length > 0
+            ? managerTeamNamesFromHeader
+            : managerTeamNames,
+          dateFrom,
+          dateTo,
+        );
+        const adminInsightPool =
+          heatmapData.primaryRows.length > 0
+            ? heatmapData.primaryRows
+            : salesInsightCountLeads(heatmapData.leads);
+        const countsWithInsights =
+          roleUsesAdminPoolInsightTiles(roleKey) && leadsWorkspace === "sales"
+            ? mergeSalesPoolInsightCounts(base, adminInsightPool, adminInsightOpts)
+            : { ...base };
         setLeadTypeCounts({
-          ...base,
+          ...countsWithInsights,
           verified: Number(heatmapData.verifiedCount ?? 0),
         });
       } catch {
@@ -2380,6 +2460,10 @@ export default function LeadsDataSection({
   }, [
     authRoleProp,
     currentRole,
+    currentUserName,
+    managerTeamNames,
+    managerTeamNamesFromHeader,
+    activeAssigneeScope,
     debouncedSearch,
     leadType,
     milestoneStage,
@@ -2560,26 +2644,23 @@ export default function LeadsDataSection({
           roleKey === "SALES_ADMIN" ? "SALES_MANAGER" : roleKey;
         const insightLeadViewForRole: "default" | "my" | "team" =
           roleKey === "SALES_ADMIN" ? "default" : insightLeadView;
-        const insights = computeFollowUpInsightCounts(scoped, {
+        const insightPool = salesInsightCountLeads(scoped);
+        const insightCountOpts = {
           viewerRole: insightViewerRole,
           currentUserName: currentUserName ?? "",
           managerTeamNames: scopedTeam,
           leadView: insightLeadViewForRole,
           dateFrom,
           dateTo,
-        });
-        const milestoneTiles = computeMilestoneTileCounts(scoped, {
-          viewerRole: insightViewerRole,
-          currentUserName: currentUserName ?? "",
-          managerTeamNames: scopedTeam,
-          leadView: insightLeadViewForRole,
-          dateFrom,
-          dateTo,
-        });
+        };
+        const insights = computeFollowUpInsightCounts(insightPool, insightCountOpts);
+        const milestoneTiles = computeMilestoneTileCounts(insightPool, insightCountOpts);
+        const lostSegment = computeLostSegmentCounts(insightPool, insightCountOpts);
         setLeadTypeCounts({
           ...base,
           ...insights,
           ...milestoneTiles,
+          ...lostSegment,
           managerMine: smMineTeam.managerMine,
           team: smMineTeam.teamLeads,
         });
@@ -2618,11 +2699,50 @@ export default function LeadsDataSection({
   ]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
+    const insightModeActive = insightTableMode !== null;
+    const requestPage = insightModeActive ? 0 : page;
+    const requestSize = insightModeActive ? 500 : size;
+    const requestLeadType = insightModeActive ? "all" : leadType;
+    const cacheKey = buildLeadsListCacheKey({
+      requestPage,
+      requestSize,
+      requestLeadType,
+      sort,
+      debouncedSearch,
+      dateFrom,
+      dateTo,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+      leadViewKey,
+      verificationStatusProp,
+      crmMonthWindowProp,
+      activeAssigneeScopeKey,
+      leadsWorkspace,
+      roleKeyForLoad,
+      insightModeActive,
+    });
+    const cached = readLeadsListCache(cacheKey);
+
     setError(null);
-    setData(null);
+    if (cached) {
+      setData(cached.data);
+      if (cached.visibleFilteredTotal !== null) {
+        setVisibleFilteredTotal(cached.visibleFilteredTotal);
+      }
+      setLoading(false);
+      if (shouldRestoreLeadsListScroll()) {
+        const scrollY = getPersistedLeadsScrollY();
+        if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
+      }
+    } else {
+      setLoading(true);
+      setData(null);
+    }
+
     try {
-      const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
 
       const applyAdminTotalsFromTablePage = (pageJson: SpringPage<ApiLead>) => {
         const totalRows = pageJson.totalRowCount ?? pageJson.totalElements ?? 0;
@@ -2693,10 +2813,6 @@ export default function LeadsDataSection({
         }
       };
 
-      const insightModeActive = insightTableMode !== null;
-      const requestPage = insightModeActive ? 0 : page;
-      const requestSize = insightModeActive ? 500 : size;
-      const requestLeadType = insightModeActive ? "all" : leadType;
       const usePageMetaForUi =
         activeAssigneeScope.length > 1 ||
         salesHierarchyFilterActive ||
@@ -2739,9 +2855,15 @@ export default function LeadsDataSection({
         });
         setPage(fallbackPage);
         applyLoadedPageMeta(fallbackJson, usePageMetaForUi);
+        writeLeadsListCache(
+          cacheKey,
+          fallbackJson,
+          fallbackJson.totalElements ?? null,
+        );
         return;
       }
       applyLoadedPageMeta(json, usePageMetaForUi);
+      writeLeadsListCache(cacheKey, json, json.totalElements ?? null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load leads";
       if (msg.toLowerCase().includes("session expired")) {
@@ -2753,6 +2875,11 @@ export default function LeadsDataSection({
       setAdminPoolDisplayTotals(null);
     } finally {
       setLoading(false);
+      if (shouldRestoreLeadsListScroll()) {
+        const scrollY = getPersistedLeadsScrollY();
+        if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
+        clearLeadsScrollRestoreFlag();
+      }
     }
   }, [
     dateFrom,
@@ -2845,14 +2972,15 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
-  const insightOpts = {
-    viewerRole: normalizeRole(authRoleProp ?? currentRole),
+  const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
+  const insightOpts = normalizeInsightCountOpts({
+    viewerRole: roleKeyForInsight,
     currentUserName: currentUserName ?? "",
     managerTeamNames: scopedTeamForInsight,
     leadView: insightLeadView,
     dateFrom,
     dateTo,
-  };
+  });
   const insightFilteredContent = filterLeadsForInsightMode(
     content,
     insightTableMode,
@@ -3275,7 +3403,17 @@ export default function LeadsDataSection({
                     ? "Quote Sent — meeting done, quotation shared"
                     : insightTableMode === "quoteDue"
                       ? "Quote Due — Meeting Done but Quote Pending"
-                      : null;
+                      : insightTableMode === "lostDiscovery"
+                        ? "Lost Segment — Discovery Lost"
+                        : insightTableMode === "lostConnection"
+                          ? "Lost Segment — Connection Lost"
+                          : insightTableMode === "lostExperienceDesign"
+                            ? "Lost Segment — Experience & Design Lost"
+                            : insightTableMode === "lostDecision"
+                              ? "Lost Segment — Decision Lost"
+                              : insightTableMode === "lostClosed"
+                                ? "Lost Segment — Closed Lost"
+                                : null;
 
   const insightBannerFollowUpNote =
     insightTableMode === "followUpActive" ||

@@ -11,6 +11,7 @@ import { presalesTopLevelStage } from "@/lib/presales-milestone";
 import {
   assigneeAliasNorms,
   filterLeadsForInsightMode,
+  normalizeInsightCountOpts,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
 import {
@@ -535,13 +536,14 @@ export default function JourneyPhaseHeatmap({
   const [presalesPhasesOpen, setPresalesPhasesOpen] = useState(false);
 
   const insightOpts = useMemo(
-    () => ({
-      viewerRole: normalizeRole(currentRole),
-      currentUserName: currentUserName ?? "",
-      managerTeamNames,
-      leadView:
-        leadView === "my" || leadView === "team" ? leadView : ("default" as const),
-    }),
+    () =>
+      normalizeInsightCountOpts({
+        viewerRole: normalizeRole(currentRole),
+        currentUserName: currentUserName ?? "",
+        managerTeamNames,
+        leadView:
+          leadView === "my" || leadView === "team" ? leadView : ("default" as const),
+      }),
     [currentRole, currentUserName, managerTeamNames, leadView],
   );
   const assigneeScopeKey = assigneeScope
