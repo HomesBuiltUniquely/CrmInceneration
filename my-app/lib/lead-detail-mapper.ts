@@ -106,6 +106,36 @@ function pickDesignerDisplay(detail: Record<string, unknown>): string {
   return "";
 }
 
+function pickSalesManagerDisplay(detail: Record<string, unknown>): string {
+  const flat = pickStr(
+    detail,
+    "salesManagerName",
+    "sales_manager_name",
+    "managerName",
+    "manager_name",
+    "reportingManagerName",
+    "reporting_manager_name",
+    "salesLeadName",
+    "sales_lead_name",
+  );
+  if (flat) return flat;
+
+  for (const key of [
+    "salesManager",
+    "manager",
+    "reportingManager",
+    "salesLead",
+  ]) {
+    const v = detail[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "object" && v !== null) {
+      const n = pickPersonNameFromNested(v as Record<string, unknown>);
+      if (n) return n;
+    }
+  }
+  return "";
+}
+
 function pickNumStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
     const v = obj[k];
@@ -532,10 +562,12 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       floorPlanPublicLink: pickStr(detail, "floorPlanPublicLink"),
       floorPlanUrl: pickStr(detail, "floorPlanUrl", "floorPlan"),
     }),
-    possessionDate: pickStr(detail, "possessionDate", "possession", "possessionTime") || "",
+    possessionDate:
+      pickStr(detail, "possession", "possessionDate", "possession_date", "possessionTime") || "",
     propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
     language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
+    salesManagerName: pickSalesManagerDisplay(detail) || undefined,
     lostReason: readLostReasonFromDetail(detail) || "",
     quoteLink: pickStr(detail, "quoteLink", "quoteURL", "proposalLink") || "",
     designQaLink:
@@ -543,6 +575,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     leadSource: getLeadDisplaySource({ ...detail, leadType }),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
+    bookingType: pickStr(detail, "bookingType", "booking_type", "BookingType") || "",
     meetingType: pickStr(detail, "meetingType", "meeting") || "",
     propertyNotes: pickPropertyNotesFromDetail(detail, leadType),
     requirements,
@@ -576,6 +609,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       stage: st.legacyStage ?? "Initial Stage",
       substage: { substage: st.legacySubstage ?? null },
     },
+    branch: pickStr(detail, "experienceCenter", "experience_center", "branch", "branchName", "branch_name", "office", "officeName", "territory", "region") || undefined,
   };
 }
 
@@ -673,6 +707,8 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.ownerName = lead.assignee;
   next.leadSource = lead.leadSource;
   next.LeadSource = lead.leadSource;
+  next.bookingType = lead.bookingType;
+  next.booking_type = lead.bookingType;
   if (lead.additionalLeadSources !== undefined) {
     next.additionalLeadSources = lead.additionalLeadSources;
   }
@@ -713,7 +749,9 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
       next.publicUrl = floorPlanPublic;
     }
   }
+  next.possession = lead.possessionDate;
   next.possessionDate = lead.possessionDate;
+  next.possession_date = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
   next.language = lead.language;
   next.languagePrefered = lead.language;
@@ -763,6 +801,8 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.budget = lead.budget;
   next.leadSource = lead.leadSource;
   next.LeadSource = lead.leadSource;
+  next.bookingType = lead.bookingType;
+  next.booking_type = lead.bookingType;
   if (lead.additionalLeadSources !== undefined) {
     next.additionalLeadSources = lead.additionalLeadSources;
   }
@@ -814,7 +854,9 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
       next.publicUrl = floorPlanPublic;
     }
   }
+  next.possession = lead.possessionDate;
   next.possessionDate = lead.possessionDate;
+  next.possession_date = lead.possessionDate;
   next.propertyLocation = lead.propertyLocation;
   next.propertyPincode = lead.pincode;
   next.pincode = lead.pincode;

@@ -22,6 +22,11 @@ The Hub app should read these on initial load (same names as below). All values 
 | `leadSource` | Lead source | Lead Source |
 | `propertyName` | **Property notes** (`propertyNotes` / `property_detail`) | Property Name |
 | `propertyConfiguration` | **Configuration** (BHK / unit; Add Lead uses `propertyType` on API) | Property Configuration (dropdown can match on label/value) |
+| `booking_type` | Booking Type | Booking Type |
+| `site_address` | Property Notes | Site Address |
+| `sales_spoc` | Sales executive / assignee name | Sales SPOC |
+| `sales_lead_name` | Sales manager name | Sales Lead Name |
+| `designer_name` | Designer name | Designer Name |
 
 Long text may be truncated (~1800 chars) for URL safety.
 
