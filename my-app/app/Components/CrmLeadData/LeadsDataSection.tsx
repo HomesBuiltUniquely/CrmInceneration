@@ -276,6 +276,93 @@ function getAllowedRoleQueries(role?: string): string[] {
   }
 }
 
+function mapRowToAssigneeUser(
+  row: Record<string, unknown>,
+  roleOverride?: string,
+): AssigneeUser | null {
+  const active =
+    row.active === undefined && row.isActive === undefined
+      ? true
+      : Boolean(row.active ?? row.isActive);
+  if (!active) return null;
+  const userId = Number(row.id ?? row.userId ?? 0);
+  if (userId <= 0) return null;
+  const name = String(row.fullName ?? row.name ?? row.username ?? `User ${userId}`).trim();
+  return {
+    userId,
+    name: name || `User ${userId}`,
+    role: normalizeRole(roleOverride ?? String(row.role ?? "")),
+  };
+}
+
+function dedupeAssigneeUsers(users: AssigneeUser[]): AssigneeUser[] {
+  return [...new Map(users.map((u) => [u.userId, u])).values()];
+}
+
+async function fetchAssigneesByRoleQuery(role: string): Promise<AssigneeUser[]> {
+  const res = await fetch(
+    `${getAuthApiBaseUrl()}/api/auth/users-by-role?role=${encodeURIComponent(role)}`,
+    { headers: getCrmAuthHeaders(), credentials: "include", cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  const data = (await res.json().catch(() => [])) as unknown;
+  if (!Array.isArray(data)) return [];
+  return dedupeAssigneeUsers(
+    data
+      .map((row) => mapRowToAssigneeUser(row as Record<string, unknown>, role))
+      .filter((u): u is AssigneeUser => Boolean(u)),
+  );
+}
+
+async function fetchManagerSalesExecutivesForAssign(
+  managerUserId: number,
+): Promise<AssigneeUser[]> {
+  const fromRole = await fetchAssigneesByRoleQuery("SALES_EXECUTIVE");
+  if (fromRole.length > 0) return fromRole;
+
+  const merged: AssigneeUser[] = [];
+  const token = readStoredCrmToken();
+  if (token) {
+    const fromManagerApi = await fetchSalesExecutivesForManager(token);
+    for (const row of fromManagerApi) {
+      const user = mapRowToAssigneeUser(row, "SALES_EXECUTIVE");
+      if (user) merged.push(user);
+    }
+  }
+
+  if (managerUserId > 0) {
+    try {
+      const legacyRes = await fetch(`/api/sales-executive/all`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: getCrmAuthHeaders({ Accept: "application/json" }),
+      });
+      if (legacyRes.ok) {
+        const j = (await legacyRes.json().catch(() => [])) as unknown;
+        const raw = Array.isArray(j)
+          ? j
+          : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+            ? ((j as { data: unknown[] }).data ?? [])
+            : [];
+        for (const row of raw) {
+          if (!row || typeof row !== "object") continue;
+          const rec = row as Record<string, unknown>;
+          if (Number(rec.managerId ?? 0) !== Number(managerUserId)) continue;
+          const user = mapRowToAssigneeUser(
+            normalizeLegacyHierarchyUser(rec) as unknown as Record<string, unknown>,
+            "SALES_EXECUTIVE",
+          );
+          if (user) merged.push(user);
+        }
+      }
+    } catch {
+      // Legacy roster is optional.
+    }
+  }
+
+  return dedupeAssigneeUsers(merged);
+}
+
 type AssignmentMode = "AUTO" | "MANUAL";
 type RowAssignLead = {
   id: string;
@@ -1209,32 +1296,67 @@ export default function LeadsDataSection({
   ]);
 
   const loadAssignableUsers = useCallback(async () => {
-    if (!canLoadAllUsers(currentRole)) {
-      console.warn("Skipping /api/admin/all-users: only SUPER_ADMIN can access this endpoint.");
+    const roleKey = normalizeRole(currentRole);
+    try {
+      if (canLoadAllUsers(roleKey)) {
+        const rows = await adminPanelApi.listAllUsers();
+        const eligibleRoles = new Set([
+          "SALES_EXECUTIVE",
+          "SALES_MANAGER",
+          "PRESALES_MANAGER",
+          "PRESALES_EXECUTIVE",
+        ]);
+        const mapped = dedupeAssigneeUsers(
+          rows
+            .filter((row) => {
+              const role = normalizeRole(row.role);
+              return eligibleRoles.has(role) && Boolean(row.active ?? true);
+            })
+            .map((row) =>
+              mapRowToAssigneeUser(row as Record<string, unknown>, String(row.role ?? "")),
+            )
+            .filter((u): u is AssigneeUser => Boolean(u)),
+        );
+        setAssigneeUsers(mapped);
+        return mapped;
+      }
+
+      if (roleKey === "SALES_ADMIN" || roleKey === "ADMIN") {
+        const roles = [
+          "SALES_EXECUTIVE",
+          "SALES_MANAGER",
+          "PRESALES_MANAGER",
+          "PRESALES_EXECUTIVE",
+        ];
+        const mapped = dedupeAssigneeUsers(
+          (await Promise.all(roles.map((r) => fetchAssigneesByRoleQuery(r)))).flat(),
+        );
+        setAssigneeUsers(mapped);
+        return mapped;
+      }
+
+      if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
+        const mapped = await fetchManagerSalesExecutivesForAssign(currentUserId);
+        setAssigneeUsers(mapped);
+        return mapped;
+      }
+
+      if (roleKey === "PRESALES_MANAGER") {
+        let mapped = await fetchAssigneesByRoleQuery("PRESALES_EXECUTIVE");
+        if (mapped.length === 0) {
+          mapped = await fetchAssigneesByRoleQuery("PRE_SALES");
+        }
+        setAssigneeUsers(mapped);
+        return mapped;
+      }
+
+      setAssigneeUsers([]);
+      return [];
+    } catch {
       setAssigneeUsers([]);
       return [];
     }
-    const rows = await adminPanelApi.listAllUsers();
-    const eligibleRoles = new Set([
-      "SALES_EXECUTIVE",
-      "SALES_MANAGER",
-      "PRESALES_MANAGER",
-      "PRESALES_EXECUTIVE",
-    ]);
-    const mapped = rows
-      .filter((row) => {
-        const role = normalizeRole(row.role);
-        return eligibleRoles.has(role) && Boolean(row.active ?? true);
-      })
-      .map((row) => ({
-        userId: Number(row.id ?? 0),
-        name: String(row.fullName ?? row.name ?? row.username ?? `User ${row.id}`),
-        role: normalizeRole(row.role),
-      }))
-      .filter((row) => row.userId > 0);
-    setAssigneeUsers(mapped);
-    return mapped;
-  }, [currentRole]);
+  }, [currentRole, currentUserId]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedSearch(search), 350);
@@ -1330,6 +1452,20 @@ export default function LeadsDataSection({
 
 
   useEffect(() => {
+    if (currentRole === "SALES_MANAGER" || currentRole === "MANAGER") {
+      setAssigneeRoleFilter("SALES_EXECUTIVE");
+    } else if (currentRole === "PRESALES_MANAGER") {
+      setAssigneeRoleFilter("PRESALES_EXECUTIVE");
+    } else if (
+      currentRole === "SUPER_ADMIN" ||
+      currentRole === "ADMIN" ||
+      currentRole === "SALES_ADMIN"
+    ) {
+      setAssigneeRoleFilter("ALL");
+    }
+  }, [currentRole]);
+
+  useEffect(() => {
     let cancelled = false;
     void loadAssignableUsers()
       .then(() => {
@@ -1365,6 +1501,27 @@ export default function LeadsDataSection({
     setRowAssignLoadingUsers(true);
     setRowAssignError("");
     try {
+      const roleKey = normalizeRole(currentRole);
+      if (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") {
+        const scoped = await fetchManagerSalesExecutivesForAssign(currentUserId);
+        setRowAssignUsers(scoped);
+        if (rowAssignUserId && !scoped.some((u) => u.userId === rowAssignUserId)) {
+          setRowAssignUserId(null);
+          setRowAssignError("Selected assignee is inactive now. Please choose another active user.");
+        }
+        return;
+      }
+      if (roleKey === "PRESALES_MANAGER") {
+        let scoped = await fetchAssigneesByRoleQuery("PRESALES_EXECUTIVE");
+        if (scoped.length === 0) scoped = await fetchAssigneesByRoleQuery("PRE_SALES");
+        setRowAssignUsers(scoped);
+        if (rowAssignUserId && !scoped.some((u) => u.userId === rowAssignUserId)) {
+          setRowAssignUserId(null);
+          setRowAssignError("Selected assignee is inactive now. Please choose another active user.");
+        }
+        return;
+      }
+
       const roles = ["SALES_EXECUTIVE", "PRESALES_MANAGER", "PRESALES_EXECUTIVE", "PRE_SALES"];
       const responses = await Promise.all(
         roles.map((role) =>
@@ -1407,7 +1564,7 @@ export default function LeadsDataSection({
     } finally {
       setRowAssignLoadingUsers(false);
     }
-  }, []);
+  }, [currentRole, currentUserId, rowAssignUserId]);
 
   useEffect(() => {
     const onStatusChanged = () => {
@@ -3099,6 +3256,16 @@ export default function LeadsDataSection({
     currentRole === "SALES_ADMIN" ||
     currentRole === "SALES_MANAGER" ||
     currentRole === "PRESALES_MANAGER";
+  const bulkAssignShowsRolePicker =
+    currentRole === "SUPER_ADMIN" ||
+    currentRole === "ADMIN" ||
+    currentRole === "SALES_ADMIN";
+  const bulkAssignTeamLabel =
+    currentRole === "SALES_MANAGER" || currentRole === "MANAGER"
+      ? "Your team — Sales Executives"
+      : currentRole === "PRESALES_MANAGER"
+        ? "Your team — Presales Executives"
+        : null;
   const canBulkDelete = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
   const showDeleteAll = currentRole === "ADMIN";
   const canDeleteAll = showDeleteAll;
@@ -3110,10 +3277,11 @@ export default function LeadsDataSection({
   const previewDistribution = Array.isArray(previewResult?.distribution)
     ? (previewResult.distribution as Array<Record<string, unknown>>)
     : [];
-  const filteredAssignees =
-    assigneeRoleFilter === "ALL"
+  const filteredAssignees = bulkAssignShowsRolePicker
+    ? assigneeRoleFilter === "ALL"
       ? assigneeUsers
-      : assigneeUsers.filter((user) => user.role === assigneeRoleFilter);
+      : assigneeUsers.filter((user) => user.role === assigneeRoleFilter)
+    : assigneeUsers;
   const totalManualPercentage = selectedAssigneeIds.reduce(
     (sum, userId) => sum + Number(manualPercentages[userId] ?? 0),
     0
@@ -3683,9 +3851,10 @@ export default function LeadsDataSection({
               type="button"
               disabled={selectedCount === 0 || isPreviewLoading || isExecuteLoading}
               onClick={() => {
-                setShowAssignModal(true);
                 setAssignmentError("");
                 setPreviewResult(null);
+                void loadAssignableUsers();
+                setShowAssignModal(true);
               }}
               className="h-9 rounded-lg bg-[#35a853] px-4 text-[13px] font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#2f9a4c] disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -3843,18 +4012,26 @@ export default function LeadsDataSection({
 
               <div className="rounded-[10px] border border-[#e2e8f3] bg-white p-3 shadow-[0_1px_2px_rgba(16,24,40,0.06)]">
                 <p className="text-[13px] font-semibold text-[#555555]">🧑‍💼 Select Role:</p>
-                <select
-                  className="mt-1.5 h-10 w-full rounded-[8px] border border-[#d1d5db] bg-white px-3 text-[14px] font-normal text-[#333333] outline-none transition focus:border-[#3b82f6] focus:ring-2 focus:ring-[#bfdbfe]"
-                  value={assigneeRoleFilter}
-                  onChange={(e) => setAssigneeRoleFilter(e.target.value)}
-                >
-                  <option value="ALL">All Roles</option>
-                  <option value="SALES_MANAGER">Sales Manager</option>
-                  <option value="SALES_EXECUTIVE">Sales Executive</option>
-                  <option value="PRESALES_MANAGER">Presales Manager</option>
-                  <option value="PRESALES_EXECUTIVE">Presales Executive</option>
-                </select>
-                <p className="mt-2 text-[12px] font-medium text-[#6f7f98]">{filteredAssignees.length} active users available</p>
+                {bulkAssignShowsRolePicker ? (
+                  <select
+                    className="mt-1.5 h-10 w-full rounded-[8px] border border-[#d1d5db] bg-white px-3 text-[14px] font-normal text-[#333333] outline-none transition focus:border-[#3b82f6] focus:ring-2 focus:ring-[#bfdbfe]"
+                    value={assigneeRoleFilter}
+                    onChange={(e) => setAssigneeRoleFilter(e.target.value)}
+                  >
+                    <option value="ALL">All Roles</option>
+                    <option value="SALES_MANAGER">Sales Manager</option>
+                    <option value="SALES_EXECUTIVE">Sales Executive</option>
+                    <option value="PRESALES_MANAGER">Presales Manager</option>
+                    <option value="PRESALES_EXECUTIVE">Presales Executive</option>
+                  </select>
+                ) : (
+                  <p className="mt-1.5 rounded-[8px] border border-[#d1d5db] bg-[#f8fafc] px-3 py-2 text-[14px] font-medium text-[#333333]">
+                    {bulkAssignTeamLabel}
+                  </p>
+                )}
+                <p className="mt-2 text-[12px] font-medium text-[#6f7f98]">
+                  {filteredAssignees.length} active team member{filteredAssignees.length === 1 ? "" : "s"} available
+                </p>
               </div>
 
               <div>
@@ -3893,6 +4070,11 @@ export default function LeadsDataSection({
                 <p className="mb-2 text-[13px] font-semibold text-[#555555]">👥 Select Users & Set Percentages:</p>
                 <div className="rounded-[8px] border border-[#e7edf8] bg-[#f7f9fc] p-2">
                   <div className="grid gap-2">
+                    {filteredAssignees.length === 0 ? (
+                      <p className="rounded-[8px] border border-[#f6c58f] bg-[#fff8eb] px-3 py-2 text-[12px] font-medium text-[#b45309]">
+                        No team members loaded. Refresh the page or contact admin if your team roster is empty.
+                      </p>
+                    ) : null}
                     {filteredAssignees.map((user) => (
                       <label key={user.userId} className="flex items-center justify-between rounded-[8px] border border-[#dde5f3] bg-white px-3 py-2 transition hover:border-[#cfdaf0] hover:bg-[#fbfcff]">
                         <div className="flex items-center gap-2">
