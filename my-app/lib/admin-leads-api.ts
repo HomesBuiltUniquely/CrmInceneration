@@ -7,9 +7,9 @@ import {
 import type { ApiLead, CrmLeadType, LeadSourceCounts, LeadSummaryTotals, SpringPage } from "@/lib/leads-filter";
 import {
   CRM_LEAD_TYPES,
+  crmLeadTopLevelStage,
   isCrmLeadVerified,
   SALES_POOL_NO_MILESTONE,
-  salesPoolMilestoneStage,
 } from "@/lib/leads-filter";
 import { presalesTopLevelStage } from "@/lib/presales-milestone";
 import {
@@ -26,6 +26,7 @@ import {
 import {
   buildAdminPoolDualCounts,
   computeLeadTypeCountsFromRows,
+  pickMilestoneRepresentativeRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 
@@ -210,16 +211,18 @@ export function normalizeMilestoneCountsToCanonical(
   for (const phase of workspace === "presales" ? PRESALES_CANONICAL_PHASES : SALES_CANONICAL_PHASES) {
     out[phase] = 0;
   }
-  if (workspace === "sales") {
-    out[SALES_POOL_NO_MILESTONE] = 0;
-  }
   for (const [stage, raw] of Object.entries(counts)) {
     if (workspace === "sales" && stage === SALES_POOL_NO_MILESTONE) {
-      out[SALES_POOL_NO_MILESTONE] = (out[SALES_POOL_NO_MILESTONE] ?? 0) + (Number(raw) || 0);
       continue;
     }
     const label = canonicalize(stage);
     out[label] = (out[label] ?? 0) + (Number(raw) || 0);
+  }
+  if (workspace === "sales") {
+    const unassigned = Number(counts[SALES_POOL_NO_MILESTONE] ?? 0) || 0;
+    if (unassigned > 0) {
+      out["Fresh Lead"] = (out["Fresh Lead"] ?? 0) + unassigned;
+    }
   }
   return out;
 }
@@ -241,6 +244,14 @@ export function salesJourneySummaryFromMilestoneCounts(
     else opportunity += n;
   }
   return { lead, opportunity };
+}
+
+/** Sum of canonical sales phases only (matches Lead + Opportunity cards). */
+export function salesJourneySummaryTotalFromMilestoneCounts(
+  counts: Record<string, number> | undefined,
+): number {
+  const { lead, opportunity } = salesJourneySummaryFromMilestoneCounts(counts);
+  return lead + opportunity;
 }
 
 export function milestoneCountForPhase(
@@ -303,17 +314,13 @@ export function milestoneCountsFromLeads(
   for (const phase of workspace === "presales" ? PRESALES_CANONICAL_PHASES : SALES_CANONICAL_PHASES) {
     out[phase] = 0;
   }
-  if (workspace === "sales") {
-    out[SALES_POOL_NO_MILESTONE] = 0;
-  }
   for (const lead of leads) {
     if (workspace === "presales") {
       const label = canonicalPresalesMilestoneLabel(presalesTopLevelStage(lead));
       out[label] = (out[label] ?? 0) + 1;
       continue;
     }
-    const stage = salesPoolMilestoneStage(lead);
-    const label = stage || SALES_POOL_NO_MILESTONE;
+    const label = canonicalSalesMilestoneLabel(crmLeadTopLevelStage(lead));
     out[label] = (out[label] ?? 0) + 1;
   }
   return out;
@@ -353,14 +360,20 @@ export async function fetchAllAdminPoolRows(
   let page = 0;
 
   while (page < maxPages) {
-    const res = await fetchAdminLeadsPage({ ...input, page, size: pageSize }, headers);
+    const res = await fetchAdminLeadsPage(
+      { ...input, page, size: pageSize },
+      headers,
+      { preserveAllRows: true },
+    );
     const chunk = Array.isArray(res.content) ? res.content : [];
     if (page === 0) {
-      totalElements = Number(res.totalElements ?? chunk.length);
+      totalElements = Number(res.totalRowCount ?? res.totalElements ?? chunk.length);
     }
     if (chunk.length === 0) break;
     rows.push(...chunk);
     page += 1;
+    const totalPages = Math.max(1, Number(res.totalPages ?? 1));
+    if (page >= totalPages) break;
     if (totalElements > 0 && rows.length >= totalElements) break;
     if (chunk.length < pageSize) break;
   }
@@ -380,13 +393,13 @@ export async function fetchAllAdminLeads(
   return { leads: rows, totalElements };
 }
 
-/** RDS-aligned milestone buckets: primary-source row per phone (earliest `created_at`). */
+/** Milestone buckets: one customer per phone using current milestone row (latest with stage). */
 function milestoneCountsFromPrimarySourceRows(
   leads: ApiLead[],
   workspace: CrmWorkspace,
 ): Record<string, number> {
   return normalizeMilestoneCountsToCanonical(
-    milestoneCountsFromLeads(pickPrimarySourceRows(leads), workspace),
+    milestoneCountsFromLeads(pickMilestoneRepresentativeRows(leads), workspace),
     workspace,
   );
 }
@@ -400,7 +413,7 @@ export async function fetchAdminLeadsMilestoneFiltered(
   headers?: HeadersInit,
 ): Promise<{ leads: ApiLead[]; total: number }> {
   const { leads } = await fetchAllAdminLeads(input, headers);
-  const primaryRows = pickPrimarySourceRows(leads);
+  const primaryRows = pickMilestoneRepresentativeRows(leads);
   const filtered = primaryRows.filter((lead) =>
     leadMatchesWorkspaceMilestoneFilter(lead, input.workspace, stage, category, subStage),
   );
@@ -447,12 +460,7 @@ function finalizeAdminHeatmapData(
   const pipelineTotal = totalFromMilestoneCountMap(normalized);
   const summaryTotals =
     workspace === "sales"
-      ? {
-          lead:
-            salesJourneySummaryFromMilestoneCounts(normalized).lead +
-            (normalized[SALES_POOL_NO_MILESTONE] ?? 0),
-          opportunity: salesJourneySummaryFromMilestoneCounts(normalized).opportunity,
-        }
+      ? salesJourneySummaryFromMilestoneCounts(normalized)
       : { lead: pipelineTotal, opportunity: 0 };
   return {
     milestoneCounts: normalized,
@@ -518,7 +526,40 @@ export async function fetchAdminLeadsHeatmapData(
       totalElements,
       pool.totalRows,
     );
-    const milestoneCounts = milestoneCountsFromPrimarySourceRows(leads, input.workspace);
+    const milestonePrimaryRows = pickMilestoneRepresentativeRows(leads);
+    const milestoneCountsFromRows = normalizeMilestoneCountsToCanonical(
+      milestoneCountsFromLeads(milestonePrimaryRows, input.workspace),
+      input.workspace,
+    );
+    const hubMilestoneRaw = countsJson
+      ? milestoneCountsFromAdminResponse(countsJson, input.workspace)
+      : {};
+    const hubMilestoneCounts = normalizeMilestoneCountsToCanonical(
+      hubMilestoneRaw,
+      input.workspace,
+    );
+    const hubMilestoneTotal = totalFromMilestoneCountMap(hubMilestoneCounts);
+    const rowMilestoneTotal = totalFromMilestoneCountMap(milestoneCountsFromRows);
+    const rowSummaryTotal = salesJourneySummaryTotalFromMilestoneCounts(milestoneCountsFromRows);
+    const hubSummaryTotal = salesJourneySummaryTotalFromMilestoneCounts(hubMilestoneCounts);
+    const milestoneCounts =
+      input.workspace === "sales"
+        ? rowSummaryTotal >= pool.uniquePrimaryTotal
+          ? milestoneCountsFromRows
+          : hubSummaryTotal >= pool.uniquePrimaryTotal
+            ? hubMilestoneCounts
+            : rowMilestoneTotal >= hubMilestoneTotal
+              ? milestoneCountsFromRows
+              : hubMilestoneTotal > 0
+                ? hubMilestoneCounts
+                : milestoneCountsFromRows
+        : hubMilestoneTotal >= pool.uniquePrimaryTotal
+          ? hubMilestoneCounts
+          : rowMilestoneTotal >= hubMilestoneTotal
+            ? milestoneCountsFromRows
+            : hubMilestoneTotal > 0
+              ? hubMilestoneCounts
+              : milestoneCountsFromRows;
     const fromRowsTypes = computeLeadTypeCountsFromRows(leads);
     const leadTypeCounts =
       countsJson?.byLeadType && Object.keys(countsJson.byLeadType).length > 0
@@ -582,7 +623,7 @@ export async function fetchAdminLeadsHeatmapData(
       leadTypeAllRowsForUi,
       leadTypePrimaryForUi,
       leads,
-      pool.primaryRows,
+      milestonePrimaryRows,
       countsJson ? "counts" : "list",
     );
   })().finally(() => {
@@ -689,6 +730,7 @@ export function adminFilterInputFromQueryString(
 export async function fetchAdminLeadsPage(
   input: AdminLeadsFilterInput & { page: number; size: number },
   headers?: HeadersInit,
+  options?: { preserveAllRows?: boolean },
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   qs.set("page", String(input.page));
@@ -706,6 +748,23 @@ export async function fetchAdminLeadsPage(
   }
 
   const contentRaw = flattenAdminListContent(json.content);
+  const totalRowCount = Number(json.totalElements ?? contentRaw.length);
+  const uniquePrimaryTotal = Number(json.uniquePrimaryTotal);
+
+  if (options?.preserveAllRows) {
+    return {
+      content: contentRaw,
+      totalElements: contentRaw.length,
+      totalRowCount,
+      ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
+        ? { uniquePrimaryTotal }
+        : {}),
+      totalPages: Math.max(1, Number(json.totalPages ?? 1)),
+      number: Number(json.number ?? input.page),
+      size: Number(json.size ?? input.size),
+    };
+  }
+
   const dedupedById = new Map<string, ApiLead>();
   let noIdSeq = 0;
   for (const lead of contentRaw) {
@@ -714,8 +773,6 @@ export async function fetchAdminLeadsPage(
     if (!dedupedById.has(key)) dedupedById.set(key, lead);
   }
   const content = [...dedupedById.values()];
-  const totalRowCount = Number(json.totalElements ?? contentRaw.length);
-  const uniquePrimaryTotal = Number(json.uniquePrimaryTotal);
 
   return {
     content,

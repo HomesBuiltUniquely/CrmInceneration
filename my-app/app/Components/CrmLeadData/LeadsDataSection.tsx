@@ -850,6 +850,49 @@ function toAssignmentLeadType(leadType: string): string {
   return "Form Lead";
 }
 
+function groupRowsByLeadType(rows: LeadRowModel[]): Map<string, LeadRowModel[]> {
+  const grouped = new Map<string, LeadRowModel[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.leadType) ?? [];
+    list.push(row);
+    grouped.set(row.leadType, list);
+  }
+  return grouped;
+}
+
+function mergeBulkAssignPreviewResults(
+  results: Array<Record<string, unknown>>,
+): Record<string, unknown> {
+  const byUser = new Map<string, Record<string, unknown>>();
+  let allSuccess = true;
+  let firstErrorMessage = "";
+
+  for (const res of results) {
+    if (res.success === false) {
+      allSuccess = false;
+      if (!firstErrorMessage && typeof res.message === "string") {
+        firstErrorMessage = res.message;
+      }
+    }
+    const distribution = Array.isArray(res.distribution) ? res.distribution : [];
+    for (const item of distribution as Array<Record<string, unknown>>) {
+      const key = String(item.userId ?? item.assigneeName ?? byUser.size);
+      const prev = byUser.get(key);
+      if (prev) {
+        prev.leadCount = Number(prev.leadCount ?? 0) + Number(item.leadCount ?? 0);
+      } else {
+        byUser.set(key, { ...item });
+      }
+    }
+  }
+
+  return {
+    success: allSuccess,
+    message: firstErrorMessage || undefined,
+    distribution: [...byUser.values()],
+  };
+}
+
 function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "formlead") return "bulk-delete-formleads";
   if (leadType === "glead") return "bulk-delete-gleads";
@@ -2393,7 +2436,8 @@ export default function LeadsDataSection({
         const milestoneMap = heatmapData.milestoneCounts;
         const summaryTotals =
           leadsWorkspace === "sales"
-            ? salesJourneySummaryFromMilestoneCounts(milestoneMap)
+            ? (heatmapData.summaryTotals ??
+              salesJourneySummaryFromMilestoneCounts(milestoneMap))
             : {
                 lead: heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
                 opportunity: 0,
@@ -3037,8 +3081,18 @@ export default function LeadsDataSection({
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
   const selectedCount = selectedLeads.length;
   const isBulkBarVisible = selectedCount > 0;
-  const selectedLeadType = selectedCount > 0 ? selectedLeads[0]?.leadType ?? null : null;
-  const hasMixedLeadTypes = selectedLeads.some((lead) => lead.leadType !== selectedLeadType);
+  const selectedLeadsByType = useMemo(
+    () => groupRowsByLeadType(selectedLeads),
+    [selectedLeads],
+  );
+  const hasMixedLeadTypes = selectedLeadsByType.size > 1;
+  const selectedLeadTypeSummary = useMemo(
+    () =>
+      [...selectedLeadsByType.entries()]
+        .map(([type, rows]) => `${rows.length} ${toAssignmentLeadType(type)}`)
+        .join(" · "),
+    [selectedLeadsByType],
+  );
   const canBulkAssign =
     currentRole === "SUPER_ADMIN" ||
     currentRole === "ADMIN" ||
@@ -3115,14 +3169,17 @@ export default function LeadsDataSection({
     });
   }, [selectedLeads, selectedAssigneeIds, assigneeUsers, resolveApiLeadForRow]);
 
-  const buildAssignmentPayload = () => {
+  const buildAssignmentPayloadForGroup = (
+    groupLeadType: string,
+    groupLeads: LeadRowModel[],
+  ) => {
     const assignees = selectedAssigneeIds.map((userId) => ({
       userId,
       percentage: assignmentMode === "MANUAL" ? Number(manualPercentages[userId] ?? 0) : undefined,
     }));
     const payload = {
-      leadType: toAssignmentLeadType(leadType),
-      leadIds: selectedLeads.map((lead) => Number(lead.id)),
+      leadType: toAssignmentLeadType(groupLeadType),
+      leadIds: groupLeads.map((lead) => Number(lead.id)),
       assignmentMode,
       assignees,
     };
@@ -3132,44 +3189,48 @@ export default function LeadsDataSection({
     return payload;
   };
 
+  const validateBulkAssignForm = (): string | null => {
+    if (selectedLeads.length === 0) return "Select at least one lead.";
+    if (selectedAssigneeIds.length === 0) return "Select at least one assignee.";
+    if (assignmentMode === "MANUAL") {
+      const totalPercentage = selectedAssigneeIds.reduce(
+        (sum, userId) => sum + Number(manualPercentages[userId] ?? 0),
+        0,
+      );
+      if (totalPercentage !== 100) {
+        return "Percentages must sum to exactly 100%.";
+      }
+    }
+    if (bulkAssignNeedsReason) {
+      return validateReassignReason(bulkReassignReason);
+    }
+    return null;
+  };
+
   const handlePreview = async () => {
     try {
       setAssignmentError("");
       setPreviewResult(null);
-      if (selectedLeads.length === 0) {
-        setAssignmentError("Select at least one lead.");
+      const validationErr = validateBulkAssignForm();
+      if (validationErr) {
+        setAssignmentError(validationErr);
         return;
-      }
-      if (selectedAssigneeIds.length === 0) {
-        setAssignmentError("Select at least one assignee.");
-        return;
-      }
-      if (leadType === "all") {
-        setAssignmentError("Choose a single lead type before assignment.");
-        return;
-      }
-      if (assignmentMode === "MANUAL") {
-        const totalPercentage = selectedAssigneeIds.reduce(
-          (sum, userId) => sum + Number(manualPercentages[userId] ?? 0),
-          0
-        );
-        if (totalPercentage !== 100) {
-          setAssignmentError("Percentages must sum to exactly 100%.");
-          return;
-        }
-      }
-      if (bulkAssignNeedsReason) {
-        const reasonErr = validateReassignReason(bulkReassignReason);
-        if (reasonErr) {
-          setAssignmentError(reasonErr);
-          return;
-        }
       }
       setIsPreviewLoading(true);
-      const res = await assignmentApi.bulkAssignPreview(buildAssignmentPayload());
-      setPreviewResult(res);
-      if (res.success === false) {
-        setAssignmentError(typeof res.message === "string" ? res.message : "Preview failed.");
+      const grouped = groupRowsByLeadType(selectedLeads);
+      const results = await Promise.all(
+        [...grouped.entries()].map(([, leads]) =>
+          assignmentApi.bulkAssignPreview(
+            buildAssignmentPayloadForGroup(leads[0]!.leadType, leads),
+          ),
+        ),
+      );
+      const merged = mergeBulkAssignPreviewResults(results);
+      setPreviewResult(merged);
+      if (merged.success === false) {
+        setAssignmentError(
+          typeof merged.message === "string" ? merged.message : "Preview failed.",
+        );
       }
     } catch (e) {
       setAssignmentError(e instanceof Error ? e.message : "Preview failed.");
@@ -3180,22 +3241,29 @@ export default function LeadsDataSection({
 
   const handleExecute = async () => {
     try {
-      if (bulkAssignNeedsReason) {
-        const reasonErr = validateReassignReason(bulkReassignReason);
-        if (reasonErr) {
-          setAssignmentError(reasonErr);
+      const validationErr = validateBulkAssignForm();
+      if (validationErr) {
+        setAssignmentError(validationErr);
+        return;
+      }
+      setIsExecuteLoading(true);
+      const grouped = groupRowsByLeadType(selectedLeads);
+      for (const [, leads] of grouped.entries()) {
+        const res = await assignmentApi.bulkAssignExecute(
+          buildAssignmentPayloadForGroup(leads[0]!.leadType, leads),
+        );
+        if (res.success === false) {
+          setAssignmentError(typeof res.message === "string" ? res.message : "Bulk assign failed.");
           return;
         }
       }
-      setIsExecuteLoading(true);
-      const res = await assignmentApi.bulkAssignExecute(buildAssignmentPayload());
-      if (res.success === false) {
-        setAssignmentError(typeof res.message === "string" ? res.message : "Bulk assign failed.");
-        return;
-      }
       clearSelection();
       await load();
-      notifySuccess(typeof res.message === "string" ? res.message : "Bulk assign completed.");
+      notifySuccess(
+        hasMixedLeadTypes
+          ? `Bulk assign completed (${selectedLeadTypeSummary}).`
+          : "Bulk assign completed.",
+      );
     } catch (e) {
       setAssignmentError(e instanceof Error ? e.message : "Bulk assign failed.");
     } finally {
@@ -3613,7 +3681,7 @@ export default function LeadsDataSection({
             {canBulkAssign ? (
             <button
               type="button"
-              disabled={selectedCount === 0 || isPreviewLoading || isExecuteLoading || hasMixedLeadTypes}
+              disabled={selectedCount === 0 || isPreviewLoading || isExecuteLoading}
               onClick={() => {
                 setShowAssignModal(true);
                 setAssignmentError("");
@@ -3898,8 +3966,8 @@ export default function LeadsDataSection({
               ) : null}
 
               {hasMixedLeadTypes ? (
-                <p className="mt-3 rounded-[8px] border border-[#f6c58f] bg-[#fff3e0] p-2 text-[12px] font-medium text-[#f57c00]">
-                  Select leads from one type only for bulk assign.
+                <p className="mt-3 rounded-[8px] border border-[#b9d5f3] bg-[#e9f3ff] p-2 text-[12px] font-medium text-[#27476a]">
+                  Mixed lead types selected — assign runs once per type ({selectedLeadTypeSummary}).
                 </p>
               ) : null}
               {assignmentError ? (

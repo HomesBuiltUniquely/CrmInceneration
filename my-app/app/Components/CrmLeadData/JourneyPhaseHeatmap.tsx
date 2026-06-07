@@ -804,8 +804,7 @@ export default function JourneyPhaseHeatmap({
     () => salesJourneySummaryFromMilestoneCounts(adminCountsEffective ?? undefined),
     [adminCountsEffective],
   );
-  const adminLeadSummaryTotal =
-    adminSummaryFromCountsLocal.lead + (adminCountsEffective?.[SALES_POOL_NO_MILESTONE] ?? 0);
+  const adminLeadSummaryTotal = adminSummaryFromCountsLocal.lead;
   const adminOppSummaryTotal = adminSummaryFromCountsLocal.opportunity;
   const summaryLeadTotal = isAdminHeatmapViewer
     ? usePresalesSummaryUi
