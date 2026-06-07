@@ -340,7 +340,7 @@ function companyFallback(lead: ApiLead): string {
   return lead.companyName ?? "—";
 }
 
-/** RDS / admin pool: count by `stage.milestoneStage` only (no category/substage inference). */
+/** Legacy filter bucket — only rows with no milestone fields at all. */
 export const SALES_POOL_NO_MILESTONE = "No milestone";
 
 const SALES_POOL_STAGES = [
@@ -352,16 +352,60 @@ const SALES_POOL_STAGES = [
   "Closed",
 ] as const;
 
-function readSalesMilestoneStageRaw(lead: ApiLead): string {
-  const fromStage = String(lead.stage?.milestoneStage ?? "").trim();
-  if (fromStage) return fromStage;
+function leadStageObject(lead: ApiLead): Record<string, unknown> | null {
   const r = lead as Record<string, unknown>;
-  const fromRoot = String(r.milestoneStage ?? r.milestone_stage ?? "").trim();
-  if (fromRoot) return fromRoot;
-  const picked = pickLeadScalar(lead, ["milestoneStage", "milestone_stage"]);
-  return typeof picked === "string" ? picked.trim() : "";
+  if (lead.stage && typeof lead.stage === "object" && !Array.isArray(lead.stage)) {
+    return lead.stage as Record<string, unknown>;
+  }
+  const stageBlock = r.stageBlock;
+  if (stageBlock && typeof stageBlock === "object" && !Array.isArray(stageBlock)) {
+    return stageBlock as Record<string, unknown>;
+  }
+  return null;
 }
 
+/** Read sales milestone fields from `stage`, `stageBlock`, root, or `dynamicFields`. */
+export function readSalesStageFieldsFromLead(lead: ApiLead): {
+  milestoneStage: string;
+  milestoneStageCategory: string;
+  milestoneSubStage: string;
+} {
+  const st = leadStageObject(lead);
+  const milestoneStage = String(
+    st?.milestoneStage ??
+      pickLeadScalar(lead, ["milestoneStage", "milestone_stage"]) ??
+      "",
+  ).trim();
+  const milestoneStageCategory = String(
+    st?.milestoneStageCategory ??
+      pickLeadScalar(lead, ["milestoneStageCategory", "milestone_stage_category"]) ??
+      "",
+  ).trim();
+  const substageObj = st?.substage;
+  const nestedSub =
+    substageObj && typeof substageObj === "object" && !Array.isArray(substageObj)
+      ? String((substageObj as { substage?: string }).substage ?? "").trim()
+      : "";
+  const scalarSub = pickLeadScalar(lead, ["milestoneSubStage", "milestone_sub_stage"]);
+  const fallbackSub =
+    nestedSub || (typeof scalarSub === "string" ? scalarSub.trim() : "");
+  const milestoneSubStage = String(st?.milestoneSubStage ?? fallbackSub).trim();
+  return { milestoneStage, milestoneStageCategory, milestoneSubStage };
+}
+
+/** True when any sales milestone field is present on the row (strict empty check). */
+export function leadHasRawSalesMilestone(lead: ApiLead): boolean {
+  const fields = readSalesStageFieldsFromLead(lead);
+  return Boolean(
+    fields.milestoneStage || fields.milestoneStageCategory || fields.milestoneSubStage,
+  );
+}
+
+function readSalesMilestoneStageRaw(lead: ApiLead): string {
+  return readSalesStageFieldsFromLead(lead).milestoneStage;
+}
+
+/** Strict top-level stage for milestone filters (`No milestone` = all fields empty). */
 export function salesPoolMilestoneStage(lead: ApiLead): string {
   const raw = readSalesMilestoneStageRaw(lead);
   if (!raw) return "";
@@ -372,10 +416,10 @@ export function salesPoolMilestoneStage(lead: ApiLead): string {
   return raw;
 }
 
+/** Same rules as the leads table journey column and journey summary cards. */
 export function crmLeadTopLevelStage(lead: ApiLead): string {
-  const stage = String(lead.stage?.milestoneStage ?? "").trim();
-  const stageCategory = String(lead.stage?.milestoneStageCategory ?? "").trim();
-  const subStage = String(lead.stage?.milestoneSubStage ?? lead.stage?.substage?.substage ?? "").trim();
+  const { milestoneStage: stage, milestoneStageCategory: stageCategory, milestoneSubStage: subStage } =
+    readSalesStageFieldsFromLead(lead);
   const stageKey = normalizeStageKey(stage);
   const categoryKey = normalizeStageKey(stageCategory);
 

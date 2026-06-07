@@ -1,5 +1,6 @@
 import { normalizeRole } from "@/lib/auth/api";
 import {
+  readSalesStageFieldsFromLead,
   SALES_POOL_NO_MILESTONE,
   salesPoolMilestoneStage,
   type ApiLead,
@@ -98,10 +99,8 @@ export function leadMatchesWorkspaceMilestoneFilter(
   }
 
   const poolStage = salesPoolMilestoneStage(lead);
-  const rawCat = String(lead.stage?.milestoneStageCategory ?? "").trim();
-  const rawSub = String(
-    lead.stage?.milestoneSubStage ?? lead.stage?.substage?.substage ?? "",
-  ).trim();
+  const { milestoneStageCategory: rawCat, milestoneSubStage: rawSub } =
+    readSalesStageFieldsFromLead(lead);
 
   if (st) {
     if (isSalesPoolNoMilestoneFilter(st)) {

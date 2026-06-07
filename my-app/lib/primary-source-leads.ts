@@ -4,7 +4,7 @@
  */
 
 import type { ApiLead, CrmLeadType, LeadSourceCounts } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES, leadHasRawSalesMilestone } from "@/lib/leads-filter";
 
 export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   const compact = String(raw ?? "")
@@ -46,11 +46,17 @@ export function parseLeadCreatedAtMs(lead: ApiLead): number {
       record.createdDate ??
       record.leadDate ??
       record.createdOn ??
-      record.updatedAt ??
       "",
   ).trim();
   const ts = createdRaw ? Date.parse(createdRaw) : Number.NaN;
   return Number.isNaN(ts) ? Number.MAX_SAFE_INTEGER : ts;
+}
+
+export function parseLeadUpdatedAtMs(lead: ApiLead): number {
+  const record = lead as Record<string, unknown>;
+  const updatedRaw = String(record.updatedAt ?? record.updated_at ?? "").trim();
+  const ts = updatedRaw ? Date.parse(updatedRaw) : Number.NaN;
+  return Number.isNaN(ts) ? 0 : ts;
 }
 
 function dedupeGroupKey(lead: ApiLead, orphanSeq: number): string {
@@ -80,6 +86,38 @@ export function pickPrimarySourceRows(leads: ApiLead[]): ApiLead[] {
       [...group].sort((a, b) => {
         const diff = parseLeadCreatedAtMs(a) - parseLeadCreatedAtMs(b);
         if (diff !== 0) return diff;
+        return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+      })[0],
+    );
+  }
+  return primary;
+}
+
+/**
+ * One row per phone for milestone heatmap counts.
+ * Prefer the latest-updated row that has milestone fields (current journey),
+ * not the earliest created row (first touch may predate milestone assignment).
+ */
+export function pickMilestoneRepresentativeRows(leads: ApiLead[]): ApiLead[] {
+  const byKey = new Map<string, ApiLead[]>();
+  let orphanSeq = 0;
+  for (const lead of leads) {
+    const key = dedupeGroupKey(lead, orphanSeq++);
+    const list = byKey.get(key) ?? [];
+    list.push(lead);
+    byKey.set(key, list);
+  }
+  const primary: ApiLead[] = [];
+  for (const group of byKey.values()) {
+    primary.push(
+      [...group].sort((a, b) => {
+        const aHas = leadHasRawSalesMilestone(a) ? 1 : 0;
+        const bHas = leadHasRawSalesMilestone(b) ? 1 : 0;
+        if (bHas !== aHas) return bHas - aHas;
+        const updatedDiff = parseLeadUpdatedAtMs(b) - parseLeadUpdatedAtMs(a);
+        if (updatedDiff !== 0) return updatedDiff;
+        const createdDiff = parseLeadCreatedAtMs(a) - parseLeadCreatedAtMs(b);
+        if (createdDiff !== 0) return createdDiff;
         return String(a.id ?? "").localeCompare(String(b.id ?? ""));
       })[0],
     );
