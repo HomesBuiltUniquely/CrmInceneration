@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { BASE_URL } from "@/lib/base-url";
 import {
   CRM_DESIGNER_ID_STORAGE_KEY,
@@ -19,9 +19,15 @@ import {
   login,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import {
+  assertPresalesCanUseSession,
+  clearCrmSession,
+  presalesInactiveLoginMessage,
+} from "@/lib/presales-auth-gate";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,10 +37,29 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
-      const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-      router.replace(landingPathByRole(role));
+    if (searchParams.get("inactive") === "presales") {
+      setError(presalesInactiveLoginMessage());
     }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    void getMe(token)
+      .then((me) =>
+        assertPresalesCanUseSession(
+          token,
+          unwrapAuthUserPayload(me as Record<string, unknown>),
+        ),
+      )
+      .then(() => {
+        const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+        router.replace(landingPathByRole(role));
+      })
+      .catch(() => {
+        clearCrmSession();
+      });
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -51,6 +76,8 @@ export default function LoginPage() {
       } catch {
         /* use login payload if /api/auth/me is unavailable */
       }
+      await assertPresalesCanUseSession(token, sessionUser);
+
       const role = getRoleFromUser(sessionUser);
       const name = getNameFromUser(sessionUser);
       if (role) {
@@ -77,6 +104,7 @@ export default function LoginPage() {
       }
       router.replace(landingPathByRole(role));
     } catch (err) {
+      clearCrmSession();
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
       setLoading(false);
@@ -155,5 +183,13 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-100" />}>
+      <LoginPageContent />
+    </Suspense>
   );
 }
