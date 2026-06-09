@@ -19,6 +19,11 @@ import {
   login,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import {
+  assertPresalesCanUseSession,
+  clearCrmSession,
+  presalesInactiveLoginMessage,
+} from "@/lib/presales-auth-gate";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -31,10 +36,25 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
+    if (new URLSearchParams(window.location.search).get("inactive") === "presales") {
+      setError(presalesInactiveLoginMessage());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    void (async () => {
+      const gate = await assertPresalesCanUseSession(token);
+      if (!gate.allowed) {
+        clearCrmSession();
+        setError(gate.message ?? presalesInactiveLoginMessage());
+        return;
+      }
       const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
       router.replace(landingPathByRole(role));
-    }
+    })();
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -43,7 +63,6 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const { token, user } = await login(username, password);
-      localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
       let sessionUser: Record<string, unknown> = user;
       try {
         const me = await getMe(token);
@@ -51,6 +70,13 @@ export default function LoginPage() {
       } catch {
         /* use login payload if /api/auth/me is unavailable */
       }
+      const gate = await assertPresalesCanUseSession(token, sessionUser);
+      if (!gate.allowed) {
+        clearCrmSession();
+        setError(gate.message ?? presalesInactiveLoginMessage());
+        return;
+      }
+      localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
       const role = getRoleFromUser(sessionUser);
       const name = getNameFromUser(sessionUser);
       if (role) {

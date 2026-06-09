@@ -1574,8 +1574,10 @@ export default function LeadsDataSection({
       }
     };
     window.addEventListener("crm:sales-executive-status-changed", onStatusChanged as EventListener);
+    window.addEventListener("crm:presales-executive-status-changed", onStatusChanged as EventListener);
     return () => {
       window.removeEventListener("crm:sales-executive-status-changed", onStatusChanged as EventListener);
+      window.removeEventListener("crm:presales-executive-status-changed", onStatusChanged as EventListener);
     };
   }, [loadAssignableUsers, loadRowAssignUsers, rowAssignModalOpen]);
 

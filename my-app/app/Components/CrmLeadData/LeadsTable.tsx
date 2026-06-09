@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
-
-import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -115,9 +112,9 @@ function AlertButton({
   );
 }
 
-function openLeadDetail(router: ReturnType<typeof useRouter>, row: LeadRowModel) {
-  persistLeadsListScrollBeforeNavigate();
-  router.push(`/Leads/${row.leadType}/${row.id}`, { scroll: false });
+function openLeadDetail(row: LeadRowModel) {
+  const url = `/Leads/${row.leadType}/${row.id}`;
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 function LeadRowAction({
@@ -130,11 +127,10 @@ function LeadRowAction({
   onDelete,
   onAssign,
 }: LeadRowActionProps) {
-  const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
   return (
     <div
-      onClick={() => openLeadDetail(router, row)}
+      onClick={() => openLeadDetail(row)}
       className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
@@ -143,7 +139,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLeadDetail(router, row);
+          openLeadDetail(row);
         }
       }}
     >
