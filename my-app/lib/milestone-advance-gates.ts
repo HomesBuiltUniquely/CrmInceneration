@@ -70,7 +70,6 @@ export function leadPropertyGateErrorMessage(
 /**
  * Budget, Property notes, and Configuration are required when:
  * - Moving **Fresh Lead** or **Discovery** → **Connection**.
- * Booking Type and Possession Date are optional.
  * Skipped for meeting-cancel flows (`cancelMode`) and LOST category moves.
  */
 export function requiresLeadPropertyGateForCompleteTask(args: {

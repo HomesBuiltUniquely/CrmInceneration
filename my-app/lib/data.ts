@@ -73,8 +73,6 @@ export interface Lead {
   /** Parsed extra sources for chips (see `parseAdditionalLeadSources`). */
   additionalLeadSourcesList?: string[];
   meetingType: string;
-  /** Optional booking type (e.g. Self-funded, Loan). Used in Connection milestone panel. */
-  bookingType?: string;
   propertyNotes: string;
   requirements: string[];
   meetingDate: string;
