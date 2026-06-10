@@ -122,6 +122,10 @@ export type CompleteTaskApiPayload = {
   budget?: string;
   propertyNotes?: string;
   configuration?: string;
+  /** Optional — not required for Connection milestone. */
+  bookingType?: string;
+  /** Optional — not required for Connection milestone. */
+  possessionDate?: string;
   meetingAppointment?: {
     designerName: string;
     date: string;
@@ -209,6 +213,8 @@ export default function CompleteTaskModal({
   const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
+  const [modalBookingType, setModalBookingType] = useState(lead.bookingType ?? "");
+  const [modalPossessionDate, setModalPossessionDate] = useState(lead.possessionDate ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
@@ -876,6 +882,8 @@ export default function CompleteTaskModal({
           budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
           propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
           configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
+          bookingType: needsLeadPropertyGate ? (modalBookingType.trim() || undefined) : undefined,
+          possessionDate: needsLeadPropertyGate ? (modalPossessionDate.trim() || undefined) : undefined,
           meetingAppointment: scheduleMode
             ? {
                 designerName: meetingDesigner.trim(),
@@ -1234,6 +1242,34 @@ export default function CompleteTaskModal({
                       className="rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] min-h-[80px]"
                     />
                   </div>
+
+                  {/* Optional fields */}
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <FieldLabel>Booking Type <span className="text-[11px] font-normal text-[var(--crm-text-muted)]">(optional)</span></FieldLabel>
+                      <Select
+                        value={modalBookingType}
+                        onChange={(e) => setModalBookingType(e.target.value)}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      >
+                        <option value="">Select type</option>
+                        <option value="Self-funded">Self-funded</option>
+                        <option value="Home Loan">Home Loan</option>
+                        <option value="NRI">NRI</option>
+                        <option value="Corporate">Corporate</option>
+                        <option value="Other">Other</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel>Possession Date <span className="text-[11px] font-normal text-[var(--crm-text-muted)]">(optional)</span></FieldLabel>
+                      <Input
+                        value={modalPossessionDate}
+                        onChange={(e) => setModalPossessionDate(e.target.value)}
+                        placeholder="e.g. June 2026"
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1431,7 +1467,7 @@ export default function CompleteTaskModal({
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>, fill{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>, and{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required).
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required). Booking Type and Possession are optional.
             </p>
           ) : null}
 
