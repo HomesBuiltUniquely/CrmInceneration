@@ -1274,6 +1274,34 @@ export default function CompleteTaskModal({
                       className="rounded-[12px] bg-[var(--crm-input-bg)] text-[14px] min-h-[80px]"
                     />
                   </div>
+
+                  {/* Optional fields */}
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <FieldLabel>Booking Type <span className="text-[11px] font-normal text-[var(--crm-text-muted)]">(optional)</span></FieldLabel>
+                      <Select
+                        value={modalBookingType}
+                        onChange={(e) => setModalBookingType(e.target.value)}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      >
+                        <option value="">Select type</option>
+                        <option value="Self-funded">Self-funded</option>
+                        <option value="Home Loan">Home Loan</option>
+                        <option value="NRI">NRI</option>
+                        <option value="Corporate">Corporate</option>
+                        <option value="Other">Other</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel>Possession Date <span className="text-[11px] font-normal text-[var(--crm-text-muted)]">(optional)</span></FieldLabel>
+                      <Input
+                        value={modalPossessionDate}
+                        onChange={(e) => setModalPossessionDate(e.target.value)}
+                        placeholder="e.g. June 2026"
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
 
