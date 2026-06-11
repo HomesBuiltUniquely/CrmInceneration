@@ -8,13 +8,6 @@ import {
   MouseEvent,
 } from "react";
 import { adminPanelApi } from "@/lib/admin-panel-api";
-import {
-  mergePresalesUserRecords,
-  presalesStatusUpdatePayload,
-  readPresalesRowActiveStatus,
-  readUserActiveFlag,
-  setPresalesUserInactiveFlag,
-} from "@/lib/presales-auth-gate";
 import { leadLimitsApi } from "@/lib/lead-limits-api";
 import { mergeUserRowsById, pickNumber } from "@/lib/api-normalize";
 import { cn } from "@/lib/cn";
@@ -26,6 +19,11 @@ import {
   normalizeRole,
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
+import {
+  isManagerStatusToggleRole,
+  isPresalesExecutiveRole,
+  isUserActive,
+} from "@/lib/user-active";
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -241,22 +239,14 @@ const Badge = ({
 interface ToggleProps {
   active: boolean;
   onChange: (value: boolean) => void;
-  disabled?: boolean;
 }
 
-const Toggle = ({ active, onChange, disabled = false }: ToggleProps) => (
-  <div
-    className="flex items-center gap-2"
-    style={{ cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1 }}
-  >
+const Toggle = ({ active, onChange }: ToggleProps) => (
+  <div className="flex cursor-pointer items-center gap-2">
     <button
       type="button"
       aria-pressed={active}
-      disabled={disabled}
-      onClick={() => {
-        if (disabled) return;
-        onChange(!active);
-      }}
+      onClick={() => onChange(!active)}
       className="relative flex h-7 w-[50px] items-center rounded-full p-0"
       style={{
         border: "none",
@@ -426,69 +416,6 @@ interface UserForm {
 function normalizedUserRole(u: Record<string, unknown>): string {
   const candidate = u.role ?? u.userRole ?? u.authority ?? u.type ?? "";
   return normalizeRole(String(candidate));
-}
-
-function isPresalesExecutiveRole(role: string): boolean {
-  const r = normalizeRole(role);
-  return r === "PRESALES_EXECUTIVE" || r === "PRE_SALES";
-}
-
-function readExecutiveRowStatus(
-  row: Record<string, unknown>,
-  pool: "sales" | "presales",
-): boolean {
-  if (pool === "presales") return readPresalesRowActiveStatus(row);
-  return readUserActiveFlag(row) ?? true;
-}
-
-function resolveExecutivePool(
-  row: Record<string, unknown>,
-  isPresalesManagerViewer: boolean,
-): "sales" | "presales" {
-  if (isPresalesManagerViewer) return "presales";
-  return String(row.__pool ?? "") === "presales" ? "presales" : "sales";
-}
-
-function resolveExecutiveRole(
-  row: Record<string, unknown>,
-  pool: "sales" | "presales",
-): string {
-  const fromRow = normalizedUserRole(row);
-  if (pool === "presales") {
-    return fromRow === "PRESALES_MANAGER" ? "PRESALES_MANAGER" : "PRESALES_EXECUTIVE";
-  }
-  return fromRow || "SALES_EXECUTIVE";
-}
-
-function isPresalesExecutiveRecord(
-  pool: "sales" | "presales",
-  role: string,
-): boolean {
-  const normalized = normalizeRole(role);
-  return (
-    pool === "presales" ||
-    isPresalesExecutiveRole(role) ||
-    normalized === "PRESALES_MANAGER"
-  );
-}
-
-async function loadPresalesUserRows(): Promise<Array<Record<string, unknown>>> {
-  const [listPreSalesRows, presalesExecutiveRows, preSalesRows] = await Promise.all([
-    adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
-    adminPanelApi
-      .listUsersByRole("PRESALES_EXECUTIVE")
-      .catch(() => [] as Array<Record<string, unknown>>),
-    adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
-  ]);
-  const merged = [...listPreSalesRows, ...presalesExecutiveRows, ...preSalesRows];
-  const byId = new Map<number, Record<string, unknown>>();
-  for (const row of merged) {
-    const id = Number(row.id ?? 0);
-    if (id <= 0) continue;
-    const existing = byId.get(id);
-    byId.set(id, mergePresalesUserRecords(existing, row));
-  }
-  return Array.from(byId.values()).map((row) => ({ ...row, __pool: "presales" }));
 }
 
 function AdminUserSection() {
@@ -936,12 +863,14 @@ function AssignSection() {
   const load = () => {
     setLoading(true);
     void Promise.all([
-      adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listSalesManagersMerged().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listSalesExecutivesLegacyAll().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listManagersAll().catch(() => [] as Array<Record<string, unknown>>),
     ])
-      .then(([se, sm]) => {
-        setExecs(se);
-        setManagers(sm);
+      .then(([se, mgrs]) => {
+        setExecs(se.filter((u) => isUserActive(u as { active?: boolean; isActive?: boolean })));
+        setManagers(
+          mgrs.filter((u) => isManagerStatusToggleRole(normalizedUserRole(u))),
+        );
       })
       .catch(() => {
         setExecs([]);
@@ -1568,177 +1497,7 @@ function AllUsersSection() {
   );
 }
 
-// ─── SECTION 5 : Presales Managers ───────────────────────────────────────────
-interface PresalesManagerRow {
-  id: number;
-  name: string;
-  email: string;
-  branch: string;
-  status: boolean;
-  teamCount: number;
-}
-
-function PresalesManagersSection() {
-  const [viewerRole, setViewerRole] = useState("");
-  const [rows, setRows] = useState<PresalesManagerRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [togglingId, setTogglingId] = useState(0);
-  const { notifySuccess, notifyError } = useGlobalNotifier();
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
-  }, []);
-
-  const canManage =
-    viewerRole === "SUPER_ADMIN" ||
-    viewerRole === "ADMIN" ||
-    viewerRole === "SALES_ADMIN";
-
-  const load = () => {
-    if (!canManage) return;
-    setLoading(true);
-    void Promise.all([
-      adminPanelApi.listUsersByRole("PRESALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
-      loadPresalesUserRows(),
-    ])
-      .then(([managerRows, allPresales]) => {
-        const executives = allPresales.filter((r) => isPresalesExecutiveRole(normalizedUserRole(r)));
-        const teamCountByManager = new Map<number, number>();
-        for (const exec of executives) {
-          if (!readPresalesRowActiveStatus(exec)) continue;
-          const mid = Number(exec.managerId ?? 0);
-          if (mid <= 0) continue;
-          teamCountByManager.set(mid, (teamCountByManager.get(mid) ?? 0) + 1);
-        }
-        const mergedManagers = [
-          ...managerRows,
-          ...allPresales.filter((r) => normalizedUserRole(r) === "PRESALES_MANAGER"),
-        ];
-        const byId = new Map<number, Record<string, unknown>>();
-        for (const row of mergedManagers) {
-          const id = Number(row.id ?? 0);
-          if (id > 0) byId.set(id, row);
-        }
-        const mapped = [...byId.values()].map((r) => {
-          const id = Number(r.id ?? 0);
-          return {
-            id,
-            name: String(r.fullName ?? r.name ?? r.username ?? ""),
-            email: String(r.email ?? ""),
-            branch: String(r.branch ?? "—"),
-            status: readPresalesRowActiveStatus(r),
-            teamCount: teamCountByManager.get(id) ?? 0,
-          };
-        });
-        setRows(mapped);
-      })
-      .catch(() => setRows([]))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load();
-  }, [canManage]);
-
-  const toggleManagerStatus = (row: PresalesManagerRow, next: boolean) => {
-    if (togglingId === row.id) return;
-    if (!next && row.teamCount >= 2) {
-      notifyError(
-        `Cannot deactivate ${row.name}: team has ${row.teamCount} active executives. Reassign or deactivate executives first (allowed only when team has fewer than 2).`,
-      );
-      return;
-    }
-    setTogglingId(row.id);
-    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, status: next } : r)));
-    void adminPanelApi
-      .updatePreSales(row.id, presalesStatusUpdatePayload(next))
-      .then(() => {
-        setPresalesUserInactiveFlag(row.id, !next);
-        window.dispatchEvent(new Event("crm:presales-executive-status-changed"));
-        notifySuccess(
-          next
-            ? "Presales manager activated. Team executives are unchanged."
-            : "Presales manager deactivated. Active team executives continue working normally.",
-        );
-      })
-      .catch((e) => {
-        setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, status: row.status } : r)));
-        notifyError(e instanceof Error ? e.message : "Status update failed.");
-      })
-      .finally(() => setTogglingId(0));
-  };
-
-  if (!canManage) return null;
-
-  return (
-    <Card>
-      <SectionTitle icon="🧑‍💼">Presales Managers</SectionTitle>
-      <p style={{ fontSize: 12, color: C.muted, marginTop: -8, marginBottom: 12 }}>
-        Deactivate a presales manager only when they have fewer than 2 active team executives.
-        Inactive managers do not block their executives from working.
-      </p>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <TableHead cols={["ID", "Name", "Email", "Branch", "Active Team", "Status"]} />
-          <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  Loading…
-                </td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  No presales managers found.
-                </td>
-              </tr>
-            ) : (
-              rows.map((row, i) => {
-                const deactivateBlocked = row.status && row.teamCount >= 2;
-                return (
-                  <tr
-                    key={row.id}
-                    className={!row.status ? "inactive-row" : undefined}
-                    style={{
-                      background: !row.status
-                        ? C.warningBg
-                        : i % 2 === 0
-                          ? C.card
-                          : C.surface,
-                      opacity: row.status ? 1 : 0.86,
-                    }}
-                  >
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>{row.id}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14, fontWeight: 600 }}>{row.name}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}>{row.email}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>{row.branch}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>{row.teamCount}</td>
-                    <td style={{ padding: "12px 14px" }}>
-                      <Toggle
-                        active={row.status}
-                        disabled={deactivateBlocked || togglingId === row.id}
-                        onChange={(next) => toggleManagerStatus(row, next)}
-                      />
-                      {deactivateBlocked ? (
-                        <span style={{ display: "block", fontSize: 11, color: C.muted, marginTop: 4 }}>
-                          Cannot deactivate while team has 2+ active executives
-                        </span>
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
-}
-
-// ─── SECTION 6 : Sales Executives Management ─────────────────────────────────
+// ─── SECTION 5 : Sales Executives Management ─────────────────────────────────
 interface SalesExecutive {
   id: number;
   name: string;
@@ -1748,9 +1507,168 @@ interface SalesExecutive {
   manager: string;
   /** Parent sales / presales manager user id — required for manager-scoped rows. */
   managerId: number;
-  status: boolean;
   role: string;
-  pool: "sales" | "presales";
+  status: boolean;
+}
+
+interface ManagerRow {
+  id: number;
+  username: string;
+  email: string;
+  role: string;
+  branch: string;
+  managerId: number;
+  managerLabel: string;
+  status: boolean;
+}
+
+function ManagersSection() {
+  const [rows, setRows] = useState<ManagerRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [viewerRole, setViewerRole] = useState("");
+  const { notifySuccess, notifyError } = useGlobalNotifier();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
+  }, []);
+
+  const canToggle =
+    viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN";
+
+  const load = () => {
+    setLoading(true);
+    void Promise.all([
+      adminPanelApi.listManagersAll().catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listUsersByRole("SALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
+      adminPanelApi.listUsersByRole("PRESALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
+    ])
+      .then(([fromManagers, sm, pm]) => {
+        const nameById = new Map<number, string>();
+        for (const u of [...sm, ...pm, ...fromManagers]) {
+          const id = Number(u.id ?? 0);
+          if (id > 0) {
+            nameById.set(id, String(u.fullName ?? u.name ?? u.username ?? `User ${id}`));
+          }
+        }
+        const byId = new Map<number, Record<string, unknown>>();
+        for (const r of fromManagers) {
+          const id = Number(r.id ?? 0);
+          if (id > 0) byId.set(id, r);
+        }
+        const mapped = Array.from(byId.values())
+          .filter((r) => isManagerStatusToggleRole(normalizedUserRole(r)))
+          .map((r) => {
+            const mid = Number(r.managerId ?? 0);
+            return {
+              id: Number(r.id ?? 0),
+              username: String(r.username ?? ""),
+              email: String(r.email ?? ""),
+              role: normalizedUserRole(r),
+              branch: String(r.branch ?? ""),
+              managerId: mid,
+              managerLabel: mid > 0 ? (nameById.get(mid) ?? String(mid)) : "—",
+              status: isUserActive(r as { active?: boolean; isActive?: boolean }),
+            };
+          });
+        setRows(mapped);
+      })
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!canToggle) return;
+    load();
+  }, [canToggle]);
+
+  const toggleStatus = (id: number, next: boolean) => {
+    void adminPanelApi
+      .setManagerStatus(id, next)
+      .then((data) => {
+        load();
+        const msg =
+          typeof data.message === "string"
+            ? data.message
+            : next
+              ? "Manager activated successfully."
+              : "Manager deactivated (login blocked only).";
+        notifySuccess(msg);
+      })
+      .catch((e) => {
+        notifyError(e instanceof Error ? e.message : "Status update failed.");
+      });
+  };
+
+  if (!canToggle) return null;
+
+  return (
+    <Card>
+      <SectionTitle icon="👔">Sales & Presales Managers</SectionTitle>
+      <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 12 }}>
+        Deactivating a manager blocks their login only. Their team and lead assignment continue
+        normally.
+      </p>
+      {!loading ? (
+        <p style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>
+          {rows.length} manager{rows.length === 1 ? "" : "s"}.
+        </p>
+      ) : null}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <TableHead
+            cols={["ID", "Username", "Email", "Role", "Branch", "Reports To", "Status"]}
+          />
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={7} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  Loading…
+                </td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No managers returned from the API.
+                </td>
+              </tr>
+            ) : (
+              rows.map((m, i) => (
+                <tr
+                  key={m.id}
+                  className={!m.status ? "inactive-row" : undefined}
+                  style={{
+                    background: !m.status ? C.warningBg : i % 2 === 0 ? C.card : C.surface,
+                    opacity: m.status ? 1 : 0.86,
+                  }}
+                >
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{m.id}</td>
+                  <td style={{ padding: "12px 14px", fontSize: 14, fontWeight: 600 }}>
+                    {m.username || "—"}
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}>{m.email}</td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Badge color={C.infoBg} text={C.infoText}>
+                      {m.role.replace(/_/g, " ")}
+                    </Badge>
+                  </td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Badge color={C.successBg} text={C.successText}>
+                      {m.branch || "—"}
+                    </Badge>
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{m.managerLabel}</td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Toggle active={m.status} onChange={() => toggleStatus(m.id, !m.status)} />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
 }
 
 function SalesExecSection() {
@@ -1801,7 +1719,7 @@ function SalesExecSection() {
   });
   const [deleteCandidate, setDeleteCandidate] = useState<SalesExecutive | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [togglingId, setTogglingId] = useState(0);
+  const [toggleBusyId, setToggleBusyId] = useState<number | null>(null);
   const { notifySuccess, notifyError } = useGlobalNotifier();
 
   useEffect(() => {
@@ -1817,8 +1735,7 @@ function SalesExecSection() {
   }, [viewerRole]);
 
   useEffect(() => {
-    if (viewerRole !== "SALES_MANAGER" && viewerRole !== "PRESALES_MANAGER") return;
-    if (!viewerUserId) return;
+    if (viewerRole !== "SALES_MANAGER" || !viewerUserId) return;
     setCreateForm((prev) => ({
       ...prev,
       parentId: prev.parentId || String(viewerUserId),
@@ -1839,18 +1756,13 @@ function SalesExecSection() {
     isPresalesManagerViewer ||
     isTerritoryDesignManagerViewer ||
     isDesignManagerViewer;
-  const isAdminViewer =
-    !isManagerViewer &&
-    (viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN");
-  const managerTitle = isAdminViewer
-    ? "Sales & Presales Executives"
-    : isPresalesManagerViewer
-      ? "Presales Executives"
-      : isTerritoryDesignManagerViewer
-        ? "Design Managers"
-        : isDesignManagerViewer
-          ? "Designers"
-          : "Sales Executives";
+  const managerTitle = isPresalesManagerViewer
+    ? "Presales Executives"
+    : isTerritoryDesignManagerViewer
+      ? "Design Managers"
+      : isDesignManagerViewer
+        ? "Designers"
+        : "Sales Executives";
   const parentLabel = isPresalesManagerViewer
     ? "Presales Manager *"
     : isTerritoryDesignManagerViewer
@@ -1860,16 +1772,30 @@ function SalesExecSection() {
       : isDesignManagerViewer
         ? "Design Manager *"
         : "Sales Manager *";
-  const canToggleTeamMemberStatus =
-    isPresalesManagerViewer ||
-    isSalesManagerViewer ||
-    (!isManagerViewer &&
-      (viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN"));
+  const canToggleSalesExecutiveStatus =
+    !isManagerViewer &&
+    (viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN");
 
   const load = () => {
     setLoading(true);
+    const loadPresalesUsers = () =>
+      Promise.all([
+        adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
+        adminPanelApi
+          .listUsersByRole("PRESALES_EXECUTIVE")
+          .catch(() => [] as Array<Record<string, unknown>>),
+        adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
+      ]).then(([listPreSalesRows, presalesExecutiveRows, preSalesRows]) => {
+        const merged = [...listPreSalesRows, ...presalesExecutiveRows, ...preSalesRows];
+        const byId = new Map<number, Record<string, unknown>>();
+        for (const row of merged) {
+          const id = Number(row.id ?? 0);
+          if (id > 0 && !byId.has(id)) byId.set(id, row);
+        }
+        return Array.from(byId.values());
+      });
     const listReq = isPresalesManagerViewer
-      ? loadPresalesUserRows()
+      ? loadPresalesUsers()
       : isTerritoryDesignManagerViewer
         ? adminPanelApi.listDesignManagers()
         : isDesignManagerViewer
@@ -1877,20 +1803,14 @@ function SalesExecSection() {
           : isSalesManagerViewer
             ? adminPanelApi
                 .listSalesExecutivesLegacyAll()
-                .then((rows) => rows.map((row) => ({ ...row, __pool: "sales" })))
                 .catch(() => [] as Array<Record<string, unknown>>)
-            : isAdminViewer
-              ? Promise.all([
-                  adminPanelApi.listSalesExecutives().catch(() => [] as Array<Record<string, unknown>>),
-                  loadPresalesUserRows(),
-                ]).then(([sales, presales]) => [
-                  ...sales.map((row) => ({ ...row, __pool: "sales" })),
-                  ...presales,
-                ])
-              : adminPanelApi
-                  .listSalesExecutives()
-                  .then((rows) => rows.map((row) => ({ ...row, __pool: "sales" })))
-                  .catch(() => [] as Array<Record<string, unknown>>);
+            : adminPanelApi
+                .listSalesExecutivesLegacyAll()
+                .catch(() =>
+                  adminPanelApi
+                    .listSalesExecutives()
+                    .catch(() => [] as Array<Record<string, unknown>>),
+                );
     const parentReq = !showCreate
       ? Promise.resolve([] as Array<Record<string, unknown>>)
       : isSalesManagerViewer
@@ -1904,14 +1824,12 @@ function SalesExecSection() {
             : adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>);
     void Promise.all([listReq, parentReq])
       .then(([rows, users]) => {
-        const mapped = (rows as Array<Record<string, unknown>>).map((r) => {
+        const mapped = rows.map((r) => {
           const mid = Number(r.managerId ?? 0);
           const managerLabel =
             isSalesManagerViewer && viewerUserId > 0 && mid === viewerUserId && viewerName.trim()
               ? viewerName.trim()
               : String(r.managerName ?? r.managerUsername ?? r.managerId ?? "—");
-          const pool = resolveExecutivePool(r, isPresalesManagerViewer);
-          const rowRole = resolveExecutiveRole(r, pool);
           return {
             id: Number(r.id ?? 0),
             name: String(r.fullName ?? r.name ?? r.username ?? ""),
@@ -1920,30 +1838,17 @@ function SalesExecSection() {
             branch: String(r.branch ?? ""),
             manager: managerLabel,
             managerId: mid,
-            status: readExecutiveRowStatus(r, pool),
-            role: rowRole,
-            pool,
+            role: normalizedUserRole(r),
+            status: isUserActive(r as { active?: boolean; isActive?: boolean }),
           };
         });
-        const teamScopedManager =
-          (isSalesManagerViewer || isPresalesManagerViewer) && viewerUserId > 0;
-        const filtered = teamScopedManager
-          ? mapped.filter((e) => {
-              if (e.managerId !== viewerUserId) return false;
-              if (isPresalesManagerViewer) return isPresalesExecutiveRole(e.role);
-              if (isSalesManagerViewer) return e.pool === "sales";
-              return true;
-            })
-          : isManagerViewer && viewerName
-            ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
-            : mapped;
-        const sorted = isAdminViewer
-          ? [...filtered].sort((a, b) => {
-              if (a.pool !== b.pool) return a.pool === "presales" ? -1 : 1;
-              return a.name.localeCompare(b.name);
-            })
-          : filtered;
-        setExecs(sorted);
+        const filtered =
+          isSalesManagerViewer && viewerUserId > 0
+            ? mapped.filter((e) => e.managerId === viewerUserId)
+            : isManagerViewer && viewerName
+              ? mapped.filter((e) => e.manager.toLowerCase().includes(viewerName.toLowerCase()))
+              : mapped;
+        setExecs(filtered);
         setAllUsers(users);
       })
       .catch(() => setExecs([]))
@@ -1964,65 +1869,44 @@ function SalesExecSection() {
     viewerUserId,
   ]);
 
-  const toggleStatus = (
-    id: number,
-    next: boolean,
-    rowRole = "",
-    pool: "sales" | "presales" = "sales",
-  ) => {
-    if (!canToggleTeamMemberStatus || togglingId === id) return;
-    const role = normalizeRole(rowRole);
-    const presalesRow = isPresalesExecutiveRecord(pool, role);
-    const previousStatus =
-      execs.find((e) => e.id === id && e.pool === pool)?.status ?? !next;
-    setTogglingId(id);
-    setExecs((prev) =>
-      prev.map((e) => (e.id === id && e.pool === pool ? { ...e, status: next } : e)),
-    );
-    const req = presalesRow
-      ? adminPanelApi.updatePreSales(id, presalesStatusUpdatePayload(next))
-      : isTerritoryDesignManagerViewer
-        ? adminPanelApi.updateDesignManager(id, { active: next })
-        : isDesignManagerViewer
-          ? adminPanelApi.updateDesigner(id, { active: next })
-          : adminPanelApi.setSalesExecutiveStatus(id, next);
+  const toggleStatus = (id: number, next: boolean) => {
+    if (!canToggleSalesExecutiveStatus || toggleBusyId !== null) return;
+    const target = execs.find((e) => e.id === id);
+    const previous = target?.status ?? !next;
+    let req: Promise<Record<string, unknown>>;
+    if (isPresalesManagerViewer) {
+      req = adminPanelApi.setPresalesExecutiveStatus(id, next);
+    } else if (isTerritoryDesignManagerViewer) {
+      req = adminPanelApi.updateDesignManager(id, { active: next });
+    } else if (isDesignManagerViewer) {
+      req = adminPanelApi.updateDesigner(id, { active: next });
+    } else if (target && isPresalesExecutiveRole(target.role)) {
+      req = adminPanelApi.setPresalesExecutiveStatus(id, next);
+    } else {
+      req = adminPanelApi.setSalesExecutiveStatus(id, next);
+    }
+    setToggleBusyId(id);
+    setExecs((prev) => prev.map((e) => (e.id === id ? { ...e, status: next } : e)));
     void req
       .then((data) => {
-        if (presalesRow) {
-          setPresalesUserInactiveFlag(id, !next);
-        }
-        const responseStatus = readUserActiveFlag(data as Record<string, unknown>);
-        const resolvedStatus = responseStatus ?? next;
-        setExecs((prev) =>
-          prev.map((e) =>
-            e.id === id && e.pool === pool ? { ...e, status: resolvedStatus } : e,
-          ),
-        );
-        if (presalesRow) {
-          window.dispatchEvent(new Event("crm:presales-executive-status-changed"));
-          notifySuccess(
-            next
-              ? "Presales executive activated successfully."
-              : "Presales executive deactivated successfully.",
-          );
-        } else if (!isTerritoryDesignManagerViewer && !isDesignManagerViewer) {
+        if (!isTerritoryDesignManagerViewer && !isDesignManagerViewer) {
           window.dispatchEvent(new Event("crm:sales-executive-status-changed"));
-          notifySuccess(
-            next
-              ? "Sales executive activated successfully."
-              : "Sales executive deactivated successfully.",
-          );
+          const msg =
+            typeof data.message === "string"
+              ? data.message
+              : next
+                ? "Executive activated successfully."
+                : "Executive deactivated successfully.";
+          notifySuccess(msg);
         }
       })
       .catch((e) => {
         setExecs((prev) =>
-          prev.map((e) =>
-            e.id === id && e.pool === pool ? { ...e, status: previousStatus } : e,
-          ),
+          prev.map((e) => (e.id === id ? { ...e, status: previous } : e)),
         );
         notifyError(e instanceof Error ? e.message : "Status update failed.");
       })
-      .finally(() => setTogglingId(0));
+      .finally(() => setToggleBusyId(null));
   };
 
   return (
@@ -2254,14 +2138,7 @@ function SalesExecSection() {
       ) : null}
       {!loading ? (
         <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 12 }}>
-          {isAdminViewer
-            ? `${execs.filter((e) => e.pool === "sales").length} sales executives, ${execs.filter((e) => e.pool === "presales").length} presales executives.`
-            : `${execs.length} ${managerTitle.toLowerCase()}.`}
-        </p>
-      ) : null}
-      {isAdminViewer && !loading ? (
-        <p style={{ fontSize: 12, color: C.muted, marginTop: -8, marginBottom: 12 }}>
-          Presales executives use the presales API for status changes. Sales executives use the sales API.
+          {execs.length} {managerTitle.toLowerCase()}.
         </p>
       ) : null}
       <div style={{ overflowX: "auto" }}>
@@ -2279,10 +2156,7 @@ function SalesExecSection() {
                   ? "TDM"
                   : isDesignManagerViewer
                     ? "Design Manager"
-                    : isAdminViewer
-                      ? "Manager"
-                      : "Sales Manager",
-              ...(isAdminViewer ? (["Pool"] as const) : []),
+                    : "Sales Manager",
               "Status",
               "Actions",
             ]}
@@ -2290,14 +2164,14 @@ function SalesExecSection() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={isAdminViewer ? 9 : 8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
                   Loading…
                 </td>
               </tr>
             ) : execs.length === 0 ? (
               <tr>
-                <td colSpan={isAdminViewer ? 9 : 8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  No executives returned from the API.
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No sales executives returned from the API.
                 </td>
               </tr>
             ) : (
@@ -2340,23 +2214,19 @@ function SalesExecSection() {
                 <td style={{ padding: "12px 14px", fontSize: 14 }}>
                   {e.manager}
                 </td>
-                {isAdminViewer ? (
-                  <td style={{ padding: "12px 14px" }}>
-                    <Badge
-                      color={e.pool === "presales" ? C.warningBg : C.successBg}
-                      text={e.pool === "presales" ? C.warningText : C.successText}
-                    >
-                      {e.pool === "presales" ? "Presales" : "Sales"}
-                    </Badge>
-                  </td>
-                ) : null}
                 <td style={{ padding: "12px 14px" }}>
-                  {canToggleTeamMemberStatus ? (
-                    <Toggle
-                      active={e.status}
-                      disabled={togglingId === e.id}
-                      onChange={(next) => toggleStatus(e.id, next, e.role, e.pool)}
-                    />
+                  {canToggleSalesExecutiveStatus ? (
+                    <>
+                      <Toggle
+                        active={e.status}
+                        onChange={() => toggleStatus(e.id, !e.status)}
+                      />
+                      {toggleBusyId === e.id ? (
+                        <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>
+                          Saving…
+                        </span>
+                      ) : null}
+                    </>
                   ) : (
                     <StatusPill active={e.status} />
                   )}
@@ -2365,6 +2235,7 @@ function SalesExecSection() {
                   <Btn
                     color={C.danger}
                     style={{ padding: "5px 14px", fontSize: 13 }}
+                    disabled={toggleBusyId === e.id}
                     onClick={() => setDeleteCandidate(e)}
                   >
                     Delete
@@ -2401,7 +2272,7 @@ function SalesExecSection() {
                 const target = deleteCandidate;
                 if (!target) return;
                 setDeleteBusy(true);
-                const req = isPresalesManagerViewer || target.pool === "presales"
+                const req = isPresalesManagerViewer || isPresalesExecutiveRole(target.role)
                   ? adminPanelApi.deletePreSales(target.id)
                   : isTerritoryDesignManagerViewer
                     ? adminPanelApi.deleteDesignManager(target.id)
@@ -2414,6 +2285,262 @@ function SalesExecSection() {
                     load();
                   })
                   .catch(() => {})
+                  .finally(() => setDeleteBusy(false));
+              }}
+            >
+              {deleteBusy ? "Deleting..." : "Confirm Delete"}
+            </Btn>
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+// ─── SECTION 5b : Presales Executives Management (admin roles) ───────────────
+function PresalesExecSection() {
+  const [execs, setExecs] = useState<SalesExecutive[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [viewerRole, setViewerRole] = useState("");
+  const [toggleBusyId, setToggleBusyId] = useState<number | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<SalesExecutive | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const { notifySuccess, notifyError } = useGlobalNotifier();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
+  }, []);
+
+  const canShow =
+    viewerRole === "SUPER_ADMIN" || viewerRole === "ADMIN" || viewerRole === "SALES_ADMIN";
+
+  const mapPresalesRows = (
+    rows: Array<Record<string, unknown>>,
+    managers: Array<Record<string, unknown>>,
+  ): SalesExecutive[] => {
+    const managerNameById = new Map<number, string>();
+    for (const m of managers) {
+      const id = Number(m.id ?? 0);
+      if (id > 0) {
+        managerNameById.set(id, String(m.fullName ?? m.name ?? m.username ?? `User ${id}`));
+      }
+    }
+    return rows
+      .filter((r) => isPresalesExecutiveRole(normalizedUserRole(r)) || !normalizedUserRole(r))
+      .map((r) => {
+        const mid = Number(r.managerId ?? 0);
+        return {
+          id: Number(r.id ?? 0),
+          name: String(r.fullName ?? r.name ?? r.username ?? ""),
+          email: String(r.email ?? ""),
+          phone: String(r.phone ?? ""),
+          branch: String(r.branch ?? ""),
+          manager:
+            mid > 0
+              ? (managerNameById.get(mid) ?? String(r.managerName ?? r.managerUsername ?? mid))
+              : String(r.managerName ?? r.managerUsername ?? "—"),
+          managerId: mid,
+          role: normalizedUserRole(r) || "PRESALES_EXECUTIVE",
+          status: isUserActive(r as { active?: boolean; isActive?: boolean }),
+        };
+      });
+  };
+
+  /** Same pattern as sales executives: GET /v1/PreSales/all, then admin role fallback. */
+  const fetchPresalesExecutiveRows = async (): Promise<Array<Record<string, unknown>>> => {
+    const legacy = await adminPanelApi
+      .listPresalesExecutivesLegacyAll()
+      .catch(() => [] as Array<Record<string, unknown>>);
+    if (legacy.length > 0) return legacy;
+    const fromRole = await adminPanelApi
+      .listUsersByRole("PRESALES_EXECUTIVE")
+      .catch(() => [] as Array<Record<string, unknown>>);
+    if (fromRole.length > 0) return fromRole;
+    return adminPanelApi
+      .listUsersByRole("PRE_SALES")
+      .catch(() => [] as Array<Record<string, unknown>>);
+  };
+
+  const load = () => {
+    setLoading(true);
+    void Promise.all([
+      fetchPresalesExecutiveRows(),
+      adminPanelApi
+        .listUsersByRole("PRESALES_MANAGER")
+        .catch(() => [] as Array<Record<string, unknown>>),
+    ])
+      .then(([rows, managers]) => {
+        setExecs(mapPresalesRows(rows, managers));
+      })
+      .catch(() => setExecs([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!canShow) return;
+    load();
+  }, [viewerRole]);
+
+  const toggleStatus = (id: number, next: boolean) => {
+    if (toggleBusyId !== null) return;
+    const previous = execs.find((e) => e.id === id)?.status ?? !next;
+    setToggleBusyId(id);
+    setExecs((prev) => prev.map((e) => (e.id === id ? { ...e, status: next } : e)));
+    void adminPanelApi
+      .setPresalesExecutiveStatus(id, next)
+      .then((data) => {
+        window.dispatchEvent(new Event("crm:sales-executive-status-changed"));
+        const msg =
+          typeof data.message === "string"
+            ? data.message
+            : next
+              ? "Presales executive activated successfully."
+              : "Presales executive deactivated successfully.";
+        notifySuccess(msg);
+      })
+      .catch((e) => {
+        setExecs((prev) =>
+          prev.map((e) => (e.id === id ? { ...e, status: previous } : e)),
+        );
+        notifyError(e instanceof Error ? e.message : "Status update failed.");
+      })
+      .finally(() => setToggleBusyId(null));
+  };
+
+  if (!canShow) return null;
+
+  return (
+    <Card>
+      <SectionTitle icon="📋">Presales Executives Management</SectionTitle>
+      <p style={{ fontSize: 13, color: C.muted, marginTop: -12, marginBottom: 12 }}>
+        Toggle active/inactive for presales executives. Inactive users cannot log in and are
+        excluded from lead assignment.
+      </p>
+      {!loading ? (
+        <p style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>
+          {execs.length} presales executive{execs.length === 1 ? "" : "s"}.
+        </p>
+      ) : null}
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <TableHead
+            cols={[
+              "ID",
+              "Name",
+              "Email",
+              "Phone",
+              "Branch",
+              "Presales Manager",
+              "Status",
+              "Actions",
+            ]}
+          />
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  Loading…
+                </td>
+              </tr>
+            ) : execs.length === 0 ? (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No presales executives returned from the API.
+                </td>
+              </tr>
+            ) : (
+              execs.map((e, i) => (
+                <tr
+                  key={e.id}
+                  className={!e.status ? "inactive-row" : undefined}
+                  style={{
+                    background: !e.status ? C.warningBg : i % 2 === 0 ? C.card : C.surface,
+                    opacity: e.status ? 1 : 0.86,
+                  }}
+                >
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{e.id}</td>
+                  <td style={{ padding: "12px 14px", fontSize: 14, fontWeight: 600 }}>
+                    {e.name}
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14, color: C.muted }}>
+                    {e.email}
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{e.phone}</td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Badge color={C.successBg} text={C.successText}>
+                      {e.branch}
+                    </Badge>
+                  </td>
+                  <td style={{ padding: "12px 14px", fontSize: 14 }}>{e.manager}</td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Toggle
+                      active={e.status}
+                      onChange={() => toggleStatus(e.id, !e.status)}
+                    />
+                    {toggleBusyId === e.id ? (
+                      <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>Saving…</span>
+                    ) : null}
+                  </td>
+                  <td style={{ padding: "12px 14px" }}>
+                    <Btn
+                      color={C.danger}
+                      style={{ padding: "5px 14px", fontSize: 13 }}
+                      disabled={toggleBusyId === e.id}
+                      onClick={() => setDeleteCandidate(e)}
+                    >
+                      Delete
+                    </Btn>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      {deleteCandidate ? (
+        <div
+          style={{
+            marginTop: 14,
+            border: `1px solid ${C.border}`,
+            borderRadius: 10,
+            padding: 12,
+            background: C.card,
+          }}
+        >
+          <p style={{ margin: 0, fontSize: 13, color: C.text, fontWeight: 600 }}>
+            Delete {deleteCandidate.name} (ID: {deleteCandidate.id})?
+          </p>
+          <p style={{ margin: "4px 0 0 0", fontSize: 12, color: C.muted }}>
+            This action cannot be undone.
+          </p>
+          <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn
+              color={C.neutral}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+              disabled={deleteBusy}
+              onClick={() => setDeleteCandidate(null)}
+            >
+              Cancel
+            </Btn>
+            <Btn
+              color={C.danger}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+              disabled={deleteBusy}
+              onClick={() => {
+                const target = deleteCandidate;
+                if (!target) return;
+                setDeleteBusy(true);
+                void adminPanelApi
+                  .deletePreSales(target.id)
+                  .then(() => {
+                    setDeleteCandidate(null);
+                    load();
+                    notifySuccess("Presales executive deleted.");
+                  })
+                  .catch((e) => {
+                    notifyError(e instanceof Error ? e.message : "Delete failed.");
+                  })
                   .finally(() => setDeleteBusy(false));
               }}
             >
@@ -3440,6 +3567,12 @@ const SECTIONS: Section[] = [
     desc: "Map sales exec to manager",
   },
   {
+    id: "managers",
+    label: "Managers",
+    icon: "👔",
+    desc: "Toggle sales & presales manager status",
+  },
+  {
     id: "branch",
     label: "Branch Transfer",
     icon: "🔄",
@@ -3452,16 +3585,16 @@ const SECTIONS: Section[] = [
     desc: "View & filter all roles",
   },
   {
-    id: "presalesManagers",
-    label: "Presales Managers",
-    icon: "🧑‍💼",
-    desc: "Activate or deactivate presales managers",
-  },
-  {
     id: "salesExec",
     label: "Sales Executives",
     icon: "💼",
-    desc: "Manage exec accounts",
+    desc: "Manage sales exec accounts",
+  },
+  {
+    id: "presalesExec",
+    label: "Presales Executives",
+    icon: "📋",
+    desc: "Toggle presales exec status",
   },
   {
     id: "leadLimit",
@@ -3496,8 +3629,10 @@ export default function AdminPanelContent() {
     ? SECTIONS.filter((section) => section.id === "salesExec")
     : SECTIONS.filter((section) => {
         if (section.id === "allUsers") return isSuperAdmin;
-        if (section.id === "presalesManagers") return isSuperAdmin || isSalesAdmin || isAdmin;
         if (section.id === "leadLimit") return canSeeLeadLimit;
+        if (section.id === "managers" || section.id === "presalesExec") {
+          return isSuperAdmin || isAdmin || isSalesAdmin;
+        }
         return true;
       });
   const sections = baseSections.map((section) => {
@@ -3507,12 +3642,6 @@ export default function AdminPanelContent() {
     }
     if (isDesignManager) {
       return { ...section, label: "Designers", desc: "Create and manage designers" };
-    }
-    if (isPresalesManager) {
-      return { ...section, label: "Presales Executives", desc: "Manage your presales team" };
-    }
-    if (isSalesManager) {
-      return { ...section, label: "Sales Executives", desc: "Manage your sales team" };
     }
     return section;
   });
@@ -3553,6 +3682,11 @@ export default function AdminPanelContent() {
             <div id="assign">
               <AssignSection />
             </div>
+            {isSuperAdmin || isAdmin || isSalesAdmin ? (
+              <div id="managers">
+                <ManagersSection />
+              </div>
+            ) : null}
             <div id="branch">
               <BranchTransferSection />
             </div>
@@ -3561,14 +3695,14 @@ export default function AdminPanelContent() {
                 <AllUsersSection />
               </div>
             ) : null}
-            {isSuperAdmin || isSalesAdmin || isAdmin ? (
-              <div id="presalesManagers">
-                <PresalesManagersSection />
-              </div>
-            ) : null}
             <div id="salesExec">
               <SalesExecSection />
             </div>
+            {isSuperAdmin || isAdmin || isSalesAdmin ? (
+              <div id="presalesExec">
+                <PresalesExecSection />
+              </div>
+            ) : null}
             {canSeeLeadLimit ? (
               <div id="leadLimit">
                 <LeadLimitSection />

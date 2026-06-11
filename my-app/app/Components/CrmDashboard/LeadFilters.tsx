@@ -15,6 +15,7 @@ import {
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
+import { isUserActive } from "@/lib/user-active";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
@@ -261,18 +262,18 @@ export default function LeadFilters({
           new Map(
             [...se, ...legacyRows].map((u) => [Number(u.id ?? 0), u] as const),
           ).values(),
-        ).filter((u) => Number(u.id ?? 0) > 0);
+        ).filter((u) => Number(u.id ?? 0) > 0 && isUserActive(u));
 
         setSalesAdmins(
           [
-            ...sa.filter((u) => u.active !== false),
+            ...sa.filter((u) => isUserActive(u)),
             ...(me && me.role === "SALES_ADMIN" ? [me] : []),
           ].filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i),
         );
-        setSalesManagers(sm.filter((u) => u.active !== false));
+        setSalesManagers(sm);
         setSalesExecs(mergedSalesExecs);
-        setPresalesManagers(pm.filter((u) => u.active !== false));
-        setPresalesExecs(pe.filter((u) => u.active !== false));
+        setPresalesManagers(pm);
+        setPresalesExecs(pe.filter((u) => isUserActive(u)));
       } catch {
         if (!cancelled) {
           setSalesAdmins([]);

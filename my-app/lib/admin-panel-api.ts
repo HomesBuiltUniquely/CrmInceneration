@@ -1,6 +1,8 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
 import { getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
+import { isPresalesExecutiveRole, isUserActive } from "@/lib/user-active";
+import { leadLimitsApi } from "@/lib/lead-limits-api";
 
 type AnyJson = Record<string, unknown>;
 
@@ -66,7 +68,7 @@ function userRecordRole(u: AnyJson): string {
 }
 
 function isActiveUserRecord(u: AnyJson): boolean {
-  return String(u.active ?? true) !== "false";
+  return isUserActive(u as { active?: boolean; isActive?: boolean });
 }
 
 function mergeUsersById(primary: AnyJson[], secondary: AnyJson[]): AnyJson[] {
@@ -107,6 +109,72 @@ async function listSalesManagersMerged(): Promise<AnyJson[]> {
  * Legacy CRM hierarchical list: GET /v1/SalesExecutive/all (proxied).
  * For SALES_MANAGER JWT, backend returns only executives under that manager (typically active only).
  */
+function isExcludedPresalesExecListRole(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    r === "PRESALES_MANAGER" ||
+    r === "SALES_MANAGER" ||
+    r === "SALES_EXECUTIVE" ||
+    r === "SALES_ADMIN" ||
+    r === "ADMIN" ||
+    r === "SUPER_ADMIN"
+  );
+}
+
+/**
+ * Merged presales executives for admin UI — combines GET /v1/PreSales/all,
+ * users-by-role(PRESALES_EXECUTIVE|PRE_SALES), and admin pre-sales list.
+ * Production backends sometimes return an empty /all list; role queries are a reliable fallback.
+ */
+async function listPresalesExecutivesMerged(): Promise<AnyJson[]> {
+  const [fromLegacy, fromRole, fromLegacyRole, fromAdmin, fromLeadLimits] = await Promise.all([
+    listPresalesExecutivesLegacyAll().catch(() => [] as AnyJson[]),
+    list(`users-by-role?role=${encodeURIComponent("PRESALES_EXECUTIVE")}`).catch(
+      () => [] as AnyJson[],
+    ),
+    list(`users-by-role?role=${encodeURIComponent("PRE_SALES")}`).catch(() => [] as AnyJson[]),
+    list("pre-sales").catch(() => [] as AnyJson[]),
+    leadLimitsApi.listUsers().catch(() => [] as AnyJson[]),
+  ]);
+
+  const fromLeadLimitsExecs = fromLeadLimits.filter((u) =>
+    isPresalesExecutiveRole(userRecordRole(u)),
+  );
+
+  const executiveSourceIds = new Set<string>();
+  for (const u of [...fromLegacy, ...fromRole, ...fromLegacyRole, ...fromLeadLimitsExecs]) {
+    const k = String(u.id ?? u.userId ?? "").trim();
+    if (k) executiveSourceIds.add(k);
+  }
+
+  const merged = mergeUsersById(
+    mergeUsersById(fromLegacy, fromRole),
+    mergeUsersById(fromLegacyRole, mergeUsersById(fromAdmin, fromLeadLimitsExecs)),
+  );
+
+  return merged.filter((u) => {
+    const role = userRecordRole(u);
+    if (isExcludedPresalesExecListRole(role)) return false;
+    if (isPresalesExecutiveRole(role)) return true;
+    const id = String(u.id ?? u.userId ?? "").trim();
+    return Boolean(id && executiveSourceIds.has(id));
+  });
+}
+
+async function listPresalesExecutivesLegacyAll(): Promise<AnyJson[]> {
+  const res = await fetch(`/api/pre-sales/all`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const data = (await res.json().catch(() => ({}))) as unknown;
+  if (!res.ok) {
+    const msg = (data as AnyJson).message;
+    throw new Error(typeof msg === "string" ? msg : `HTTP ${res.status}`);
+  }
+  return normalizeToArray<AnyJson>(data);
+}
+
 async function listSalesExecutivesLegacyAll(): Promise<AnyJson[]> {
   const res = await fetch(`/api/sales-executive/all`, {
     cache: "no-store",
@@ -131,11 +199,17 @@ export const adminPanelApi = {
   createAdmin: (payload: AnyJson) =>
     call<AnyJson>("create-admin", { method: "POST", body: JSON.stringify(payload) }),
   listManagers: () => list("managers"),
-  /** Merged managers list for dropdowns (see {@link listSalesManagersMerged}). */
+  /** All managers from GET /api/admin/managers (includes inactive). */
+  listManagersAll: () => list("managers"),
+  /** Merged active sales managers for parent dropdowns in create-user forms. */
   listSalesManagersMerged: () => listSalesManagersMerged(),
   listSalesExecutives: () => list("sales-executives"),
   /** GET /v1/SalesExecutive/all — use for Sales Manager team table (see API spec). */
   listSalesExecutivesLegacyAll: () => listSalesExecutivesLegacyAll(),
+  /** GET /v1/PreSales/all — includes inactive executives for admin roles. */
+  listPresalesExecutivesLegacyAll: () => listPresalesExecutivesLegacyAll(),
+  /** Merged presales executives (see {@link listPresalesExecutivesMerged}). */
+  listPresalesExecutivesMerged: () => listPresalesExecutivesMerged(),
   listPreSales: () => list("pre-sales"),
   listDesignManagers: () => list("design-managers"),
   listDesigners: () => list("designers"),
@@ -157,6 +231,44 @@ export const adminPanelApi = {
   /** Master API: PUT /v1/SalesExecutive/{id}/status with raw boolean body. */
   setSalesExecutiveStatus: async (id: number | string, active: boolean) => {
     const res = await fetch(`/api/sales-executive/${id}/status`, {
+      method: "PUT",
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders({
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }),
+      body: JSON.stringify(active),
+    });
+    const data = (await res.json().catch(() => ({}))) as AnyJson;
+    if (!res.ok) {
+      const msg = typeof data.message === "string" ? data.message : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  },
+  /** Master API: PUT /v1/PreSales/{id}/status with raw boolean body. */
+  setPresalesExecutiveStatus: async (id: number | string, active: boolean) => {
+    const res = await fetch(`/api/pre-sales/${id}/status`, {
+      method: "PUT",
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders({
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      }),
+      body: JSON.stringify(active),
+    });
+    const data = (await res.json().catch(() => ({}))) as AnyJson;
+    if (!res.ok) {
+      const msg = typeof data.message === "string" ? data.message : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  },
+  /** PUT /api/admin/managers/{id}/status with raw boolean body (login blocked only). */
+  setManagerStatus: async (id: number | string, active: boolean) => {
+    const res = await fetch(`/api/admin/managers/${id}/status`, {
       method: "PUT",
       cache: "no-store",
       credentials: "include",
