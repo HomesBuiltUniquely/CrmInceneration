@@ -2149,6 +2149,7 @@ export default function LeadDetailsApiClient({
       lostReason: args.lostReason?.trim()
         ? args.lostReason.trim()
         : lead.lostReason,
+      possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
       stageBlock: {
         ...lead.stageBlock,
         ...nextPresalesStage,

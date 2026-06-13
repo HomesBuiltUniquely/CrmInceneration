@@ -43,23 +43,30 @@ export default function StatsRow({ lead }: { lead: Lead }) {
       iconBg: "bg-[rgba(167,139,250,0.15)]",
       iconColor: "text-[#a78bfa]",
     },
+    {
+      icon: "🔑",
+      label: "Possession",
+      value: lead.possessionDate?.trim() ? lead.possessionDate : "Not set",
+      iconBg: "bg-[rgba(244,114,182,0.15)]",
+      iconColor: "text-[#f472b6]",
+    },
   ];
 
   return (
-    <div className="mb-5 grid grid-cols-2 gap-3.5 animate-fade-up delay-2 md:grid-cols-4">
+    <div className="mb-5 flex w-full gap-2 animate-fade-up delay-2">
       {stats.map((s, i) => (
         <div
           key={i}
-          className="flex items-center gap-3 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-4 py-3.5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]"
+          className="flex-1 min-w-0 flex items-center gap-2 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2 py-2 shadow-[0_14px_30px_rgba(15,23,42,0.06)] overflow-hidden"
         >
-          <div className={`w-10 h-10 rounded-[9px] flex items-center justify-center text-base flex-shrink-0 ${s.iconBg} ${s.iconColor}`}>
+          <div className={`w-8 h-8 rounded-[8px] flex items-center justify-center text-[14px] flex-shrink-0 ${s.iconBg} ${s.iconColor}`}>
             {s.icon}
           </div>
-          <div className="min-w-0">
-            <div className="truncate text-[15px] font-bold tracking-[-0.2px] text-[var(--crm-text-primary)]">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[12px] font-bold tracking-[-0.2px] text-[var(--crm-text-primary)]">
               {s.value}
             </div>
-            <div className="mt-0.5 text-[11px] text-[var(--crm-text-muted)]">{s.label}</div>
+            <div className="mt-0.5 truncate text-[10px] text-[var(--crm-text-muted)]">{s.label}</div>
           </div>
         </div>
       ))}
