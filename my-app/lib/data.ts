@@ -68,10 +68,13 @@ export interface Lead {
   budget: string;
   language: string;
   leadSource: string;
+  /** Sales manager name for Sales Closure prefill when backend provides it. */
+  salesManagerName?: string;
   /** Raw `additionalLeadSources` string from API (for PUT round-trip). */
   additionalLeadSources?: string;
   /** Parsed extra sources for chips (see `parseAdditionalLeadSources`). */
   additionalLeadSourcesList?: string[];
+  bookingType: string;
   meetingType: string;
   propertyNotes: string;
   requirements: string[];
@@ -99,6 +102,8 @@ export interface Lead {
    * Do not include on PUT bodies — backend owns persistence.
    */
   designQaLink?: string | null;
+  /** Branch or experience center for the lead. */
+  branch?: string;
 }
 
 export const LANGUAGE_OPTIONS = [
@@ -132,6 +137,7 @@ export const BUDGET_OPTIONS = [
   "2 BHK Standard Interiors - 6 Lakhs+",
   "3 BHK Standard Interiors - 8 Lakhs+",
 ];
+export const BOOKING_TYPE_OPTIONS = ["APARTMENT", "RENOVATION", "KITCHEN"];
 export const MEETING_TYPES = ["Site Visit", "Video Call", "Office Meeting", "Phone Call"];
 
 export const leads: Lead[] = [
@@ -154,6 +160,7 @@ export const leads: Lead[] = [
     budget: "45L",
     language: "English",
     leadSource: "Website",
+    bookingType: "APARTMENT",
     meetingType: "Site Visit",
     propertyNotes: "Prefers a modern interior language with practical storage in every room.",
     requirements: ["Living Room", "Modular Kitchen", "Wardrobes"],
@@ -209,6 +216,7 @@ export const leads: Lead[] = [
     budget: "85L",
     language: "English",
     leadSource: "Referral",
+    bookingType: "RENOVATION",
     meetingType: "Office Meeting",
     propertyNotes: "Waiting on legal review before design lock. Timelines are tight.",
     requirements: ["Home Office", "Bar Unit", "Guest Bedroom"],
@@ -264,6 +272,7 @@ export const leads: Lead[] = [
     budget: "32L",
     language: "Hindi",
     leadSource: "Instagram",
+    bookingType: "KITCHEN",
     meetingType: "Video Call",
     propertyNotes: "Interested in a minimalist scheme with family-friendly materials.",
     requirements: ["Kids Room", "TV Unit", "Dining Storage"],

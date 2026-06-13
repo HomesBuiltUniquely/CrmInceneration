@@ -35,6 +35,8 @@ export type LeadPropertyGateFields = {
   budget: string | null | undefined;
   propertyNotes: string | null | undefined;
   configuration: string | null | undefined;
+  bookingType?: string | null | undefined;
+  possessionDate?: string | null | undefined;
 };
 
 function isEffectivelyEmptyField(value: string | null | undefined): boolean {
@@ -52,16 +54,18 @@ function isEffectivelyEmptyField(value: string | null | undefined): boolean {
 
 export function missingLeadPropertyGateFields(
   lead: LeadPropertyGateFields
-): Array<"Budget" | "Property notes" | "Configuration"> {
-  const missing: Array<"Budget" | "Property notes" | "Configuration"> = [];
+): Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession"> {
+  const missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession"> = [];
   if (isEffectivelyEmptyField(lead.budget)) missing.push("Budget");
   if (isEffectivelyEmptyField(lead.propertyNotes)) missing.push("Property notes");
   if (isEffectivelyEmptyField(lead.configuration)) missing.push("Configuration");
+  if (isEffectivelyEmptyField(lead.bookingType)) missing.push("Booking type");
+  if (isEffectivelyEmptyField(lead.possessionDate)) missing.push("Possession");
   return missing;
 }
 
 export function leadPropertyGateErrorMessage(
-  missing: Array<"Budget" | "Property notes" | "Configuration">,
+  missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession">,
 ): string {
   if (missing.length === 0) return "";
   return `Fill ${missing.join(", ")} on the Lead tab (required before Connection; cannot be empty).`;
