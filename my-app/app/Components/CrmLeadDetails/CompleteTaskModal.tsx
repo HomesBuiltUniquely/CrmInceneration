@@ -107,6 +107,7 @@ export type PresalesCompleteTaskApiPayload = {
   nextCallDateLocal: string;
   /** Sent as `resone` on PUT when path category is LOST. */
   lostReason?: string;
+  possessionDate?: string;
 };
 
 export type CompleteTaskApiPayload = {
@@ -633,6 +634,18 @@ export default function CompleteTaskModal({
     () => feedbackOptions.find((m) => m.label === feedback),
     [feedback, feedbackOptions],
   );
+
+  const isHoldSubstageSelected = useMemo(() => {
+    if (!selectedFeedbackOption) return false;
+    const subStage = selectedFeedbackOption.subStageName.trim();
+    return (
+      subStage === "Discovery Hold" ||
+      subStage === "Connection Hold" ||
+      subStage === "Experience & Design Hold" ||
+      subStage === "Decision Hold" ||
+      subStage.toLowerCase().includes("hold")
+    );
+  }, [selectedFeedbackOption]);
   const verifyHandoffMode = Boolean(
     presalesMode &&
       presalesVerifyAvailable &&
@@ -767,33 +780,32 @@ export default function CompleteTaskModal({
       return;
     }
 
+    // In presalesMode the connection-gate panel is hidden; only validate the gate in sales (non-presales) mode.
+    if (!presalesMode) {
+      const effectivelyMissingFields = missingLeadPropertyGateFields({
+        budget: modalBudget,
+        propertyNotes: modalPropertyNotes,
+        configuration: modalConfiguration,
+        bookingType: modalBookingType,
+      } as any);
 
-
-    const effectivelyMissingFields = missingLeadPropertyGateFields({
-      budget: modalBudget,
-      propertyNotes: modalPropertyNotes,
-      configuration: modalConfiguration,
-      bookingType: modalBookingType,
-      possessionDate: modalPossessionDate,
-    });
-
-    if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
-      const msg = presalesMode
-        ? leadPropertyGateErrorMessage(effectivelyMissingFields)
-        : `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`;
-      if (!presalesMode) {
-        setApiError(msg);
-      } else {
-        setGatePopupMessage(msg);
-        setApiError(msg);
+      if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
+        setApiError(
+          `Please fill ${effectivelyMissingFields.join(", ")} below before moving to Connection.`
+        );
+        return;
       }
-      return;
     }
 
     if (resoneMissing) {
       setApiError(
         "Reason (resone) is required for LOST or this closure substage.",
       );
+      return;
+    }
+
+    if (isHoldSubstageSelected && !modalPossessionDate.trim()) {
+      setApiError("Possession is required when placing a lead on hold.");
       return;
     }
 
@@ -862,6 +874,7 @@ export default function CompleteTaskModal({
           note: note.trim(),
           nextCallDateLocal: nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
+          possessionDate: isHoldSubstageSelected ? modalPossessionDate.trim() : undefined,
         });
         onClose();
       } catch (e) {
@@ -887,7 +900,7 @@ export default function CompleteTaskModal({
           propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
           configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
           bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
-          possessionDate: needsLeadPropertyGate ? modalPossessionDate.trim() : undefined,
+          possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
           meetingAppointment: scheduleMode
             ? {
                 designerName: meetingDesigner.trim(),
@@ -1191,6 +1204,34 @@ export default function CompleteTaskModal({
                 />
               ) : null}
 
+                            {isHoldSubstageSelected ? (
+                <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-orange-500/10 text-orange-500">
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 17c-.77 1.333.192 3 1.732 3z" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
+                      Possession Required for Hold
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-[var(--crm-text-muted)] leading-relaxed">
+                    Please provide the possession details to place this lead on hold.
+                  </p>
+                  <div>
+                    <FieldLabel required>Possession</FieldLabel>
+                    <Input
+                      value={modalPossessionDate}
+                      onChange={(e) => setModalPossessionDate(e.target.value)}
+                      placeholder="Add possession..."
+                      missing={showErrors && !modalPossessionDate.trim()}
+                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
               {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
               {presalesMode || scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
@@ -1252,16 +1293,7 @@ export default function CompleteTaskModal({
                         ))}
                       </Select>
                     </div>
-                    <div>
-                      <FieldLabel required>Possession</FieldLabel>
-                      <Input
-                        value={modalPossessionDate}
-                        onChange={(e) => setModalPossessionDate(e.target.value)}
-                        placeholder="Add possession..."
-                        missing={showErrors && !modalPossessionDate.trim()}
-                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                      />
-                    </div>
+
                   </div>
 
                   <div>
@@ -1471,9 +1503,8 @@ export default function CompleteTaskModal({
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>, fill{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>,{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong>,{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Booking type</strong>, and{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Possession</strong> on the Lead tab (all required).
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong>, and{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Booking type</strong> on the Lead tab (all required).
             </p>
           ) : null}
 

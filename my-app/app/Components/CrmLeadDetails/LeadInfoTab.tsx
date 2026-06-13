@@ -465,19 +465,6 @@ export default function LeadInfoTab({
               <FieldLabel>Meeting Type</FieldLabel>
               <Input value={meetingTypeDisplay(lead.meetingType)} readOnly />
             </div>
-            <div>
-              <FieldLabel>Possession</FieldLabel>
-              <Input
-                placeholder="Add possession..."
-                {...(c
-                  ? {
-                      value: lead.possessionDate,
-                      onChange: (e) => c({ possessionDate: e.target.value }),
-                    }
-                  : { defaultValue: lead.possessionDate })}
-                readOnly={!additionalInfoEditable}
-              />
-            </div>
           </div>
 
           <div>

@@ -54,18 +54,17 @@ function isEffectivelyEmptyField(value: string | null | undefined): boolean {
 
 export function missingLeadPropertyGateFields(
   lead: LeadPropertyGateFields
-): Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession"> {
-  const missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession"> = [];
+): Array<"Budget" | "Property notes" | "Configuration" | "Booking type"> {
+  const missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type"> = [];
   if (isEffectivelyEmptyField(lead.budget)) missing.push("Budget");
   if (isEffectivelyEmptyField(lead.propertyNotes)) missing.push("Property notes");
   if (isEffectivelyEmptyField(lead.configuration)) missing.push("Configuration");
   if (isEffectivelyEmptyField(lead.bookingType)) missing.push("Booking type");
-  if (isEffectivelyEmptyField(lead.possessionDate)) missing.push("Possession");
   return missing;
 }
 
 export function leadPropertyGateErrorMessage(
-  missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type" | "Possession">,
+  missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type">,
 ): string {
   if (missing.length === 0) return "";
   return `Fill ${missing.join(", ")} on the Lead tab (required before Connection; cannot be empty).`;
