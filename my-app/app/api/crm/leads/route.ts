@@ -8,6 +8,7 @@ import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/aut
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
+import { fetchWhatsappLeadsForMerge } from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
@@ -73,6 +74,7 @@ function emptySourceCounts(): LeadSourceCounts {
     addlead: 0,
     websitelead: 0,
     walkinlead: 0,
+    whatsapplead: 0,
   };
 }
 
@@ -364,8 +366,9 @@ function filterAndSortMergedLeads(
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      const isWalkInRow = normalizeLeadTypeKey(lead.leadType) === "walkinlead";
-      if (!isWalkInRow) {
+      const ltKey = normalizeLeadTypeKey(lead.leadType);
+      const isExternalListRow = ltKey === "walkinlead" || ltKey === "whatsapplead";
+      if (!isExternalListRow) {
         const dateFieldRaw =
           dateFrom || dateTo
             ? usePresalesMilestoneFilters
@@ -388,7 +391,7 @@ function filterAndSortMergedLeads(
           return false;
         }
       } else if (
-        !isWalkInRow &&
+        !isExternalListRow &&
         (mStage || mCat || mSub) &&
         !leadMatchesWorkspaceMilestoneFilter(lead, "sales", mStage, mCat, mSub)
       ) {
@@ -554,6 +557,22 @@ export async function GET(req: NextRequest) {
     if (leadType === "walkinlead") {
       try {
         return await fetchWalkInLeadsForMerge({
+          req,
+          sort,
+          search,
+          effDates,
+          extraParams: walkInExtraParams,
+          perType,
+          maxPages: maxPagesPerType,
+        });
+      } catch {
+        return { leads: [] as ApiLead[], accessDenied: false };
+      }
+    }
+
+    if (leadType === "whatsapplead") {
+      try {
+        return await fetchWhatsappLeadsForMerge({
           req,
           sort,
           search,

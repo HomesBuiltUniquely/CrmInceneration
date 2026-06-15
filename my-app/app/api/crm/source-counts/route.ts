@@ -8,6 +8,7 @@ import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/aut
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { getEffectiveNewCrmEndDate, getEffectiveNewCrmStartDate } from "@/lib/new-crm-cutoff";
 import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
+import { fetchWhatsappLeadsForMerge } from "@/lib/crm-whatsapp-leads";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
 type SourceCountsResponse = Record<"all" | (typeof CRM_LEAD_TYPES)[number], number>;
@@ -99,7 +100,7 @@ async function countLeadType(
   assigneeScopes: string[],
   effDates: { from: string; to: string },
 ): Promise<number> {
-  if (leadType === "walkinlead") {
+  if (leadType === "walkinlead" || leadType === "whatsapplead") {
     const sort = (reqUrl.searchParams.get("sort") ?? "updatedAt,desc").trim() || "updatedAt,desc";
     const search = (reqUrl.searchParams.get("search") ?? "").trim();
     const extraParams = [
@@ -115,7 +116,7 @@ async function countLeadType(
       { key: "dateFrom", value: effDates.from },
       { key: "dateTo", value: effDates.to },
     ];
-    const { leads } = await fetchWalkInLeadsForMerge({
+    const fetchCtx = {
       req,
       sort,
       search,
@@ -123,7 +124,11 @@ async function countLeadType(
       extraParams,
       perType: 500,
       maxPages: 100,
-    });
+    };
+    const { leads } =
+      leadType === "walkinlead"
+        ? await fetchWalkInLeadsForMerge(fetchCtx)
+        : await fetchWhatsappLeadsForMerge(fetchCtx);
     const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
     const ids = new Set<string>();
     for (const lead of leads) {
@@ -195,6 +200,7 @@ export async function GET(req: NextRequest) {
     addlead: 0,
     websitelead: 0,
     walkinlead: 0,
+    whatsapplead: 0,
   };
 
   const selectedTypes =

@@ -169,7 +169,11 @@ function ActivityListRow({
   );
 }
 
-export default function ActivityTimeline({ activities }: { activities: ActivityItem[] }) {
+export default function ActivityTimeline({
+  activities,
+}: {
+  activities: ActivityItem[];
+}) {
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

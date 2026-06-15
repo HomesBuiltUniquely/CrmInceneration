@@ -16,6 +16,7 @@ export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   if (compact === "addlead" || compact === "alead") return "addlead";
   if (compact === "websitelead" || compact === "wlead") return "websitelead";
   if (compact === "walkinlead" || compact === "walkin") return "walkinlead";
+  if (compact === "whatsapplead" || compact === "whatsapp") return "whatsapplead";
   return "formlead";
 }
 
@@ -96,6 +97,7 @@ export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCount
     addlead: 0,
     websitelead: 0,
     walkinlead: 0,
+    whatsapplead: 0,
   };
   for (const lead of leads) {
     const type = normalizeLeadTypeKey(lead.leadType);

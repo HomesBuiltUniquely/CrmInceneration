@@ -8,5 +8,6 @@ export function crmLeadTypeToApiLabel(leadType: CrmLeadType): string {
   if (leadType === "addlead") return "Add Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";
+  if (leadType === "whatsapplead") return "WhatsApp";
   return "Form Lead";
 }

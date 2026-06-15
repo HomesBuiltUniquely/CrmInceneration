@@ -350,6 +350,7 @@ export default function LeadsToolbar({
       ["Add Lead", counts.addlead ?? 0],
       ["Website Lead", counts.websitelead ?? 0],
       ["Walk-in Lead", counts.walkinlead ?? 0],
+      ["WhatsApp", counts.whatsapplead ?? 0],
     ];
   }, [adminPoolUsesPrimaryCounts, leadTypeCounts, leadTypeCountsPrimary]);
   const adminPoolPrimaryTotal =
@@ -630,6 +631,7 @@ export default function LeadsToolbar({
                     ["Google Leads", leadTypeCounts.glead ?? 0],
                     ["Meta Leads", leadTypeCounts.mlead ?? 0],
                     ["Walk-in Leads", leadTypeCounts.walkinlead ?? 0],
+                    ["WhatsApp Leads", leadTypeCounts.whatsapplead ?? 0],
                   ]
                 : isSalesManager
                   ? [

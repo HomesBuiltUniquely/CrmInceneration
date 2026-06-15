@@ -24,6 +24,10 @@ import {
   mergeWalkInCountIntoSourceCounts,
 } from "@/lib/crm-walkin-leads";
 import {
+  augmentLeadSourceCountsWithWhatsapp,
+  mergeWhatsappCountIntoSourceCounts,
+} from "@/lib/crm-whatsapp-leads";
+import {
   buildAdminPoolDualCounts,
   computeLeadTypeCountsFromRows,
   pickPrimarySourceRows,
@@ -149,6 +153,7 @@ export function adminByLeadTypeToSourceCounts(
     addlead: 0,
     websitelead: 0,
     walkinlead: 0,
+    whatsapplead: 0,
   };
   if (!byLeadType) return counts;
   for (const t of CRM_LEAD_TYPES) {
@@ -552,21 +557,19 @@ export async function fetchAdminLeadsHeatmapData(
         ],
       };
       try {
-        const augmented = await augmentLeadSourceCountsWithWalkIn(
-          leadTypeCounts,
-          walkInCtx,
-        );
+        let augmented = await augmentLeadSourceCountsWithWalkIn(leadTypeCounts, walkInCtx);
+        augmented = await augmentLeadSourceCountsWithWhatsapp(augmented, walkInCtx);
         leadTypeCountsForUi = augmented;
-        leadTypeAllRowsForUi = mergeWalkInCountIntoSourceCounts(
-          pool.leadTypeAllRows,
-          augmented.walkinlead,
+        leadTypeAllRowsForUi = mergeWhatsappCountIntoSourceCounts(
+          mergeWalkInCountIntoSourceCounts(pool.leadTypeAllRows, augmented.walkinlead),
+          augmented.whatsapplead,
         );
-        leadTypePrimaryForUi = mergeWalkInCountIntoSourceCounts(
-          pool.leadTypePrimaryUnique,
-          augmented.walkinlead,
+        leadTypePrimaryForUi = mergeWhatsappCountIntoSourceCounts(
+          mergeWalkInCountIntoSourceCounts(pool.leadTypePrimaryUnique, augmented.walkinlead),
+          augmented.whatsapplead,
         );
       } catch {
-        // Walk-in augment is optional; admin pool must still load.
+        // Walk-in / WhatsApp augment is optional; admin pool must still load.
       }
     }
 

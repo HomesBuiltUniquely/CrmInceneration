@@ -27,13 +27,14 @@ import {
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import TopBar from "./TopBar";
-import LeadHeader from "./LeadHeader";
-import DesignQaPanel from "./DesignQaPanel";
-import StatsRow from "./StatsRow";
-import Tabs, { type TabId } from "./Tabs";
-import LeadInfoTab from "./LeadInfoTab";
+import LeadDetailsPageShell from "./LeadDetailsPageShell";
+import LeadDetailsHero from "./LeadDetailsHero";
+import LeadDetailsSidebar from "./LeadDetailsSidebar";
+import LeadPhasesPanel from "./LeadPhasesPanel";
+import ActivityHistoryModal from "./ActivityHistoryModal";
 import AssignmentsTab from "./AssignmentsTab";
-import ActivityTimeline from "./ActivityTimeline";
+import DesignQaPanel from "./DesignQaPanel";
+import LeadInfoTab from "./LeadInfoTab";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
@@ -572,6 +573,7 @@ const SOURCE_LABELS: Record<CrmLeadType, string> = {
   addlead: "Add Lead",
   websitelead: "Website Lead",
   walkinlead: "Walk-in Lead",
+  whatsapplead: "WhatsApp",
 };
 
 function parseDateLoose(input: unknown): Date | null {
@@ -709,10 +711,10 @@ export default function LeadDetailsApiClient({
   const validLeadType = isCrmLeadType(leadTypeParam);
   const leadType = leadTypeParam as CrmLeadType;
 
-  const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
+  const [activityHistoryOpen, setActivityHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -2334,14 +2336,43 @@ export default function LeadDetailsApiClient({
     );
   }
 
+  const leadInfoForm = (
+    <LeadInfoTab
+      lead={lead}
+      onLeadChange={patchLead}
+      onFloorPlanUpload={handleFloorPlanUpload}
+      onFloorPlanMissing={handleFloorPlanMissing}
+      onFloorPlanRemove={handleFloorPlanRemove}
+      floorPlanUploading={floorPlanUploading}
+      floorPlanRemoving={floorPlanRemoving}
+      onAdditionalInfoSave={handleSaveSecondBox}
+      onLogCall={handlePhoneCallLog}
+      onDesignQaLinkCopied={handleDesignQaLinkCopied}
+      quoteExtras={{
+        subject: quoteSubject,
+        body: quoteBody,
+        onSubjectChange: setQuoteSubject,
+        onBodyChange: setQuoteBody,
+        onSendQuote: handleSendQuote,
+        quoteSending,
+        quotePersisting: quoteLinkPersisting,
+        quoteLinkPersistError,
+        onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
+      }}
+    />
+  );
+
   return (
-    <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-6 md:px-6 lg:px-8">
-      <div className="mx-auto max-w-[1440px]">
+    <>
+    <LeadDetailsPageShell
+      topBar={
         <TopBar
           designQaOpen={designQaOpen}
           onToggleDesignQa={() => setDesignQaOpen((v) => !v)}
         />
-        <LeadHeader
+      }
+      hero={
+        <LeadDetailsHero
           lead={lead}
           userRole={viewerRoleKey}
           presalesHandedOff={presalesHandedOff}
@@ -2370,62 +2401,37 @@ export default function LeadDetailsApiClient({
           showSalesClosure={canClosedLeadHeader && isCloserStageBookingDone(lead)}
           onOpenSalesClosure={openStrictSalesClosureNewTab}
           salesClosureLoading={salesClosureLoading}
-          createdTimelineOptions={createdTimelineOptions}
-          createdTimelineLoading={createdTimelineLoading}
-          createdTimelineValue={selectedTimelineValue}
-          onCreatedTimelineChange={(selected) => {
-            if (!selected) return;
-            setSelectedTimelineValue(selected);
-            const chosen = createdTimelineOptions.find(
-              (opt) => opt.value === selected,
-            );
-            if (!chosen) return;
-            const { leadType: nextLeadType, leadId: nextLeadId } = chosen;
-            if (nextLeadType === leadType && nextLeadId === leadId) return;
-            window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
-          }}
         />
+      }
+      designQaPanel={
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
-        <StatsRow lead={lead} />
-        <Tabs active={activeTab} onChange={setActiveTab} />
-
-        {activeTab === "lead" && (
-          <LeadInfoTab
-            lead={lead}
-            onLeadChange={patchLead}
-            onFloorPlanUpload={handleFloorPlanUpload}
-            onFloorPlanMissing={handleFloorPlanMissing}
-            onFloorPlanRemove={handleFloorPlanRemove}
-            floorPlanUploading={floorPlanUploading}
-            floorPlanRemoving={floorPlanRemoving}
-            onAdditionalInfoSave={handleSaveSecondBox}
-            onLogCall={handlePhoneCallLog}
-            onDesignQaLinkCopied={handleDesignQaLinkCopied}
-            quoteExtras={{
-              subject: quoteSubject,
-              body: quoteBody,
-              onSubjectChange: setQuoteSubject,
-              onBodyChange: setQuoteBody,
-              onSendQuote: handleSendQuote,
-              quoteSending,
-              quotePersisting: quoteLinkPersisting,
-              quoteLinkPersistError,
-              onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
-            }}
-          />
-        )}
-        {activeTab === "assignments" && (
-          <AssignmentsTab lead={lead} onLeadChange={patchLead} />
-        )}
-        {activeTab === "activity" && (
-          <ActivityTimeline activities={lead.activities} />
-        )}
-        {saveError ? (
-          <p className="mt-2 text-[12px] text-rose-600">{saveError}</p>
-        ) : null}
-        {secondBoxError ? (
-          <p className="mt-2 text-[12px] text-rose-600">{secondBoxError}</p>
-        ) : null}
+      }
+      sidebar={
+        <LeadDetailsSidebar
+          lead={lead}
+          onLogCall={handlePhoneCallLog}
+          onOpenActivityHistory={() => setActivityHistoryOpen(true)}
+        />
+      }
+      phases={
+        <LeadPhasesPanel
+          lead={lead}
+          formContent={leadInfoForm}
+          assignmentsContent={<AssignmentsTab lead={lead} onLeadChange={patchLead} />}
+          onToggleDesignQa={() => setDesignQaOpen((v) => !v)}
+        />
+      }
+      errors={
+        <>
+          {saveError ? (
+            <p className="mt-2 text-[12px] text-rose-600">{saveError}</p>
+          ) : null}
+          {secondBoxError ? (
+            <p className="mt-2 text-[12px] text-rose-600">{secondBoxError}</p>
+          ) : null}
+        </>
+      }
+      footer={
         <FooterActions
           onSave={handleSave}
           saving={saving}
@@ -2441,7 +2447,13 @@ export default function LeadDetailsApiClient({
               : undefined
           }
         />
-      </div>
+      }
+    />
+      <ActivityHistoryModal
+        activities={lead.activities}
+        open={activityHistoryOpen}
+        onClose={() => setActivityHistoryOpen(false)}
+      />
       <CompleteTaskModal
         lead={lead}
         open={completeTaskOpen}
@@ -2572,6 +2584,6 @@ export default function LeadDetailsApiClient({
           </div>
         </div>
       ) : null}
-    </main>
+    </>
   );
 }

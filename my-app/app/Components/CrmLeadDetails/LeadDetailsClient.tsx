@@ -4,18 +4,19 @@ import { useEffect, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { getStoredLeadStatus, setStoredLeadStatus } from "@/lib/lead-status";
 import TopBar from "./TopBar";
-import LeadHeader from "./LeadHeader";
-import StatsRow from "./StatsRow";
-import Tabs, { type TabId } from "./Tabs";
-import LeadInfoTab from "./LeadInfoTab";
+import LeadDetailsPageShell from "./LeadDetailsPageShell";
+import LeadDetailsHero from "./LeadDetailsHero";
+import LeadDetailsSidebar from "./LeadDetailsSidebar";
+import ActivityHistoryModal from "./ActivityHistoryModal";
 import AssignmentsTab from "./AssignmentsTab";
-import ActivityTimeline from "./ActivityTimeline";
+import LeadPhasesPanel from "./LeadPhasesPanel";
+import LeadInfoTab from "./LeadInfoTab";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal from "./CompleteTaskModal";
 
 export default function LeadDetailsClient({ lead }: { lead: Lead }) {
-  const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [activityHistoryOpen, setActivityHistoryOpen] = useState(false);
   const [currentStatus, setCurrentStatus] = useState(lead.status);
 
   useEffect(() => {
@@ -28,18 +29,35 @@ export default function LeadDetailsClient({ lead }: { lead: Lead }) {
   };
 
   return (
-    <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-6 md:px-6 lg:px-8">
-      <div className="mx-auto max-w-[1440px]">
-        <TopBar />
-        <LeadHeader lead={leadWithCurrentStatus} onCompleteTask={() => setCompleteTaskOpen(true)} />
-        <StatsRow lead={leadWithCurrentStatus} />
-        <Tabs active={activeTab} onChange={setActiveTab} />
-
-        {activeTab === "lead" && <LeadInfoTab lead={leadWithCurrentStatus} />}
-        {activeTab === "assignments" && <AssignmentsTab lead={leadWithCurrentStatus} />}
-        {activeTab === "activity" && <ActivityTimeline activities={lead.activities} />}
-        <FooterActions />
-      </div>
+    <>
+      <LeadDetailsPageShell
+        topBar={<TopBar />}
+        hero={
+          <LeadDetailsHero
+            lead={leadWithCurrentStatus}
+            onCompleteTask={() => setCompleteTaskOpen(true)}
+          />
+        }
+        sidebar={
+          <LeadDetailsSidebar
+            lead={leadWithCurrentStatus}
+            onOpenActivityHistory={() => setActivityHistoryOpen(true)}
+          />
+        }
+        phases={
+          <LeadPhasesPanel
+            lead={leadWithCurrentStatus}
+            formContent={<LeadInfoTab lead={leadWithCurrentStatus} />}
+            assignmentsContent={<AssignmentsTab lead={leadWithCurrentStatus} />}
+          />
+        }
+        footer={<FooterActions />}
+      />
+      <ActivityHistoryModal
+        activities={leadWithCurrentStatus.activities}
+        open={activityHistoryOpen}
+        onClose={() => setActivityHistoryOpen(false)}
+      />
       <CompleteTaskModal
         lead={leadWithCurrentStatus}
         open={completeTaskOpen}
@@ -50,6 +68,6 @@ export default function LeadDetailsClient({ lead }: { lead: Lead }) {
           setCompleteTaskOpen(false);
         }}
       />
-    </main>
+    </>
   );
 }
