@@ -17,7 +17,8 @@ import {
   isLeadVerifiedForPresales,
 } from "@/lib/presales-heatmap-helpers";
 import { normalizeStageKey } from "@/lib/milestone-progress";
-import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
+import { appendCrmDateFilters } from "@/lib/crm-date-field-filter";
+import type { CrmDateField } from "@/lib/crm-date-field-filter";
 import { isAdminRole } from "@/lib/roleUtils";
 import {
   augmentLeadSourceCountsWithWalkIn,
@@ -73,6 +74,7 @@ export type AdminLeadsFilterInput = {
   assigneeAliasSet?: string[];
   dateFrom?: string;
   dateTo?: string;
+  dateField?: CrmDateField | string;
   crmMonthWindow?: string;
   verificationStatus?: string;
   reinquiry?: string;
@@ -590,6 +592,7 @@ export async function fetchAdminLeadsHeatmapData(
           { key: "assignee", value: (poolInput.assignee ?? "").trim() },
           { key: "dateFrom", value: dateFrom },
           { key: "dateTo", value: dateTo },
+          { key: "dateField", value: (poolInput.dateField ?? "").trim() },
         ],
       };
       try {
@@ -640,15 +643,13 @@ export function appendAdminLeadsFilters(qs: URLSearchParams, input: AdminLeadsFi
   }
   qs.set("sort", (input.sort ?? "updatedAt,desc").trim() || "updatedAt,desc");
 
-  let dateFrom = (input.dateFrom ?? "").trim();
-  let dateTo = (input.dateTo ?? "").trim();
-  if ((input.crmMonthWindow ?? "").trim().toLowerCase() === "current") {
-    const month = getLocalMonthRangeIsoDates();
-    dateFrom = month.from;
-    dateTo = month.to;
-  }
-  if (dateFrom) qs.set("dateFrom", dateFrom);
-  if (dateTo) qs.set("dateTo", dateTo);
+  appendCrmDateFilters(qs, {
+    dateFrom: input.dateFrom,
+    dateTo: input.dateTo,
+    dateField: input.dateField,
+    crmMonthWindow: input.crmMonthWindow,
+    expandMonthWindow: true,
+  });
 
   const lt = (input.leadType ?? "all").trim().toLowerCase();
   if (lt && lt !== "all" && lt !== "verified") qs.set("leadType", lt);
@@ -717,6 +718,7 @@ export function adminFilterInputFromQueryString(
     assignee: q.get("assignee") ?? "",
     dateFrom: q.get("dateFrom") ?? "",
     dateTo: q.get("dateTo") ?? "",
+    dateField: q.get("dateField") ?? "",
     crmMonthWindow: q.get("crmMonthWindow") ?? "",
     verificationStatus,
     reinquiry: q.get("reinquiry") ?? "",

@@ -11,6 +11,7 @@ import {
   postStageRollback,
   postVerifyLead,
   putLeadDetail,
+  putHubScheduleDates,
   getLeadFloorPlanMeta,
   removeLeadFloorPlan,
   uploadLeadFloorPlan,
@@ -2172,7 +2173,9 @@ export default function LeadDetailsApiClient({
             followUpDate = appt.endTime;
             meetingDate = appt.endTime;
           } else if (args.meetingAppointment.date.trim()) {
-            meetingDate = args.meetingAppointment.date.trim();
+            const slotDate = args.meetingAppointment.date.trim();
+            meetingDate = slotDate;
+            followUpDate = slotDate;
           }
           designerName = args.meetingAppointment.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
@@ -2203,8 +2206,7 @@ export default function LeadDetailsApiClient({
 
         if (
           isMeetingScheduleSubstage(persistedSubstage) &&
-          followUpDate.trim() &&
-          !meetingDate.trim()
+          followUpDate.trim()
         ) {
           meetingDate = followUpDate;
         }
@@ -2248,7 +2250,21 @@ export default function LeadDetailsApiClient({
             : lead.lostReason,
         };
         const body = mergeLeadIntoDetail(baseDetail, leadForSave);
-        const updated = await putLeadDetail(lt, leadId, body);
+        let updated = await putLeadDetail(lt, leadId, body);
+        if (followUpDate.trim() || meetingDate.trim()) {
+          const mirrorMeetingFromFollowUp =
+            isMeetingScheduleSubstage(persistedSubstage) ||
+            Boolean(args.meetingAppointment);
+          try {
+            updated = await putHubScheduleDates(lt, leadId, {
+              followUpDate: followUpDate.trim() || undefined,
+              meetingDate: meetingDate.trim() || undefined,
+              mirrorFollowUpToMeeting: mirrorMeetingFromFollowUp,
+            });
+          } catch (scheduleErr) {
+            console.warn("[lead:schedule-dates] Hub §14 PUT failed after save", scheduleErr);
+          }
+        }
         const stickyQuote = pickPersistedQuoteLink(updated, leadForSave);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);

@@ -80,6 +80,8 @@ export type ApiLead = {
   presalesTrackingReadOnly?: boolean | null;
   /** Next follow-up (string in API; parse client-side for “today” / overdue). */
   followUpDate?: string | null;
+  meetingDate?: string | null;
+  assignedAt?: string | null;
   additionalLeadSources?: string | string[] | null;
   presalesMilestoneStage?: string | null;
   presalesMilestoneCategory?: string | null;

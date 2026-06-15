@@ -18,7 +18,6 @@ import {
 } from "@/lib/friendly-api-error";
 import { mergeClearFloorPlanInDetail } from "@/lib/lead-detail-mapper";
 import type { Lead } from "@/lib/data";
-
 function authHeaders(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json" });
 }
@@ -51,6 +50,12 @@ function normalizePropertyDetails(value: unknown): string {
     return String(value).trim();
   }
 }
+
+import {
+  applyScheduleDatesToHubPayload,
+  buildHubScheduleDatePutBody,
+  type HubScheduleDateInput,
+} from "@/lib/lead-schedule-payload";
 
 function normalizeLeadUpdatePayload(
   leadType: CrmLeadType,
@@ -145,7 +150,7 @@ function normalizeLeadUpdatePayload(
     };
   }
 
-  return normalizedBody;
+  return applyScheduleDatesToHubPayload(normalizedBody);
 }
 
 async function parseApiError(response: Response): Promise<ParsedApiError> {
@@ -253,6 +258,32 @@ export async function putLeadDetail(
   });
   if (!res.ok) {
     throw await buildApiError(res, "Unable to save lead");
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+/**
+ * Backend §14 — persist only `followUpDate` / `meetingDate` (no full detail merge).
+ * Skips propertyDetails normalization so Hub is not sent an empty propertyDetails by mistake.
+ */
+export async function putHubScheduleDates(
+  leadType: CrmLeadType,
+  id: string,
+  opts: HubScheduleDateInput,
+): Promise<Record<string, unknown>> {
+  const body = buildHubScheduleDatePutBody(opts);
+  if (Object.keys(body).length === 0) {
+    throw new Error("No schedule dates to save");
+  }
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw await buildApiError(res, "Unable to save schedule dates");
   }
   return res.json() as Promise<Record<string, unknown>>;
 }

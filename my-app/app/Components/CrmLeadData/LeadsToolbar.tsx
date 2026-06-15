@@ -18,6 +18,12 @@ import { isSalesPoolNoMilestoneFilter, type CrmWorkspace } from "@/lib/crm-works
 import { SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import { isAdminRole } from "@/lib/roleUtils";
+import {
+  CRM_DATE_FIELD_TOOLBAR_OPTIONS,
+  isToolbarDateFilterActive,
+  parseCrmDateFieldSelection,
+  type CrmDateFieldSelection,
+} from "@/lib/crm-date-field-filter";
 
 function meetingQuoteLeadTypeTiles(
   counts: Record<string, number>,
@@ -136,6 +142,80 @@ function Chevron() {
   );
 }
 
+function FilterSelectField({
+  label,
+  value,
+  onChange,
+  disabled,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <label
+      className={`group flex min-h-[52px] flex-col justify-center gap-0.5 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-2 py-1.5 transition-all ${
+        disabled
+          ? "cursor-not-allowed opacity-55"
+          : "hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface)] focus-within:border-[var(--crm-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--crm-accent-soft)]"
+      }`}
+    >
+      <span className="text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--crm-text-muted)]">
+        {label}
+      </span>
+      <div className="relative min-w-0">
+        <select
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-[11px] font-semibold text-[var(--crm-text-primary)] focus:outline-none disabled:cursor-not-allowed"
+        >
+          {children}
+        </select>
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center text-[var(--crm-text-muted)]">
+          <Chevron />
+        </div>
+      </div>
+    </label>
+  );
+}
+
+function FilterDateField({
+  label,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <label
+      className={`group flex min-h-[52px] flex-col justify-center gap-0.5 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-2 py-1.5 transition-all ${
+        disabled
+          ? "cursor-not-allowed opacity-55"
+          : "hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface)] focus-within:border-[var(--crm-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--crm-accent-soft)]"
+      }`}
+    >
+      <span className="text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--crm-text-muted)]">
+        {label}
+      </span>
+      <input
+        type="date"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-transparent text-[11px] font-semibold text-[var(--crm-text-primary)] focus:outline-none disabled:cursor-not-allowed [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-60"
+      />
+    </label>
+  );
+}
+
 function SelectField({
   label,
   value,
@@ -198,6 +278,7 @@ type LeadsToolbarProps = {
   assignee: string;
   dateFrom: string;
   dateTo: string;
+  dateField: CrmDateFieldSelection;
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
@@ -219,6 +300,7 @@ type LeadsToolbarProps = {
   onAssigneeChange: (next: string) => void;
   onDateFromChange: (next: string) => void;
   onDateToChange: (next: string) => void;
+  onDateFieldChange: (next: CrmDateFieldSelection) => void;
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
@@ -262,6 +344,7 @@ export default function LeadsToolbar({
   assignee,
   dateFrom,
   dateTo,
+  dateField,
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
@@ -283,6 +366,7 @@ export default function LeadsToolbar({
   onAssigneeChange,
   onDateFromChange,
   onDateToChange,
+  onDateFieldChange,
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
@@ -308,6 +392,7 @@ export default function LeadsToolbar({
   const [openLeadTypes, setOpenLeadTypes] = useState(false);
   const [draftDateFrom, setDraftDateFrom] = useState(dateFrom);
   const [draftDateTo, setDraftDateTo] = useState(dateTo);
+  const [draftDateField, setDraftDateField] = useState(dateField);
   const [callsTileMode, setCallsTileMode] = useState<"totalCalls" | "callDelayed">(() =>
     insightActive === "callDelayed" ? "callDelayed" : "totalCalls",
   );
@@ -387,12 +472,10 @@ export default function LeadsToolbar({
 
   const milestoneStageOptions = useMemo(() => {
     const base = milestoneStageOptionsFromNested(pipelineNested);
-    if (!isAdminPoolViewer || isPresalesRole(role)) return base;
-    const hasNoMilestone = base.some(
-      (s) => normalizeStageKey(s) === normalizeStageKey(SALES_POOL_NO_MILESTONE),
+    return base.filter(
+      (s) => normalizeStageKey(s) !== normalizeStageKey(SALES_POOL_NO_MILESTONE),
     );
-    return hasNoMilestone ? base : [...base, SALES_POOL_NO_MILESTONE];
-  }, [pipelineNested, isAdminPoolViewer, role]);
+  }, [pipelineNested]);
   const milestoneStageCategoryOptions = useMemo(
     () => milestoneCategoryOptionsForStage(pipelineNested, milestoneStage),
     [pipelineNested, milestoneStage],
@@ -416,13 +499,64 @@ export default function LeadsToolbar({
     setDraftDateTo(dateTo);
   }, [dateTo]);
 
+  useEffect(() => {
+    setDraftDateField(dateField);
+  }, [dateField]);
+
+  const clearAppliedDateFilter = () => {
+    if (dateField || dateFrom || dateTo) {
+      onDateFieldChange("");
+      onDateFromChange("");
+      onDateToChange("");
+    }
+  };
+
+  const applyDateFilterToParent = (
+    field: CrmDateFieldSelection,
+    from: string,
+    to: string,
+  ) => {
+    if (!field || !from || !to) return;
+    if (field !== dateField) onDateFieldChange(field);
+    if (from !== dateFrom) onDateFromChange(from);
+    if (to !== dateTo) onDateToChange(to);
+  };
+
+  const handleDraftDateFieldChange = (raw: string) => {
+    const next = parseCrmDateFieldSelection(raw);
+    setDraftDateField(next);
+    if (!next) {
+      setDraftDateFrom("");
+      setDraftDateTo("");
+      clearAppliedDateFilter();
+      return;
+    }
+    clearAppliedDateFilter();
+    if (draftDateFrom && draftDateTo) {
+      applyDateFilterToParent(next, draftDateFrom, draftDateTo);
+    }
+  };
+
   const commitDateRange = (nextFrom: string, nextTo: string) => {
+    setDraftDateFrom(nextFrom);
+    setDraftDateTo(nextTo);
     const bothEmpty = !nextFrom && !nextTo;
     const bothFilled = Boolean(nextFrom && nextTo);
     if (!bothEmpty && !bothFilled) return;
-    if (nextFrom !== dateFrom) onDateFromChange(nextFrom);
-    if (nextTo !== dateTo) onDateToChange(nextTo);
+
+    if (bothEmpty) {
+      clearAppliedDateFilter();
+      return;
+    }
+
+    if (!draftDateField) return;
+    applyDateFilterToParent(draftDateField, nextFrom, nextTo);
   };
+
+  const dateFilterEnabled = Boolean(draftDateField);
+  const dateFilterActive = isToolbarDateFilterActive({ dateField, dateFrom, dateTo });
+  const dateFilterDraftPending =
+    Boolean(draftDateField) && !dateFilterActive && Boolean(draftDateFrom || draftDateTo);
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
@@ -440,8 +574,7 @@ export default function LeadsToolbar({
     if (salesExecFilter) c += 1;
     if (isSalesWorkspace && presalesManagerFilter) c += 1;
     if (isSalesWorkspace && presalesExecFilter) c += 1;
-    if (dateFrom) c += 1;
-    if (dateTo) c += 1;
+    if (dateFilterActive) c += 1;
     if (isPresalesWorkspace && reinquiry) c += 1;
     return c;
   }, [
@@ -449,6 +582,7 @@ export default function LeadsToolbar({
     authRole,
     dateFrom,
     dateTo,
+    dateFilterActive,
     leadType,
     milestoneStage,
     milestoneStageCategory,
@@ -471,6 +605,7 @@ export default function LeadsToolbar({
     }
     setDraftDateFrom("");
     setDraftDateTo("");
+    setDraftDateField("");
     onLeadTypeChange("all");
     onAssigneeChange("");
     onMilestoneStageChange("");
@@ -483,6 +618,7 @@ export default function LeadsToolbar({
     onPresalesExecFilterChange("");
     onDateFromChange("");
     onDateToChange("");
+    onDateFieldChange("");
     onReinquiryChange("");
     onResetPresalesSummary?.();
   };
@@ -766,55 +902,62 @@ export default function LeadsToolbar({
         ) : null}
 
         {openFilter ? (
-          <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
+          <div className="mt-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-2.5 shadow-[var(--crm-shadow-sm)]">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-[12px] font-semibold text-[var(--crm-text-primary)]">
-                <FilterIcon />
-                <span>Filter</span>
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[var(--crm-text-primary)]">
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]">
+                  <FilterIcon />
+                </span>
+                <span>Filters</span>
+                {dateFilterActive ? (
+                  <span className="rounded-full bg-[var(--crm-accent-soft)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--crm-accent)]">
+                    Date on
+                  </span>
+                ) : null}
               </div>
               <button
                 type="button"
                 onClick={resetFilter}
-                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
+                className="rounded-md border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2 py-0.5 text-[10px] font-semibold text-[var(--crm-text-secondary)] transition-colors hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface-subtle)]"
               >
                 Reset
               </button>
             </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {isSalesWorkspace && (viewerRole === "ADMIN" || viewerRole === "SUPER_ADMIN") && (
-                <SelectField label="Sales Admin" value={salesAdminFilter} onChange={onSalesAdminFilterChange}>
+                <FilterSelectField label="Sales Admin" value={salesAdminFilter} onChange={onSalesAdminFilterChange}>
                   <option value="">All</option>
                   {salesAdminOptions.map((v) => (
                     <option key={v} value={v}>
                       {v}
                     </option>
                   ))}
-                </SelectField>
+                </FilterSelectField>
               )}
               {isSalesWorkspace && !isSalesExecutive && !isPresalesFlow ? (
-                <SelectField label="Sales Exec" value={salesExecFilter} onChange={onSalesExecFilterChange}>
+                <FilterSelectField label="Sales Exec" value={salesExecFilter} onChange={onSalesExecFilterChange}>
                   <option value="">All</option>
                   {salesExecOptions.map((v) => (
                     <option key={v} value={v}>
                       {v}
                     </option>
                   ))}
-                </SelectField>
+                </FilterSelectField>
               ) : null}
               {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
                 <>
-                  <SelectField label="Sales Mgr" value={salesManagerFilter} onChange={onSalesManagerFilterChange}>
+                  <FilterSelectField label="Sales Mgr" value={salesManagerFilter} onChange={onSalesManagerFilterChange}>
                     <option value="">All</option>
                     {salesManagerOptions.map((v) => (
                       <option key={v} value={v}>
                         {v}
                       </option>
                     ))}
-                  </SelectField>
+                  </FilterSelectField>
                 </>
               ) : null}
               {isSalesWorkspace && isPresalesManager ? (
-                <SelectField
+                <FilterSelectField
                   label="Presales Exec"
                   value={presalesExecFilter}
                   onChange={onPresalesExecFilterChange}
@@ -825,28 +968,28 @@ export default function LeadsToolbar({
                       {v}
                     </option>
                   ))}
-                </SelectField>
+                </FilterSelectField>
               ) : null}
-              <SelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
+              <FilterSelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
                 {leadTypeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
-              </SelectField>
+              </FilterSelectField>
               {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
-                <SelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
+                <FilterSelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
                   <option value="">All</option>
                   {assigneeOptions.map((v) => (
                     <option key={v} value={v}>
                       {v}
                     </option>
                   ))}
-                </SelectField>
+                </FilterSelectField>
               ) : null}
               {isPresalesFlow ? (
                 <>
-                  <SelectField
+                  <FilterSelectField
                     label="Presales Stage"
                     value={milestoneStage}
                     onChange={(v) => {
@@ -861,8 +1004,8 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
-                  <SelectField
+                  </FilterSelectField>
+                  <FilterSelectField
                     label="Presales Category"
                     value={milestoneStageCategory}
                     onChange={(v) => {
@@ -879,8 +1022,8 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
-                  <SelectField
+                  </FilterSelectField>
+                  <FilterSelectField
                     label="Presales Substage"
                     value={milestoneSubStage}
                     onChange={onMilestoneSubStageChange}
@@ -898,11 +1041,11 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
+                  </FilterSelectField>
                 </>
               ) : (
                 <>
-                  <SelectField
+                  <FilterSelectField
                     label="Stage"
                     value={milestoneStage}
                     onChange={(v) => {
@@ -917,8 +1060,8 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
-                  <SelectField
+                  </FilterSelectField>
+                  <FilterSelectField
                     label="Category"
                     value={milestoneStageCategory}
                     onChange={(v) => {
@@ -939,8 +1082,8 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
-                  <SelectField
+                  </FilterSelectField>
+                  <FilterSelectField
                     label="Sub Stage"
                     value={milestoneSubStage}
                     onChange={onMilestoneSubStageChange}
@@ -964,42 +1107,64 @@ export default function LeadsToolbar({
                         {v}
                       </option>
                     ))}
-                  </SelectField>
+                  </FilterSelectField>
                 </>
               )}
               {isPresalesWorkspace ? (
-                <SelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
+                <FilterSelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
                   <option value="">All</option>
                   <option value="true">Reinquiry only</option>
                   <option value="false">Non-reinquiry only</option>
-                </SelectField>
+                </FilterSelectField>
               ) : null}
-              <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
-                <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">From</span>
-                <input
-                  type="date"
-                  value={draftDateFrom}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setDraftDateFrom(next);
-                    commitDateRange(next, draftDateTo);
-                  }}
-                  className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
-                />
-              </label>
-              <label className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 transition-colors hover:border-[var(--crm-border-strong)]">
-                <span className="whitespace-nowrap text-[12px] font-semibold text-[var(--crm-text-secondary)]">To</span>
-                <input
-                  type="date"
-                  value={draftDateTo}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    setDraftDateTo(next);
-                    commitDateRange(draftDateFrom, next);
-                  }}
-                  className="w-full bg-transparent text-[12px] font-semibold text-[var(--crm-text-primary)] focus:outline-none"
-                />
-              </label>
+            </div>
+            <div className="mt-2 border-t border-[var(--crm-border)] pt-2">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--crm-text-muted)]">
+                  Date range
+                </span>
+                {dateFilterDraftPending ? (
+                  <span className="text-[9px] font-medium text-[var(--crm-warning-text)]">
+                    Set From &amp; To to apply
+                  </span>
+                ) : !dateFilterEnabled ? (
+                  <span className="text-[9px] font-medium text-[var(--crm-text-muted)]">
+                    Pick field first
+                  </span>
+                ) : null}
+              </div>
+              <div className="grid gap-1.5 sm:grid-cols-3">
+              <FilterSelectField
+                label="Filter by"
+                value={draftDateField}
+                onChange={handleDraftDateFieldChange}
+              >
+                <option value="">Select date field</option>
+                {CRM_DATE_FIELD_TOOLBAR_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </FilterSelectField>
+              <FilterDateField
+                label="From"
+                value={draftDateFrom}
+                disabled={!dateFilterEnabled}
+                onChange={(next) => {
+                  setDraftDateFrom(next);
+                  commitDateRange(next, draftDateTo);
+                }}
+              />
+              <FilterDateField
+                label="To"
+                value={draftDateTo}
+                disabled={!dateFilterEnabled}
+                onChange={(next) => {
+                  setDraftDateTo(next);
+                  commitDateRange(draftDateFrom, next);
+                }}
+              />
+              </div>
             </div>
           </div>
         ) : null}
@@ -1024,6 +1189,10 @@ export default function LeadsToolbar({
               <option value="updatedAt,asc">Updated: Oldest</option>
               <option value="createdAt,desc">Created: Newest</option>
               <option value="createdAt,asc">Created: Oldest</option>
+              <option value="followUpDate,asc">Follow-up: Soonest</option>
+              <option value="followUpDate,desc">Follow-up: Latest</option>
+              <option value="meetingDate,asc">Meeting: Soonest</option>
+              <option value="meetingDate,desc">Meeting: Latest</option>
             </SelectField>
           </div>
         ) : null}

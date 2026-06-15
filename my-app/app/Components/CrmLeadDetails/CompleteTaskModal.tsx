@@ -219,7 +219,7 @@ export default function CompleteTaskModal({
   const scheduleMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
+      isMeetingScheduleSubstage(feedback),
   );
   const cancelMode = Boolean(
     onApiComplete &&

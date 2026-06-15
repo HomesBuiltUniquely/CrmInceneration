@@ -96,6 +96,7 @@ import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helper
 import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
+import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
 
 type Props = {
   search: string;
@@ -104,6 +105,7 @@ type Props = {
   assignee: string;
   dateFrom: string;
   dateTo: string;
+  dateField: CrmDateFieldSelection;
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
@@ -129,6 +131,7 @@ type Props = {
   onAssigneeChange: (next: string) => void;
   onDateFromChange: (next: string) => void;
   onDateToChange: (next: string) => void;
+  onDateFieldChange: (next: CrmDateFieldSelection) => void;
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
@@ -545,6 +548,7 @@ async function fetchMergedPage(
   assignee: string,
   dateFrom: string,
   dateTo: string,
+  dateField: CrmDateFieldSelection,
   milestoneStage: string,
   milestoneStageCategory: string,
   milestoneSubStage: string,
@@ -579,11 +583,7 @@ async function fetchMergedPage(
     qs.set("sort", sort);
     if (search.trim()) qs.set("search", search.trim());
     appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-    if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-    else {
-      if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-      if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
-    }
+    appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
     appendWorkspaceMilestoneFilterQuery(
       qs,
       leadsWorkspace,
@@ -631,11 +631,7 @@ async function fetchMergedPage(
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
         appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-        if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-        else {
-          if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-          if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
-        }
+        appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
         appendWorkspaceMilestoneFilterQuery(
           qs,
           leadsWorkspace,
@@ -720,6 +716,7 @@ async function fetchMergedPage(
         sort,
         dateFrom,
         dateTo,
+        dateField,
         crmMonthWindow,
         verificationStatus:
           workspace === "presales" ? "" : resolvedVerification,
@@ -791,6 +788,7 @@ async function fetchMergedPage(
         assigneeAliasSet,
         dateFrom,
         dateTo,
+        dateField,
         crmMonthWindow,
         verificationStatus: resolvedVerification,
         reinquiry,
@@ -819,11 +817,12 @@ async function fetchMergedPage(
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
   appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-  if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-  else {
-    if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
-    if (effectiveDateTo) qs.set("dateTo", effectiveDateTo);
-  }
+  appendCrmDateFilters(qs, {
+    dateFrom: effectiveDateFrom,
+    dateTo: effectiveDateTo,
+    dateField,
+    crmMonthWindow,
+  });
   appendWorkspaceMilestoneFilterQuery(
     qs,
     leadsWorkspace,
@@ -1067,6 +1066,7 @@ export default function LeadsDataSection({
   assignee,
   dateFrom,
   dateTo,
+  dateField,
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
@@ -1088,6 +1088,7 @@ export default function LeadsDataSection({
   onAssigneeChange,
   onDateFromChange,
   onDateToChange,
+  onDateFieldChange,
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
@@ -1581,7 +1582,7 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, leadType, page, size, debouncedSearch, assignee, dateFrom, dateTo, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+  }, [clearSelection, leadType, page, size, debouncedSearch, assignee, dateFrom, dateTo, dateField, milestoneStage, milestoneStageCategory, milestoneSubStage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2187,6 +2188,7 @@ export default function LeadsDataSection({
           queryAssignee,
           dateFrom,
           dateTo,
+          dateField,
           milestoneStage,
           milestoneStageCategory,
           milestoneSubStage,
@@ -2213,6 +2215,7 @@ export default function LeadsDataSection({
               queryAssignee,
               dateFrom,
               dateTo,
+              dateField,
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
@@ -2293,6 +2296,7 @@ export default function LeadsDataSection({
             assigneeFetchSeed,
             dateFrom,
             dateTo,
+            dateField,
             milestoneStage,
             milestoneStageCategory,
             milestoneSubStage,
@@ -2356,6 +2360,7 @@ export default function LeadsDataSection({
       effectiveAssignee,
       dateFrom,
       dateTo,
+      dateField,
       milestoneStage,
       milestoneStageCategory,
       milestoneSubStage,
@@ -2395,6 +2400,7 @@ export default function LeadsDataSection({
           queryAssignee,
           dateFrom,
           dateTo,
+          dateField,
           milestoneStage,
           milestoneStageCategory,
           milestoneSubStage,
@@ -2421,6 +2427,7 @@ export default function LeadsDataSection({
               queryAssignee,
               dateFrom,
               dateTo,
+              dateField,
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
@@ -2558,6 +2565,7 @@ export default function LeadsDataSection({
           assignee: effectiveAssignee,
           dateFrom,
           dateTo,
+          dateField,
           crmMonthWindow: crmMonthWindowProp,
           verificationStatus: resolvedVerification,
           reinquiry,
@@ -2675,6 +2683,7 @@ export default function LeadsDataSection({
     crmMonthWindowProp,
     dateFrom,
     dateTo,
+    dateField,
     effectiveAssignee,
     activeAssigneeScope,
     fetchAllScopedMergedLeads,
@@ -2771,6 +2780,7 @@ export default function LeadsDataSection({
     crmMonthWindowProp,
     dateFrom,
     dateTo,
+    dateField,
     effectiveAssignee,
     leadsWorkspace,
   ]);
@@ -2913,6 +2923,7 @@ export default function LeadsDataSection({
       debouncedSearch,
       dateFrom,
       dateTo,
+      dateField,
       milestoneStage,
       milestoneStageCategory,
       milestoneSubStage,
@@ -3716,6 +3727,7 @@ export default function LeadsDataSection({
         assignee={assignee}
         dateFrom={dateFrom}
         dateTo={dateTo}
+        dateField={dateField}
         milestoneStage={milestoneStage}
         milestoneStageCategory={milestoneStageCategory}
         milestoneSubStage={milestoneSubStage}
@@ -3773,6 +3785,7 @@ export default function LeadsDataSection({
         }}
         onDateFromChange={onDateFromChange}
         onDateToChange={onDateToChange}
+        onDateFieldChange={onDateFieldChange}
         onMilestoneStageChange={onMilestoneStageChange}
         onMilestoneStageCategoryChange={onMilestoneStageCategoryChange}
         onMilestoneSubStageChange={onMilestoneSubStageChange}

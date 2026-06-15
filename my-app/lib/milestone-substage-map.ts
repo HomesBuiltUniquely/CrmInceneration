@@ -14,9 +14,23 @@ function normSubstageLabel(s: string): string {
   return s.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
-/** UI label → pipeline substage, e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`. */
+export const DESIGN_REFINEMENT_REVISIT_SUBSTAGE = "Design Refinement Round (Revisit)";
+
+const DESIGN_REFINEMENT_REVISIT_RE =
+  /design refinement round\s*\(\s*revisit\s*\)/i;
+
+/**
+ * UI label → pipeline substage.
+ * e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`
+ *
+ * `(Revisit)` is part of the substage name — do not strip it like a category suffix.
+ */
 export function pipelineSubStageLabel(value: string): string {
-  return value.replace(/\s*\([^)]+\)\s*$/i, "").trim();
+  const t = value.trim();
+  if (DESIGN_REFINEMENT_REVISIT_RE.test(t)) {
+    return DESIGN_REFINEMENT_REVISIT_SUBSTAGE;
+  }
+  return t.replace(/\s*\([^)]+\)\s*$/i, "").trim();
 }
 
 /** True when selected feedback (substage) is one of the closer cancellation/refund substages. */
@@ -54,19 +68,19 @@ export function isMeetingScheduleSubstage(subStageName: string): boolean {
   return (
     s === "Meeting Scheduled" ||
     s === "Meeting Rescheduled" ||
-    s === "Design Refinement Round (Revisit)" ||
+    s === DESIGN_REFINEMENT_REVISIT_SUBSTAGE ||
     s === "Fix Appointment"
   );
 }
 
 export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {
-  return pipelineSubStageLabel(subStageName) === "Design Refinement Round (Revisit)";
+  return pipelineSubStageLabel(subStageName) === DESIGN_REFINEMENT_REVISIT_SUBSTAGE;
 }
 
 /** Short heading for the scheduling panel in Complete Task. */
 export function meetingSchedulePanelTitle(subStageName: string): string {
   const s = pipelineSubStageLabel(subStageName);
-  if (s === "Design Refinement Round (Revisit)") return "Hub meeting (Design refinement)";
+  if (s === DESIGN_REFINEMENT_REVISIT_SUBSTAGE) return "Hub meeting (Design refinement)";
   if (s === "Fix Appointment") return "Hub meeting (Fix appointment)";
   return "Hub meeting (Connection)";
 }

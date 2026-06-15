@@ -35,7 +35,13 @@ import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-exec
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 import { usesAdminLeadsApi } from "@/lib/admin-leads-api";
 import { fetchAllPresalesAssigneeDisplayNames } from "@/lib/fetch-all-presales-assignee-names";
-
+import {
+  appendCrmDateFilters,
+  defaultSortForDateField,
+  isToolbarDateFilterActive,
+  parseCrmDateFieldSelection,
+  type CrmDateFieldSelection,
+} from "@/lib/crm-date-field-filter";
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
 const LEADS_VIEW_PERSIST_KEY = "crm:lead-mgmt:view:v1";
 
@@ -46,6 +52,7 @@ type HeaderPersistedState = {
   assignee?: string;
   dateFrom?: string;
   dateTo?: string;
+  dateField?: CrmDateFieldSelection;
   milestoneStage?: string;
   milestoneStageCategory?: string;
   milestoneSubStage?: string;
@@ -101,6 +108,9 @@ export default function Header() {
   const [assignee, setAssignee] = useState(persistedHeaderState.assignee ?? "");
   const [dateFrom, setDateFrom] = useState(persistedHeaderState.dateFrom ?? "");
   const [dateTo, setDateTo] = useState(persistedHeaderState.dateTo ?? "");
+  const [dateField, setDateField] = useState<CrmDateFieldSelection>(() =>
+    parseCrmDateFieldSelection(persistedHeaderState.dateField ?? ""),
+  );
   const [milestoneStage, setMilestoneStage] = useState(
     persistedHeaderState.milestoneStage ?? "",
   );
@@ -143,7 +153,6 @@ export default function Header() {
   const [superAdminPresalesNames, setSuperAdminPresalesNames] = useState<string[]>([]);
   const presalesSummaryTabRef = useRef(presalesSummaryTab);
   presalesSummaryTabRef.current = presalesSummaryTab;
-
   const handleHeatmapSummarySync = useCallback(
     (summary: { lead: number; opportunity: number } | null) => {
       setHeatmapSummaryTotals((prev) => {
@@ -462,8 +471,16 @@ export default function Header() {
       !viewerUsesAdminLeadsApi &&
       ((isPresalesRole(currentRole) && presalesSummaryTab !== null) ||
         (superAdminPresalesCards && presalesSummaryTab !== null));
-    if (presalesMonthCards) q.set("crmMonthWindow", "current");
-    else setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
+    if (presalesMonthCards) {
+      appendCrmDateFilters(q, { crmMonthWindow: "current" });
+    } else {
+      setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
+      appendCrmDateFilters(q, {
+        dateFrom: q.get("dateFrom") ?? dateFrom,
+        dateTo: q.get("dateTo") ?? dateTo,
+        dateField,
+      });
+    }
     appendWorkspaceMilestoneFilterQuery(
       q,
       leadsWorkspace,
@@ -478,6 +495,7 @@ export default function Header() {
     search,
     dateFrom,
     dateTo,
+    dateField,
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
@@ -528,6 +546,24 @@ export default function Header() {
     setDateTo(v);
   }, []);
 
+  const handleToolbarDateFieldChange = useCallback(
+    (next: CrmDateFieldSelection) => {
+      setPresalesSummaryTab(null);
+      setDateField(next);
+      if (!next) {
+        setDateFrom("");
+        setDateTo("");
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isToolbarDateFilterActive({ dateField, dateFrom, dateTo })) return;
+    const nextSort = defaultSortForDateField(dateField);
+    if (nextSort) setSort(nextSort);
+  }, [dateField, dateFrom, dateTo]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload: HeaderPersistedState = {
@@ -537,6 +573,7 @@ export default function Header() {
       assignee,
       dateFrom,
       dateTo,
+      dateField,
       milestoneStage,
       milestoneStageCategory,
       milestoneSubStage,
@@ -554,6 +591,7 @@ export default function Header() {
     assignee,
     dateFrom,
     dateTo,
+    dateField,
     milestoneStage,
     milestoneStageCategory,
     milestoneSubStage,
@@ -567,6 +605,7 @@ export default function Header() {
     setAssignee("");
     setDateFrom("");
     setDateTo("");
+    setDateField("");
     setMilestoneStage("");
     setMilestoneStageCategory("");
     setMilestoneSubStage("");
@@ -636,6 +675,7 @@ export default function Header() {
                 assignee={forcedAssignee}
                 dateFrom={dateFrom}
                 dateTo={dateTo}
+                dateField={dateField}
                 milestoneStage={milestoneStage}
                 milestoneStageCategory={milestoneStageCategory}
                 milestoneSubStage={milestoneSubStage}
@@ -671,6 +711,7 @@ export default function Header() {
                 }}
                 onDateFromChange={handleToolbarDateFromChange}
                 onDateToChange={handleToolbarDateToChange}
+                onDateFieldChange={handleToolbarDateFieldChange}
                 onMilestoneStageChange={setMilestoneStage}
                 onMilestoneStageCategoryChange={setMilestoneStageCategory}
                 onMilestoneSubStageChange={setMilestoneSubStage}
