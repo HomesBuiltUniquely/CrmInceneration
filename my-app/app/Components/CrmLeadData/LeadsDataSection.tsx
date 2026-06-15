@@ -21,6 +21,7 @@ import {
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import {
   computeLeadTypeCountsFromRows,
+  pickMilestoneRepresentativeRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 import {
@@ -2725,23 +2726,54 @@ export default function LeadsDataSection({
             ? "verified"
             : verificationStatusProp.trim() ||
               defaultLeadsVerificationStatus(leadsWorkspace, undefined, roleKey);
-        const { leads, total } = await fetchAdminLeadsMilestoneFiltered(
-          {
-            workspace: leadsWorkspace,
-            search: debouncedSearch,
-            assignee: effectiveAssignee,
-            dateFrom,
-            dateTo,
-            crmMonthWindow: crmMonthWindowProp,
-            verificationStatus: resolvedVerification,
-            reinquiry,
-            leadType: summaryLeadType,
-          },
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          getCrmAuthHeaders(),
-        );
+        const milestoneAliasSet =
+          effectiveAssigneeScope.length > 0
+            ? effectiveAssigneeScope
+            : activeAssigneeScope.length > 0
+              ? activeAssigneeScope
+              : undefined;
+
+        let leads: ApiLead[];
+        let total: number;
+
+        /** SALES_ADMIN + Sales Mgr/Exec toolbar: use same scoped pool as heatmap (not manager name only). */
+        if (salesHierarchyFilterActive) {
+          const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
+          const primaryRows = pickMilestoneRepresentativeRows(scopedRows);
+          leads = primaryRows.filter((lead) =>
+            leadMatchesWorkspaceMilestoneFilter(
+              lead,
+              leadsWorkspace,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+            ),
+          );
+          total = leads.length;
+        } else {
+          const result = await fetchAdminLeadsMilestoneFiltered(
+            {
+              workspace: leadsWorkspace,
+              search: debouncedSearch,
+              assignee: milestoneAliasSet?.[0]?.trim() || effectiveAssignee,
+              assigneeAliasSet: milestoneAliasSet,
+              dateFrom,
+              dateTo,
+              dateField,
+              crmMonthWindow: crmMonthWindowProp,
+              verificationStatus: resolvedVerification,
+              reinquiry,
+              leadType: summaryLeadType,
+            },
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
+            getCrmAuthHeaders(),
+          );
+          leads = result.leads;
+          total = result.total;
+        }
+
         if (cancelled) return;
         setAdminMilestoneTableLeads(leads);
         const primaryRows = pickPrimarySourceRows(leads);
@@ -2782,6 +2814,11 @@ export default function LeadsDataSection({
     dateTo,
     dateField,
     effectiveAssignee,
+    effectiveAssigneeScope,
+    activeAssigneeScope,
+    salesHierarchyFilterActive,
+    fetchAllScopedMergedLeads,
+    sort,
     leadsWorkspace,
   ]);
 
