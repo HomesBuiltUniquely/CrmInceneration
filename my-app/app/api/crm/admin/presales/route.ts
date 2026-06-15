@@ -117,6 +117,7 @@ export async function GET(req: NextRequest) {
   const uniquePrimaryTotal = pickPrimarySourceRows(flatLeads).length;
   const start = requestedPage * requestedSize;
   const content = filteredRows.slice(start, start + requestedSize);
+
   return NextResponse.json({
     success: true,
     pool: "presales",
