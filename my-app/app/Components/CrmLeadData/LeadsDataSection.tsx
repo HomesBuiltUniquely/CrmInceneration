@@ -78,6 +78,7 @@ import {
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
 import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
+import { isExecutiveAssigneeRole, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
   roleUsesAdminPoolInsightTiles,
@@ -253,7 +254,7 @@ async function fetchMergedSalesExecutivesForFilters(
       username: row.username ?? prev?.username,
     });
   }
-  return [...byId.values()];
+  return [...byId.values()].filter((u) => isUserActive(u));
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -284,18 +285,17 @@ function mapRowToAssigneeUser(
   row: Record<string, unknown>,
   roleOverride?: string,
 ): AssigneeUser | null {
-  const active =
-    row.active === undefined && row.isActive === undefined
-      ? true
-      : Boolean(row.active ?? row.isActive);
-  if (!active) return null;
+  const role = normalizeRole(roleOverride ?? String(row.role ?? ""));
+  if (isExecutiveAssigneeRole(role) && !isUserActive(row as { active?: boolean; isActive?: boolean })) {
+    return null;
+  }
   const userId = Number(row.id ?? row.userId ?? 0);
   if (userId <= 0) return null;
   const name = String(row.fullName ?? row.name ?? row.username ?? `User ${userId}`).trim();
   return {
     userId,
     name: name || `User ${userId}`,
-    role: normalizeRole(roleOverride ?? String(row.role ?? "")),
+    role,
   };
 }
 
@@ -1311,8 +1311,12 @@ export default function LeadsDataSection({
         const mapped = dedupeAssigneeUsers(
           rows
             .filter((row) => {
-              const role = normalizeRole(row.role);
-              return eligibleRoles.has(role) && Boolean(row.active ?? true);
+              const role = normalizeRole(String(row.role ?? ""));
+              if (!eligibleRoles.has(role)) return false;
+              if (isExecutiveAssigneeRole(role)) {
+                return isUserActive(row as { active?: boolean; isActive?: boolean });
+              }
+              return true;
             })
             .map((row) =>
               mapRowToAssigneeUser(row as Record<string, unknown>, String(row.role ?? "")),
@@ -1665,11 +1669,11 @@ export default function LeadsDataSection({
             ? mergedSalesExecs
             : seJ;
 
-        setSalesAdmins(saJ.filter((u) => u.active !== false));
-        setSalesManagers(smJ.filter((u) => u.active !== false));
-        setSalesExecs(salesExecList);
-        setPresalesManagers(pmJ.filter((u) => u.active !== false));
-        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
+        setSalesAdmins(saJ.filter((u) => isUserActive(u)));
+        setSalesManagers(smJ);
+        setSalesExecs(salesExecList.filter((u) => isUserActive(u)));
+        setPresalesManagers(pmJ);
+        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => isUserActive(u));
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
