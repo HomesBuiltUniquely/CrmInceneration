@@ -3,7 +3,7 @@ import { getRoleFromUser, normalizeRole } from "@/lib/auth/api";
 
 export const SALES_CLOSURE_ORIGIN = (
   process.env.NEXT_PUBLIC_SALES_CLOSURE_ORIGIN?.trim() ||
-  "http://localhost:3001"
+  "https://design.hubinterior.com"
 ).replace(/\/+$/, "");
 
 /** Avoid oversized URLs when property notes are long. */
@@ -87,16 +87,16 @@ function setSalesClosurePrefillPayload(
   const salesManagerName = salesManagerNameForPrefill(lead, authUser);
   const mail = authUser
     ? pickUserStr(
-        authUser,
-        "email",
-        "mail",
-        "emailAddress",
-        "workEmail",
-        "salesEmail",
-        "username",
-        "userName",
-        "login",
-      )
+      authUser,
+      "email",
+      "mail",
+      "emailAddress",
+      "workEmail",
+      "salesEmail",
+      "username",
+      "userName",
+      "login",
+    )
     : "";
   const payload = {
     sales_email: isLikelyEmail(mail) ? mail : "",

@@ -13,6 +13,7 @@ export type DiscoveryToConnectionPayload = {
   budget?: string;
   propertyNotes?: string;
   configuration?: string;
+  bookingType?: string;
 };
 
 /**
@@ -44,6 +45,7 @@ export function validateDiscoveryToConnectionTransition(
     budget: payload.budget ?? lead.budget,
     propertyNotes: payload.propertyNotes ?? lead.propertyNotes,
     configuration: payload.configuration ?? lead.configuration,
+    bookingType: payload.bookingType ?? lead.bookingType,
   });
 
   if (missing.length === 0) {
