@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Button } from "./ui";
 import type { Lead } from "@/lib/data";
-import { BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
+import { BOOKING_TYPE_OPTIONS, BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
 import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -443,8 +443,40 @@ export default function LeadInfoTab({
               </Select>
             </div>
             <div>
+              <FieldLabel>Booking Type</FieldLabel>
+              <Select
+                {...(c
+                  ? { value: lead.bookingType, onChange: (e) => c({ bookingType: e.target.value }) }
+                  : { defaultValue: lead.bookingType })}
+                disabled={!additionalInfoEditable}
+              >
+                <option value="">Select Type</option>
+                {BOOKING_TYPE_OPTIONS.map((bookingType) => (
+                  <option key={bookingType} value={bookingType}>
+                    {bookingType}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3.5 mb-4">
+            <div>
               <FieldLabel>Meeting Type</FieldLabel>
               <Input value={meetingTypeDisplay(lead.meetingType)} readOnly />
+            </div>
+            <div>
+              <FieldLabel>Possession</FieldLabel>
+              <Input
+                placeholder="Add possession..."
+                {...(c
+                  ? {
+                      value: lead.possessionDate,
+                      onChange: (e) => c({ possessionDate: e.target.value }),
+                    }
+                  : { defaultValue: lead.possessionDate })}
+                readOnly={!additionalInfoEditable}
+              />
             </div>
           </div>
 

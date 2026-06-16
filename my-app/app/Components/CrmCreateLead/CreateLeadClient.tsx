@@ -265,6 +265,7 @@ export default function CreateLeadClient() {
     budget: form.budget,
     language: form.languagePrefered,
     leadSource: form.leadSource,
+    bookingType: "",
     meetingType: "",
     propertyNotes: form.propertyDetails,
     requirements: [],

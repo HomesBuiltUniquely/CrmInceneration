@@ -16,6 +16,7 @@ function walkInContextFromRequest(req: NextRequest): WalkInFetchContext {
     "assignee",
     "dateFrom",
     "dateTo",
+    "dateField",
   ] as const;
 
   return {

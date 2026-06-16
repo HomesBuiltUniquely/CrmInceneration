@@ -925,10 +925,11 @@ export default function JourneyPhaseHeatmap({
         if (leadsWorkspace === "presales") {
           query.delete("verificationStatus");
         }
-        // Presales month cards derive "this month" from assignment timestamps in client helper.
-        // Avoid server-side updatedAt month filtering here, otherwise assignment-month counts can drift.
-        query.delete("crmMonthWindow");
-        setEffectiveNewCrmDateRange(query, query.get("dateFrom"), query.get("dateTo"));
+        // Presales month cards use Hub `dateField=assigned` via crmMonthWindow in the query string.
+        const hasMonthWindow = (query.get("crmMonthWindow") ?? "").trim().toLowerCase() === "current";
+        if (!hasMonthWindow) {
+          setEffectiveNewCrmDateRange(query, query.get("dateFrom"), query.get("dateTo"));
+        }
         query.set("mergeAll", "1");
         query.set("milestoneScope", "crm");
         appendLeadPoolQuery(query, leadsWorkspace);

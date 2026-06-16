@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
-import { BUDGET_OPTIONS } from "@/lib/data";
+import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS } from "@/lib/data";
 import {
   fetchActiveDesigners,
   fetchAvailableSlots,
@@ -122,6 +122,8 @@ export type CompleteTaskApiPayload = {
   budget?: string;
   propertyNotes?: string;
   configuration?: string;
+  bookingType?: string;
+  possessionDate?: string;
   meetingAppointment?: {
     designerName: string;
     date: string;
@@ -209,6 +211,8 @@ export default function CompleteTaskModal({
   const [modalBudget, setModalBudget] = useState(lead.budget ?? "");
   const [modalPropertyNotes, setModalPropertyNotes] = useState(lead.propertyNotes ?? "");
   const [modalConfiguration, setModalConfiguration] = useState(lead.configuration ?? "");
+  const [modalBookingType, setModalBookingType] = useState(lead.bookingType ?? "");
+  const [modalPossessionDate, setModalPossessionDate] = useState(lead.possessionDate ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
 
   const minAppointmentDate = useMemo(() => {
@@ -219,7 +223,7 @@ export default function CompleteTaskModal({
   const scheduleMode = Boolean(
     onApiComplete &&
       !presalesMode &&
-      isMeetingScheduleSubstage(pipelineSubStageLabel(feedback)),
+      isMeetingScheduleSubstage(feedback),
   );
   const cancelMode = Boolean(
     onApiComplete &&
@@ -227,10 +231,10 @@ export default function CompleteTaskModal({
       isMeetingCancelledSubstage(pipelineSubStageLabel(feedback)),
   );
 
-  /** Hide the Budget / Property notes / Configuration hint once all three are filled on the lead. */
+  /** Hide the Budget / Property notes / Configuration hint once all are filled on the lead. */
   const showLeadPropertyGateFooterHint = useMemo(
     () => missingLeadPropertyGateFields(lead).length > 0,
-    [lead.budget, lead.propertyNotes, lead.configuration],
+    [lead.budget, lead.propertyNotes, lead.configuration, lead.bookingType, lead.possessionDate],
   );
 
   useEffect(() => {
@@ -260,10 +264,14 @@ export default function CompleteTaskModal({
     setModalBudget(lead.budget ?? "");
     setModalPropertyNotes(lead.propertyNotes ?? "");
     setModalConfiguration(lead.configuration ?? "");
+    setModalBookingType(lead.bookingType ?? "");
+    setModalPossessionDate(lead.possessionDate ?? "");
   }, [
     defaultNextCallDate,
     lead.budget,
     lead.configuration,
+    lead.bookingType,
+    lead.possessionDate,
     lead.lostReason,
     lead.pincode,
     lead.propertyNotes,
@@ -765,6 +773,8 @@ export default function CompleteTaskModal({
       budget: modalBudget,
       propertyNotes: modalPropertyNotes,
       configuration: modalConfiguration,
+      bookingType: modalBookingType,
+      possessionDate: modalPossessionDate,
     });
 
     if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
@@ -876,6 +886,8 @@ export default function CompleteTaskModal({
           budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
           propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
           configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
+          bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+          possessionDate: needsLeadPropertyGate ? modalPossessionDate.trim() : undefined,
           meetingAppointment: scheduleMode
             ? {
                 designerName: meetingDesigner.trim(),
@@ -1224,6 +1236,34 @@ export default function CompleteTaskModal({
                       />
                     </div>
                   </div>
+                  
+                  <div className="grid grid-cols-2 gap-3.5">
+                    <div>
+                      <FieldLabel required>Booking Type</FieldLabel>
+                      <Select
+                        value={modalBookingType}
+                        onChange={(e) => setModalBookingType(e.target.value)}
+                        missing={showErrors && !modalBookingType.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      >
+                        <option value="">Select Booking Type</option>
+                        {BOOKING_TYPE_OPTIONS.map((b) => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    <div>
+                      <FieldLabel required>Possession</FieldLabel>
+                      <Input
+                        value={modalPossessionDate}
+                        onChange={(e) => setModalPossessionDate(e.target.value)}
+                        placeholder="Add possession..."
+                        missing={showErrors && !modalPossessionDate.trim()}
+                        className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
+                      />
+                    </div>
+                  </div>
+
                   <div>
                     <FieldLabel required>Property Notes</FieldLabel>
                     <Textarea
@@ -1430,8 +1470,10 @@ export default function CompleteTaskModal({
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Discovery</strong> →{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Connection</strong>, fill{" "}
               <strong className="font-semibold text-[var(--crm-text-secondary)]">Budget</strong>,{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>, and{" "}
-              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong> on the Lead tab (all required).
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Property notes</strong>,{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Configuration</strong>,{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Booking type</strong>, and{" "}
+              <strong className="font-semibold text-[var(--crm-text-secondary)]">Possession</strong> on the Lead tab (all required).
             </p>
           ) : null}
 

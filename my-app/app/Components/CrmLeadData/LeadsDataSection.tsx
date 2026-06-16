@@ -21,6 +21,7 @@ import {
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import {
   computeLeadTypeCountsFromRows,
+  pickMilestoneRepresentativeRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 import {
@@ -77,6 +78,7 @@ import {
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
 import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
+import { isExecutiveAssigneeRole, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
   roleUsesAdminPoolInsightTiles,
@@ -96,6 +98,7 @@ import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helper
 import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
+import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
 
 type Props = {
   search: string;
@@ -104,6 +107,7 @@ type Props = {
   assignee: string;
   dateFrom: string;
   dateTo: string;
+  dateField: CrmDateFieldSelection;
   milestoneStage: string;
   milestoneStageCategory: string;
   milestoneSubStage: string;
@@ -129,6 +133,7 @@ type Props = {
   onAssigneeChange: (next: string) => void;
   onDateFromChange: (next: string) => void;
   onDateToChange: (next: string) => void;
+  onDateFieldChange: (next: CrmDateFieldSelection) => void;
   onMilestoneStageChange: (next: string) => void;
   onMilestoneStageCategoryChange: (next: string) => void;
   onMilestoneSubStageChange: (next: string) => void;
@@ -249,7 +254,7 @@ async function fetchMergedSalesExecutivesForFilters(
       username: row.username ?? prev?.username,
     });
   }
-  return [...byId.values()];
+  return [...byId.values()].filter((u) => isUserActive(u));
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -280,18 +285,17 @@ function mapRowToAssigneeUser(
   row: Record<string, unknown>,
   roleOverride?: string,
 ): AssigneeUser | null {
-  const active =
-    row.active === undefined && row.isActive === undefined
-      ? true
-      : Boolean(row.active ?? row.isActive);
-  if (!active) return null;
+  const role = normalizeRole(roleOverride ?? String(row.role ?? ""));
+  if (isExecutiveAssigneeRole(role) && !isUserActive(row as { active?: boolean; isActive?: boolean })) {
+    return null;
+  }
   const userId = Number(row.id ?? row.userId ?? 0);
   if (userId <= 0) return null;
   const name = String(row.fullName ?? row.name ?? row.username ?? `User ${userId}`).trim();
   return {
     userId,
     name: name || `User ${userId}`,
-    role: normalizeRole(roleOverride ?? String(row.role ?? "")),
+    role,
   };
 }
 
@@ -545,6 +549,7 @@ async function fetchMergedPage(
   assignee: string,
   dateFrom: string,
   dateTo: string,
+  dateField: CrmDateFieldSelection,
   milestoneStage: string,
   milestoneStageCategory: string,
   milestoneSubStage: string,
@@ -579,11 +584,7 @@ async function fetchMergedPage(
     qs.set("sort", sort);
     if (search.trim()) qs.set("search", search.trim());
     appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-    if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-    else {
-      if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-      if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
-    }
+    appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
     appendWorkspaceMilestoneFilterQuery(
       qs,
       leadsWorkspace,
@@ -631,11 +632,7 @@ async function fetchMergedPage(
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
         appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-        if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-        else {
-          if (dateFrom.trim()) qs.set("dateFrom", dateFrom.trim());
-          if (dateTo.trim()) qs.set("dateTo", dateTo.trim());
-        }
+        appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
         appendWorkspaceMilestoneFilterQuery(
           qs,
           leadsWorkspace,
@@ -720,6 +717,7 @@ async function fetchMergedPage(
         sort,
         dateFrom,
         dateTo,
+        dateField,
         crmMonthWindow,
         verificationStatus:
           workspace === "presales" ? "" : resolvedVerification,
@@ -791,6 +789,7 @@ async function fetchMergedPage(
         assigneeAliasSet,
         dateFrom,
         dateTo,
+        dateField,
         crmMonthWindow,
         verificationStatus: resolvedVerification,
         reinquiry,
@@ -819,11 +818,12 @@ async function fetchMergedPage(
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
   appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
-  if (crmMonthWindow.trim()) qs.set("crmMonthWindow", crmMonthWindow.trim());
-  else {
-    if (effectiveDateFrom) qs.set("dateFrom", effectiveDateFrom);
-    if (effectiveDateTo) qs.set("dateTo", effectiveDateTo);
-  }
+  appendCrmDateFilters(qs, {
+    dateFrom: effectiveDateFrom,
+    dateTo: effectiveDateTo,
+    dateField,
+    crmMonthWindow,
+  });
   appendWorkspaceMilestoneFilterQuery(
     qs,
     leadsWorkspace,
@@ -1067,6 +1067,7 @@ export default function LeadsDataSection({
   assignee,
   dateFrom,
   dateTo,
+  dateField,
   milestoneStage,
   milestoneStageCategory,
   milestoneSubStage,
@@ -1088,6 +1089,7 @@ export default function LeadsDataSection({
   onAssigneeChange,
   onDateFromChange,
   onDateToChange,
+  onDateFieldChange,
   onMilestoneStageChange,
   onMilestoneStageCategoryChange,
   onMilestoneSubStageChange,
@@ -1309,8 +1311,12 @@ export default function LeadsDataSection({
         const mapped = dedupeAssigneeUsers(
           rows
             .filter((row) => {
-              const role = normalizeRole(row.role);
-              return eligibleRoles.has(role) && Boolean(row.active ?? true);
+              const role = normalizeRole(String(row.role ?? ""));
+              if (!eligibleRoles.has(role)) return false;
+              if (isExecutiveAssigneeRole(role)) {
+                return isUserActive(row as { active?: boolean; isActive?: boolean });
+              }
+              return true;
             })
             .map((row) =>
               mapRowToAssigneeUser(row as Record<string, unknown>, String(row.role ?? "")),
@@ -1581,7 +1587,7 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, leadType, page, size, debouncedSearch, assignee, dateFrom, dateTo, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+  }, [clearSelection, leadType, page, size, debouncedSearch, assignee, dateFrom, dateTo, dateField, milestoneStage, milestoneStageCategory, milestoneSubStage]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1663,11 +1669,11 @@ export default function LeadsDataSection({
             ? mergedSalesExecs
             : seJ;
 
-        setSalesAdmins(saJ.filter((u) => u.active !== false));
-        setSalesManagers(smJ.filter((u) => u.active !== false));
-        setSalesExecs(salesExecList);
-        setPresalesManagers(pmJ.filter((u) => u.active !== false));
-        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => u.active !== false);
+        setSalesAdmins(saJ.filter((u) => isUserActive(u)));
+        setSalesManagers(smJ);
+        setSalesExecs(salesExecList.filter((u) => isUserActive(u)));
+        setPresalesManagers(pmJ);
+        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => isUserActive(u));
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
@@ -2187,6 +2193,7 @@ export default function LeadsDataSection({
           queryAssignee,
           dateFrom,
           dateTo,
+          dateField,
           milestoneStage,
           milestoneStageCategory,
           milestoneSubStage,
@@ -2213,6 +2220,7 @@ export default function LeadsDataSection({
               queryAssignee,
               dateFrom,
               dateTo,
+              dateField,
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
@@ -2293,6 +2301,7 @@ export default function LeadsDataSection({
             assigneeFetchSeed,
             dateFrom,
             dateTo,
+            dateField,
             milestoneStage,
             milestoneStageCategory,
             milestoneSubStage,
@@ -2356,6 +2365,7 @@ export default function LeadsDataSection({
       effectiveAssignee,
       dateFrom,
       dateTo,
+      dateField,
       milestoneStage,
       milestoneStageCategory,
       milestoneSubStage,
@@ -2395,6 +2405,7 @@ export default function LeadsDataSection({
           queryAssignee,
           dateFrom,
           dateTo,
+          dateField,
           milestoneStage,
           milestoneStageCategory,
           milestoneSubStage,
@@ -2421,6 +2432,7 @@ export default function LeadsDataSection({
               queryAssignee,
               dateFrom,
               dateTo,
+              dateField,
               milestoneStage,
               milestoneStageCategory,
               milestoneSubStage,
@@ -2558,6 +2570,7 @@ export default function LeadsDataSection({
           assignee: effectiveAssignee,
           dateFrom,
           dateTo,
+          dateField,
           crmMonthWindow: crmMonthWindowProp,
           verificationStatus: resolvedVerification,
           reinquiry,
@@ -2675,6 +2688,7 @@ export default function LeadsDataSection({
     crmMonthWindowProp,
     dateFrom,
     dateTo,
+    dateField,
     effectiveAssignee,
     activeAssigneeScope,
     fetchAllScopedMergedLeads,
@@ -2716,23 +2730,54 @@ export default function LeadsDataSection({
             ? "verified"
             : verificationStatusProp.trim() ||
               defaultLeadsVerificationStatus(leadsWorkspace, undefined, roleKey);
-        const { leads, total } = await fetchAdminLeadsMilestoneFiltered(
-          {
-            workspace: leadsWorkspace,
-            search: debouncedSearch,
-            assignee: effectiveAssignee,
-            dateFrom,
-            dateTo,
-            crmMonthWindow: crmMonthWindowProp,
-            verificationStatus: resolvedVerification,
-            reinquiry,
-            leadType: summaryLeadType,
-          },
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          getCrmAuthHeaders(),
-        );
+        const milestoneAliasSet =
+          effectiveAssigneeScope.length > 0
+            ? effectiveAssigneeScope
+            : activeAssigneeScope.length > 0
+              ? activeAssigneeScope
+              : undefined;
+
+        let leads: ApiLead[];
+        let total: number;
+
+        /** SALES_ADMIN + Sales Mgr/Exec toolbar: use same scoped pool as heatmap (not manager name only). */
+        if (salesHierarchyFilterActive) {
+          const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
+          const primaryRows = pickMilestoneRepresentativeRows(scopedRows);
+          leads = primaryRows.filter((lead) =>
+            leadMatchesWorkspaceMilestoneFilter(
+              lead,
+              leadsWorkspace,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+            ),
+          );
+          total = leads.length;
+        } else {
+          const result = await fetchAdminLeadsMilestoneFiltered(
+            {
+              workspace: leadsWorkspace,
+              search: debouncedSearch,
+              assignee: milestoneAliasSet?.[0]?.trim() || effectiveAssignee,
+              assigneeAliasSet: milestoneAliasSet,
+              dateFrom,
+              dateTo,
+              dateField,
+              crmMonthWindow: crmMonthWindowProp,
+              verificationStatus: resolvedVerification,
+              reinquiry,
+              leadType: summaryLeadType,
+            },
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
+            getCrmAuthHeaders(),
+          );
+          leads = result.leads;
+          total = result.total;
+        }
+
         if (cancelled) return;
         setAdminMilestoneTableLeads(leads);
         const primaryRows = pickPrimarySourceRows(leads);
@@ -2771,7 +2816,13 @@ export default function LeadsDataSection({
     crmMonthWindowProp,
     dateFrom,
     dateTo,
+    dateField,
     effectiveAssignee,
+    effectiveAssigneeScope,
+    activeAssigneeScope,
+    salesHierarchyFilterActive,
+    fetchAllScopedMergedLeads,
+    sort,
     leadsWorkspace,
   ]);
 
@@ -2913,6 +2964,7 @@ export default function LeadsDataSection({
       debouncedSearch,
       dateFrom,
       dateTo,
+      dateField,
       milestoneStage,
       milestoneStageCategory,
       milestoneSubStage,
@@ -3716,6 +3768,7 @@ export default function LeadsDataSection({
         assignee={assignee}
         dateFrom={dateFrom}
         dateTo={dateTo}
+        dateField={dateField}
         milestoneStage={milestoneStage}
         milestoneStageCategory={milestoneStageCategory}
         milestoneSubStage={milestoneSubStage}
@@ -3773,6 +3826,7 @@ export default function LeadsDataSection({
         }}
         onDateFromChange={onDateFromChange}
         onDateToChange={onDateToChange}
+        onDateFieldChange={onDateFieldChange}
         onMilestoneStageChange={onMilestoneStageChange}
         onMilestoneStageCategoryChange={onMilestoneStageCategoryChange}
         onMilestoneSubStageChange={onMilestoneSubStageChange}

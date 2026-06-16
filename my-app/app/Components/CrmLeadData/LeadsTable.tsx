@@ -117,7 +117,23 @@ function AlertButton({
 
 function openLeadDetail(router: ReturnType<typeof useRouter>, row: LeadRowModel) {
   persistLeadsListScrollBeforeNavigate();
-  router.push(`/Leads/${row.leadType}/${row.id}`, { scroll: false });
+  const url = `/Leads/${row.leadType}/${row.id}`;
+  if (typeof window !== "undefined") {
+    const width = 1080;
+    const height = 720;
+    const left = Math.max(0, Math.floor((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.floor((window.screen.height - height) / 2));
+    const popup = window.open(
+      url,
+      "_blank",
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
+    );
+    if (popup) {
+      popup.focus();
+      return;
+    }
+  }
+  router.push(url, { scroll: false });
 }
 
 function LeadRowAction({

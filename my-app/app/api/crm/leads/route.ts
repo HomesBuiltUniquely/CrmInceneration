@@ -13,6 +13,7 @@ import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
+import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -141,6 +142,7 @@ const LEADS_EXTRA_PARAMS = [
   "stage",
   "substage",
   "result",
+  "dateField",
   "dateFrom",
   "dateTo",
   "assignee",
@@ -302,6 +304,12 @@ function filterAndSortMergedLeads(
   const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
+  const skipHubDateFilter = hubHandlesDateFilter({
+    dateFrom,
+    dateTo,
+    dateField: url.searchParams.get("dateField"),
+    crmMonthWindow: url.searchParams.get("crmMonthWindow"),
+  });
 
   return leads
     .filter((lead) => {
@@ -365,18 +373,15 @@ function filterAndSortMergedLeads(
       }
 
       const isWalkInRow = normalizeLeadTypeKey(lead.leadType) === "walkinlead";
-      if (!isWalkInRow) {
-        const dateFieldRaw =
-          dateFrom || dateTo
-            ? usePresalesMilestoneFilters
-              ? (() => {
-                  const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-                  return assignedTs > 0
-                    ? new Date(assignedTs).toISOString()
-                    : readLeadCreatedAtRaw(lead);
-                })()
-              : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim()
-            : "";
+      if (!skipHubDateFilter && !isWalkInRow && (dateFrom || dateTo)) {
+        const dateFieldRaw = usePresalesMilestoneFilters
+          ? (() => {
+              const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+              return assignedTs > 0
+                ? new Date(assignedTs).toISOString()
+                : readLeadCreatedAtRaw(lead);
+            })()
+          : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
         if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
       }
 

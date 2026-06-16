@@ -7,6 +7,7 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { getEffectiveNewCrmEndDate, getEffectiveNewCrmStartDate } from "@/lib/new-crm-cutoff";
+import { appendCrmDateFilters, hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
 import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
@@ -63,8 +64,12 @@ function buildUpstreamUrl(
 
   if (search) upstream.searchParams.set("search", search);
   if (assignee) upstream.searchParams.set("assignee", assignee);
-  if (effDates.from) upstream.searchParams.set("dateFrom", effDates.from);
-  if (effDates.to) upstream.searchParams.set("dateTo", effDates.to);
+  appendCrmDateFilters(upstream.searchParams, {
+    dateFrom: effDates.from,
+    dateTo: effDates.to,
+    dateField: reqUrl.searchParams.get("dateField"),
+    crmMonthWindow: reqUrl.searchParams.get("crmMonthWindow"),
+  });
   if (milestoneStage) upstream.searchParams.set("milestoneStage", milestoneStage);
   if (milestoneStageCategory) upstream.searchParams.set("milestoneStageCategory", milestoneStageCategory);
   if (milestoneSubStage) upstream.searchParams.set("milestoneSubStage", milestoneSubStage);
@@ -114,6 +119,7 @@ async function countLeadType(
       { key: "assignee", value: (reqUrl.searchParams.get("assignee") ?? "").trim() },
       { key: "dateFrom", value: effDates.from },
       { key: "dateTo", value: effDates.to },
+      { key: "dateField", value: (reqUrl.searchParams.get("dateField") ?? "").trim() },
     ];
     const { leads } = await fetchWalkInLeadsForMerge({
       req,
@@ -124,10 +130,16 @@ async function countLeadType(
       perType: 500,
       maxPages: 100,
     });
+    const skipLocalDateFilter = hubHandlesDateFilter({
+      dateFrom: effDates.from,
+      dateTo: effDates.to,
+      dateField: reqUrl.searchParams.get("dateField"),
+      crmMonthWindow: reqUrl.searchParams.get("crmMonthWindow"),
+    });
     const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
     const ids = new Set<string>();
     for (const lead of leads) {
-      if (!leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
+      if (!skipLocalDateFilter && !leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
       if (assigneeNorms.length > 0) {
         const assigneeText =
           typeof lead.assignee === "string"

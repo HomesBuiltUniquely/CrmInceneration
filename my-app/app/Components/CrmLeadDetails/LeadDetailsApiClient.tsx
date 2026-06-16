@@ -11,6 +11,7 @@ import {
   postStageRollback,
   postVerifyLead,
   putLeadDetail,
+  putHubScheduleDates,
   getLeadFloorPlanMeta,
   removeLeadFloorPlan,
   uploadLeadFloorPlan,
@@ -86,6 +87,12 @@ import {
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import { adminPanelApi } from "@/lib/admin-panel-api";
+import {
+  collectHierarchyUserAssigneeAliases,
+  hierarchyUserDisplayName,
+  normalizeLegacyHierarchyUser,
+} from "@/lib/hierarchy-user-display";
 import {
   isLeadHandedOffToSales,
   isPresalesHandedOffReadOnly,
@@ -99,12 +106,24 @@ import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
 type SalesExecutiveOption = {
   id: number;
   fullName?: string;
+  name?: string;
   username?: string;
+  email?: string;
+  managerId?: number | null;
   active?: boolean;
 };
 
 function salesExecutiveLabel(u: SalesExecutiveOption): string {
   return (u.fullName ?? u.username ?? `User ${u.id}`).trim();
+}
+
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function userRecordId(row: Record<string, unknown>): number {
+  const id = Number(row.id ?? row.userId ?? 0);
+  return Number.isFinite(id) ? id : 0;
 }
 
 function pickPersistedQuoteLink(
@@ -207,6 +226,8 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   budget: "",
   language: "English",
   leadSource: leadType,
+  salesManagerName: "",
+  bookingType: "",
   meetingType: "",
   propertyNotes: "",
   requirements: [],
@@ -1277,7 +1298,9 @@ export default function LeadDetailsApiClient({
       propertyNotes: latestLead.propertyNotes,
       possessionDate: latestLead.possessionDate,
       leadSource: latestLead.leadSource,
+      salesManagerName: latestLead.salesManagerName,
       configuration: latestLead.configuration,
+      bookingType: latestLead.bookingType,
     });
     setBaseDetail(latestDetail);
     setLead((prev) => ({
@@ -1287,6 +1310,42 @@ export default function LeadDetailsApiClient({
     }));
     return latestLead;
   }, [leadId, leadType]);
+
+  const resolveSalesManagerNameForLead = useCallback(
+    async (targetLead: Lead): Promise<string> => {
+      const existing = targetLead.salesManagerName?.trim();
+      if (existing) return existing;
+
+      const assigneeName = targetLead.assignee?.trim();
+      if (!assigneeName || /^[-–—]+$/.test(assigneeName)) return "";
+
+      try {
+        const [legacyExecRows, managerRows] = await Promise.all([
+          adminPanelApi.listSalesExecutivesLegacyAll().catch(() => []),
+          adminPanelApi.listSalesManagersMerged().catch(() => []),
+        ]);
+        const execs = legacyExecRows
+          .map((row) => normalizeLegacyHierarchyUser(row))
+          .filter((row) => row.active !== false);
+        const assigneeKey = normalizeName(assigneeName);
+        const matchedExec = execs.find((exec) =>
+          collectHierarchyUserAssigneeAliases(exec).some(
+            (alias) => normalizeName(alias) === assigneeKey,
+          ),
+        );
+        const managerId = Number(matchedExec?.managerId ?? 0);
+        if (!Number.isFinite(managerId) || managerId <= 0) return "";
+
+        const manager = managerRows.find((row) => userRecordId(row) === managerId);
+        if (!manager) return "";
+        return hierarchyUserDisplayName(manager).trim();
+      } catch (e) {
+        console.warn("[sales-closure] sales manager lookup failed", e);
+        return "";
+      }
+    },
+    [],
+  );
 
   const buildStrictSalesClosureUrl = useCallback(async () => {
     const returnUrl = new URL(window.location.href);
@@ -1307,6 +1366,15 @@ export default function LeadDetailsApiClient({
     if (authUserResult.status === "rejected") {
       console.error("[sales-closure] current user fetch failed", authUserResult.reason);
     }
+    const resolvedSalesManagerName =
+      (await resolveSalesManagerNameForLead(latestLead)) ||
+      latestLead.salesManagerName ||
+      "";
+    const salesClosureLead = {
+      ...latestLead,
+      salesManagerName: resolvedSalesManagerName,
+      bookingType: latestLead.bookingType?.trim() || lead.bookingType || "",
+    };
     console.info("[sales-closure] auth user for prefill", {
       hasUser: Boolean(latestAuthUser),
       email:
@@ -1321,7 +1389,7 @@ export default function LeadDetailsApiClient({
     return buildSalesClosureUrl({
       leadTypeLabel: crmLeadTypeToApiLabel(leadType),
       returnUrl: returnUrl.toString(),
-      lead: latestLead,
+      lead: salesClosureLead,
       authUser: latestAuthUser,
     });
   }, [
@@ -1330,6 +1398,7 @@ export default function LeadDetailsApiClient({
     leadType,
     loadLatestLeadForSalesClosure,
     loadSalesClosureAuthUser,
+    resolveSalesManagerNameForLead,
     salesClosureAuthUser,
   ]);
 
@@ -1450,6 +1519,8 @@ export default function LeadDetailsApiClient({
           ...detailJsonToLead(stickyDetail, lt),
           id: leadId,
           activities: prev.activities,
+          bookingType: prev.bookingType,
+          salesManagerName: prev.salesManagerName,
           quoteLink: stickyQuote || prev.quoteLink || "",
         }));
         notifyError("Lead moved back because Sales Closure is pending.");
@@ -1567,6 +1638,9 @@ export default function LeadDetailsApiClient({
         ...mapped,
         id: leadId,
         activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
         quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
       }));
       maybeOpenSalesClosureAfterWon([
@@ -1614,6 +1688,9 @@ export default function LeadDetailsApiClient({
         ...mapped,
         id: leadId,
         activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
         quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
       }));
       notifySuccess("Additional info saved.");
@@ -1738,6 +1815,8 @@ export default function LeadDetailsApiClient({
           ...detailJsonToLead(stickyDetail, lt),
           id: leadId,
           activities: prev.activities,
+          bookingType: prev.bookingType,
+          salesManagerName: prev.salesManagerName,
           quoteLink: link,
         }));
       } catch (e) {
@@ -2087,6 +2166,8 @@ export default function LeadDetailsApiClient({
       ...detailJsonToLead(updated, lt),
       id: leadId,
       activities: prev.activities,
+      bookingType: leadForSave.bookingType || prev.bookingType,
+      salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
       followUpDate: leadForSave.followUpDate,
       lostReason: leadForSave.lostReason,
       stageBlock: {
@@ -2172,7 +2253,9 @@ export default function LeadDetailsApiClient({
             followUpDate = appt.endTime;
             meetingDate = appt.endTime;
           } else if (args.meetingAppointment.date.trim()) {
-            meetingDate = args.meetingAppointment.date.trim();
+            const slotDate = args.meetingAppointment.date.trim();
+            meetingDate = slotDate;
+            followUpDate = slotDate;
           }
           designerName = args.meetingAppointment.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
@@ -2203,8 +2286,7 @@ export default function LeadDetailsApiClient({
 
         if (
           isMeetingScheduleSubstage(persistedSubstage) &&
-          followUpDate.trim() &&
-          !meetingDate.trim()
+          followUpDate.trim()
         ) {
           meetingDate = followUpDate;
         }
@@ -2243,12 +2325,28 @@ export default function LeadDetailsApiClient({
           budget: args.budget ?? lead.budget,
           propertyNotes: args.propertyNotes ?? lead.propertyNotes,
           configuration: args.configuration ?? lead.configuration,
+          bookingType: args.bookingType ?? lead.bookingType,
+          possessionDate: args.possessionDate ?? lead.possessionDate,
           lostReason: args.lostReason?.trim()
             ? args.lostReason.trim()
             : lead.lostReason,
         };
         const body = mergeLeadIntoDetail(baseDetail, leadForSave);
-        const updated = await putLeadDetail(lt, leadId, body);
+        let updated = await putLeadDetail(lt, leadId, body);
+        if (followUpDate.trim() || meetingDate.trim()) {
+          const mirrorMeetingFromFollowUp =
+            isMeetingScheduleSubstage(persistedSubstage) ||
+            Boolean(args.meetingAppointment);
+          try {
+            updated = await putHubScheduleDates(lt, leadId, {
+              followUpDate: followUpDate.trim() || undefined,
+              meetingDate: meetingDate.trim() || undefined,
+              mirrorFollowUpToMeeting: mirrorMeetingFromFollowUp,
+            });
+          } catch (scheduleErr) {
+            console.warn("[lead:schedule-dates] Hub §14 PUT failed after save", scheduleErr);
+          }
+        }
         const stickyQuote = pickPersistedQuoteLink(updated, leadForSave);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
@@ -2256,6 +2354,8 @@ export default function LeadDetailsApiClient({
           ...detailJsonToLead(stickyDetail, lt),
           id: leadId,
           activities: prev.activities,
+          bookingType: leadForSave.bookingType || prev.bookingType,
+          salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
           stageBlock: nextStage,
           quoteLink: stickyQuote || prev.quoteLink || "",
         }));
