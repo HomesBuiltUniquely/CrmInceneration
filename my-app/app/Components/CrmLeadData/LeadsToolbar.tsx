@@ -9,6 +9,7 @@ import {
   milestoneStageOptionsFromNested,
   milestoneSubStageOptionsForCategory,
 } from "@/lib/milestone-filter-tree";
+import { PRESALES_PIPELINE_STAGE_ORDER } from "@/lib/presales-milestone";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import { LOST_SEGMENT_TILES } from "@/lib/lead-lost-segment";
@@ -480,11 +481,14 @@ export default function LeadsToolbar({
   const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
 
   const milestoneStageOptions = useMemo(() => {
+    if (isPresalesWorkspace) {
+      return [...PRESALES_PIPELINE_STAGE_ORDER];
+    }
     const base = milestoneStageOptionsFromNested(pipelineNested);
     return base.filter(
       (s) => normalizeStageKey(s) !== normalizeStageKey(SALES_POOL_NO_MILESTONE),
     );
-  }, [pipelineNested]);
+  }, [isPresalesWorkspace, pipelineNested]);
   const milestoneStageCategoryOptions = useMemo(
     () => milestoneCategoryOptionsForStage(pipelineNested, milestoneStage),
     [pipelineNested, milestoneStage],

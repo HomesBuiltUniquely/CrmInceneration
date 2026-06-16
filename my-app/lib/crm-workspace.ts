@@ -89,10 +89,7 @@ export function leadMatchesWorkspaceMilestoneFilter(
   if (workspace === "presales") {
     const ps = readPresalesMilestoneFromLead(lead);
     const top = presalesTopLevelStage(lead);
-    if (st) {
-      const want = normalizeStageKey(st);
-      if (normalizeStageKey(top) !== want && normalizeStageKey(ps.stage) !== want) return false;
-    }
+    if (st && normalizeStageKey(top) !== normalizeStageKey(st)) return false;
     if (cat && normalizeStageKey(ps.category) !== normalizeStageKey(cat)) return false;
     if (sub && normalizeStageKey(ps.subStage) !== normalizeStageKey(sub)) return false;
     return true;

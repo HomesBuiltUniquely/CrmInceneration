@@ -2127,6 +2127,13 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     if (pipelineNested.length === 0) return;
+    if (leadsWorkspace === "presales") {
+      if (!milestoneStage.trim()) {
+        if (milestoneStageCategory.trim()) onMilestoneStageCategoryChange("");
+        if (milestoneSubStage.trim()) onMilestoneSubStageChange("");
+      }
+      return;
+    }
     if (!milestoneStage.trim()) {
       if (milestoneStageCategory.trim()) onMilestoneStageCategoryChange("");
       if (milestoneSubStage.trim()) onMilestoneSubStageChange("");
@@ -2165,6 +2172,7 @@ export default function LeadsDataSection({
     onMilestoneStageChange,
     onMilestoneStageCategoryChange,
     onMilestoneSubStageChange,
+    leadsWorkspace,
   ]);
 
   const fetchScopedMergedPage = useCallback(
