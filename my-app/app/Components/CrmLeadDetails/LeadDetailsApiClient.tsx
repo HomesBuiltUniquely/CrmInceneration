@@ -2202,6 +2202,7 @@ export default function LeadDetailsApiClient({
         budget: args.budget,
         configuration: args.configuration,
         propertyNotes: args.propertyNotes,
+        bookingType: args.bookingType,
       });
       if (!discoveryGate.valid) {
         throw new Error(discoveryGate.message);
