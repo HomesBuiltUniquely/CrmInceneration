@@ -16,6 +16,17 @@ export default function FooterActions({
   verifying?: boolean;
 }) {
   const router = useRouter();
+  const handleCloseWindow = () => {
+    if (typeof window !== "undefined" && window.opener && !window.opener.closed) {
+      window.close();
+      return;
+    }
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+    router.push("/Leads");
+  };
 
   return (
     <div className="mt-7 flex items-center gap-3 border-t border-[var(--crm-border)] pt-6 animate-fade-up">
@@ -45,13 +56,7 @@ export default function FooterActions({
         <Button
           variant="ghost"
           icon="✕"
-          onClick={() => {
-            if (typeof window !== "undefined" && window.history.length > 1) {
-              router.back();
-              return;
-            }
-            router.push("/Leads");
-          }}
+          onClick={handleCloseWindow}
         >
           Close Window
         </Button>

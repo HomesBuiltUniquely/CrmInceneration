@@ -156,6 +156,36 @@ const LEADS_EXTRA_PARAMS = [
   "reinquiry",
 ] as const;
 
+/** Presales inbox: Hub often returns 0 when milestone params are forwarded — filter in BFF only. */
+const PRESALES_CLIENT_MILESTONE_KEYS = new Set([
+  "presalesMilestoneStage",
+  "presalesMilestoneCategory",
+  "presalesMilestoneSubStage",
+]);
+
+function shouldForwardLeadsExtraParam(
+  key: (typeof LEADS_EXTRA_PARAMS)[number],
+  usePresalesSearchPool: boolean,
+): boolean {
+  if (usePresalesSearchPool && PRESALES_CLIENT_MILESTONE_KEYS.has(key)) {
+    return false;
+  }
+  return true;
+}
+
+function appendLeadsExtraParams(
+  upstream: URL,
+  reqUrl: URL,
+  effDates: { from: string; to: string },
+  usePresalesSearchPool: boolean,
+) {
+  for (const key of LEADS_EXTRA_PARAMS) {
+    if (!shouldForwardLeadsExtraParam(key, usePresalesSearchPool)) continue;
+    const v = extraParamValue(reqUrl, key, effDates);
+    if (v) upstream.searchParams.set(key, v);
+  }
+}
+
 /** Hub presales inbox — JWT-scoped list; forwards same filters as `/v1/leads/filter`. */
 async function fetchPresalesSearchLeads(
   req: NextRequest,
@@ -163,6 +193,7 @@ async function fetchPresalesSearchLeads(
   effDates: { from: string; to: string },
   sort: string,
   search: string,
+  usePresalesSearchPool = true,
 ): Promise<ApiLead[]> {
   const parseChunk = (json: unknown): Array<{ type?: string; lead?: ApiLead }> => {
     if (!json || typeof json !== "object") return [];
@@ -201,10 +232,7 @@ async function fetchPresalesSearchLeads(
     upstream.searchParams.set("size", String(searchSize));
     upstream.searchParams.set("sort", sort);
     if (search) upstream.searchParams.set("search", search);
-    for (const key of LEADS_EXTRA_PARAMS) {
-      const v = extraParamValue(url, key, effDates);
-      if (v) upstream.searchParams.set(key, v);
-    }
+    appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
     const res = await fetch(upstream.toString(), {
       headers: upstreamAuthHeaders(req),
       cache: "no-store",
@@ -258,10 +286,7 @@ async function fetchPresalesSearchLeads(
       upstream.searchParams.set("size", String(pageSize));
       upstream.searchParams.set("sort", sort);
       if (search) upstream.searchParams.set("search", search);
-      for (const key of LEADS_EXTRA_PARAMS) {
-        const v = extraParamValue(url, key, effDates);
-        if (v) upstream.searchParams.set(key, v);
-      }
+      appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
       const res = await fetch(upstream.toString(), {
         headers: upstreamAuthHeaders(req),
         cache: "no-store",
@@ -491,10 +516,7 @@ export async function GET(req: NextRequest) {
     const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
     if (mStage) upstream.searchParams.set("stage", mStage);
     if (mSub) upstream.searchParams.set("substage", mSub);
-    for (const key of LEADS_EXTRA_PARAMS) {
-      const v = extraParamValue(url, key, effDates);
-      if (v) upstream.searchParams.set(key, v);
-    }
+    appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
 
     const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
     const text = await res.text();
@@ -505,7 +527,14 @@ export async function GET(req: NextRequest) {
   }
 
   if (mergeAll && usePresalesSearchPool) {
-    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    const presalesRows = await fetchPresalesSearchLeads(
+      req,
+      url,
+      effDates,
+      sort,
+      search,
+      usePresalesSearchPool,
+    );
     const merged = filterAndSortMergedLeads(
       presalesRows,
       url,
@@ -583,10 +612,7 @@ export async function GET(req: NextRequest) {
       upstream.searchParams.set("size", String(perType));
       upstream.searchParams.set("sort", sort);
       if (search) upstream.searchParams.set("search", search);
-      for (const key of LEADS_EXTRA_PARAMS) {
-        const v = extraParamValue(url, key, effDates);
-        if (v) upstream.searchParams.set(key, v);
-      }
+      appendLeadsExtraParams(upstream, url, effDates, isPresalesPool);
       // When hierarchy aliasSet is present, assignee param is empty on the request.
       // Extract the first alias as a display name hint and send to Hub so Hub
       // pre-filters server-side. UI filterLeadsByAssigneeScope still does
@@ -650,7 +676,14 @@ export async function GET(req: NextRequest) {
     }
   }
   if (includePresalesInGlobalSearch) {
-    const presalesRows = await fetchPresalesSearchLeads(req, url, effDates, sort, search);
+    const presalesRows = await fetchPresalesSearchLeads(
+      req,
+      url,
+      effDates,
+      sort,
+      search,
+      false,
+    );
     for (const lead of presalesRows) {
       const id = leadStableIdentifier(lead);
       if (!id || byId.has(id)) continue;

@@ -10,6 +10,13 @@ export default function TopBar({
   onToggleDesignQa?: () => void;
 }) {
   const router = useRouter();
+  const handleClose = () => {
+    if (typeof window !== "undefined" && window.opener && !window.opener.closed) {
+      window.close();
+      return;
+    }
+    router.back();
+  };
 
   return (
     <div className="mb-8 flex items-center justify-between animate-fade-up">
@@ -44,7 +51,7 @@ export default function TopBar({
           </button>
         ) : null}
         <button
-          onClick={() => router.back()}
+          onClick={handleClose}
           className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-slate-800 px-5 py-2.5 text-[13px] font-semibold tracking-tight text-white shadow-sm transition-all duration-200 hover:-translate-y-[1px] hover:bg-slate-700 hover:shadow-[0_6px_14px_rgba(15,23,42,0.22)] dark:border-[var(--crm-border-strong)]"
         >
           <span className="text-[14px] leading-none" aria-hidden>

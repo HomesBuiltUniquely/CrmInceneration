@@ -521,6 +521,7 @@ export default function Header() {
   ]);
 
   const handlePhaseFilterToggle = (stageName: string) => {
+    setPresalesSummaryTab(null);
     const sameStage =
       milestoneStage.trim().toLowerCase() === stageName.trim().toLowerCase();
     if (sameStage) {
@@ -729,9 +730,18 @@ export default function Header() {
                 onDateFromChange={handleToolbarDateFromChange}
                 onDateToChange={handleToolbarDateToChange}
                 onDateFieldChange={handleToolbarDateFieldChange}
-                onMilestoneStageChange={setMilestoneStage}
-                onMilestoneStageCategoryChange={setMilestoneStageCategory}
-                onMilestoneSubStageChange={setMilestoneSubStage}
+                onMilestoneStageChange={(next) => {
+                  setPresalesSummaryTab(null);
+                  setMilestoneStage(next);
+                }}
+                onMilestoneStageCategoryChange={(next) => {
+                  setPresalesSummaryTab(null);
+                  setMilestoneStageCategory(next);
+                }}
+                onMilestoneSubStageChange={(next) => {
+                  setPresalesSummaryTab(null);
+                  setMilestoneSubStage(next);
+                }}
                 onReinquiryChange={setReinquiry}
                 onHeatmapAssigneeSync={setHeatmapToolbarAssignee}
                 onHeatmapAssigneeScopeSync={setHeatmapToolbarAssigneeScope}
