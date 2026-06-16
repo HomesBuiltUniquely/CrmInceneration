@@ -14,6 +14,64 @@ export const CRM_DATE_FIELD_TOOLBAR_OPTIONS: { value: Exclude<CrmDateField, "ass
   { value: "meeting", label: "Meeting date" },
 ];
 
+/** Presales + field roles — follow-up + created only (no meeting milestones). */
+export const CRM_DATE_FIELD_NO_MEETING_TOOLBAR_OPTIONS = CRM_DATE_FIELD_TOOLBAR_OPTIONS.filter(
+  (opt) => opt.value !== "meeting",
+);
+
+/** @deprecated Use `CRM_DATE_FIELD_NO_MEETING_TOOLBAR_OPTIONS` */
+export const CRM_DATE_FIELD_PRESALES_TOOLBAR_OPTIONS = CRM_DATE_FIELD_NO_MEETING_TOOLBAR_OPTIONS;
+
+function normalizeViewerRoleKey(role: string | null | undefined): string {
+  return (role ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+}
+
+/** Meeting date filter is for sales managers/admins on the sales pipeline only. */
+export function viewerShowsMeetingDateToolbarOption(input: {
+  workspace: "sales" | "presales" | string;
+  role?: string | null;
+}): boolean {
+  const workspace = (input.workspace ?? "").trim().toLowerCase();
+  if (workspace === "presales") return false;
+  const role = normalizeViewerRoleKey(input.role);
+  if (role === "SALES_EXECUTIVE" || role === "PRESALES_EXECUTIVE") return false;
+  return true;
+}
+
+export function crmDateFieldToolbarOptionsForViewer(input: {
+  workspace: "sales" | "presales" | string;
+  role?: string | null;
+}): typeof CRM_DATE_FIELD_TOOLBAR_OPTIONS {
+  return viewerShowsMeetingDateToolbarOption(input)
+    ? CRM_DATE_FIELD_TOOLBAR_OPTIONS
+    : CRM_DATE_FIELD_NO_MEETING_TOOLBAR_OPTIONS;
+}
+
+/** @deprecated Use `crmDateFieldToolbarOptionsForViewer` */
+export function crmDateFieldToolbarOptionsForWorkspace(
+  workspace: "sales" | "presales" | string,
+): typeof CRM_DATE_FIELD_TOOLBAR_OPTIONS {
+  return crmDateFieldToolbarOptionsForViewer({ workspace });
+}
+
+export function sanitizeDateFieldForViewer(
+  dateField: CrmDateFieldSelection,
+  workspace: "sales" | "presales" | string,
+  role?: string | null,
+): CrmDateFieldSelection {
+  const allowed = crmDateFieldToolbarOptionsForViewer({ workspace, role });
+  if (dateField && !allowed.some((o) => o.value === dateField)) return "";
+  return dateField;
+}
+
+/** @deprecated Use `sanitizeDateFieldForViewer` */
+export function sanitizeDateFieldForWorkspace(
+  dateField: CrmDateFieldSelection,
+  workspace: "sales" | "presales" | string,
+): CrmDateFieldSelection {
+  return sanitizeDateFieldForViewer(dateField, workspace);
+}
+
 export const CRM_DATE_FIELD_OPTIONS: { value: CrmDateField; label: string }[] = [
   ...CRM_DATE_FIELD_TOOLBAR_OPTIONS,
   { value: "assigned", label: "Assigned date" },

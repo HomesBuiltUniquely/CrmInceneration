@@ -40,6 +40,7 @@ import {
   defaultSortForDateField,
   isToolbarDateFilterActive,
   parseCrmDateFieldSelection,
+  sanitizeDateFieldForViewer,
   type CrmDateFieldSelection,
 } from "@/lib/crm-date-field-filter";
 const HEADER_PERSIST_KEY = "crm:lead-mgmt:header:v1";
@@ -109,7 +110,13 @@ export default function Header() {
   const [dateFrom, setDateFrom] = useState(persistedHeaderState.dateFrom ?? "");
   const [dateTo, setDateTo] = useState(persistedHeaderState.dateTo ?? "");
   const [dateField, setDateField] = useState<CrmDateFieldSelection>(() =>
-    parseCrmDateFieldSelection(persistedHeaderState.dateField ?? ""),
+    sanitizeDateFieldForViewer(
+      parseCrmDateFieldSelection(persistedHeaderState.dateField ?? ""),
+      leadsWorkspace,
+      typeof window !== "undefined"
+        ? normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "")
+        : "",
+    ),
   );
   const [milestoneStage, setMilestoneStage] = useState(
     persistedHeaderState.milestoneStage ?? "",
@@ -557,6 +564,16 @@ export default function Header() {
     },
     [],
   );
+
+  useEffect(() => {
+    const sanitized = sanitizeDateFieldForViewer(dateField, leadsWorkspace, currentRole);
+    if (sanitized === dateField) return;
+    setDateField(sanitized);
+    if (!sanitized) {
+      setDateFrom("");
+      setDateTo("");
+    }
+  }, [leadsWorkspace, currentRole, dateField]);
 
   useEffect(() => {
     if (!isToolbarDateFilterActive({ dateField, dateFrom, dateTo })) return;

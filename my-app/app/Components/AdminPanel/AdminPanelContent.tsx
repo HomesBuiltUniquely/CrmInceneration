@@ -1525,6 +1525,7 @@ interface ManagerRow {
 function ManagersSection() {
   const [rows, setRows] = useState<ManagerRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [toggleBusyId, setToggleBusyId] = useState<number | null>(null);
   const [viewerRole, setViewerRole] = useState("");
   const { notifySuccess, notifyError } = useGlobalNotifier();
 
@@ -1583,10 +1584,14 @@ function ManagersSection() {
   }, [canToggle]);
 
   const toggleStatus = (id: number, next: boolean) => {
+    if (toggleBusyId !== null) return;
+    const previous = rows.find((m) => m.id === id)?.status ?? !next;
+    setToggleBusyId(id);
+    setRows((prev) => prev.map((m) => (m.id === id ? { ...m, status: next } : m)));
     void adminPanelApi
       .setManagerStatus(id, next)
       .then((data) => {
-        load();
+        window.dispatchEvent(new Event("crm:sales-executive-status-changed"));
         const msg =
           typeof data.message === "string"
             ? data.message
@@ -1596,8 +1601,12 @@ function ManagersSection() {
         notifySuccess(msg);
       })
       .catch((e) => {
+        setRows((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, status: previous } : m)),
+        );
         notifyError(e instanceof Error ? e.message : "Status update failed.");
-      });
+      })
+      .finally(() => setToggleBusyId(null));
   };
 
   if (!canToggle) return null;
@@ -1659,7 +1668,15 @@ function ManagersSection() {
                   </td>
                   <td style={{ padding: "12px 14px", fontSize: 14 }}>{m.managerLabel}</td>
                   <td style={{ padding: "12px 14px" }}>
-                    <Toggle active={m.status} onChange={() => toggleStatus(m.id, !m.status)} />
+                    <Toggle
+                      active={m.status}
+                      onChange={() => toggleStatus(m.id, !m.status)}
+                    />
+                    {toggleBusyId === m.id ? (
+                      <span style={{ marginLeft: 8, fontSize: 11, color: C.muted }}>
+                        Saving…
+                      </span>
+                    ) : null}
                   </td>
                 </tr>
               ))

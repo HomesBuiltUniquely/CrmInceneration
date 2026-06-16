@@ -19,9 +19,10 @@ import { SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import { isAdminRole } from "@/lib/roleUtils";
 import {
-  CRM_DATE_FIELD_TOOLBAR_OPTIONS,
+  crmDateFieldToolbarOptionsForViewer,
   isToolbarDateFilterActive,
   parseCrmDateFieldSelection,
+  viewerShowsMeetingDateToolbarOption,
   type CrmDateFieldSelection,
 } from "@/lib/crm-date-field-filter";
 
@@ -464,6 +465,14 @@ export default function LeadsToolbar({
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
   const isSalesWorkspace = leadsWorkspace === "sales";
   const isPresalesWorkspace = leadsWorkspace === "presales";
+  const dateFieldToolbarOptions = useMemo(
+    () => crmDateFieldToolbarOptionsForViewer({ workspace: leadsWorkspace, role }),
+    [leadsWorkspace, role],
+  );
+  const showMeetingDateToolbar = viewerShowsMeetingDateToolbarOption({
+    workspace: leadsWorkspace,
+    role,
+  });
   const showMeetingQuoteTiles = isSalesManager || isSalesExecutive || isSalesAdmin;
   const meetingQuoteTiles = showMeetingQuoteTiles
     ? meetingQuoteLeadTypeTiles(leadTypeCounts)
@@ -1140,7 +1149,7 @@ export default function LeadsToolbar({
                 onChange={handleDraftDateFieldChange}
               >
                 <option value="">Select date field</option>
-                {CRM_DATE_FIELD_TOOLBAR_OPTIONS.map((opt) => (
+                {dateFieldToolbarOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
@@ -1191,8 +1200,12 @@ export default function LeadsToolbar({
               <option value="createdAt,asc">Created: Oldest</option>
               <option value="followUpDate,asc">Follow-up: Soonest</option>
               <option value="followUpDate,desc">Follow-up: Latest</option>
-              <option value="meetingDate,asc">Meeting: Soonest</option>
-              <option value="meetingDate,desc">Meeting: Latest</option>
+              {!showMeetingDateToolbar ? null : (
+                <>
+                  <option value="meetingDate,asc">Meeting: Soonest</option>
+                  <option value="meetingDate,desc">Meeting: Latest</option>
+                </>
+              )}
             </SelectField>
           </div>
         ) : null}
