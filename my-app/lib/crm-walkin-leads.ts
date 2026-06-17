@@ -153,6 +153,18 @@ function appendWalkInQueryParams(
   }
 }
 
+function shouldStopListPaging(
+  pageNum: number,
+  chunkLength: number,
+  perType: number,
+  totalPages: number,
+): boolean {
+  if (Number.isFinite(totalPages) && totalPages > 0) {
+    return pageNum + 1 >= totalPages;
+  }
+  return chunkLength < perType;
+}
+
 async function fetchWalkInFromFilterAlias(
   ctx: WalkInFetchContext,
   filterLeadType: string,
@@ -173,8 +185,7 @@ async function fetchWalkInFromFilterAlias(
     if (chunk.length === 0) break;
     all.push(...chunk);
     const totalPages = Math.max(1, Number(pageData.totalPages ?? 1));
-    if (pageNum + 1 >= totalPages) break;
-    if (chunk.length < ctx.perType) break;
+    if (shouldStopListPaging(pageNum, chunk.length, ctx.perType, totalPages)) break;
   }
   return tagWalkInLeads(all);
 }
@@ -207,8 +218,7 @@ async function fetchWalkInFromDirectList(
     const { content, totalPages } = parseListPayload(json);
     if (content.length === 0) break;
     all.push(...content);
-    if (pageNum + 1 >= totalPages) break;
-    if (content.length < ctx.perType) break;
+    if (shouldStopListPaging(pageNum, content.length, ctx.perType, totalPages)) break;
   }
   if (gotOk) {
     return { leads: tagWalkInLeads(all), apiUnavailable: false };
