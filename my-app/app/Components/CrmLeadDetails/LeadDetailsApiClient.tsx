@@ -2151,6 +2151,10 @@ export default function LeadDetailsApiClient({
       lostReason: args.lostReason?.trim()
         ? args.lostReason.trim()
         : lead.lostReason,
+      budget: args.budget !== undefined ? args.budget : lead.budget,
+      propertyNotes: args.propertyNotes !== undefined ? args.propertyNotes : lead.propertyNotes,
+      configuration: args.configuration !== undefined ? args.configuration : lead.configuration,
+      bookingType: args.bookingType !== undefined ? args.bookingType : lead.bookingType,
       possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
       stageBlock: {
         ...lead.stageBlock,
