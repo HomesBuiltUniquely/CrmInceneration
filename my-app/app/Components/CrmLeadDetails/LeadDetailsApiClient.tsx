@@ -593,6 +593,7 @@ const SOURCE_LABELS: Record<CrmLeadType, string> = {
   addlead: "Add Lead",
   websitelead: "Website Lead",
   walkinlead: "Walk-in Lead",
+  whatsapplead: "WhatsApp",
 };
 
 function parseDateLoose(input: unknown): Date | null {

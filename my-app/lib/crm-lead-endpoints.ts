@@ -8,11 +8,15 @@ export const LEAD_TYPE_TO_BASE: Record<CrmLeadType, string> = {
   addlead: "/v1/AddLead",
   websitelead: "/v1/WebsiteLead",
   walkinlead: "/v1/WalkinLead",
+  whatsapplead: "/v1/WhatsappLead",
 };
 
 export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
   if (leadType === "walkinlead") {
     return `${LEAD_TYPE_TO_BASE.walkinlead}/${id}`;
+  }
+  if (leadType === "whatsapplead") {
+    return `${LEAD_TYPE_TO_BASE.whatsapplead}/${id}`;
   }
   return `${LEAD_TYPE_TO_BASE[leadType]}/details/${id}`;
 }

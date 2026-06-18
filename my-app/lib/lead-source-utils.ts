@@ -39,6 +39,7 @@ export function normalizeLeadTypeLabel(raw: unknown): string {
   if (compact === "alead" || compact === "addlead") return "Add Lead";
   if (compact === "wlead" || compact === "websitelead") return "Website Lead";
   if (compact === "walkinlead" || compact === "walkin") return "Walk-in Lead";
+  if (compact === "whatsapplead" || compact === "whatsapp") return "WhatsApp";
   return original;
 }
 

@@ -12,6 +12,7 @@ const CRM_TO_FLOOR_PLAN: Record<CrmLeadType, string> = {
   formlead: "form",
   addlead: "add",
   walkinlead: "walkin",
+  whatsapplead: "whatsapp",
 };
 
 /** CRM detail `leadType` → `/v1/leads/{segment}/…/floor-plan` segment. */
@@ -28,6 +29,7 @@ export function toFloorPlanLeadType(source: string): string {
   if (["form", "form-lead", "external", "fl", "formlead"].includes(s)) return "form";
   if (["add", "add-lead", "al", "addlead"].includes(s)) return "add";
   if (["walkin", "walk-in", "walk-in-lead", "walkinlead"].includes(s)) return "walkin";
+  if (["whatsapp", "whatsapplead"].includes(s)) return "whatsapp";
   throw new Error(`Unknown lead source for floor plan: ${source}`);
 }
 

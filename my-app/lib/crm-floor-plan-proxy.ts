@@ -13,6 +13,7 @@ const SEGMENT_TO_CRM: Record<string, CrmLeadType> = {
   form: "formlead",
   add: "addlead",
   walkin: "walkinlead",
+  whatsapp: "whatsapplead",
 };
 
 export function crmFloorPlanContentProxyPath(leadType: CrmLeadType, id: string): string {

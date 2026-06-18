@@ -573,11 +573,11 @@ async function fetchMergedPage(
         : explicitVerification ||
           defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
 
-  /** Walk-in lives on `/v1/WalkinLead`, not the admin assignee pool — always use merge route. */
-  if (normalizedLeadType === "walkinlead") {
+  /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge route. */
+  if (normalizedLeadType === "walkinlead" || normalizedLeadType === "whatsapplead") {
     const qs = new URLSearchParams();
     qs.set("mergeAll", "1");
-    qs.set("leadType", "walkinlead");
+    qs.set("leadType", normalizedLeadType);
     qs.set("milestoneScope", "crm");
     qs.set("page", String(page));
     qs.set("size", String(size));
@@ -934,6 +934,7 @@ function toAssignmentLeadType(leadType: string): string {
   if (leadType === "addlead") return "Add Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";
+  if (leadType === "whatsapplead") return "WhatsApp";
   return "Form Lead";
 }
 
@@ -986,6 +987,7 @@ function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "mlead") return "bulk-delete-mleads";
   if (leadType === "addlead") return "bulk-delete-addleads";
   if (leadType === "walkinlead") return "bulk-delete-walkinleads";
+  if (leadType === "whatsapplead") return "bulk-delete-whatsappleads";
   return "bulk-delete-websiteleads";
 }
 
@@ -995,6 +997,7 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
   if (leadType === "walkinlead") return "delete-all-walkinleads";
+  if (leadType === "whatsapplead") return "delete-all-whatsappleads";
   return "delete-all-websiteleads";
 }
 
@@ -3219,7 +3222,9 @@ export default function LeadsDataSection({
   const hasMilestoneFilter = Boolean(
     milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
   );
-  const walkInTableView = leadType.trim().toLowerCase() === "walkinlead";
+  const walkInTableView =
+    leadType.trim().toLowerCase() === "walkinlead" ||
+    leadType.trim().toLowerCase() === "whatsapplead";
   const content = adminMilestoneTableActive
     ? contentFromApi
     : hasMilestoneFilter && !walkInTableView
@@ -3632,7 +3637,15 @@ export default function LeadsDataSection({
         if (!res.ok) throw new Error("Delete-all failed.");
         notifyInfo(deleteNoticeText(currentRole, `Delete All (${toAssignmentLeadType(leadType)})`));
       } else {
-        const targets = ["formlead", "glead", "mlead", "addlead", "websitelead", "walkinlead"] as const;
+        const targets = [
+          "formlead",
+          "glead",
+          "mlead",
+          "addlead",
+          "websitelead",
+          "walkinlead",
+          "whatsapplead",
+        ] as const;
         const results = await Promise.all(
           targets.map(async (t) => {
             const res = await fetch(`/api/admin/${toAdminDeleteAllPath(t)}`, {
