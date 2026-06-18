@@ -1,63 +1,239 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 type Props = {
   leadType: string;
   leadId: string;
 };
 
-const sections = [
-  "Basic Understanding",
-  "Requirement Scope",
-  "Reference & Inspiration",
-  "Financial Guardrails",
-  "Internal Executive Notes",
+type ScopeSectionId =
+  | "basic-understanding"
+  | "requirements"
+  | "reference-inspiration"
+  | "budget-alignment"
+  | "internal-notes";
+
+const scopeNavItems: {
+  id: ScopeSectionId;
+  label: string;
+  status?: "done" | "detailed";
+  icon: "understanding" | "requirements" | "reference" | "budget" | "notes";
+}[] = [
+  { id: "basic-understanding", label: "Basic Understanding", status: "done", icon: "understanding" },
+  { id: "requirements", label: "Requirements", status: "detailed", icon: "requirements" },
+  { id: "reference-inspiration", label: "Reference & Inspiration", icon: "reference" },
+  { id: "budget-alignment", label: "Budget Alignment", icon: "budget" },
+  { id: "internal-notes", label: "Internal Notes", icon: "notes" },
 ];
 
 export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
+  const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
+
+  const scrollToSection = useCallback((sectionId: ScopeSectionId) => {
+    setActiveSectionId(sectionId);
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  useEffect(() => {
+    const sectionElements = scopeNavItems
+      .map((item) => document.getElementById(item.id))
+      .filter((element): element is HTMLElement => Boolean(element));
+
+    if (!sectionElements.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntries = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+
+        const topEntry = visibleEntries[0];
+        if (topEntry?.target.id) {
+          setActiveSectionId(topEntry.target.id as ScopeSectionId);
+        }
+      },
+      {
+        rootMargin: "-12% 0px -55% 0px",
+        threshold: [0.15, 0.35, 0.55, 0.75],
+      },
+    );
+
+    sectionElements.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <main className="min-h-screen bg-[#f3f5f7] px-4 py-6 md:px-6">
-      <div className="mx-auto grid max-w-[1320px] gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="rounded-xl border border-[#dfe5ec] bg-white p-4">
-          <h2 className="text-2xl font-extrabold text-[#0f172a]">DesignScope CRM</h2>
-          <p className="mt-2 text-xs font-semibold text-[#6c788b]">
-            Project Lead: Amit Sharma • LID-8842
-          </p>
-          <ul className="mt-5 space-y-2">
-            {sections.map((section, idx) => (
-              <li
-                key={section}
-                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
-                  idx === 1
-                    ? "border-[#f4c66f] bg-[#fff8ea] text-[#9a5c00]"
-                    : idx === 0
-                      ? "border-[#16d45f] bg-[#f2fff6] text-[#0c8f3f]"
-                      : "border-[#e6ebf2] bg-white text-[#4a5565]"
-                }`}
+      <div className="mx-auto grid max-w-[1320px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="sticky top-6 flex h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-white">
+          <div className="flex min-h-0 flex-1 flex-col px-4 py-4 lg:py-5">
+            <div className="shrink-0">
+              <h2 className="text-[22px] font-extrabold leading-tight text-[#101828]">Scope Sections</h2>
+              <p className="mt-1 text-[12px] font-semibold text-[#9ca3af]">7 Total Sections</p>
+            </div>
+
+            <ul className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+              {scopeNavItems.map((item, idx) => {
+                const isActive = activeSectionId === item.id;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => scrollToSection(item.id)}
+                      aria-current={isActive ? "true" : undefined}
+                      className={`group relative flex w-full items-center gap-3.5 overflow-hidden rounded-lg border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
+                        isActive
+                          ? "border-[#e5e7eb] bg-[#f3f4f6] shadow-sm"
+                          : "border-transparent bg-white hover:border-[#e5e7eb] hover:bg-[#f9fafb] hover:shadow-sm"
+                      }`}
+                    >
+                      {isActive ? (
+                        <div className="absolute top-0 right-0 h-full w-1 bg-[#f97316]" aria-hidden="true" />
+                      ) : null}
+                      <ScopeNavIcon type={item.icon} active={isActive} />
+                      <span
+                        className={`min-w-0 flex-1 text-[13px] font-semibold ${
+                          isActive ? "text-[#111827]" : "text-[#374151]"
+                        }`}
+                      >
+                        {idx + 1}. {item.label}
+                      </span>
+                      {item.status === "done" ? (
+                        <span className="shrink-0 rounded bg-[#dcfce7] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#16a34a]">
+                          Done
+                        </span>
+                      ) : null}
+                      {item.status === "detailed" ? (
+                        <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-[#ea580c]">
+                          Detailed
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="mt-4 shrink-0 space-y-4 border-t border-[#eef1f5] pt-4">
+              <div className="relative overflow-hidden rounded-xl bg-[#0f1b38] p-4">
+                <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#94a3b8]">Conversion Chance</p>
+                <p className="mt-1 text-[28px] font-black leading-none text-white">High</p>
+                <svg
+                  viewBox="0 0 80 40"
+                  className="absolute right-2 bottom-2 h-10 w-20 text-[#1e293b]"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 32 20 22 36 26 52 14 68 8" />
+                </svg>
+              </div>
+
+              <Link
+                href={`/Leads/new/${leadType}/${leadId}`}
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-black uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
               >
-                {idx + 1}. {section}
-              </li>
-            ))}
-          </ul>
-          <Link
-            href={`/Leads/new/${leadType}/${leadId}`}
-            className="mt-5 inline-flex rounded-lg border border-[#d2dae5] px-3 py-2 text-xs font-semibold text-[#1f2937]"
-          >
-            Back To Lead Details
-          </Link>
+                Back To Lead Details
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M19 12H5" />
+                  <path d="m12 19-7-7 7-7" />
+                </svg>
+              </Link>
+            </div>
+          </div>
         </aside>
 
         <section className="space-y-4">
-          <BasicUnderstandingSection />
-          <RequirementScopeSection />
-          <ReferenceInspirationSection />
-          <FinancialGuardrailsSection />
-          <InternalExecutiveNotesSection />
+          <div id="basic-understanding" className="scroll-mt-24">
+            <BasicUnderstandingSection />
+          </div>
+          <div id="requirements" className="scroll-mt-24">
+            <RequirementScopeSection />
+          </div>
+          <div id="reference-inspiration" className="scroll-mt-24">
+            <ReferenceInspirationSection />
+          </div>
+          <div id="budget-alignment" className="scroll-mt-24">
+            <FinancialGuardrailsSection />
+          </div>
+          <div id="internal-notes" className="scroll-mt-24">
+            <InternalExecutiveNotesSection />
+          </div>
         </section>
       </div>
     </main>
+  );
+}
+
+function ScopeNavIcon({
+  type,
+  active = false,
+}: {
+  type: "understanding" | "requirements" | "reference" | "budget" | "notes";
+  active?: boolean;
+}) {
+  const className = `h-4 w-4 shrink-0 transition-colors duration-200 ${
+    active ? "text-[#059669]" : "text-[#6b7280] group-hover:text-[#374151]"
+  }`;
+
+  if (type === "understanding") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+    );
+  }
+  if (type === "requirements") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <line x1="8" y1="6" x2="21" y2="6" />
+        <line x1="8" y1="12" x2="21" y2="12" />
+        <line x1="8" y1="18" x2="21" y2="18" />
+        <line x1="3" y1="6" x2="3.01" y2="6" />
+        <line x1="3" y1="12" x2="3.01" y2="12" />
+        <line x1="3" y1="18" x2="3.01" y2="18" />
+      </svg>
+    );
+  }
+  if (type === "reference") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <circle cx="8.5" cy="8.5" r="1.5" />
+        <path d="m21 15-5-5L5 21" />
+      </svg>
+    );
+  }
+  if (type === "budget") {
+    return (
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
   );
 }
 
