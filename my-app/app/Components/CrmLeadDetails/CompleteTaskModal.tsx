@@ -107,6 +107,10 @@ export type PresalesCompleteTaskApiPayload = {
   nextCallDateLocal: string;
   /** Sent as `resone` on PUT when path category is LOST. */
   lostReason?: string;
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
+  bookingType?: string;
   possessionDate?: string;
 };
 
@@ -874,7 +878,11 @@ export default function CompleteTaskModal({
           note: note.trim(),
           nextCallDateLocal: nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
-          possessionDate: isHoldSubstageSelected ? modalPossessionDate.trim() : undefined,
+          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
+          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
+          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
+          bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+          possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
         });
         onClose();
       } catch (e) {

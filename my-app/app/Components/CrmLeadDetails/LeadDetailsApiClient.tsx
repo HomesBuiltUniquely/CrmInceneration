@@ -57,6 +57,7 @@ import {
   isCloserStageBookingDone,
   maybeOpenSalesClosureOnWon,
 } from "@/lib/sales-closure";
+import { clearFollowUpDateAliases, FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import {
@@ -2151,6 +2152,10 @@ export default function LeadDetailsApiClient({
       lostReason: args.lostReason?.trim()
         ? args.lostReason.trim()
         : lead.lostReason,
+      budget: args.budget !== undefined ? args.budget : lead.budget,
+      propertyNotes: args.propertyNotes !== undefined ? args.propertyNotes : lead.propertyNotes,
+      configuration: args.configuration !== undefined ? args.configuration : lead.configuration,
+      bookingType: args.bookingType !== undefined ? args.bookingType : lead.bookingType,
       possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
       stageBlock: {
         ...lead.stageBlock,
@@ -2162,6 +2167,9 @@ export default function LeadDetailsApiClient({
       mergePresalesMilestoneIntoDetail(baseDetail, nextPresalesStage),
       leadForSave,
     );
+    if (noFollowUpNeeded) {
+      clearFollowUpDateAliases(body);
+    }
     const updated = await putLeadDetail(lt, leadId, body);
     setBaseDetail(updated);
     setLead((prev) => ({
@@ -2335,14 +2343,17 @@ export default function LeadDetailsApiClient({
             : lead.lostReason,
         };
         const body = mergeLeadIntoDetail(baseDetail, leadForSave);
+        if (noFollowUpNeeded) {
+          body.followUpDate = null;
+        }
         let updated = await putLeadDetail(lt, leadId, body);
-        if (followUpDate.trim() || meetingDate.trim()) {
+        if (followUpDate.trim() || meetingDate.trim() || noFollowUpNeeded) {
           const mirrorMeetingFromFollowUp =
             isMeetingScheduleSubstage(persistedSubstage) ||
             Boolean(args.meetingAppointment);
           try {
             updated = await putHubScheduleDates(lt, leadId, {
-              followUpDate: followUpDate.trim() || undefined,
+              followUpDate: noFollowUpNeeded ? FOLLOW_UP_DATE_CLEAR_SENTINEL : (followUpDate.trim() || undefined),
               meetingDate: meetingDate.trim() || undefined,
               mirrorFollowUpToMeeting: mirrorMeetingFromFollowUp,
             });
