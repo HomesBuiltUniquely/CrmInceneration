@@ -14,6 +14,14 @@ import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import { LOST_SEGMENT_TILES } from "@/lib/lead-lost-segment";
 import type { LeadSourceCounts } from "@/lib/leads-filter";
+import {
+  ADMIN_SOURCE_LEAD_TYPE_TILES,
+  defaultLeadTypeCountPool,
+  leadSourceCountsForPool,
+  leadTypeTileClickFiltersTable,
+  type CrossPoolLeadTypeCounts,
+  type LeadTypeCountPool,
+} from "@/lib/lead-type-tile-pool";
 import { normalizeRole } from "@/lib/auth/api";
 import { isSalesPoolNoMilestoneFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
@@ -270,6 +278,8 @@ type LeadsToolbarProps = {
   adminTotalLeadsDisplay?: { uniquePrimary: number; totalRows: number };
   /** SUPER_ADMIN search only: separate Sales / Presales pool match counts. */
   superAdminSearchPoolTotals?: { sales: number; presales: number };
+  /** SUPER_ADMIN only: sales + presales per-source counts for pool toggle. */
+  crossPoolLeadTypeCounts?: CrossPoolLeadTypeCounts;
   /** True while SUPER_ADMIN has active cross-pool search (show Sales/Presales pills). */
   superAdminCrossPoolSearchActive?: boolean;
   /** When set (e.g. from `Header`), used for badge / role checks on first paint so exec assignee scoping is not counted as a filter. */
@@ -338,6 +348,7 @@ export default function LeadsToolbar({
   totalLeadsSecondaryTitle,
   adminTotalLeadsDisplay,
   superAdminSearchPoolTotals,
+  crossPoolLeadTypeCounts,
   superAdminCrossPoolSearchActive = false,
   authRole = "",
   viewerRole = "",
@@ -398,6 +409,9 @@ export default function LeadsToolbar({
   const [callsTileMode, setCallsTileMode] = useState<"totalCalls" | "callDelayed">(() =>
     insightActive === "callDelayed" ? "callDelayed" : "totalCalls",
   );
+  const [leadTypeCountPool, setLeadTypeCountPool] = useState<LeadTypeCountPool>(() =>
+    defaultLeadTypeCountPool(leadsWorkspace),
+  );
   const activeCallsTileMode =
     insightActive === "callDelayed" || insightActive === "totalCalls"
       ? insightActive
@@ -425,25 +439,60 @@ export default function LeadsToolbar({
     isAdminPoolViewer &&
     leadTypeCountsPrimary !== undefined &&
     leadTypeCountsPrimary.all > 0;
-  const adminSourceLeadTypeTiles = useMemo((): Array<[string, number]> => {
-    const counts =
-      adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
-        ? leadTypeCountsPrimary
-        : leadTypeCounts;
-    return [
-      ["External Lead", counts.formlead ?? 0],
-      ["Google Ads", counts.glead ?? 0],
-      ["Meta Ads", counts.mlead ?? 0],
-      ["Add Lead", counts.addlead ?? 0],
-      ["Website Lead", counts.websitelead ?? 0],
-      ["Walk-in Lead", counts.walkinlead ?? 0],
-      ["WhatsApp", counts.whatsapplead ?? 0],
-    ];
+  const fallbackSourceCounts: LeadSourceCounts = useMemo(() => {
+    if (adminPoolUsesPrimaryCounts && leadTypeCountsPrimary) {
+      return leadTypeCountsPrimary;
+    }
+    return {
+      all: Number(leadTypeCounts.all ?? 0),
+      formlead: Number(leadTypeCounts.formlead ?? 0),
+      glead: Number(leadTypeCounts.glead ?? 0),
+      mlead: Number(leadTypeCounts.mlead ?? 0),
+      addlead: Number(leadTypeCounts.addlead ?? 0),
+      websitelead: Number(leadTypeCounts.websitelead ?? 0),
+      walkinlead: Number(leadTypeCounts.walkinlead ?? 0),
+      whatsapplead: Number(leadTypeCounts.whatsapplead ?? 0),
+    };
   }, [adminPoolUsesPrimaryCounts, leadTypeCounts, leadTypeCountsPrimary]);
+  const showLeadTypePoolToggle = isSuperAdmin && Boolean(crossPoolLeadTypeCounts);
+  const pooledSourceCounts = useMemo(
+    () =>
+      leadSourceCountsForPool(leadTypeCountPool, crossPoolLeadTypeCounts, fallbackSourceCounts),
+    [leadTypeCountPool, crossPoolLeadTypeCounts, fallbackSourceCounts],
+  );
+  const sourceTileClickFilters = leadTypeTileClickFiltersTable(
+    leadTypeCountPool,
+    leadsWorkspace,
+  );
+  useEffect(() => {
+    setLeadTypeCountPool(defaultLeadTypeCountPool(leadsWorkspace));
+  }, [leadsWorkspace]);
+  const adminSourceLeadTypeTiles = useMemo(
+    () =>
+      ADMIN_SOURCE_LEAD_TYPE_TILES.map((tile) => ({
+        ...tile,
+        value: Number(pooledSourceCounts[tile.leadTypeKey] ?? 0),
+      })),
+    [pooledSourceCounts],
+  );
+  const adminPoolAllCount = pooledSourceCounts.all ?? 0;
   const adminPoolPrimaryTotal =
     adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
       ? leadTypeCountsPrimary.all
-      : undefined;
+      : showLeadTypePoolToggle
+        ? adminPoolAllCount
+        : undefined;
+  const sourceTileLeadTypeByLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const tile of ADMIN_SOURCE_LEAD_TYPE_TILES) {
+      map.set(tile.label, tile.leadTypeKey);
+    }
+    return map;
+  }, []);
+  const adminSourceLeadTypeRows = useMemo(
+    () => adminSourceLeadTypeTiles.map((tile) => [tile.label, tile.value] as [string, number]),
+    [adminSourceLeadTypeTiles],
+  );
   const adminPoolAllRowsTotal =
     showAdminPoolDualTotals && leadTypeCountsAllRows ? leadTypeCountsAllRows.all : undefined;
   const totalLeadsPillPrimary =
@@ -645,6 +694,17 @@ export default function LeadsToolbar({
     onSortChange("updatedAt,desc");
   };
 
+  const resetLeadTypesPanel = () => {
+    resetFilter();
+    setLeadTypeCountPool(defaultLeadTypeCountPool(leadsWorkspace));
+  };
+
+  /** Same reset as reload / Reset, then apply the clicked source tile. */
+  const applyLeadTypeTileFilter = (leadTypeFilterKey: string) => {
+    resetFilter();
+    onLeadTypeChange(leadTypeFilterKey);
+  };
+
   return (
     <section className="mx-auto mt-4 max-w-[1200px] px-6">
       <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3 shadow-[var(--crm-shadow-sm)]">
@@ -749,22 +809,61 @@ export default function LeadsToolbar({
         {openLeadTypes ? (
           <div className="mt-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <div>
-                <div className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Lead Types</div>
-                {isSalesAdmin ? (
-                  <p className="mt-0.5 text-[11px] font-normal text-[var(--crm-text-muted)]">
-                    Follow-up and overdue tiles count unique customers (one per phone), not the sum of each
-                    sales manager&apos;s team.
-                  </p>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                <div>
+                  <div className="text-[13px] font-semibold text-[var(--crm-text-primary)]">Lead Types</div>
+                  {isSalesAdmin ? (
+                    <p className="mt-0.5 text-[11px] font-normal text-[var(--crm-text-muted)]">
+                      Follow-up and overdue tiles count unique customers (one per phone), not the sum of each
+                      sales manager&apos;s team.
+                    </p>
+                  ) : null}
+                </div>
+                {showLeadTypePoolToggle ? (
+                  <div
+                    className="inline-flex shrink-0 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-0.5"
+                    role="group"
+                    aria-label="Lead type count pool"
+                  >
+                    {(
+                      [
+                        ["sales", "Sales"],
+                        ["presales", "Presales"],
+                        ["total", "Total"],
+                      ] as const
+                    ).map(([pool, label]) => (
+                      <button
+                        key={pool}
+                        type="button"
+                        onClick={() => setLeadTypeCountPool(pool)}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                          leadTypeCountPool === pool
+                            ? "bg-[var(--crm-surface)] text-[var(--crm-accent)] shadow-sm ring-1 ring-[var(--crm-accent-ring)]"
+                            : "text-[var(--crm-text-secondary)] hover:text-[var(--crm-text-primary)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={() => setOpenLeadTypes(false)}
-                className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
-              >
-                Close
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resetLeadTypesPanel}
+                  className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] transition-colors hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface-subtle)]"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpenLeadTypes(false)}
+                  className="rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-subtle)]"
+                >
+                  Close
+                </button>
+              </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
               {(isSalesExecutive
@@ -795,8 +894,8 @@ export default function LeadsToolbar({
                       ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                       ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                       ...meetingQuoteTiles,
-                        ...adminSourceLeadTypeTiles,
-                      ]
+                      ...adminSourceLeadTypeRows,
+                    ]
                   : isSalesAdmin
                     ? [
                         [callsTileLabel, callsTileValue],
@@ -805,23 +904,38 @@ export default function LeadsToolbar({
                         ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                         ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                         ...meetingQuoteTiles,
-                        ...adminSourceLeadTypeTiles,
+                        ...adminSourceLeadTypeRows,
                       ]
                   : isPresalesRole(role)
-                    ? [...adminSourceLeadTypeTiles]
+                    ? [...adminSourceLeadTypeRows]
                   : [
                       [
                         isAdminPoolViewer ? "Sales pool (all assignees)" : "My Assigned Leads",
-                        adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
-                          ? leadTypeCountsPrimary.all
-                          : (leadTypeCounts.all ?? 0),
+                        showLeadTypePoolToggle
+                          ? adminPoolAllCount
+                          : adminPoolUsesPrimaryCounts && leadTypeCountsPrimary
+                            ? leadTypeCountsPrimary.all
+                            : (leadTypeCounts.all ?? 0),
                       ],
-                      ...adminSourceLeadTypeTiles,
+                      ...adminSourceLeadTypeRows,
                     ]).map(([label, value]) => {
                 const tileLabel = String(label);
                 const insightKey = insightKeyForLeadTypeLabel(tileLabel);
-                const interactive = Boolean(insightKey && onInsightNavigate);
-                const isActive = Boolean(insightKey && insightActive === insightKey);
+                const isSalesPoolTile = tileLabel === "Sales pool (all assignees)";
+                const sourceLeadTypeKey = sourceTileLeadTypeByLabel.get(tileLabel);
+                const leadTypeFilterKey = isSalesPoolTile ? "all" : sourceLeadTypeKey;
+                const leadTypeTileInteractive =
+                  sourceTileClickFilters &&
+                  Boolean(leadTypeFilterKey) &&
+                  isAdminPoolViewer &&
+                  Boolean(onLeadTypeChange);
+                const interactive = Boolean(
+                  (insightKey && onInsightNavigate) || leadTypeTileInteractive,
+                );
+                const isActive = Boolean(
+                  (insightKey && insightActive === insightKey) ||
+                    (leadTypeTileInteractive && leadType === leadTypeFilterKey),
+                );
                 const tileClass = `rounded-xl border px-3 py-4 text-center transition-colors ${
                   isActive
                     ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
@@ -847,6 +961,18 @@ export default function LeadsToolbar({
                           onInsightNavigate?.(nextMode);
                         }
                       }}
+                      className={tileClass}
+                    >
+                      {inner}
+                    </button>
+                  );
+                }
+                if (leadTypeTileInteractive && leadTypeFilterKey) {
+                  return (
+                    <button
+                      key={tileLabel}
+                      type="button"
+                      onClick={() => applyLeadTypeTileFilter(leadTypeFilterKey)}
                       className={tileClass}
                     >
                       {inner}

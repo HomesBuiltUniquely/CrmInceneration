@@ -1,18 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, LeadSourceCounts, LeadSummaryTotals, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES, crmLeadTopLevelStage } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES, crmLeadTopLevelStage, parseLeadSortTimestamp } from "@/lib/leads-filter";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
-import { fetchWhatsappLeadsForMerge } from "@/lib/crm-whatsapp-leads";
+import {
+  augmentLeadSourceCountsWithWalkIn,
+  fetchWalkInLeadsForMerge,
+  walkInHubUnavailableMessage,
+} from "@/lib/crm-walkin-leads";
+import {
+  augmentLeadSourceCountsWithWhatsapp,
+  fetchWhatsappLeadsForMerge,
+  whatsappHubUnavailableMessage,
+} from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
-import { leadMatchesWorkspaceMilestoneFilter } from "@/lib/crm-workspace";
+import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
 import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
 
@@ -46,10 +54,7 @@ const NEW_CRM_GLOBAL_SEARCH_ROLES = new Set([
 ]);
 
 function parseUpdatedAt(a: ApiLead): number {
-  const u = a.updatedAt;
-  if (!u) return 0;
-  const t = Date.parse(u);
-  return Number.isNaN(t) ? 0 : t;
+  return parseLeadSortTimestamp(a);
 }
 
 function norm(v: string | null | undefined) {
@@ -87,6 +92,35 @@ function computeSourceCounts(leads: ApiLead[]): LeadSourceCounts {
     counts.all += 1;
   }
   return counts;
+}
+
+/** Hub admin pool / mergeAll may omit walk-in + WhatsApp — fold filter counts into `all`. */
+async function augmentMergeSourceCounts(
+  req: NextRequest,
+  url: URL,
+  effDates: { from: string; to: string },
+  sort: string,
+  search: string,
+  counts: LeadSourceCounts,
+): Promise<LeadSourceCounts> {
+  const extraParams = LEADS_EXTRA_PARAMS.map((key) => ({
+    key,
+    value: extraParamValue(url, key, effDates),
+  }));
+  const ctx = {
+    req,
+    sort,
+    search,
+    effDates,
+    extraParams,
+  };
+  try {
+    let augmented = await augmentLeadSourceCountsWithWalkIn(counts, ctx);
+    augmented = await augmentLeadSourceCountsWithWhatsapp(augmented, ctx);
+    return augmented;
+  } catch {
+    return counts;
+  }
 }
 
 function computeSummaryTotals(leads: ApiLead[]): LeadSummaryTotals {
@@ -157,6 +191,58 @@ const LEADS_EXTRA_PARAMS = [
   "verificationStatus",
   "reinquiry",
 ] as const;
+
+function buildLeadsExtraParams(
+  url: URL,
+  effDates: { from: string; to: string },
+): Array<{ key: string; value: string }> {
+  return LEADS_EXTRA_PARAMS.map((key) => ({
+    key,
+    value: extraParamValue(url, key, effDates),
+  }));
+}
+
+/**
+ * Walk-in / WhatsApp in merged `leadType=all` use per-source verification defaults
+ * (e.g. admins see unverified WhatsApp) — not the global sales `verified` inbox filter.
+ */
+function buildDedicatedMergeExtraParams(
+  url: URL,
+  effDates: { from: string; to: string },
+  dedicatedLeadType: "walkinlead" | "whatsapplead",
+  leadTypeParam: string,
+  viewerRoleKey: string,
+  usePresalesSearchPool: boolean,
+): Array<{ key: string; value: string }> {
+  const params = buildLeadsExtraParams(url, effDates);
+  if (leadTypeParam !== "all") return params;
+  const workspace: CrmWorkspace = usePresalesSearchPool ? "presales" : "sales";
+  const typeVs = defaultVerificationForLeadTypeFilter(
+    dedicatedLeadType,
+    workspace,
+    "",
+    viewerRoleKey,
+  );
+  return params.map((p) =>
+    p.key === "verificationStatus" ? { key: p.key, value: typeVs } : p,
+  );
+}
+
+function mergeUniqueLeadsIntoMap(
+  byId: Map<string, ApiLead>,
+  leads: ApiLead[],
+  fallbackLeadType: (typeof CRM_LEAD_TYPES)[number],
+): void {
+  for (const lead of leads) {
+    const id = leadStableIdentifier(lead);
+    if (!id) continue;
+    if (byId.has(id)) continue;
+    byId.set(id, {
+      ...lead,
+      leadType: normalizeLeadTypeKey(lead.leadType ?? fallbackLeadType),
+    });
+  }
+}
 
 /** Presales inbox: Hub often returns 0 when milestone params are forwarded — filter in BFF only. */
 const PRESALES_CLIENT_MILESTONE_KEYS = new Set([
@@ -529,7 +615,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
+    const presalesPerType = 1000;
+    const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(
       req,
       url,
@@ -538,8 +626,46 @@ export async function GET(req: NextRequest) {
       search,
       usePresalesSearchPool,
     );
+    const [walkInResult, whatsappResult] = await Promise.all([
+      fetchWalkInLeadsForMerge({
+        req,
+        sort,
+        search,
+        effDates,
+        extraParams: buildDedicatedMergeExtraParams(
+          url,
+          effDates,
+          "walkinlead",
+          leadTypeParam,
+          viewerRoleKey,
+          usePresalesSearchPool,
+        ),
+        perType: presalesPerType,
+        maxPages: presalesMaxPages,
+      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
+      fetchWhatsappLeadsForMerge({
+        req,
+        sort,
+        search,
+        effDates,
+        extraParams: buildDedicatedMergeExtraParams(
+          url,
+          effDates,
+          "whatsapplead",
+          leadTypeParam,
+          viewerRoleKey,
+          usePresalesSearchPool,
+        ),
+        perType: presalesPerType,
+        maxPages: presalesMaxPages,
+      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
+    ]);
+    const byId = new Map<string, ApiLead>();
+    mergeUniqueLeadsIntoMap(byId, presalesRows, "formlead");
+    mergeUniqueLeadsIntoMap(byId, walkInResult.leads, "walkinlead");
+    mergeUniqueLeadsIntoMap(byId, whatsappResult.leads, "whatsapplead");
     const merged = filterAndSortMergedLeads(
-      presalesRows,
+      [...byId.values()],
       url,
       effDates,
       usePresalesMilestoneFilters,
@@ -555,7 +681,14 @@ export async function GET(req: NextRequest) {
       totalPages: Math.max(1, Math.ceil(merged.length / pageSize)),
       number: pageNum,
       size: pageSize,
-      sourceCounts: computeSourceCounts(merged),
+      sourceCounts: await augmentMergeSourceCounts(
+        req,
+        url,
+        effDates,
+        sort,
+        search,
+        computeSourceCounts(merged),
+      ),
       summaryTotals: computeSummaryTotals(merged),
     };
     return NextResponse.json(body);
@@ -582,10 +715,6 @@ export async function GET(req: NextRequest) {
     ? 1000
     : Math.min(500, Math.max(100, Number.parseInt(size, 10) * 25 || 200));
   const maxPagesPerType = isPresalesPool ? 200 : 100;
-  const walkInExtraParams = LEADS_EXTRA_PARAMS.map((key) => ({
-    key,
-    value: extraParamValue(url, key, effDates),
-  }));
 
   const fetches = selectedTypes.map(async (leadType) => {
     if (leadType === "walkinlead") {
@@ -595,7 +724,14 @@ export async function GET(req: NextRequest) {
           sort,
           search,
           effDates,
-          extraParams: walkInExtraParams,
+          extraParams: buildDedicatedMergeExtraParams(
+            url,
+            effDates,
+            "walkinlead",
+            leadTypeParam,
+            viewerRoleKey,
+            usePresalesSearchPool,
+          ),
           perType,
           maxPages: maxPagesPerType,
         });
@@ -611,7 +747,14 @@ export async function GET(req: NextRequest) {
           sort,
           search,
           effDates,
-          extraParams: walkInExtraParams,
+          extraParams: buildDedicatedMergeExtraParams(
+            url,
+            effDates,
+            "whatsapplead",
+            leadTypeParam,
+            viewerRoleKey,
+            usePresalesSearchPool,
+          ),
           perType,
           maxPages: maxPagesPerType,
         });
@@ -679,6 +822,16 @@ export async function GET(req: NextRequest) {
   const accessDeniedLeadTypes = fetchResults
     .map((r, i) => (r.accessDenied ? selectedTypes[i] : null))
     .filter((t): t is (typeof CRM_LEAD_TYPES)[number] => t !== null);
+  const dedicatedApiUnavailable =
+    isDedicatedFilterLeadType(leadTypeParam) &&
+    fetchResults.some((r) => Boolean(r.apiUnavailable));
+  const hubUnavailableMessage = dedicatedApiUnavailable
+    ? leadTypeParam === "whatsapplead"
+      ? whatsappHubUnavailableMessage()
+      : leadTypeParam === "walkinlead"
+        ? walkInHubUnavailableMessage()
+        : undefined
+    : undefined;
   const chunks = fetchResults.map((r) => r.leads);
   const byId = new Map<string, ApiLead>();
   for (let i = 0; i < chunks.length; i++) {
@@ -724,7 +877,14 @@ export async function GET(req: NextRequest) {
   const slice = merged.slice(start, start + pageSize);
   const totalElements = merged.length;
   const totalPages = Math.max(1, Math.ceil(totalElements / pageSize));
-  const sourceCounts = computeSourceCounts(merged);
+  const sourceCounts = await augmentMergeSourceCounts(
+    req,
+    url,
+    effDates,
+    sort,
+    search,
+    computeSourceCounts(merged),
+  );
   const summaryTotals = computeSummaryTotals(merged);
 
   const body: SpringPage<ApiLead> = {
@@ -737,6 +897,9 @@ export async function GET(req: NextRequest) {
     summaryTotals,
     ...(accessDeniedLeadTypes.length > 0
       ? { accessDeniedLeadTypes: [...new Set(accessDeniedLeadTypes)] }
+      : {}),
+    ...(dedicatedApiUnavailable
+      ? { apiUnavailable: true, message: hubUnavailableMessage }
       : {}),
   };
 

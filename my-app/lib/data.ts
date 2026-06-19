@@ -104,6 +104,10 @@ export interface Lead {
   designQaLink?: string | null;
   /** Branch or experience center for the lead. */
   branch?: string;
+  /** Presales assignee before verify handoff (Hub `previousAssignee`). */
+  previousAssignee?: string;
+  /** Raw webhook/API payload string — WhatsApp ingest debug. */
+  inboundPayloadJson?: string;
 }
 
 export const LANGUAGE_OPTIONS = [

@@ -2415,7 +2415,7 @@ export default function LeadDetailsApiClient({
       <main className="min-h-screen bg-[var(--crm-app-bg)] p-8">
         <p className="text-rose-600">
           Unknown lead source. Use /Leads/formlead/123 (or glead, mlead,
-          addlead, websitelead, walkinlead).
+          addlead, websitelead, walkinlead, whatsapplead).
         </p>
       </main>
     );

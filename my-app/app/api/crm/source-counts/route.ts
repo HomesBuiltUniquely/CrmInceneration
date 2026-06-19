@@ -52,6 +52,7 @@ function buildUpstreamUrl(
 ): URL {
   const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
   upstream.searchParams.set("leadType", leadType);
+  upstream.searchParams.set("milestoneScope", "crm");
   upstream.searchParams.set("page", String(page));
   upstream.searchParams.set("size", String(pageSize));
   upstream.searchParams.set("sort", (reqUrl.searchParams.get("sort") ?? "updatedAt,desc").trim() || "updatedAt,desc");
@@ -105,7 +106,7 @@ async function countLeadType(
   assigneeScopes: string[],
   effDates: { from: string; to: string },
 ): Promise<number> {
-  if (leadType === "walkinlead" || leadType === "whatsapplead") {
+  if (leadType === "walkinlead") {
     const sort = (reqUrl.searchParams.get("sort") ?? "updatedAt,desc").trim() || "updatedAt,desc";
     const search = (reqUrl.searchParams.get("search") ?? "").trim();
     const extraParams = [
@@ -131,10 +132,70 @@ async function countLeadType(
       perType: 500,
       maxPages: 100,
     };
-    const { leads } =
-      leadType === "walkinlead"
-        ? await fetchWalkInLeadsForMerge(fetchCtx)
-        : await fetchWhatsappLeadsForMerge(fetchCtx);
+    const { leads } = await fetchWalkInLeadsForMerge(fetchCtx);
+    const skipLocalDateFilter = hubHandlesDateFilter({
+      dateFrom: effDates.from,
+      dateTo: effDates.to,
+      dateField: reqUrl.searchParams.get("dateField"),
+      crmMonthWindow: reqUrl.searchParams.get("crmMonthWindow"),
+    });
+    const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
+    const ids = new Set<string>();
+    for (const lead of leads) {
+      if (!skipLocalDateFilter && !leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
+      if (assigneeNorms.length > 0) {
+        const assigneeText =
+          typeof lead.assignee === "string"
+            ? lead.assignee
+            : (lead.assignee?.name ?? lead.assignee?.fullName ?? "");
+        const hay = assigneeText.trim().toLowerCase();
+        if (!assigneeNorms.some((a) => hay.includes(a))) continue;
+      }
+      const id = String(lead.id ?? "").trim();
+      if (id) ids.add(id);
+    }
+    return ids.size;
+  }
+
+  if (leadType === "whatsapplead") {
+    const sort = (reqUrl.searchParams.get("sort") ?? "updatedAt,desc").trim() || "updatedAt,desc";
+    const search = (reqUrl.searchParams.get("search") ?? "").trim();
+    const extraParams = [
+      { key: "milestoneStage", value: (reqUrl.searchParams.get("milestoneStage") ?? "").trim() },
+      {
+        key: "milestoneStageCategory",
+        value: (reqUrl.searchParams.get("milestoneStageCategory") ?? "").trim(),
+      },
+      { key: "milestoneSubStage", value: (reqUrl.searchParams.get("milestoneSubStage") ?? "").trim() },
+      {
+        key: "presalesMilestoneStage",
+        value: (reqUrl.searchParams.get("presalesMilestoneStage") ?? "").trim(),
+      },
+      {
+        key: "presalesMilestoneStageCategory",
+        value: (reqUrl.searchParams.get("presalesMilestoneStageCategory") ?? "").trim(),
+      },
+      {
+        key: "presalesMilestoneSubStage",
+        value: (reqUrl.searchParams.get("presalesMilestoneSubStage") ?? "").trim(),
+      },
+      { key: "verificationStatus", value: (reqUrl.searchParams.get("verificationStatus") ?? "").trim() },
+      { key: "reinquiry", value: (reqUrl.searchParams.get("reinquiry") ?? "").trim() },
+      { key: "assignee", value: (reqUrl.searchParams.get("assignee") ?? "").trim() },
+      { key: "dateFrom", value: effDates.from },
+      { key: "dateTo", value: effDates.to },
+      { key: "dateField", value: (reqUrl.searchParams.get("dateField") ?? "").trim() },
+    ];
+    const fetchCtx = {
+      req,
+      sort,
+      search,
+      effDates,
+      extraParams,
+      perType: 500,
+      maxPages: 100,
+    };
+    const { leads } = await fetchWhatsappLeadsForMerge(fetchCtx);
     const skipLocalDateFilter = hubHandlesDateFilter({
       dateFrom: effDates.from,
       dateTo: effDates.to,

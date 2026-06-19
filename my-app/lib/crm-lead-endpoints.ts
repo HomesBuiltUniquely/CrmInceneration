@@ -16,7 +16,7 @@ export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
     return `${LEAD_TYPE_TO_BASE.walkinlead}/${id}`;
   }
   if (leadType === "whatsapplead") {
-    return `${LEAD_TYPE_TO_BASE.whatsapplead}/${id}`;
+    return `${LEAD_TYPE_TO_BASE.whatsapplead}/details/${id}`;
   }
   return `${LEAD_TYPE_TO_BASE[leadType]}/details/${id}`;
 }

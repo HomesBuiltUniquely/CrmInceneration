@@ -15,7 +15,7 @@ import {
   fetchRecentCustomerPhones,
 } from "@/lib/customer-phones-api";
 import type { ApiLead, CrmLeadType, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES, asCrmLeadType } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { detailsUrl, LEAD_TYPE_TO_BASE } from "@/lib/crm-lead-endpoints";
 import {
   WHATSAPP_CRM_LEAD_TYPE,
@@ -25,7 +25,6 @@ import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
 import {
   leadPhoneDigits,
   normalizeLeadTypeKey,
-  pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 import {
   dedupeLeadSources,
@@ -84,6 +83,7 @@ export type CustomerIngestHints = {
   email?: string;
   projectName?: string;
   customerNumber?: string;
+  pincode?: string;
   payload?: Record<string, unknown> | null;
 };
 
@@ -107,11 +107,15 @@ function hintsFromCustomerPayload(
   const customerNumber = String(
     payload.customerNumber ?? payload.customer_mobile ?? payload.contactNo ?? "",
   ).trim();
+  const pincode = String(
+    payload.pincode ?? payload.propertyPin ?? payload.property_pin ?? "",
+  ).trim();
   return {
     name: name || undefined,
     email: email || undefined,
     projectName: projectName || undefined,
     customerNumber: customerNumber || undefined,
+    pincode: pincode || undefined,
     payload,
   };
 }
@@ -285,7 +289,14 @@ export async function createWhatsappLead(
   phoneDigits: string,
   headers: HeadersInit,
   hints: CustomerIngestHints = {},
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+): Promise<{
+  ok: boolean;
+  id?: string;
+  leadId?: string;
+  isUpdate?: boolean;
+  assignee?: string;
+  error?: string;
+}> {
   const display =
     normalizeInboundPhone(hints.customerNumber) ||
     (phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits);
@@ -295,16 +306,21 @@ export async function createWhatsappLead(
     phone: display,
     mobile: display,
     mobileNumber: display,
+    customerName: displayName,
     name: displayName,
     leadSource: WHATSAPP_SOURCE_LABEL,
-    LeadSource: WHATSAPP_SOURCE_LABEL,
-    leadType: WHATSAPP_CRM_LEAD_TYPE,
   };
   if (hints.email?.trim()) {
     body.email = hints.email.trim();
-    body.clientEmail = hints.email.trim();
   }
   if (hints.projectName?.trim()) body.projectName = hints.projectName.trim();
+  const pincode =
+    hints.pincode?.trim() ||
+    String(hints.payload?.pincode ?? hints.payload?.propertyPin ?? "").trim();
+  if (pincode) body.pincode = pincode;
+  if (hints.payload && typeof hints.payload === "object") {
+    body.payload = hints.payload;
+  }
 
   for (const path of WHATSAPP_CREATE_PATHS) {
     const res = await fetch(`${BASE_URL}${path}`, {
@@ -316,14 +332,22 @@ export async function createWhatsappLead(
     const text = await res.text();
     if (isHubNoResourceResponse(res.status, text)) continue;
     if (!res.ok) continue;
-    let id = "";
     try {
       const json = JSON.parse(text) as Record<string, unknown>;
-      id = String(json.id ?? json.leadId ?? "").trim();
+      const id = String(json.id ?? "").trim();
+      const leadId = String(json.leadId ?? json.uniqueId ?? id).trim();
+      const isUpdate = Boolean(json.isUpdate) || res.status === 200;
+      const assignee = String(json.assignee ?? "").trim() || undefined;
+      return {
+        ok: true,
+        id: id || undefined,
+        leadId: leadId || undefined,
+        isUpdate,
+        assignee,
+      };
     } catch {
-      // accepted without id
+      return { ok: true, isUpdate: res.status === 200 };
     }
-    return { ok: true, id: id || undefined };
   }
   return { ok: false, error: "WhatsApp lead create API unavailable on Hub (POST /v1/WhatsappLead)" };
 }
@@ -354,37 +378,35 @@ export async function processWhatsappPhone(
     );
 
     if (nonWhatsapp.length > 0) {
-      const primary = pickPrimarySourceRows(nonWhatsapp)[0];
-      const lt = asCrmLeadType(primary.leadType, "formlead");
-      const id = String(primary.id ?? "").trim();
-      if (!id) {
-        return { phone, recordId, action: "error", message: "Matched lead has no id" };
-      }
-      const tagged = await markWhatsappReinquiryOnLead(lt, id, headers);
-      if (!tagged.ok) {
-        return {
-          phone,
-          recordId,
-          action: "error",
-          leadType: lt,
-          leadId: id,
-          assignee: pickAssigneeLabel(primary),
-          message: tagged.error,
-        };
+      // Hub creates a new whatsapplead row (dedup seeds assignee/verified from existing source).
+      const created = await createWhatsappLead(phone, headers, opts?.hints);
+      if (!created.ok) {
+        return { phone, recordId, action: "error", message: created.error };
       }
       return {
         phone,
         recordId,
-        action: "reinquiry",
-        leadType: lt,
-        leadId: id,
-        assignee: pickAssigneeLabel(primary),
-        message: tagged.alreadyTagged ? "Already tagged" : undefined,
+        action: created.isUpdate ? "reinquiry" : "created",
+        leadType: WHATSAPP_CRM_LEAD_TYPE,
+        leadId: created.leadId || created.id,
+        assignee: created.assignee,
+        message: created.isUpdate ? "WhatsApp re-inquiry on existing customer" : undefined,
       };
     }
 
     if (whatsappOnly.length > 0) {
       const row = whatsappOnly[0];
+      const created = await createWhatsappLead(phone, headers, opts?.hints);
+      if (created.ok && created.isUpdate) {
+        return {
+          phone,
+          recordId,
+          action: "reinquiry",
+          leadType: WHATSAPP_CRM_LEAD_TYPE,
+          leadId: created.leadId || created.id || String(row.id ?? "").trim() || undefined,
+          assignee: created.assignee || pickAssigneeLabel(row),
+        };
+      }
       return {
         phone,
         recordId,

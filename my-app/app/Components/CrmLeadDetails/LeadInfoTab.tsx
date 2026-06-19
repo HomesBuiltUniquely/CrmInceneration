@@ -608,6 +608,18 @@ export default function LeadInfoTab({
             </div>
           ) : null}
         </Card>
+
+        {lead.leadType === "whatsapplead" && lead.previousAssignee?.trim() ? (
+          <Card className="lg:col-span-2">
+            <CardTitle icon="💬" color="blue">
+              WhatsApp details
+            </CardTitle>
+            <div>
+              <FieldLabel>Previous assignee (presales)</FieldLabel>
+              <Input value={lead.previousAssignee.trim()} readOnly />
+            </div>
+          </Card>
+        ) : null}
       </div>
     </div>
   );

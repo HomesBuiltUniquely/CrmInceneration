@@ -11,11 +11,15 @@ function whatsappContextFromRequest(req: NextRequest): WhatsappFetchContext {
     "milestoneStage",
     "milestoneStageCategory",
     "milestoneSubStage",
+    "presalesMilestoneStage",
+    "presalesMilestoneStageCategory",
+    "presalesMilestoneSubStage",
     "verificationStatus",
     "reinquiry",
     "assignee",
     "dateFrom",
     "dateTo",
+    "dateField",
   ] as const;
 
   return {

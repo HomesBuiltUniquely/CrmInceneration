@@ -1,18 +1,20 @@
 /**
- * WhatsApp lead source — Hub contract (mirror Walk-in):
- * POST /v1/WhatsappLead, GET /v1/WhatsappLead/{id}
+ * WhatsApp lead source — Hub contract:
+ * POST /v1/WhatsappLead (create/verify/get), GET /v1/leads/filter?leadType=whatsapplead (CRM lists)
  */
 
 import type { NextRequest } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, CrmLeadType, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES, normalizeLeadSortFields } from "@/lib/leads-filter";
 import { emptyLeadSourceCounts } from "@/lib/primary-source-leads";
 import { LEAD_TYPE_TO_BASE } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
+import { filterLeadsForAdminWorkspacePool } from "@/lib/crm-workspace";
 
 export const WHATSAPP_CRM_LEAD_TYPE: CrmLeadType = "whatsapplead";
 
@@ -83,10 +85,12 @@ function parseListPayload(json: unknown): { content: ApiLead[]; totalPages: numb
 }
 
 function tagWhatsappLeads(leads: ApiLead[]): ApiLead[] {
-  return leads.map((lead) => ({
-    ...lead,
-    leadType: normalizeLeadTypeKey(lead.leadType ?? WHATSAPP_CRM_LEAD_TYPE),
-  }));
+  return leads.map((lead) =>
+    normalizeLeadSortFields({
+      ...lead,
+      leadType: normalizeLeadTypeKey(lead.leadType ?? WHATSAPP_CRM_LEAD_TYPE),
+    }),
+  );
 }
 
 export type WhatsappFetchContext = {
@@ -98,6 +102,8 @@ export type WhatsappFetchContext = {
   extraParams: Array<{ key: string; value: string }>;
   perType: number;
   maxPages: number;
+  /** Scope WhatsApp counts to sales or presales assignee pool (admin Lead Types tiles). */
+  workspace?: CrmWorkspace;
 };
 
 function buildWhatsappProxyQuery(ctx: WhatsappFetchContext): URLSearchParams {
@@ -115,18 +121,24 @@ function buildWhatsappProxyQuery(ctx: WhatsappFetchContext): URLSearchParams {
 }
 
 async function fetchWhatsappLeadsResolved(ctx: WhatsappFetchContext): Promise<ApiLead[]> {
+  let leads: ApiLead[];
   if (ctx.req) {
-    return (await fetchWhatsappLeadsForMerge(ctx)).leads;
+    leads = (await fetchWhatsappLeadsForMerge(ctx)).leads;
+  } else {
+    const qs = buildWhatsappProxyQuery(ctx);
+    const res = await fetch(`/api/crm/whatsapp-leads?${qs.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: ctx.headers,
+    });
+    if (!res.ok) return [];
+    const json = (await res.json().catch(() => ({}))) as { leads?: ApiLead[] };
+    leads = Array.isArray(json.leads) ? json.leads : [];
   }
-  const qs = buildWhatsappProxyQuery(ctx);
-  const res = await fetch(`/api/crm/whatsapp-leads?${qs.toString()}`, {
-    cache: "no-store",
-    credentials: "include",
-    headers: ctx.headers,
-  });
-  if (!res.ok) return [];
-  const json = (await res.json().catch(() => ({}))) as { leads?: ApiLead[] };
-  return Array.isArray(json.leads) ? json.leads : [];
+  if (ctx.workspace) {
+    leads = filterLeadsForAdminWorkspacePool(leads, ctx.workspace);
+  }
+  return leads;
 }
 
 function resolveAuthHeaders(ctx: WhatsappFetchContext): HeadersInit {
@@ -135,20 +147,44 @@ function resolveAuthHeaders(ctx: WhatsappFetchContext): HeadersInit {
   return {};
 }
 
-const WHATSAPP_LIST_QUERY_KEYS = new Set(["search"]);
+const WHATSAPP_DIRECT_LIST_QUERY_KEYS = new Set(["search"]);
+
+/** Params forwarded to GET /v1/leads/filter (role + verification buckets). */
+const WHATSAPP_FILTER_QUERY_KEYS = new Set([
+  "search",
+  "verificationStatus",
+  "reinquiry",
+  "milestoneStage",
+  "milestoneStageCategory",
+  "milestoneSubStage",
+  "assignee",
+  "dateFrom",
+  "dateTo",
+  "dateField",
+  "presalesMilestoneStage",
+  "presalesMilestoneStageCategory",
+  "presalesMilestoneSubStage",
+]);
 
 function appendWhatsappQueryParams(
   upstream: URL,
   ctx: WhatsappFetchContext,
   pageNum: number,
+  mode: "filter" | "direct" = "direct",
 ): void {
   upstream.searchParams.set("page", String(pageNum));
   upstream.searchParams.set("size", String(ctx.perType));
   upstream.searchParams.set("sort", ctx.sort);
   if (ctx.search) upstream.searchParams.set("search", ctx.search);
+  const allowedKeys =
+    mode === "filter" ? WHATSAPP_FILTER_QUERY_KEYS : WHATSAPP_DIRECT_LIST_QUERY_KEYS;
   for (const { key, value } of ctx.extraParams) {
-    if (!value || !WHATSAPP_LIST_QUERY_KEYS.has(key)) continue;
+    if (!value || !allowedKeys.has(key)) continue;
     upstream.searchParams.set(key, value);
+  }
+  if (mode === "filter") {
+    if (ctx.effDates.from) upstream.searchParams.set("dateFrom", ctx.effDates.from);
+    if (ctx.effDates.to) upstream.searchParams.set("dateTo", ctx.effDates.to);
   }
 }
 
@@ -173,7 +209,7 @@ async function fetchWhatsappFromFilterAlias(
     const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", filterLeadType);
     upstream.searchParams.set("milestoneScope", "crm");
-    appendWhatsappQueryParams(upstream, ctx, pageNum);
+    appendWhatsappQueryParams(upstream, ctx, pageNum, "filter");
     const res = await fetch(upstream.toString(), {
       headers: resolveAuthHeaders(ctx),
       cache: "no-store",
@@ -197,7 +233,7 @@ async function fetchWhatsappFromDirectListAtPath(
   let gotOk = false;
   for (let pageNum = 0; pageNum < ctx.maxPages; pageNum += 1) {
     const upstream = new URL(`${BASE_URL}${basePath}`);
-    appendWhatsappQueryParams(upstream, ctx, pageNum);
+    appendWhatsappQueryParams(upstream, ctx, pageNum, "direct");
     const res = await fetch(upstream.toString(), {
       headers: resolveAuthHeaders(ctx),
       cache: "no-store",
@@ -248,16 +284,16 @@ export async function fetchWhatsappLeadsForMerge(ctx: WhatsappFetchContext): Pro
   accessDenied: boolean;
   apiUnavailable?: boolean;
 }> {
-  const direct = await fetchWhatsappFromDirectList(ctx);
-  if (direct.leads.length > 0) {
-    return { leads: direct.leads, accessDenied: false };
-  }
-
   for (const alias of WHATSAPP_FILTER_LEAD_TYPE_ALIASES) {
     const fromFilter = await fetchWhatsappFromFilterAlias(ctx, alias);
     if (fromFilter.length > 0) {
       return { leads: fromFilter, accessDenied: false };
     }
+  }
+
+  const direct = await fetchWhatsappFromDirectList(ctx);
+  if (direct.leads.length > 0) {
+    return { leads: direct.leads, accessDenied: false };
   }
 
   return {

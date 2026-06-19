@@ -1187,6 +1187,11 @@ export default function CompleteTaskModal({
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
+                  title={
+                    lead.leadType === "whatsapplead"
+                      ? "Verify WhatsApp Lead"
+                      : "Verify & hand off to sales"
+                  }
                   handoffLabel={
                     feedback.trim() ||
                     "Data Conversion → Won → Assigned"
@@ -1548,7 +1553,9 @@ export default function CompleteTaskModal({
                   ? "Verifying..."
                   : "Saving..."
                 : verifyHandoffMode
-                  ? "Verify & hand off to sales"
+                  ? lead.leadType === "whatsapplead"
+                    ? "Verify WhatsApp Lead"
+                    : "Verify & hand off to sales"
                   : "Save note"}
             </Button>
           </div>

@@ -21,6 +21,8 @@ type Props = {
   showErrors?: boolean;
   pincodeMissing?: boolean;
   handoffLabel?: string;
+  /** Modal title — e.g. "Verify WhatsApp Lead" for whatsapplead. */
+  title?: string;
 };
 
 function HandoffIcon() {
@@ -56,6 +58,7 @@ export default function PresalesVerifyPanel({
   showErrors = false,
   pincodeMissing = false,
   handoffLabel,
+  title = "Verify & hand off to sales",
 }: Props) {
   const salesFooterMessage = salesExecutivesLoading
     ? "Loading…"
@@ -83,7 +86,7 @@ export default function PresalesVerifyPanel({
               id="presales-verify-panel-title"
               className="text-[13px] font-semibold text-[var(--crm-text-primary)]"
             >
-              Verify & hand off to sales
+              {title}
             </h3>
             <span className="rounded-full bg-[var(--crm-success-bg)] px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-[var(--crm-success-text)]">
               Handoff

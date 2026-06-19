@@ -6,6 +6,7 @@ import {
   isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
 import { getLeadDisplayName } from "@/lib/lead-display";
+import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
 import {
   formatPresalesListStatusLabel,
   getListDisplayMilestone,
@@ -16,6 +17,7 @@ import {
   usePresalesListDisplayForWorkspace,
 } from "@/lib/presales-milestone";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
+import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
 export const CRM_LEAD_TYPES = [
   "formlead",
@@ -53,6 +55,9 @@ export type SpringPage<T> = {
   presalesSearchTotal?: number;
   /** Present when mergeAll could not load one or more lead types (e.g. Hub 403). */
   accessDeniedLeadTypes?: CrmLeadType[];
+  /** Dedicated walk-in / WhatsApp list when Hub resource is missing. */
+  apiUnavailable?: boolean;
+  message?: string;
 };
 
 /** Minimal lead fields from backend; extend as entity stabilizes. */
@@ -152,6 +157,39 @@ function pickLeadScalar(lead: ApiLead, keys: string[]): unknown {
   return undefined;
 }
 
+/** Best timestamp for list sort + "Updated" column (Hub field names vary by lead type). */
+export function readLeadUpdatedAtRaw(lead: ApiLead): string {
+  const fromScalar = String(
+    pickLeadScalar(lead, [
+      "updatedAt",
+      "updated_at",
+      "updatedOn",
+      "updated_on",
+      "modifiedAt",
+      "modified_at",
+      "lastModified",
+      "last_modified",
+      "lastUpdated",
+      "last_updated",
+    ]) ?? "",
+  ).trim();
+  if (fromScalar) return fromScalar;
+  return readLeadCreatedAtRaw(lead);
+}
+
+export function parseLeadSortTimestamp(lead: ApiLead): number {
+  const raw = readLeadUpdatedAtRaw(lead);
+  if (!raw) return 0;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+export function normalizeLeadSortFields(lead: ApiLead): ApiLead {
+  const updatedAt = readLeadUpdatedAtRaw(lead);
+  if (!updatedAt) return lead;
+  return { ...lead, updatedAt };
+}
+
 function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | undefined {
   const rawVs = pickLeadScalar(lead, [
     "verificationStatus",
@@ -201,9 +239,9 @@ export function isCrmLeadVerified(lead: ApiLead): boolean {
 }
 
 function hasReinquiry(lead: ApiLead): boolean {
-  const src = lead.additionalLeadSources;
-  if (Array.isArray(src)) return src.some((v) => String(v).trim().length > 0);
-  return typeof src === "string" && src.trim().length > 0;
+  return parseAdditionalLeadSources(lead.additionalLeadSources).some((source) =>
+    source.toLowerCase().replace(/[^a-z0-9]/g, "").includes("whatsapp"),
+  );
 }
 
 function leadDynamicFields(lead: ApiLead): Record<string, unknown> {
@@ -547,7 +585,7 @@ export function mapApiLeadToRow(
     },
     owner: { name: assigneeName(lead) },
     engagement: {
-      time: formatRelativeTime(lead.updatedAt),
+      time: formatRelativeTime(readLeadUpdatedAtRaw(lead)),
       action: "Updated",
       tone: "ok",
     },

@@ -13,6 +13,8 @@ import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
+import { filterLeadsForAdminWorkspacePool } from "@/lib/crm-workspace";
 
 export const WALKIN_CRM_LEAD_TYPE: CrmLeadType = "walkinlead";
 
@@ -95,6 +97,8 @@ export type WalkInFetchContext = {
   extraParams: Array<{ key: string; value: string }>;
   perType: number;
   maxPages: number;
+  /** Scope walk-in counts to sales or presales assignee pool (admin Lead Types tiles). */
+  workspace?: CrmWorkspace;
 };
 
 function buildWalkInProxyQuery(ctx: WalkInFetchContext): URLSearchParams {
@@ -113,20 +117,26 @@ function buildWalkInProxyQuery(ctx: WalkInFetchContext): URLSearchParams {
 
 /** Use Next proxy in browser; Hub direct only when `req` is present (API routes). */
 async function fetchWalkInLeadsResolved(ctx: WalkInFetchContext): Promise<ApiLead[]> {
+  let leads: ApiLead[];
   if (ctx.req) {
-    return (await fetchWalkInLeadsForMerge(ctx)).leads;
+    leads = (await fetchWalkInLeadsForMerge(ctx)).leads;
+  } else {
+    const qs = buildWalkInProxyQuery(ctx);
+    const res = await fetch(`/api/crm/walkin-leads?${qs.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: ctx.headers,
+    });
+    if (!res.ok) return [];
+    const json = (await res.json().catch(() => ({}))) as {
+      leads?: ApiLead[];
+    };
+    leads = Array.isArray(json.leads) ? json.leads : [];
   }
-  const qs = buildWalkInProxyQuery(ctx);
-  const res = await fetch(`/api/crm/walkin-leads?${qs.toString()}`, {
-    cache: "no-store",
-    credentials: "include",
-    headers: ctx.headers,
-  });
-  if (!res.ok) return [];
-  const json = (await res.json().catch(() => ({}))) as {
-    leads?: ApiLead[];
-  };
-  return Array.isArray(json.leads) ? json.leads : [];
+  if (ctx.workspace) {
+    leads = filterLeadsForAdminWorkspacePool(leads, ctx.workspace);
+  }
+  return leads;
 }
 
 function resolveAuthHeaders(ctx: WalkInFetchContext): HeadersInit {
