@@ -610,6 +610,10 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       substage: { substage: st.legacySubstage ?? null },
     },
     branch: pickStr(detail, "experienceCenter", "experience_center", "branch", "branchName", "branch_name", "office", "officeName", "territory", "region") || undefined,
+    previousAssignee: pickStr(detail, "previousAssignee", "previous_assignee") || undefined,
+    inboundPayloadJson:
+      pickStr(detail, "inboundPayloadJson", "inbound_payload_json", "inboundPayload") ||
+      undefined,
   };
 }
 

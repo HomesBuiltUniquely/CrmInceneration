@@ -594,6 +594,7 @@ const SOURCE_LABELS: Record<CrmLeadType, string> = {
   addlead: "Add Lead",
   websitelead: "Website Lead",
   walkinlead: "Walk-in Lead",
+  whatsapplead: "WhatsApp",
 };
 
 function parseDateLoose(input: unknown): Date | null {
@@ -2151,6 +2152,10 @@ export default function LeadDetailsApiClient({
       lostReason: args.lostReason?.trim()
         ? args.lostReason.trim()
         : lead.lostReason,
+      budget: args.budget !== undefined ? args.budget : lead.budget,
+      propertyNotes: args.propertyNotes !== undefined ? args.propertyNotes : lead.propertyNotes,
+      configuration: args.configuration !== undefined ? args.configuration : lead.configuration,
+      bookingType: args.bookingType !== undefined ? args.bookingType : lead.bookingType,
       possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
       stageBlock: {
         ...lead.stageBlock,
@@ -2421,7 +2426,7 @@ export default function LeadDetailsApiClient({
       <main className="min-h-screen bg-[var(--crm-app-bg)] p-8">
         <p className="text-rose-600">
           Unknown lead source. Use /Leads/formlead/123 (or glead, mlead,
-          addlead, websitelead, walkinlead).
+          addlead, websitelead, walkinlead, whatsapplead).
         </p>
       </main>
     );

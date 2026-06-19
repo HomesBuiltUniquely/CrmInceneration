@@ -107,6 +107,10 @@ export type PresalesCompleteTaskApiPayload = {
   nextCallDateLocal: string;
   /** Sent as `resone` on PUT when path category is LOST. */
   lostReason?: string;
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
+  bookingType?: string;
   possessionDate?: string;
 };
 
@@ -874,7 +878,11 @@ export default function CompleteTaskModal({
           note: note.trim(),
           nextCallDateLocal: nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
-          possessionDate: isHoldSubstageSelected ? modalPossessionDate.trim() : undefined,
+          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
+          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
+          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
+          bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+          possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
         });
         onClose();
       } catch (e) {
@@ -1187,6 +1195,11 @@ export default function CompleteTaskModal({
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
+                  title={
+                    lead.leadType === "whatsapplead"
+                      ? "Verify WhatsApp Lead"
+                      : "Verify & hand off to sales"
+                  }
                   handoffLabel={
                     feedback.trim() ||
                     "Data Conversion → Won → Assigned"
@@ -1548,7 +1561,9 @@ export default function CompleteTaskModal({
                   ? "Verifying..."
                   : "Saving..."
                 : verifyHandoffMode
-                  ? "Verify & hand off to sales"
+                  ? lead.leadType === "whatsapplead"
+                    ? "Verify WhatsApp Lead"
+                    : "Verify & hand off to sales"
                   : "Save note"}
             </Button>
           </div>

@@ -221,12 +221,18 @@ export default function FloorPlanUpload({
               disabled={opening}
               className="group relative block w-full cursor-pointer text-left"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewSrc}
-                alt="Floor plan preview"
-                className="max-h-52 w-full object-contain bg-white/60 p-2 transition group-hover:brightness-[0.98] dark:bg-black/20"
-              />
+              {previewSrc ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={previewSrc}
+                  alt="Floor plan preview"
+                  className="max-h-52 w-full object-contain bg-white/60 p-2 transition group-hover:brightness-[0.98] dark:bg-black/20"
+                />
+              ) : (
+                <div className="flex max-h-52 min-h-[8rem] w-full items-center justify-center bg-white/60 p-6 dark:bg-black/20">
+                  <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[var(--crm-accent)] border-t-transparent" />
+                </div>
+              )}
               <span className="absolute right-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[10px] font-semibold text-white backdrop-blur-sm">
                 Preview
               </span>
