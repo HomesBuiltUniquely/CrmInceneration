@@ -31,6 +31,30 @@ function meetingTypeDisplay(value: string): string {
   return raw;
 }
 
+function msg91DirectionLabel(raw?: string): string {
+  const v = (raw ?? "").trim();
+  if (v === "0") return "Inbound";
+  if (v === "1") return "Outbound";
+  return v || "—";
+}
+
+function whatsappDetailFields(lead: Lead): Array<{ label: string; value: string }> {
+  const rows: Array<{ label: string; value: string }> = [];
+  const push = (label: string, value?: string) => {
+    const v = (value ?? "").trim();
+    if (v) rows.push({ label, value: v });
+  };
+  push("Latest message", lead.lastInboundMessage);
+  push("Customer number (MSG91)", lead.msg91CustomerNumber);
+  push("Business number", lead.msg91IntegratedNumber);
+  push("Direction", msg91DirectionLabel(lead.msg91Direction));
+  push("Content type", lead.msg91ContentType);
+  push("Event type", lead.msg91EventType);
+  push("Message ID", lead.msgUuid);
+  push("Previous assignee (presales)", lead.previousAssignee);
+  return rows;
+}
+
 const DESIGN_QA_BASE_URL = "https://design.hubinterior.com/DesignQA?id=";
 const DESIGN_QA_STATE_KEY_PREFIX = "crm_designqa_state_";
 
@@ -104,6 +128,8 @@ export default function LeadInfoTab({
   const [additionalInfoEditable, setAdditionalInfoEditable] = useState(false);
   const quoteEligible =
     Boolean(c && quoteExtras && isExperienceDesignQuoteSentStage(lead));
+  const whatsappFields =
+    lead.leadType === "whatsapplead" ? whatsappDetailFields(lead) : [];
   const [designQaState, setDesignQaState] = useState<DesignQaState>({
     active: false,
     version: 0,
@@ -609,15 +635,34 @@ export default function LeadInfoTab({
           ) : null}
         </Card>
 
-        {lead.leadType === "whatsapplead" && lead.previousAssignee?.trim() ? (
+        {lead.leadType === "whatsapplead" ? (
           <Card className="lg:col-span-2">
             <CardTitle icon="💬" color="blue">
               WhatsApp details
             </CardTitle>
-            <div>
-              <FieldLabel>Previous assignee (presales)</FieldLabel>
-              <Input value={lead.previousAssignee.trim()} readOnly />
-            </div>
+            {lead.additionalLeadSourcesList && lead.additionalLeadSourcesList.length > 0 ? (
+              <p className="mb-3 text-[11px] font-medium text-[var(--crm-warning-text)]">
+                Re-inquiry · additional sources: {lead.additionalLeadSourcesList.join(", ")}
+              </p>
+            ) : null}
+            {whatsappFields.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {whatsappFields.map(({ label, value }) => (
+                  <div key={label}>
+                    <FieldLabel>{label}</FieldLabel>
+                    {label === "Latest message" ? (
+                      <Textarea value={value} readOnly rows={3} className="resize-none" />
+                    ) : (
+                      <Input value={value} readOnly />
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-[var(--crm-text-muted)]">
+                No MSG91 metadata on this lead yet. Inbound messages arrive via the Hub webhook.
+              </p>
+            )}
           </Card>
         ) : null}
       </div>

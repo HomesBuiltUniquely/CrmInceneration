@@ -60,3 +60,36 @@ export function dedupeLeadSources(rawSources: unknown[]): string[] {
 export function formatLeadSourceLabel(raw: string): string {
   return normalizeLeadTypeLabel(raw);
 }
+
+/** True when Hub appended repeat / cross-source entries in `additionalLeadSources`. */
+export function isCrmLeadReinquiry(lead: {
+  additionalLeadSources?: string | string[] | null;
+}): boolean {
+  return parseAdditionalLeadSources(lead.additionalLeadSources).length > 0;
+}
+
+export function formatAdditionalLeadSourcesLabel(raw: unknown): string {
+  return parseAdditionalLeadSources(raw).join(", ");
+}
+
+const WHATSAPP_CROSS_MERGE_RE = /WhatsApp Lead ID:\s*(\d+)/i;
+
+/** Hub plain-text body when Glead/Form/etc. merges into existing WhatsApp row. */
+export function isCrossTypeWhatsappMergeMessage(text: string): boolean {
+  const t = text.trim();
+  return t.includes("Cross-type merge") && WHATSAPP_CROSS_MERGE_RE.test(t);
+}
+
+export function parseCrossTypeWhatsappMergeId(text: string): string | null {
+  const m = text.trim().match(WHATSAPP_CROSS_MERGE_RE);
+  return m?.[1] ?? null;
+}
+
+/** `POST /v1/WhatsappLead` — 200 + isUpdate means duplicate phone merged server-side. */
+export function isWhatsappCreateDuplicateUpdate(body: unknown, status: number): boolean {
+  if (body && typeof body === "object") {
+    const rec = body as Record<string, unknown>;
+    if (typeof rec.isUpdate === "boolean") return rec.isUpdate;
+  }
+  return status === 200;
+}

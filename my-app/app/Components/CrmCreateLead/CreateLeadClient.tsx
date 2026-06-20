@@ -16,6 +16,10 @@ import {
 } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
+import {
+  isCrossTypeWhatsappMergeMessage,
+  parseCrossTypeWhatsappMergeId,
+} from "@/lib/lead-source-utils";
 
 const LEAD_SOURCES = [
   "Website",
@@ -367,16 +371,40 @@ export default function CreateLeadClient() {
           );
           throw new Error(friendlyMessage);
         }
-        const result = await response.json().catch(() => ({}));
+
+        const responseText = await response.text();
+        if (isCrossTypeWhatsappMergeMessage(responseText)) {
+          const whatsappId = parseCrossTypeWhatsappMergeId(responseText);
+          setSuccess(
+            whatsappId
+              ? `Merged into existing WhatsApp lead (ID ${whatsappId}). Open WhatsApp list to view.`
+              : "Merged into existing WhatsApp lead. Open WhatsApp list to view.",
+          );
+          setCreatedLeadInfo(null);
+          setForm(INITIAL_FORM);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("crm:leads-invalidate"));
+          }
+          return;
+        }
+
+        let result: Record<string, unknown> = {};
+        try {
+          result = responseText.trim()
+            ? (JSON.parse(responseText) as Record<string, unknown>)
+            : {};
+        } catch {
+          result = { message: responseText.trim() || "Lead saved." };
+        }
 
         setSuccess(
-          typeof result?.message === "string"
+          typeof result.message === "string"
             ? result.message
             : "Lead created successfully.",
         );
         setCreatedLeadInfo({
-          id: result?.id,
-          customerId: result?.customerId,
+          id: result.id as string | number | undefined,
+          customerId: result.customerId as string | undefined,
         });
         setForm(INITIAL_FORM);
         if (typeof window !== "undefined") {
