@@ -8,10 +8,11 @@ import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
   createAppointment,
   deleteAppointment,
-  fetchActiveDesigners,
+  fetchDesignersFromDesignModule,
   fetchAvailableSlots,
   fetchMyAppointments,
   type AvailableSlotRow,
+  type DesignModuleDesigner,
 } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -112,10 +113,11 @@ export default function AppointmentManagementClient() {
 
   const [leadId, setLeadId] = useState("");
   const [leadType, setLeadType] = useState<CrmLeadType>("formlead");
-  const [designerName, setDesignerName] = useState("");
+  const [selectedDesigner, setSelectedDesigner] = useState<DesignModuleDesigner | null>(null);
   const [apptDate, setApptDate] = useState("");
   const [slotId, setSlotId] = useState("");
-  const [designers, setDesigners] = useState<string[]>([]);
+  const [designers, setDesigners] = useState<DesignModuleDesigner[]>([]);
+  const [designersError, setDesignersError] = useState(false);
   const [slots, setSlots] = useState<AvailableSlotRow[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
 
@@ -144,20 +146,24 @@ export default function AppointmentManagementClient() {
 
   useEffect(() => {
     if (!createOpen) return;
-    void fetchActiveDesigners()
+    setDesignersError(false);
+    void fetchDesignersFromDesignModule()
       .then(setDesigners)
-      .catch(() => setDesigners([]));
+      .catch(() => {
+        setDesigners([]);
+        setDesignersError(true);
+      });
   }, [createOpen]);
 
   useEffect(() => {
-    if (!createOpen || !designerName.trim() || !apptDate.trim()) {
+    if (!createOpen || !selectedDesigner || !apptDate.trim()) {
       setSlots([]);
       setSlotId("");
       return;
     }
     let cancelled = false;
     setSlotsLoading(true);
-    void fetchAvailableSlots(apptDate.trim(), designerName.trim())
+    void fetchAvailableSlots(apptDate.trim(), selectedDesigner.name)
       .then((res) => {
         if (!cancelled) {
           setSlots((res.availableSlots ?? []).filter((s) => s.available !== false));
@@ -173,7 +179,7 @@ export default function AppointmentManagementClient() {
     return () => {
       cancelled = true;
     };
-  }, [apptDate, createOpen, designerName]);
+  }, [apptDate, createOpen, selectedDesigner]);
 
   const handleCreate = async () => {
     const idNum = Number(leadId);
@@ -181,14 +187,14 @@ export default function AppointmentManagementClient() {
       notifyInfo("Enter a valid Lead ID");
       return;
     }
-    if (!designerName.trim() || !apptDate.trim() || !slotId.trim()) {
+    if (!selectedDesigner || !apptDate.trim() || !slotId.trim()) {
       notifyInfo("Designer, date, and slot are required");
       return;
     }
     setBusy(true);
     try {
       await createAppointment({
-        designerName: designerName.trim(),
+        designerName: selectedDesigner.name,
         date: apptDate.trim(),
         slotId: slotId.trim(),
         description: `Meeting with ${crmLeadTypeToApiLabel(leadType)} - Lead ID: ${idNum}`,
@@ -198,6 +204,7 @@ export default function AppointmentManagementClient() {
       setCreateOpen(false);
       setLeadId("");
       setSlotId("");
+      setSelectedDesigner(null);
       notifySuccess("Appointment created");
       await load();
     } catch (e) {
@@ -401,18 +408,37 @@ export default function AppointmentManagementClient() {
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">Designer</label>
-                <select
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3 py-2 text-sm"
-                  value={designerName}
-                  onChange={(e) => setDesignerName(e.target.value)}
-                >
-                  <option value="">Select designer</option>
-                  {designers.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
+                {designersError ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-[12px] text-rose-600">Could not load designers.</p>
+                    <button
+                      type="button"
+                      className="text-[12px] text-[var(--crm-accent)] underline"
+                      onClick={() => {
+                        setDesignersError(false);
+                        void fetchDesignersFromDesignModule().then(setDesigners).catch(() => setDesignersError(true));
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3 py-2 text-sm"
+                    value={selectedDesigner?.id ?? ""}
+                    onChange={(e) => {
+                      const found = designers.find((d) => d.id === Number(e.target.value));
+                      setSelectedDesigner(found ?? null);
+                    }}
+                  >
+                    <option value="">Select designer</option>
+                    {designers.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">Date</label>
@@ -444,7 +470,7 @@ export default function AppointmentManagementClient() {
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCreateOpen(false)}
+                onClick={() => { setCreateOpen(false); setSelectedDesigner(null); }}
                 className="rounded-lg border border-[var(--crm-border)] px-4 py-2 text-sm font-medium text-[var(--crm-text-primary)]"
                 disabled={busy}
               >
