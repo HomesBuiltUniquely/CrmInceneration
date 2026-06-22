@@ -130,6 +130,36 @@ export async function fetchMyAppointments(): Promise<unknown[]> {
   return [];
 }
 
+export type DesignModuleDesigner = {
+  id: number;
+  name: string;
+  email: string;
+};
+
+/**
+ * Fetch designers from Design Module (source of truth).
+ * Returns { id, name, email } — name for slot matching, email for Google Calendar.
+ */
+export async function fetchDesignersFromDesignModule(): Promise<DesignModuleDesigner[]> {
+  const res = await fetch("/api/crm/designers", {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+  const data = JSON.parse(text) as unknown;
+  if (
+    data &&
+    typeof data === "object" &&
+    "designers" in data &&
+    Array.isArray((data as { designers: unknown }).designers)
+  ) {
+    return (data as { designers: DesignModuleDesigner[] }).designers;
+  }
+  return [];
+}
+
 export async function deleteAppointment(id: number | string): Promise<void> {
   const res = await fetch(`/api/crm/appointment/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
