@@ -72,17 +72,50 @@ export function formatAdditionalLeadSourcesLabel(raw: unknown): string {
   return parseAdditionalLeadSources(raw).join(", ");
 }
 
-const WHATSAPP_CROSS_MERGE_RE = /WhatsApp Lead ID:\s*(\d+)/i;
+const CROSS_MERGE_WA_REGEX =
+  /Cross-type merge: .+ merged into existing WhatsApp Lead ID: (\d+)/i;
+
+export type CrossMergeIntoWhatsapp = {
+  merged: true;
+  whatsappLeadId: number;
+  rawMessage: string;
+};
+
+/** Normalize BFF/Hub body to plain text before cross-merge detection. */
+function crossMergeResponseText(body: unknown): string | null {
+  if (typeof body === "string") return body;
+  if (!body || typeof body !== "object") return null;
+  const rec = body as Record<string, unknown>;
+  for (const key of ["message", "msg", "body", "text", "error"]) {
+    const v = rec[key];
+    if (typeof v === "string" && v.includes("Cross-type merge")) return v;
+  }
+  return null;
+}
+
+/** Shared detector for Add Lead / Glead / Form / Website cross-merge into WhatsApp. */
+export function parseCrossMergeIntoWhatsapp(
+  body: unknown,
+): CrossMergeIntoWhatsapp | null {
+  const text = typeof body === "string" ? body : crossMergeResponseText(body);
+  if (!text) return null;
+  const match = text.trim().match(CROSS_MERGE_WA_REGEX);
+  if (!match) return null;
+  return {
+    merged: true,
+    whatsappLeadId: Number(match[1]),
+    rawMessage: text.trim(),
+  };
+}
 
 /** Hub plain-text body when Glead/Form/etc. merges into existing WhatsApp row. */
 export function isCrossTypeWhatsappMergeMessage(text: string): boolean {
-  const t = text.trim();
-  return t.includes("Cross-type merge") && WHATSAPP_CROSS_MERGE_RE.test(t);
+  return parseCrossMergeIntoWhatsapp(text) !== null;
 }
 
 export function parseCrossTypeWhatsappMergeId(text: string): string | null {
-  const m = text.trim().match(WHATSAPP_CROSS_MERGE_RE);
-  return m?.[1] ?? null;
+  const parsed = parseCrossMergeIntoWhatsapp(text);
+  return parsed ? String(parsed.whatsappLeadId) : null;
 }
 
 /** `POST /v1/WhatsappLead` — 200 + isUpdate means duplicate phone merged server-side. */
