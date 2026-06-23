@@ -614,6 +614,17 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     inboundPayloadJson:
       pickStr(detail, "inboundPayloadJson", "inbound_payload_json", "inboundPayload") ||
       undefined,
+    lastInboundMessage:
+      pickStr(detail, "lastInboundMessage", "last_inbound_message") || undefined,
+    msgUuid: pickStr(detail, "msgUuid", "msg_uuid") || undefined,
+    msg91CustomerNumber:
+      pickStr(detail, "msg91CustomerNumber", "msg91_customer_number") || undefined,
+    msg91IntegratedNumber:
+      pickStr(detail, "msg91IntegratedNumber", "msg91_integrated_number") || undefined,
+    msg91Direction: pickStr(detail, "msg91Direction", "msg91_direction") || undefined,
+    msg91ContentType:
+      pickStr(detail, "msg91ContentType", "msg91_content_type") || undefined,
+    msg91EventType: pickStr(detail, "msg91EventType", "msg91_event_type") || undefined,
   };
 }
 

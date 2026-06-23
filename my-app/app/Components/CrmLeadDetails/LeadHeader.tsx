@@ -266,19 +266,6 @@ export default function LeadHeader({
           </div>
           {lead.assignee}
         </div>
-        {lead.previousAssignee?.trim() ? (
-          <div
-            className="flex flex-col rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-2 text-[12px] text-[var(--crm-text-secondary)]"
-            title="Presales owner before verify handoff"
-          >
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--crm-text-muted)]">
-              Previous assignee
-            </span>
-            <span className="font-semibold text-[var(--crm-text-primary)]">
-              {lead.previousAssignee.trim()}
-            </span>
-          </div>
-        ) : null}
 
         {showSalesClosure && onOpenSalesClosure ? (
           <button

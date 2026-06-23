@@ -106,8 +106,22 @@ export interface Lead {
   branch?: string;
   /** Presales assignee before verify handoff (Hub `previousAssignee`). */
   previousAssignee?: string;
-  /** Raw webhook/API payload string — WhatsApp ingest debug. */
+  /** Raw MSG91 / webhook payload from Hub (optional, read-only). */
   inboundPayloadJson?: string;
+  /** Latest customer WhatsApp message text (Hub `lastInboundMessage`). */
+  lastInboundMessage?: string;
+  /** MSG91/Meta message id for idempotency (Hub `msgUuid`). */
+  msgUuid?: string;
+  /** Raw customer phone from MSG91 e.g. `919876543210`. */
+  msg91CustomerNumber?: string;
+  /** WhatsApp business number from MSG91. */
+  msg91IntegratedNumber?: string;
+  /** MSG91 direction: `0` inbound, `1` outbound. */
+  msg91Direction?: string;
+  /** MSG91 content type e.g. `text`. */
+  msg91ContentType?: string;
+  /** MSG91 webhook `eventName`. */
+  msg91EventType?: string;
 }
 
 export const LANGUAGE_OPTIONS = [

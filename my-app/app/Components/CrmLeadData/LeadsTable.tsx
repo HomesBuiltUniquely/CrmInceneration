@@ -189,7 +189,17 @@ function LeadRowAction({
             ) : row.verificationTag === "unverified" ? (
               <TinyTag chip={{ label: "Unverified", tone: "amber" }} />
             ) : null}
-            {row.reinquiry ? <TinyTag chip={{ label: "Re-inquiry", tone: "rose" }} /> : null}
+            {row.reinquiry ? (
+              <span
+                title={
+                  row.reinquirySources
+                    ? `Additional sources: ${row.reinquirySources}`
+                    : "Repeat inquiry — same customer contacted again"
+                }
+              >
+                <TinyTag chip={{ label: "Re-inquiry", tone: "rose" }} />
+              </span>
+            ) : null}
             {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
             {row.pipelineBadge === "presales" ? (
               <TinyTag chip={{ label: "Presales", tone: "amber" }} />

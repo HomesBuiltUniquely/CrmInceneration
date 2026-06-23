@@ -6,7 +6,10 @@ import {
   isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
 import { getLeadDisplayName } from "@/lib/lead-display";
-import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import {
+  formatAdditionalLeadSourcesLabel,
+  isCrmLeadReinquiry,
+} from "@/lib/lead-source-utils";
 import {
   formatPresalesListStatusLabel,
   getListDisplayMilestone,
@@ -96,6 +99,15 @@ export type ApiLead = {
   meetingDate?: string | null;
   assignedAt?: string | null;
   additionalLeadSources?: string | string[] | null;
+  lastInboundMessage?: string | null;
+  msgUuid?: string | null;
+  msg91CustomerNumber?: string | null;
+  msg91IntegratedNumber?: string | null;
+  msg91Direction?: string | null;
+  msg91ContentType?: string | null;
+  msg91EventType?: string | null;
+  inboundPayloadJson?: string | null;
+  previousAssignee?: string | null;
   presalesMilestoneStage?: string | null;
   presalesMilestoneCategory?: string | null;
   presalesMilestoneSubStage?: string | null;
@@ -123,6 +135,8 @@ export type LeadRowModel = {
   statusLabel?: string;
   verificationTag?: "verified" | "unverified";
   reinquiry?: boolean;
+  /** Parsed `additionalLeadSources` for re-inquiry tooltip. */
+  reinquirySources?: string;
   callDelayed?: boolean;
   journey: {
     stage: string;
@@ -239,9 +253,7 @@ export function isCrmLeadVerified(lead: ApiLead): boolean {
 }
 
 function hasReinquiry(lead: ApiLead): boolean {
-  return parseAdditionalLeadSources(lead.additionalLeadSources).some((source) =>
-    source.toLowerCase().replace(/[^a-z0-9]/g, "").includes("whatsapp"),
-  );
+  return isCrmLeadReinquiry(lead);
 }
 
 function leadDynamicFields(lead: ApiLead): Record<string, unknown> {
@@ -578,6 +590,9 @@ export function mapApiLeadToRow(
     statusLabel,
     verificationTag: normalizeVerificationTag(lead),
     reinquiry: hasReinquiry(lead),
+    reinquirySources: hasReinquiry(lead)
+      ? formatAdditionalLeadSourcesLabel(lead.additionalLeadSources)
+      : undefined,
     journey: {
       stage: journeyStage,
       progressLabel: pipelineOrder.length > 0 ? prog.progressLabel : "—",

@@ -3010,7 +3010,7 @@ export default function LeadsDataSection({
     leadsWorkspace,
   ]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { forceNetwork?: boolean }) => {
     const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
     const insightModeActive = insightTableMode !== null;
     const requestPage = insightModeActive ? 0 : page;
@@ -3037,7 +3037,7 @@ export default function LeadsDataSection({
       roleKeyForLoad,
       insightModeActive,
     });
-    const cached = readLeadsListCache(cacheKey);
+    const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
     setError(null);
     if (cached) {
@@ -3050,7 +3050,7 @@ export default function LeadsDataSection({
         const scrollY = getPersistedLeadsScrollY();
         if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
       }
-    } else {
+    } else if (!opts?.forceNetwork) {
       setLoading(true);
       setData(null);
     }
@@ -3240,6 +3240,35 @@ export default function LeadsDataSection({
     }
     void load();
   }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+
+  const whatsappListActive = leadType.trim().toLowerCase() === "whatsapplead";
+
+  /** MSG91 inbound hits Hub immediately — refresh on focus when WhatsApp list is open. */
+  useEffect(() => {
+    if (!whatsappListActive) return;
+    const refreshWhatsappList = () => {
+      void load({ forceNetwork: true });
+      setLastRefreshTime(new Date());
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshWhatsappList();
+    };
+    window.addEventListener("focus", refreshWhatsappList);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshWhatsappList);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [whatsappListActive, load]);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      void load({ forceNetwork: true });
+      setLastRefreshTime(new Date());
+    };
+    window.addEventListener("crm:leads-invalidate", onInvalidate);
+    return () => window.removeEventListener("crm:leads-invalidate", onInvalidate);
+  }, [load]);
 
   const handleRefresh = useCallback(async () => {
     setError(null);
@@ -4437,7 +4466,17 @@ export default function LeadsDataSection({
               handleRefresh();
             }
           }}
-          title={isMinimized ? "Expand Refresh Button" : (lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads")}
+          title={
+            isMinimized
+              ? "Expand Refresh Button"
+              : whatsappListActive
+                ? lastRefreshTime
+                  ? `Last sync: ${relativeTime}. Refresh after MSG91 inbound if the list is stale.`
+                  : "Refresh leads after MSG91 inbound."
+                : lastRefreshTime
+                  ? `Last sync: ${relativeTime}`
+                  : "Refresh Leads"
+          }
           className={cn(
             "flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group",
             isMinimized ? "cursor-e-resize" : "cursor-pointer"

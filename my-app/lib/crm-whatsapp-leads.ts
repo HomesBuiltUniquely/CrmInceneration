@@ -1,6 +1,8 @@
 /**
- * WhatsApp lead source — Hub contract:
- * POST /v1/WhatsappLead (create/verify/get), GET /v1/leads/filter?leadType=whatsapplead (CRM lists)
+ * WhatsApp lead source — Hub contract (MSG91-only inbound):
+ * - Inbound: MSG91 webhook → BFF `POST /api/crm/whatsapp-leads/inbound` → Hub `POST /v1/WhatsappLead`
+ * - CRM UI lists: `GET /v1/leads/filter?leadType=whatsapplead` (never poll Hub customer API)
+ * - Verify / details: `/v1/WhatsappLead/verify/{id}`, `/v1/WhatsappLead/details/{id}`
  */
 
 import type { NextRequest } from "next/server";
@@ -24,7 +26,7 @@ export const WHATSAPP_FILTER_LEAD_TYPE_ALIASES = [
   "WhatsAppLead",
 ] as const;
 
-/** Probe order for paginated list — mirrors create paths in whatsapp-lead-ingest. */
+/** Probe order for paginated list when Hub filter returns empty. */
 const WHATSAPP_DIRECT_LIST_PATHS = [
   LEAD_TYPE_TO_BASE.whatsapplead,
   "/v1/WhatsAppLead",
@@ -49,8 +51,8 @@ export function whatsappHubUnavailableMessage(hubOrigin: string = BASE_URL): str
   }
   return (
     `Could not load WhatsApp leads from ${hubOrigin}. ` +
-    `Hub must expose GET ${LEAD_TYPE_TO_BASE.whatsapplead} (paginated list) or include whatsapplead in GET /v1/leads/filter — ` +
-    `walk-in works via filter today, but WhatsApp is not registered on Hub yet even when rows exist in SQL.`
+    `Hub must expose GET /v1/leads/filter?leadType=whatsapplead or GET ${LEAD_TYPE_TO_BASE.whatsapplead} (paginated list). ` +
+    `Ensure the migration branch is deployed and BASE_URL points at that Hub.`
   );
 }
 
