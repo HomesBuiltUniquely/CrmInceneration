@@ -15,7 +15,7 @@ import {
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
-import { isUserActive } from "@/lib/user-active";
+import { includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
@@ -245,6 +245,11 @@ export default function LeadFilters({
         ]);
         if (cancelled) return;
 
+        const storedRole = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+        const includeInactiveExecs = includeInactiveExecutivesInHierarchyFilters(
+          storedRole || (role === "sales_admin" ? "SALES_ADMIN" : role === "super_admin" ? "SUPER_ADMIN" : ""),
+        );
+
         const legacyRows: HierarchyUser[] = [];
         if (legacyRes.ok) {
           const j = (await legacyRes.json().catch(() => [])) as unknown;
@@ -262,7 +267,11 @@ export default function LeadFilters({
           new Map(
             [...se, ...legacyRows].map((u) => [Number(u.id ?? 0), u] as const),
           ).values(),
-        ).filter((u) => Number(u.id ?? 0) > 0 && isUserActive(u));
+        ).filter(
+          (u) =>
+            Number(u.id ?? 0) > 0 &&
+            (includeInactiveExecs || isUserActive(u)),
+        );
 
         setSalesAdmins(
           [
@@ -273,7 +282,9 @@ export default function LeadFilters({
         setSalesManagers(sm);
         setSalesExecs(mergedSalesExecs);
         setPresalesManagers(pm);
-        setPresalesExecs(pe.filter((u) => isUserActive(u)));
+        setPresalesExecs(
+          includeInactiveExecs ? pe : pe.filter((u) => isUserActive(u)),
+        );
       } catch {
         if (!cancelled) {
           setSalesAdmins([]);

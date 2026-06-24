@@ -11,6 +11,7 @@ import {
   postStageRollback,
   postVerifyLead,
   putLeadDetail,
+  putPresalesMilestoneDetail,
   putHubScheduleDates,
   getLeadFloorPlanMeta,
   removeLeadFloorPlan,
@@ -20,8 +21,12 @@ import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
+  applyCustomerNameToDetail,
+  pickCustomerNameFromDetail,
   mergePresalesMilestoneIntoDetail,
   mergeSecondBoxIntoDetail,
+  buildPresalesCompleteTaskPutBody,
+  buildMinimalPresalesMilestonePutBody,
   pickConfigurationFromDetail,
   pickPropertyNotesFromDetail,
 } from "@/lib/lead-detail-mapper";
@@ -58,8 +63,16 @@ import {
   maybeOpenSalesClosureOnWon,
 } from "@/lib/sales-closure";
 import { clearFollowUpDateAliases, FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
+import {
+  applyStoredPresalesMilestoneToDetail,
+  clearStoredPresalesMilestone,
+  presalesMilestonePersistedInDetail,
+  setStoredPresalesMilestone,
+  usesPresalesMilestoneClientOverlay,
+} from "@/lib/lead-presales-milestone-store";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
+import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import {
   CRM_USER_NAME_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -88,6 +101,7 @@ import {
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   collectHierarchyUserAssigneeAliases,
@@ -102,7 +116,14 @@ import {
   isPresalesVerifyHandoffSelection,
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
-import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
+import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
+import {
+  markWhatsappPresalesNameUpdateBeenUsed,
+  resolveWhatsappPresalesNameLocked,
+  isDefaultWhatsappPlaceholderName,
+  shouldShowWhatsappPresalesNameHint,
+  validateWhatsappCustomerNameForSave,
+} from "@/lib/whatsapp-presales-name-lock";
 
 type SalesExecutiveOption = {
   id: number;
@@ -734,7 +755,6 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
-  const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
   const [error, setError] = useState<string | null>(null);
@@ -745,6 +765,10 @@ export default function LeadDetailsApiClient({
     message: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [whatsappNameLockTick, setWhatsappNameLockTick] = useState(0);
+  const [whatsappNameLockedFromServer, setWhatsappNameLockedFromServer] =
+    useState(false);
+  const [whatsappNameSaving, setWhatsappNameSaving] = useState(false);
   const [savingSecondBox, setSavingSecondBox] = useState(false);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanRemoving, setFloorPlanRemoving] = useState(false);
@@ -810,9 +834,41 @@ export default function LeadDetailsApiClient({
     setError(null);
     try {
       const lt = leadTypeParam as CrmLeadType;
-      const detailJson = await getLeadDetail(lt, leadId);
+      let detailJson = await getLeadDetail(lt, leadId);
+      if (lt === "whatsapplead") {
+        clearStoredPresalesMilestone(lt, leadId);
+      } else if (usesPresalesMilestoneClientOverlay(lt)) {
+        detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
+      }
       setBaseDetail(detailJson);
       const mapped = detailJsonToLead(detailJson, lt);
+      void tryPersistAutoFollowUpDateForLead(
+        { ...detailJson, id: leadId, leadType: lt } as ApiLead,
+        lt,
+      ).then(async (saved) => {
+        if (!saved) return;
+        try {
+          const refreshed = await getLeadDetail(lt, leadId);
+          setBaseDetail(refreshed);
+          setLead((prev) => ({
+            ...detailJsonToLead(refreshed, lt),
+            id: leadId,
+            activities: prev.activities,
+          }));
+        } catch {
+          /* list refresh on next load is enough */
+        }
+      });
+      if (lt === "whatsapplead") {
+        const serverName = (mapped.name ?? "").trim();
+        const serverPhone = mapped.phone ?? "";
+        setWhatsappNameLockedFromServer(
+          Boolean(serverName) &&
+            !isDefaultWhatsappPlaceholderName(serverName, serverPhone),
+        );
+      } else {
+        setWhatsappNameLockedFromServer(false);
+      }
       setLead((prev) => ({ ...mapped, id: leadId, activities: prev.activities }));
       void getLeadFloorPlanMeta(lt, leadId).then((meta) => {
         if (meta) {
@@ -1630,7 +1686,25 @@ export default function LeadDetailsApiClient({
     setSaving(true);
     setSaveError(null);
     try {
-      const body = mergeLeadIntoDetail(baseDetail, lead);
+      let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (
+        shouldShowWhatsappPresalesNameHint({
+          leadType: lt,
+          leadId,
+          phone: previousLead.phone,
+          handedOffToSales:
+            isLeadHandedOffToSales(previousLead) ||
+            isLeadHandedOffToSales(verifyLeadRecord),
+          viewerRoleKey,
+          nameLockedFromServer: whatsappNameLockedFromServer,
+          nameHasValue: Boolean((previousLead.name ?? "").trim()),
+        })
+      ) {
+        body = applyCustomerNameToDetail(
+          body,
+          pickCustomerNameFromDetail(baseDetail),
+        );
+      }
       const updated = await putLeadDetail(lt, leadId, body);
       const stickyQuote = pickPersistedQuoteLink(updated, lead);
       const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -1672,15 +1746,37 @@ export default function LeadDetailsApiClient({
     notifyError,
     redirectToStrictSalesClosure,
     validLeadType,
+    verifyLeadRecord,
+    viewerRoleKey,
+    whatsappNameLockedFromServer,
   ]);
 
   const handleSaveSecondBox = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
+    const previousLead = lead;
     setSavingSecondBox(true);
     setSecondBoxError(null);
     try {
-      const body = mergeLeadIntoDetail(baseDetail, lead);
+      let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (
+        shouldShowWhatsappPresalesNameHint({
+          leadType: lt,
+          leadId,
+          phone: previousLead.phone,
+          handedOffToSales:
+            isLeadHandedOffToSales(previousLead) ||
+            isLeadHandedOffToSales(verifyLeadRecord),
+          viewerRoleKey,
+          nameLockedFromServer: whatsappNameLockedFromServer,
+          nameHasValue: Boolean((previousLead.name ?? "").trim()),
+        })
+      ) {
+        body = applyCustomerNameToDetail(
+          body,
+          pickCustomerNameFromDetail(baseDetail),
+        );
+      }
       const updated = await putLeadDetail(lt, leadId, body);
       const stickyQuote = pickPersistedQuoteLink(updated, lead);
       const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -1720,6 +1816,9 @@ export default function LeadDetailsApiClient({
     maybeOpenSalesClosureAfterWon,
     validLeadType,
     notifySuccess,
+    verifyLeadRecord,
+    viewerRoleKey,
+    whatsappNameLockedFromServer,
   ]);
 
   const handleSendQuote = useCallback(async () => {
@@ -1758,32 +1857,18 @@ export default function LeadDetailsApiClient({
     }
     setQuoteSending(true);
     try {
-      const fd = new FormData();
-      fd.append("quoteLink", link);
-      fd.append("toEmail", lead.email.trim());
-      fd.append("subject", quoteSubject.trim() || "Quote");
-      fd.append(
-        "body",
-        quoteBody.trim() ||
-          "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
-      );
-      fd.append("leadId", String(leadId));
-      fd.append("leadType", crmLeadTypeToApiLabel(lt));
-      const res = (await postQuoteSend(fd)) as {
-        success?: boolean;
-        message?: string;
-      };
-      const ok = res && typeof res === "object" && res.success !== false;
-      const message =
-        typeof res === "object" &&
-        res !== null &&
-        typeof res.message === "string"
-          ? res.message
-          : ok
-            ? "Quote sent."
-            : "Quote send failed";
-      if (ok) notifySuccess(message);
-      else notifyError(message);
+      const payload = buildEmailRequest(lead, "Quote Sent", true);
+      if (payload) {
+        payload.quoteLink = link;
+        const res = await sendEmailNotification(payload);
+        if (res.success) {
+          notifySuccess(res.message || "Quote sent.");
+        } else {
+          notifyError(res.message || "Quote send failed");
+        }
+      } else {
+        notifyError("Failed to build email payload.");
+      }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Quote send failed");
     } finally {
@@ -2007,6 +2092,82 @@ export default function LeadDetailsApiClient({
     () => isLeadHandedOffToSales(lead) || isLeadHandedOffToSales(verifyLeadRecord),
     [lead, verifyLeadRecord],
   );
+  const whatsappNameLockInput = useMemo(
+    () => ({
+      leadType: leadTypeParam,
+      leadId,
+      phone: lead.phone,
+      handedOffToSales: inSalesPhase,
+      viewerRoleKey,
+      nameLockedFromServer: whatsappNameLockedFromServer,
+      nameHasValue: Boolean((lead.name ?? "").trim()),
+    }),
+    [
+      inSalesPhase,
+      lead.name,
+      lead.phone,
+      leadId,
+      leadTypeParam,
+      viewerRoleKey,
+      whatsappNameLockTick,
+      whatsappNameLockedFromServer,
+    ],
+  );
+  const nameFieldLocked = useMemo(
+    () => resolveWhatsappPresalesNameLocked(whatsappNameLockInput),
+    [whatsappNameLockInput],
+  );
+  const showWhatsappPresalesNameHint = useMemo(
+    () => shouldShowWhatsappPresalesNameHint(whatsappNameLockInput),
+    [whatsappNameLockInput],
+  );
+
+  const handleWhatsappNameSave = useCallback(async () => {
+    if (!validLeadType || !showWhatsappPresalesNameHint) return;
+    const trimmed = (lead.name ?? "").trim();
+    const validation = validateWhatsappCustomerNameForSave(trimmed, lead.phone);
+    if (!validation.ok) {
+      notifyError(validation.message);
+      return;
+    }
+    const lt = leadTypeParam as CrmLeadType;
+    setWhatsappNameSaving(true);
+    try {
+      const body = applyCustomerNameToDetail(baseDetail, trimmed);
+      const updated = await putLeadDetail(lt, leadId, body);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
+      markWhatsappPresalesNameUpdateBeenUsed(leadId);
+      setWhatsappNameLockedFromServer(true);
+      setWhatsappNameLockTick((t) => t + 1);
+      setLead((prev) => ({
+        ...mapped,
+        id: leadId,
+        activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+      }));
+      notifySuccess("Customer name saved.");
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save name.");
+    } finally {
+      setWhatsappNameSaving(false);
+    }
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    notifyError,
+    notifySuccess,
+    showWhatsappPresalesNameHint,
+    validLeadType,
+  ]);
+
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
     () =>
@@ -2145,47 +2306,58 @@ export default function LeadDetailsApiClient({
       presalesMilestoneSubStage: persistedSubStage,
     };
 
-    const leadForSave: Lead = {
-      ...lead,
+    const putFields = {
       followUpDate,
-      status: persistedSubStage || lead.status,
-      lostReason: args.lostReason?.trim()
-        ? args.lostReason.trim()
-        : lead.lostReason,
-      budget: args.budget !== undefined ? args.budget : lead.budget,
-      propertyNotes: args.propertyNotes !== undefined ? args.propertyNotes : lead.propertyNotes,
-      configuration: args.configuration !== undefined ? args.configuration : lead.configuration,
-      bookingType: args.bookingType !== undefined ? args.bookingType : lead.bookingType,
-      possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
-      stageBlock: {
-        ...lead.stageBlock,
-        ...nextPresalesStage,
-      },
+      lostReason: args.lostReason,
+      budget: args.budget,
+      propertyNotes: args.propertyNotes,
+      configuration: args.configuration,
+      bookingType: args.bookingType,
+      possessionDate: args.possessionDate,
+      clearFollowUp: noFollowUpNeeded,
     };
+    const body =
+      lt === "whatsapplead" || lt === "walkinlead"
+        ? buildMinimalPresalesMilestonePutBody(nextPresalesStage, putFields)
+        : buildPresalesCompleteTaskPutBody(baseDetail, nextPresalesStage, putFields);
 
-    const body = mergeLeadIntoDetail(
-      mergePresalesMilestoneIntoDetail(baseDetail, nextPresalesStage),
-      leadForSave,
-    );
-    if (noFollowUpNeeded) {
-      clearFollowUpDateAliases(body);
+    const putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
+
+    let detailJson = presalesMilestonePersistedInDetail(putResponse, nextPresalesStage)
+      ? putResponse
+      : await getLeadDetail(lt, leadId);
+    const hubPersisted = presalesMilestonePersistedInDetail(detailJson, nextPresalesStage);
+
+    if (!hubPersisted && usesPresalesMilestoneClientOverlay(lt)) {
+      setStoredPresalesMilestone(lt, leadId, nextPresalesStage);
+      detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
+      notifySuccess("Milestone saved");
+    } else if (!hubPersisted) {
+      throw new Error(
+        lt === "whatsapplead"
+          ? isAdminRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey)
+            ? "Milestone did not persist on Hub after save. Backend must apply presales milestone on WhatsappLead PUT for Admin/Super Admin (same as Add Lead) — confirm Hub deploy, then retry."
+            : "Milestone did not persist on Hub after save. Confirm backend deploy and retry as the presales assignee."
+          : "Milestone did not persist after save. Please retry or contact support.",
+      );
+    } else {
+      clearStoredPresalesMilestone(lt, leadId);
+      notifySuccess("Saved");
+      dispatchCrmLeadsInvalidate({
+        leadTypes: [lt],
+        reason: "presales-milestone",
+      });
     }
-    const updated = await putLeadDetail(lt, leadId, body);
-    setBaseDetail(updated);
+
+    setBaseDetail(detailJson);
+    const mapped = detailJsonToLead(detailJson, lt);
     setLead((prev) => ({
-      ...detailJsonToLead(updated, lt),
+      ...mapped,
       id: leadId,
       activities: prev.activities,
-      bookingType: leadForSave.bookingType || prev.bookingType,
-      salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
-      followUpDate: leadForSave.followUpDate,
-      lostReason: leadForSave.lostReason,
-      stageBlock: {
-        ...prev.stageBlock,
-        ...nextPresalesStage,
-      },
+      followUpDate: mapped.followUpDate || followUpDate || prev.followUpDate,
+      lostReason: mapped.lostReason || args.lostReason?.trim() || prev.lostReason,
     }));
-    notifySuccess("Saved");
     void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
     void refreshActivities();
   };
@@ -2507,6 +2679,10 @@ export default function LeadDetailsApiClient({
           <LeadInfoTab
             lead={lead}
             onLeadChange={patchLead}
+            nameFieldLocked={nameFieldLocked}
+            showWhatsappPresalesNameHint={showWhatsappPresalesNameHint}
+            onWhatsappNameSave={handleWhatsappNameSave}
+            whatsappNameSaving={whatsappNameSaving}
             onFloorPlanUpload={handleFloorPlanUpload}
             onFloorPlanMissing={handleFloorPlanMissing}
             onFloorPlanRemove={handleFloorPlanRemove}
@@ -2540,30 +2716,12 @@ export default function LeadDetailsApiClient({
         {secondBoxError ? (
           <p className="mt-2 text-[12px] text-rose-600">{secondBoxError}</p>
         ) : null}
-        <FooterActions
-          onSave={handleSave}
-          saving={saving}
-          onVerify={
-            usePresalesCompleteTask &&
-            canVerifyCurrentLead &&
-            !presalesHandedOff &&
-            !inSalesPhase
-              ? () => {
-                  setCompleteTaskVerifyFocus(true);
-                  setCompleteTaskOpen(true);
-                }
-              : undefined
-          }
-        />
+        <FooterActions onSave={handleSave} saving={saving} />
       </div>
       <CompleteTaskModal
         lead={lead}
         open={completeTaskOpen}
-        onClose={() => {
-          setCompleteTaskOpen(false);
-          setCompleteTaskVerifyFocus(false);
-        }}
-        forcePresalesVerifyPanel={completeTaskVerifyFocus}
+        onClose={() => setCompleteTaskOpen(false)}
         onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
         onPresalesApiComplete={
           usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined

@@ -27,3 +27,9 @@ export function isManagerStatusToggleRole(role: string): boolean {
   const r = normalizeRole(role);
   return r === "SALES_MANAGER" || r === "PRESALES_MANAGER" || r === "MANAGER";
 }
+
+/** Super Admin / Admin / Sales Admin — keep inactive executives in filter scope and counts. */
+export function includeInactiveExecutivesInHierarchyFilters(role?: string): boolean {
+  const r = normalizeRole(role ?? "");
+  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+}

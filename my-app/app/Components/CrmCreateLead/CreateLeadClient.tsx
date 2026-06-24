@@ -18,6 +18,10 @@ import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import { parseCrossMergeIntoWhatsapp } from "@/lib/lead-source-utils";
+import {
+  DEFAULT_FOLLOW_UP_OFFSET_MS,
+  formatDateTimeLocalInputValue,
+} from "@/lib/follow-up-date";
 
 const LEAD_SOURCES = [
   "Website",
@@ -99,6 +103,20 @@ type CreateLeadFormState = {
   reason: string;
 };
 
+function getTodayStartDateTimeLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}T00:00`;
+}
+
+function getDefaultFollowUpDateTimeLocal(): string {
+  return formatDateTimeLocalInputValue(
+    new Date(Date.now() + DEFAULT_FOLLOW_UP_OFFSET_MS),
+  );
+}
+
 const INITIAL_FORM: CreateLeadFormState = {
   name: "",
   email: "",
@@ -111,19 +129,11 @@ const INITIAL_FORM: CreateLeadFormState = {
   propertyDetails: "",
   designerName: "",
   notes: "",
-  followUpDate: "",
+  followUpDate: getDefaultFollowUpDateTimeLocal(),
   quoteLink: "",
   feedbackSubstage: "",
   reason: "",
 };
-
-function getTodayStartDateTimeLocal(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}T00:00`;
-}
 
 function CreateLeadSection({
   title,
@@ -316,7 +326,7 @@ export default function CreateLeadClient() {
       designerName: form.designerName.trim() || undefined,
       propertyDetails: form.propertyDetails.trim() || undefined,
       quoteLink: form.quoteLink.trim() || undefined,
-      followUpDate: form.followUpDate || undefined,
+      followUpDate: form.followUpDate.trim() || getDefaultFollowUpDateTimeLocal(),
       notes: form.notes.trim() || undefined,
     };
 

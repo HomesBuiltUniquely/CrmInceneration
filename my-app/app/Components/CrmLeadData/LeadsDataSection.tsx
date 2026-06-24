@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
+import type { ApiLead, CrmLeadType, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import {
   asCrmLeadType,
@@ -20,6 +20,9 @@ import {
   resolveHierarchyUserByDisplayName,
 } from "@/lib/hierarchy-user-display";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import {
+  applyStoredPresalesMilestoneToApiLead,
+} from "@/lib/lead-presales-milestone-store";
 import {
   computeLeadTypeCountsFromRows,
   pickMilestoneRepresentativeRows,
@@ -84,8 +87,12 @@ import {
   normalizeInsightCountOpts,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
+import {
+  computeAutoFollowUpDateToPersist,
+  persistAutoFollowUpDatesForLeads,
+} from "@/lib/lead-follow-up-persist";
 import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
-import { isExecutiveAssigneeRole, isUserActive } from "@/lib/user-active";
+import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
   roleUsesAdminPoolInsightTiles,
@@ -206,12 +213,12 @@ import {
 } from "@/lib/leads-view-persist";
 
 function isHierarchyAdminRole(role?: string): boolean {
-  const r = normalizeRole(role ?? "");
-  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+  return includeInactiveExecutivesInHierarchyFilters(role);
 }
 
 async function fetchMergedSalesExecutivesForFilters(
   authHeaders: HeadersInit,
+  includeInactive = false,
 ): Promise<HierarchyUser[]> {
   const authBase = getAuthApiBaseUrl();
   const [byRoleRes, legacyRes] = await Promise.all([
@@ -261,7 +268,8 @@ async function fetchMergedSalesExecutivesForFilters(
       username: row.username ?? prev?.username,
     });
   }
-  return [...byId.values()].filter((u) => isUserActive(u));
+  const merged = [...byId.values()].filter((u) => Number(u.id ?? 0) > 0);
+  return includeInactive ? merged : merged.filter((u) => isUserActive(u));
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -1664,8 +1672,12 @@ export default function LeadsDataSection({
         if (cancelled) return;
 
         let mergedSalesExecs: HierarchyUser[] = [];
+        const includeInactiveExecs = includeInactiveExecutivesInHierarchyFilters(currentRole);
         if (isHierarchyAdminRole(currentRole)) {
-          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(auth);
+          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(
+            auth,
+            includeInactiveExecs,
+          );
         }
 
         const byRole = new Map<string, HierarchyUser[]>(pairs);
@@ -1683,13 +1695,21 @@ export default function LeadsDataSection({
 
         setSalesAdmins(saJ.filter((u) => isUserActive(u)));
         setSalesManagers(smJ);
-        setSalesExecs(salesExecList.filter((u) => isUserActive(u)));
+        setSalesExecs(
+          includeInactiveExecs
+            ? salesExecList.filter((u) => Number(u.id ?? 0) > 0)
+            : salesExecList.filter((u) => Number(u.id ?? 0) > 0 && isUserActive(u)),
+        );
         setPresalesManagers(pmJ);
-        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => isUserActive(u));
+        const mergedPresalesExecs = [...peJ, ...preJ];
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
-        setPresalesExecs(dedupedPresalesExecs);
+        setPresalesExecs(
+          includeInactiveExecs
+            ? dedupedPresalesExecs
+            : dedupedPresalesExecs.filter((u) => isUserActive(u)),
+        );
       } catch {
         if (cancelled) return;
         setSalesAdmins([]);
@@ -3317,6 +3337,30 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
+  const leadTypeFallbackForPersist = asCrmLeadType(
+    leadType,
+    (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+      ? "formlead"
+      : leadType.trim().toLowerCase()) as CrmLeadType,
+  );
+  const autoFollowUpPersistSignature = useMemo(
+    () =>
+      content
+        .map((lead) => {
+          const followUp = computeAutoFollowUpDateToPersist(lead);
+          if (!followUp) return "";
+          const lt = asCrmLeadType(lead.leadType, leadTypeFallbackForPersist);
+          return `${lt}:${lead.id}`;
+        })
+        .filter(Boolean)
+        .sort()
+        .join("|"),
+    [content, leadTypeFallbackForPersist],
+  );
+  useEffect(() => {
+    if (!autoFollowUpPersistSignature) return;
+    void persistAutoFollowUpDatesForLeads(content, leadTypeFallbackForPersist);
+  }, [autoFollowUpPersistSignature, content, leadTypeFallbackForPersist]);
   const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
   const insightOpts = normalizeInsightCountOpts({
     viewerRole: roleKeyForInsight,
@@ -3331,21 +3375,19 @@ export default function LeadsDataSection({
     insightTableMode,
     insightOpts,
   );
-  const baseRows = insightFilteredContent.map((lead) => ({
-    ...mapApiLeadToRow(
-      lead,
-      asCrmLeadType(
-        lead.leadType,
-        (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
-          ? "formlead"
-          : leadType.trim().toLowerCase()) as any
-      ),
-      stageOrder,
-      scopeRoleKey,
-      leadsWorkspace,
-    ),
-    callDelayed: isFirstCallDelayedLead(lead),
-  }));
+  const baseRows = insightFilteredContent.map((lead) => {
+    const sourceLt = asCrmLeadType(
+      lead.leadType,
+      (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+        ? "formlead"
+        : leadType.trim().toLowerCase()) as CrmLeadType,
+    );
+    const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
+    return {
+      ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
+      callDelayed: isFirstCallDelayedLead(lead),
+    };
+  });
   const norm = (v: string) => v.trim().toLowerCase();
   const myName = norm(currentUserName);
   const scopedTeamNames = managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;

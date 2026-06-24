@@ -72,6 +72,13 @@ type Props = {
   onFloorPlanRemove?: () => void | Promise<void>;
   floorPlanUploading?: boolean;
   floorPlanRemoving?: boolean;
+  /** API detail: Full Name read-only (WhatsApp presales one-time lock). */
+  nameFieldLocked?: boolean;
+  /** Hint when presales may edit WhatsApp name once before verify/handoff. */
+  showWhatsappPresalesNameHint?: boolean;
+  /** Inline save for WhatsApp one-time name update. */
+  onWhatsappNameSave?: () => void | Promise<void>;
+  whatsappNameSaving?: boolean;
   /** Quote email (`POST /v1/quote/send`) — only on API-backed lead details. */
   quoteExtras?: {
     subject: string;
@@ -97,6 +104,10 @@ export default function LeadInfoTab({
   onFloorPlanRemove,
   floorPlanUploading = false,
   floorPlanRemoving = false,
+  nameFieldLocked,
+  showWhatsappPresalesNameHint = false,
+  onWhatsappNameSave,
+  whatsappNameSaving = false,
   quoteExtras,
 }: Props) {
   const c = onLeadChange;
@@ -123,13 +134,15 @@ export default function LeadInfoTab({
 
   useEffect(() => {
     setLockedIdentityFields({
-      // Lock only if backend already had a value for this lead.
-      name: Boolean((lead.name ?? "").trim()),
+      name:
+        nameFieldLocked !== undefined
+          ? nameFieldLocked
+          : Boolean((lead.name ?? "").trim()),
       email: Boolean((lead.email ?? "").trim()),
       phone: Boolean((lead.phone ?? "").trim()),
       pincode: Boolean((lead.pincode ?? "").trim()),
     });
-  }, [lead.id]);
+  }, [lead.id, nameFieldLocked]);
 
   useEffect(() => {
     const storageKey = `${DESIGN_QA_STATE_KEY_PREFIX}${lead.id}`;
@@ -240,16 +253,36 @@ export default function LeadInfoTab({
 
           <div className="mb-4">
             <FieldLabel>Full Name</FieldLabel>
-            <Input
-              placeholder="Customer name"
-              {...(c
-                ? {
-                    value: lead.name,
-                    onChange: (e) => c({ name: e.target.value }),
-                    readOnly: lockedIdentityFields.name,
-                  }
-                : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
-            />
+            <div className="flex items-stretch gap-2">
+              <Input
+                className="min-w-0 flex-1"
+                placeholder="Customer name"
+                {...(c
+                  ? {
+                      value: lead.name,
+                      onChange: (e) => c({ name: e.target.value }),
+                      readOnly: lockedIdentityFields.name,
+                    }
+                  : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
+              />
+              {onWhatsappNameSave && showWhatsappPresalesNameHint ? (
+                <button
+                  type="button"
+                  title="Save name"
+                  aria-label="Save name"
+                  disabled={whatsappNameSaving || lockedIdentityFields.name}
+                  onClick={() => void onWhatsappNameSave()}
+                  className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[var(--crm-accent)] bg-[var(--crm-accent)] text-[15px] text-white transition-all duration-200 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {whatsappNameSaving ? "…" : "💾"}
+                </button>
+              ) : null}
+            </div>
+            {showWhatsappPresalesNameHint ? (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                Enter the customer name and tap save — can only be updated once before verify or sales assignment.
+              </p>
+            ) : null}
           </div>
 
           <div className="mb-4">

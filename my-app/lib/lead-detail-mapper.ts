@@ -1,6 +1,6 @@
 import { asCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
-import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import { isCrmLeadReinquiry, parseAdditionalLeadSources } from "@/lib/lead-source-utils";
 import {
   getLeadDisplayEmail,
   getLeadDisplayName,
@@ -10,7 +10,11 @@ import {
 } from "@/lib/lead-display";
 import { applyLostReasonToDetailPayload, readLostReasonFromDetail } from "@/lib/lead-lost-fields";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { resolveEffectiveFollowUpDateRaw } from "@/lib/follow-up-date";
 import { normalizeFloorPlanS3Key, pickFloorPlanPublicLink } from "@/lib/floor-plan";
+import {
+  clearFollowUpDateAliases,
+} from "@/lib/lead-schedule-payload";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -149,6 +153,75 @@ function stageObj(detail: Record<string, unknown>): Record<string, unknown> | nu
   const s = detail.stage;
   if (s && typeof s === "object" && !Array.isArray(s)) return s as Record<string, unknown>;
   return null;
+}
+
+function pickDetailScalar(detail: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = detail[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  const df = detail.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const d = df as Record<string, unknown>;
+    for (const k of keys) {
+      const v = d[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  return "";
+}
+
+/** Read presales milestone from root, `stage`, `dynamicFields`, and snake_case aliases. */
+export function readPresalesMilestoneFromDetail(detail: Record<string, unknown>): {
+  stage: string;
+  category: string;
+  subStage: string;
+} {
+  const st = stageObj(detail);
+  const stage =
+    pickDetailScalar(detail, ["presalesMilestoneStage", "presales_milestone_stage"]) ||
+    String(st?.presalesMilestoneStage ?? "").trim();
+  const category =
+    pickDetailScalar(detail, [
+      "presalesMilestoneCategory",
+      "presales_milestone_category",
+      "presalesMilestoneStageCategory",
+    ]) ||
+    String(st?.presalesMilestoneCategory ?? st?.presalesMilestoneStageCategory ?? "").trim();
+  const subStage =
+    pickDetailScalar(detail, ["presalesMilestoneSubStage", "presales_milestone_sub_stage"]) ||
+    String(st?.presalesMilestoneSubStage ?? "").trim();
+  return { stage, category, subStage };
+}
+
+function applyPresalesMilestoneAliases(
+  target: Record<string, unknown>,
+  update: PresalesMilestoneUpdate,
+): void {
+  const stage = update.presalesMilestoneStage.trim();
+  const category = update.presalesMilestoneCategory.trim();
+  const subStage = update.presalesMilestoneSubStage.trim();
+
+  target.presalesMilestoneStage = stage;
+  target.presalesMilestoneCategory = category;
+  target.presalesMilestoneSubStage = subStage;
+  target.presales_milestone_stage = stage;
+  target.presales_milestone_category = category;
+  target.presales_milestone_sub_stage = subStage;
+  target.presalesMilestoneStageCategory = category;
+
+  const df = target.dynamicFields;
+  const dfo =
+    df && typeof df === "object" && !Array.isArray(df)
+      ? { ...(df as Record<string, unknown>) }
+      : {};
+  if (stage) dfo.presalesMilestoneStage = stage;
+  if (category) {
+    dfo.presalesMilestoneCategory = category;
+    dfo.presalesMilestoneStageCategory = category;
+  }
+  if (subStage) dfo.presalesMilestoneSubStage = subStage;
+  target.dynamicFields = dfo;
 }
 
 function pickAdditionalLeadSourcesRaw(detail: Record<string, unknown>): string {
@@ -469,23 +542,14 @@ export function extractStage(detail: Record<string, unknown>) {
     st?.substage && typeof st.substage === "object" && st.substage !== null
       ? (st.substage as { substage?: string | null }).substage
       : undefined;
-  const root = detail;
+  const ps = readPresalesMilestoneFromDetail(detail);
   return {
     milestoneStage: (st?.milestoneStage as string | null | undefined) ?? null,
     milestoneStageCategory: (st?.milestoneStageCategory as string | null | undefined) ?? null,
     milestoneSubStage: (st?.milestoneSubStage as string | null | undefined) ?? null,
-    presalesMilestoneStage:
-      (pickStr(root, "presalesMilestoneStage") as string | null) ??
-      (st?.presalesMilestoneStage as string | null | undefined) ??
-      null,
-    presalesMilestoneCategory:
-      (pickStr(root, "presalesMilestoneCategory") as string | null) ??
-      (st?.presalesMilestoneCategory as string | null | undefined) ??
-      null,
-    presalesMilestoneSubStage:
-      (pickStr(root, "presalesMilestoneSubStage") as string | null) ??
-      (st?.presalesMilestoneSubStage as string | null | undefined) ??
-      null,
+    presalesMilestoneStage: ps.stage || null,
+    presalesMilestoneCategory: ps.category || null,
+    presalesMilestoneSubStage: ps.subStage || null,
     legacyStage: (st?.stage as string | null | undefined) ?? null,
     legacySubstage: substage ?? null,
   };
@@ -581,7 +645,15 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",
     meetingVenue: pickStr(detail, "meetingVenue", "venue") || "",
-    followUpDate: pickStr(detail, "followUpDate", "nextFollowUp") || "",
+    followUpDate:
+      resolveEffectiveFollowUpDateRaw(
+        pickStr(detail, "followUpDate", "nextFollowUp"),
+        createdRaw,
+        {
+          isReinquiry: isCrmLeadReinquiry(detail),
+          updatedRaw: pickStr(detail, "updatedAt", "updated_at", "updatedOn", "modifiedAt"),
+        },
+      ) || "",
     agentName: pickStr(detail, "agentName", "agent") || "",
     activities: [],
     leadType,
@@ -638,22 +710,113 @@ export type PresalesMilestoneUpdate = {
 export function mergePresalesMilestoneIntoDetail(
   base: Record<string, unknown>,
   update: PresalesMilestoneUpdate,
+  opts?: { omitSalesMilestones?: boolean },
 ): Record<string, unknown> {
   const next = { ...base };
-  next.presalesMilestoneStage = update.presalesMilestoneStage.trim();
-  next.presalesMilestoneCategory = update.presalesMilestoneCategory.trim();
-  next.presalesMilestoneSubStage = update.presalesMilestoneSubStage.trim();
-  const prevStage =
-    next.stage && typeof next.stage === "object" && !Array.isArray(next.stage)
-      ? (next.stage as Record<string, unknown>)
-      : {};
-  next.stage = {
-    ...prevStage,
+  applyPresalesMilestoneAliases(next, update);
+
+  const stage = update.presalesMilestoneStage.trim();
+  const category = update.presalesMilestoneCategory.trim();
+  const subStage = update.presalesMilestoneSubStage.trim();
+  const prevStage = stageObj(next) ?? {};
+
+  if (opts?.omitSalesMilestones) {
+    next.stage = {
+      presalesMilestoneStage: stage,
+      presalesMilestoneCategory: category,
+      presalesMilestoneSubStage: subStage,
+      ...(prevStage.substage !== undefined ? { substage: prevStage.substage } : {}),
+      ...(prevStage.stage !== undefined ? { stage: prevStage.stage } : {}),
+    };
+  } else {
+    next.stage = {
+      ...prevStage,
+      presalesMilestoneStage: stage,
+      presalesMilestoneCategory: category,
+      presalesMilestoneSubStage: subStage,
+    };
+  }
+  return next;
+}
+
+export type PresalesCompleteTaskPutFields = {
+  followUpDate?: string;
+  lostReason?: string;
+  budget?: string;
+  propertyNotes?: string;
+  configuration?: string;
+  bookingType?: string;
+  possessionDate?: string;
+  clearFollowUp?: boolean;
+};
+
+function applyPresalesCompleteTaskPutFields(
+  body: Record<string, unknown>,
+  fields: PresalesCompleteTaskPutFields,
+): void {
+  if (fields.budget !== undefined) body.budget = fields.budget.trim();
+  if (fields.bookingType !== undefined) {
+    const bookingType = fields.bookingType.trim();
+    body.bookingType = bookingType;
+    body.booking_type = bookingType;
+  }
+  if (fields.configuration !== undefined) {
+    const cfg = fields.configuration.trim();
+    body.propertyType = cfg;
+    body.configuration = cfg;
+    body.interiorSetup = cfg;
+  }
+  if (fields.propertyNotes !== undefined) {
+    const notes = fields.propertyNotes.trim();
+    body.propertyNotes = notes;
+    body.property_detail = notes;
+  }
+  if (fields.possessionDate !== undefined) {
+    const possession = fields.possessionDate.trim();
+    body.possession = possession;
+    body.possessionDate = possession;
+  }
+  if (fields.lostReason !== undefined) {
+    applyLostReasonToDetailPayload(body, fields.lostReason);
+  }
+  if (fields.clearFollowUp) {
+    clearFollowUpDateAliases(body);
+  } else if (fields.followUpDate !== undefined) {
+    body.followUpDate = fields.followUpDate;
+    body.nextFollowUp = fields.followUpDate;
+  }
+}
+
+/**
+ * Milestone-only PUT for WhatsApp / walk-in — root + nested presales `stage` only.
+ * See docs/WHATSAPP_PRESALES_MILESTONE_FRONTEND.md §4.
+ */
+export function buildMinimalPresalesMilestonePutBody(
+  update: PresalesMilestoneUpdate,
+  fields: PresalesCompleteTaskPutFields = {},
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  applyPresalesMilestoneAliases(body, update);
+  body.stage = {
     presalesMilestoneStage: update.presalesMilestoneStage.trim(),
     presalesMilestoneCategory: update.presalesMilestoneCategory.trim(),
     presalesMilestoneSubStage: update.presalesMilestoneSubStage.trim(),
   };
-  return next;
+  applyPresalesCompleteTaskPutFields(body, fields);
+  return body;
+}
+
+/**
+ * Presales Complete Task PUT — full GET body + presales milestone (non–WhatsApp types).
+ */
+export function buildPresalesCompleteTaskPutBody(
+  base: Record<string, unknown>,
+  update: PresalesMilestoneUpdate,
+  fields: PresalesCompleteTaskPutFields = {},
+): Record<string, unknown> {
+  const body = mergePresalesMilestoneIntoDetail(base, update, { omitSalesMilestones: true });
+  applyPresalesCompleteTaskPutFields(body, fields);
+  return body;
 }
 
 /** Clear all floor-plan fields on PUT body (remove PDF/JPG/PNG from lead). */
@@ -668,6 +831,31 @@ export function mergeClearFloorPlanInDetail(
     floorPlanViewPath: undefined,
     floorPlanOpenPath: undefined,
   });
+}
+
+/** Merge UI Lead + existing GET body for PUT (preserves unknown backend fields). */
+export function pickCustomerNameFromDetail(detail: Record<string, unknown>): string {
+  return pickStr(
+    detail,
+    "name",
+    "customerName",
+    "fullName",
+    "displayName",
+    "userName",
+    "firstName",
+  );
+}
+
+export function applyCustomerNameToDetail(
+  detail: Record<string, unknown>,
+  name: string,
+): Record<string, unknown> {
+  return {
+    ...detail,
+    name,
+    customerName: name,
+    fullName: name,
+  };
 }
 
 /** Merge UI Lead + existing GET body for PUT (preserves unknown backend fields). */
