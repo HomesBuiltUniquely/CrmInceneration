@@ -1,6 +1,6 @@
 import { asCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
-import { parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import { isCrmLeadReinquiry, parseAdditionalLeadSources } from "@/lib/lead-source-utils";
 import {
   getLeadDisplayEmail,
   getLeadDisplayName,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/lead-display";
 import { applyLostReasonToDetailPayload, readLostReasonFromDetail } from "@/lib/lead-lost-fields";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { resolveEffectiveFollowUpDateRaw } from "@/lib/follow-up-date";
 import { normalizeFloorPlanS3Key, pickFloorPlanPublicLink } from "@/lib/floor-plan";
 import {
   clearFollowUpDateAliases,
@@ -644,7 +645,15 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",
     meetingVenue: pickStr(detail, "meetingVenue", "venue") || "",
-    followUpDate: pickStr(detail, "followUpDate", "nextFollowUp") || "",
+    followUpDate:
+      resolveEffectiveFollowUpDateRaw(
+        pickStr(detail, "followUpDate", "nextFollowUp"),
+        createdRaw,
+        {
+          isReinquiry: isCrmLeadReinquiry(detail),
+          updatedRaw: pickStr(detail, "updatedAt", "updated_at", "updatedOn", "modifiedAt"),
+        },
+      ) || "",
     agentName: pickStr(detail, "agentName", "agent") || "",
     activities: [],
     leadType,

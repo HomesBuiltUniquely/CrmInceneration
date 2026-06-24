@@ -1,7 +1,9 @@
-import { crmLeadAssigneeAliasNorms, type ApiLead } from "@/lib/leads-filter";
+import { crmLeadAssigneeAliasNorms, readLeadUpdatedAtRaw, type ApiLead } from "@/lib/leads-filter";
+import { isCrmLeadReinquiry } from "@/lib/lead-source-utils";
 import {
   isFollowUpDueLocalToday,
   isFollowUpOverdueLocal,
+  resolveEffectiveFollowUpDateRaw,
 } from "@/lib/follow-up-date";
 import { filterLeadsForMilestoneInsightMode } from "@/lib/lead-milestone-insight-tiles";
 import {
@@ -19,6 +21,14 @@ export function readFollowUpDateRaw(lead: ApiLead): string {
       r.FollowUpDate ??
       "",
   ).trim();
+}
+
+/** Explicit follow-up, or enquiry/created date when intake has none yet. */
+export function readEffectiveFollowUpDateRaw(lead: ApiLead): string {
+  return resolveEffectiveFollowUpDateRaw(readFollowUpDateRaw(lead), readLeadCreatedAtRaw(lead), {
+    isReinquiry: isCrmLeadReinquiry(lead),
+    updatedRaw: readLeadUpdatedAtRaw(lead),
+  });
 }
 
 export function readLeadCreatedAtRaw(lead: ApiLead): string {
@@ -226,7 +236,7 @@ export function computeFollowUpInsightCounts(
   let team = 0;
 
   for (const lead of leads) {
-    const fu = readFollowUpDateRaw(lead);
+    const fu = readEffectiveFollowUpDateRaw(lead);
 
     if (opts.viewerRole === "SALES_EXECUTIVE") {
       if (leadAssignedToSelf(lead, me)) {
@@ -388,7 +398,7 @@ export function filterLeadsForInsightMode(
   }
 
   return leads.filter((lead) => {
-    const fu = readFollowUpDateRaw(lead);
+    const fu = readEffectiveFollowUpDateRaw(lead);
     const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
 
     if (mode === "totalCalls") {

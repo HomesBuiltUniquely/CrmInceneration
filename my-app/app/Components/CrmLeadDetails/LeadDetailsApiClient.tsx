@@ -101,6 +101,7 @@ import {
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   collectHierarchyUserAssigneeAliases,
@@ -841,6 +842,23 @@ export default function LeadDetailsApiClient({
       }
       setBaseDetail(detailJson);
       const mapped = detailJsonToLead(detailJson, lt);
+      void tryPersistAutoFollowUpDateForLead(
+        { ...detailJson, id: leadId, leadType: lt } as ApiLead,
+        lt,
+      ).then(async (saved) => {
+        if (!saved) return;
+        try {
+          const refreshed = await getLeadDetail(lt, leadId);
+          setBaseDetail(refreshed);
+          setLead((prev) => ({
+            ...detailJsonToLead(refreshed, lt),
+            id: leadId,
+            activities: prev.activities,
+          }));
+        } catch {
+          /* list refresh on next load is enough */
+        }
+      });
       if (lt === "whatsapplead") {
         const serverName = (mapped.name ?? "").trim();
         const serverPhone = mapped.phone ?? "";

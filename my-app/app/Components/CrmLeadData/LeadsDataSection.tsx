@@ -87,6 +87,10 @@ import {
   normalizeInsightCountOpts,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
+import {
+  computeAutoFollowUpDateToPersist,
+  persistAutoFollowUpDatesForLeads,
+} from "@/lib/lead-follow-up-persist";
 import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
 import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
@@ -3333,6 +3337,30 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
+  const leadTypeFallbackForPersist = asCrmLeadType(
+    leadType,
+    (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+      ? "formlead"
+      : leadType.trim().toLowerCase()) as CrmLeadType,
+  );
+  const autoFollowUpPersistSignature = useMemo(
+    () =>
+      content
+        .map((lead) => {
+          const followUp = computeAutoFollowUpDateToPersist(lead);
+          if (!followUp) return "";
+          const lt = asCrmLeadType(lead.leadType, leadTypeFallbackForPersist);
+          return `${lt}:${lead.id}`;
+        })
+        .filter(Boolean)
+        .sort()
+        .join("|"),
+    [content, leadTypeFallbackForPersist],
+  );
+  useEffect(() => {
+    if (!autoFollowUpPersistSignature) return;
+    void persistAutoFollowUpDatesForLeads(content, leadTypeFallbackForPersist);
+  }, [autoFollowUpPersistSignature, content, leadTypeFallbackForPersist]);
   const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
   const insightOpts = normalizeInsightCountOpts({
     viewerRole: roleKeyForInsight,
