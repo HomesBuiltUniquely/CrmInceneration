@@ -1758,32 +1758,18 @@ export default function LeadDetailsApiClient({
     }
     setQuoteSending(true);
     try {
-      const fd = new FormData();
-      fd.append("quoteLink", link);
-      fd.append("toEmail", lead.email.trim());
-      fd.append("subject", quoteSubject.trim() || "Quote");
-      fd.append(
-        "body",
-        quoteBody.trim() ||
-          "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
-      );
-      fd.append("leadId", String(leadId));
-      fd.append("leadType", crmLeadTypeToApiLabel(lt));
-      const res = (await postQuoteSend(fd)) as {
-        success?: boolean;
-        message?: string;
-      };
-      const ok = res && typeof res === "object" && res.success !== false;
-      const message =
-        typeof res === "object" &&
-        res !== null &&
-        typeof res.message === "string"
-          ? res.message
-          : ok
-            ? "Quote sent."
-            : "Quote send failed";
-      if (ok) notifySuccess(message);
-      else notifyError(message);
+      const payload = buildEmailRequest(lead, "Quote Sent", true);
+      if (payload) {
+        payload.quoteLink = link;
+        const res = await sendEmailNotification(payload);
+        if (res.success) {
+          notifySuccess(res.message || "Quote sent.");
+        } else {
+          notifyError(res.message || "Quote send failed");
+        }
+      } else {
+        notifyError("Failed to build email payload.");
+      }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Quote send failed");
     } finally {
