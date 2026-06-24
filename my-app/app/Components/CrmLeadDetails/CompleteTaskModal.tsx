@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS } from "@/lib/data";
 import {
-  fetchActiveDesigners,
+  fetchDesignersFromDesignModule,
   fetchAvailableSlots,
   type AvailableSlotRow,
+  type DesignModuleDesigner,
 } from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
@@ -202,7 +203,7 @@ export default function CompleteTaskModal({
   const [appointmentDate, setAppointmentDate] = useState("");
   const [selectedSlotId, setSelectedSlotId] = useState("");
   const [meetingType, setMeetingType] = useState("");
-  const [designerOptions, setDesignerOptions] = useState<string[]>([]);
+  const [designerOptions, setDesignerOptions] = useState<DesignModuleDesigner[]>([]);
   const [availableSlots, setAvailableSlots] = useState<AvailableSlotRow[]>([]);
   const [designersLoading, setDesignersLoading] = useState(false);
   const [slotsLoading, setSlotsLoading] = useState(false);
@@ -516,9 +517,9 @@ export default function CompleteTaskModal({
     }
     let cancelled = false;
     setDesignersLoading(true);
-    void fetchActiveDesigners()
-      .then((names) => {
-        if (!cancelled) setDesignerOptions(names);
+    void fetchDesignersFromDesignModule()
+      .then((list) => {
+        if (!cancelled) setDesignerOptions(list);
       })
       .catch(() => {
         if (!cancelled) setDesignerOptions([]);
@@ -1356,8 +1357,8 @@ export default function CompleteTaskModal({
                           : "Select designer"}
                       </option>
                       {designerOptions.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
+                        <option key={d.id} value={d.name}>
+                          {d.name}
                         </option>
                       ))}
                     </Select>

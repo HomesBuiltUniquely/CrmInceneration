@@ -77,6 +77,48 @@ export async function fetchAvailableSlots(date: string, designerName: string): P
   return JSON.parse(text) as AvailableSlotsResponse;
 }
 
+export type DesignModuleDesigner = {
+  id: number;
+  name: string;
+  email: string;
+};
+
+/**
+ * Fetch designers from Design Module (single source of truth).
+ * Returns { id, name, email } — name for slot matching, email for Google Calendar.
+ * Route returns empty list (not an error) when Design Module is unreachable.
+ */
+export async function fetchDesignersFromDesignModule(): Promise<DesignModuleDesigner[]> {
+  console.log("[fetchDesignersFromDesignModule] calling /api/crm/designers");
+  const res = await fetch("/api/crm/designers", {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  console.log(`[fetchDesignersFromDesignModule] status=${res.status} body=${text.slice(0, 300)}`);
+  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    console.error("[fetchDesignersFromDesignModule] JSON parse failed:", text.slice(0, 200));
+    return [];
+  }
+  if (
+    data &&
+    typeof data === "object" &&
+    "designers" in data &&
+    Array.isArray((data as { designers: unknown }).designers)
+  ) {
+    const list = (data as { designers: DesignModuleDesigner[] }).designers;
+    console.log(`[fetchDesignersFromDesignModule] got ${list.length} designers`);
+    return list;
+  }
+  console.warn("[fetchDesignersFromDesignModule] unexpected response shape:", JSON.stringify(data).slice(0, 200));
+  return [];
+}
+
 export async function fetchActiveDesigners(): Promise<string[]> {
   const res = await fetch("/api/crm/appointment/designer-list/active", {
     cache: "no-store",
