@@ -4,32 +4,27 @@ const DESIGN_MODULE_URL = (
   process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
 ).replace(/\/+$/, "");
 
-const DESIGN_MODULE_API_KEY = process.env.DESIGN_MODULE_API_KEY || "";
-
 export async function GET() {
-  try {
-    const headers: HeadersInit = {
-      Accept: "application/json",
-    };
-    if (DESIGN_MODULE_API_KEY) {
-      (headers as Record<string, string>)["x-api-key"] = DESIGN_MODULE_API_KEY;
-    }
+  const targetUrl = `${DESIGN_MODULE_URL}/api/designers`;
+  console.log(`[CRM /api/crm/designers] → fetching from: ${targetUrl}`);
 
-    const res = await fetch(`${DESIGN_MODULE_URL}/api/designers`, {
-      headers,
+  try {
+    const res = await fetch(targetUrl, {
+      headers: { Accept: "application/json" },
       cache: "no-store",
     });
 
     const text = await res.text();
+    console.log(`[CRM /api/crm/designers] ← status: ${res.status}, body: ${text.slice(0, 200)}`);
+
+    // Always return 200 with whatever Design Module sends (it returns { designers: [] } on error)
     return new NextResponse(text, {
-      status: res.status,
+      status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err: any) {
-    console.error("[CRM /api/crm/designers] fetch error:", err);
-    return NextResponse.json(
-      { message: "Could not load designers", error: err?.message },
-      { status: 502 }
-    );
+    // Network error — Design Module not running
+    console.error(`[CRM /api/crm/designers] Design Module unreachable (${DESIGN_MODULE_URL}):`, err?.message);
+    return NextResponse.json({ designers: [] }, { status: 200 });
   }
 }

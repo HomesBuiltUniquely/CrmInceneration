@@ -53,6 +53,7 @@ type RowVM = {
   description: string;
   assignedTo: string;
   googleSync: string;
+  source: string;
   raw: Record<string, unknown>;
 };
 
@@ -68,6 +69,7 @@ function toRowVM(raw: unknown, index: number): RowVM {
     pickStr(o, "googleSyncStatus", "googleSync", "syncStatus") ||
     (typeof o.googleSyncStatus === "string" ? o.googleSyncStatus : "");
   const googleSync = g || "—";
+  const source = pickStr(o, "source") || "CRM";
 
   return {
     id: String(id),
@@ -77,6 +79,7 @@ function toRowVM(raw: unknown, index: number): RowVM {
     description,
     assignedTo,
     googleSync,
+    source,
     raw: o,
   };
 }
@@ -303,6 +306,7 @@ export default function AppointmentManagementClient() {
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">End Time</th>
                       <th className="min-w-[140px] px-3 py-3 font-semibold">Description</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Assigned To</th>
+                      <th className="whitespace-nowrap px-3 py-3 font-semibold">Source</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Google Sync</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Actions</th>
                     </tr>
@@ -310,13 +314,13 @@ export default function AppointmentManagementClient() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-10 text-center text-slate-500">
+                        <td colSpan={8} className="px-3 py-10 text-center text-slate-500">
                           Loading appointments…
                         </td>
                       </tr>
                     ) : rows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-12 text-center text-slate-400 dark:text-[var(--crm-text-muted)]">
+                        <td colSpan={8} className="px-3 py-12 text-center text-slate-400 dark:text-[var(--crm-text-muted)]">
                           No appointments found
                         </td>
                       </tr>
@@ -344,12 +348,30 @@ export default function AppointmentManagementClient() {
                           <td className="whitespace-nowrap px-3 py-3">
                             <span
                               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                r.source === "DESIGN_MODULE"
+                                  ? "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200"
+                                  : "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200"
+                              }`}
+                            >
+                              {r.source === "DESIGN_MODULE" ? "Design Module" : "CRM"}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                String(r.googleSync).toUpperCase().includes("SYNCED") ||
                                 String(r.googleSync).toUpperCase().includes("SUCCESS")
                                   ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                                  : String(r.googleSync).toUpperCase().includes("FAILED")
+                                  ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+                                  : String(r.googleSync).toUpperCase().includes("SKIPPED_DM")
+                                  ? "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                                   : "bg-slate-100 text-slate-600 dark:bg-[var(--crm-surface-subtle)] dark:text-[var(--crm-text-muted)]"
                               }`}
                             >
-                              {r.googleSync}
+                              {String(r.googleSync).toUpperCase() === "SKIPPED_DM_HANDLED"
+                                ? "DM SYNCED"
+                                : r.googleSync}
                             </span>
                           </td>
                           <td className="whitespace-nowrap px-3 py-3">

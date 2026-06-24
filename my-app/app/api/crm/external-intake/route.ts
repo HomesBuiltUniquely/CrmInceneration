@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const EXTERNAL_API_BASE = (
-  process.env.NEXT_PUBLIC_API?.trim() || "https://api.hubinterior.com"
+  process.env.DESIGN_MODULE_URL?.trim() || "https://api.hubinterior.com"
 ).replace(/\/+$/, "");
 const DEFAULT_EXTERNAL_INTAKE_URL = `${EXTERNAL_API_BASE}/api/leads/external-intake`;
 const EXTERNAL_INTAKE_URL = (() => {
