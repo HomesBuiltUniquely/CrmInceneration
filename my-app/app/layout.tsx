@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Manrope } from "next/font/google";
 import "./globals.css";
 import { CRM_THEME_STORAGE_KEY } from "@/lib/theme";
 import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin"],
+  weight: ["400", "600", "700", "800"],
 });
 
 const geistMono = Geist_Mono({
@@ -46,7 +47,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${manrope.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <GlobalNotifierProvider>{children}</GlobalNotifierProvider>
       </body>

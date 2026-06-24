@@ -200,7 +200,7 @@ export default function ActivityHistoryWithConnector() {
           type="button"
           onClick={openPanel}
           aria-expanded={open}
-          className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-black uppercase tracking-wide transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] active:scale-[0.97] ${
+          className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-bold uppercase tracking-wide transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] active:scale-[0.97] ${
             open
               ? "border-[#10b981] bg-[#d1fae5] text-[#047857] shadow-md"
               : "border-[#a7f3d0] bg-[#ecfdf5] text-[#059669] hover:-translate-y-0.5 hover:border-[#10b981] hover:bg-[#d1fae5] hover:text-[#047857] hover:shadow-lg"
@@ -257,7 +257,7 @@ export default function ActivityHistoryWithConnector() {
               <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#fef3c7] text-[#d97706]">
                 📋
               </span>
-              <h2 className="text-[13px] font-black uppercase tracking-[0.08em] text-[#374151]">
+              <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">
                 Activity History
               </h2>
               <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
@@ -398,7 +398,7 @@ function KindBadge({ kind }: { kind: ActivityKind }) {
 
   return (
     <span
-      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-black uppercase ${styles}`}
+      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-bold uppercase ${styles}`}
     >
       {kind === "note" ? "N" : kind === "call" ? "C" : "U"}
     </span>

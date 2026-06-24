@@ -65,7 +65,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#f3f5f7] px-4 py-6 md:px-6">
+    <main className="min-h-screen bg-[#f3f5f7] px-4 py-6 font-sans md:px-6">
       <div className="mx-auto grid max-w-[1320px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside className="sticky top-6 flex h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-white">
           <div className="flex min-h-0 flex-1 flex-col px-4 py-4 lg:py-5">
@@ -119,7 +119,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
             <div className="mt-4 shrink-0 space-y-4 border-t border-[#eef1f5] pt-4">
               <div className="relative overflow-hidden rounded-xl bg-[#0f1b38] p-4">
                 <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#94a3b8]">Conversion Chance</p>
-                <p className="mt-1 text-[28px] font-black leading-none text-white">High</p>
+                <p className="mt-1 text-[28px] font-bold leading-none text-white">High</p>
                 <svg
                   viewBox="0 0 80 40"
                   className="absolute right-2 bottom-2 h-10 w-20 text-[#1e293b]"
@@ -136,7 +136,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
 
               <Link
                 href={`/Leads/new/${leadType}/${leadId}`}
-                className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-black uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
               >
                 Back To Lead Details
                 <svg
@@ -255,7 +255,7 @@ function FinancialGuardrailsSection() {
         <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#4ade80]">Total Investment Range</p>
-            <p className="mt-1 text-[42px] font-black leading-none tracking-tight">₹12L - 15L</p>
+            <p className="mt-1 text-[42px] font-bold leading-none tracking-tight">₹12L - 15L</p>
             <p className="mt-2 text-[13px] text-[#c5d4f3]">
               Targeting a &apos;Premium Balanced&apos; finish with 10% buffer.
             </p>
@@ -321,7 +321,7 @@ function InternalExecutiveNotesSection() {
         <div>
           <FormLabel>Closure Probability</FormLabel>
           <div className="mt-1.5 flex gap-2">
-            <span className="rounded-md bg-[#1ed760] px-4 py-2 text-[11px] font-black uppercase tracking-wide text-[#05220f]">
+            <span className="rounded-md bg-[#1ed760] px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-[#05220f]">
               Hot
             </span>
             <span className="rounded-md border border-[#e4e8ef] bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-[#9ca3af]">
@@ -359,13 +359,13 @@ function InternalExecutiveNotesSection() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-md border border-[#111827] bg-white px-5 py-2.5 text-[11px] font-black uppercase tracking-wide text-[#111827]"
+            className="rounded-md border border-[#111827] bg-white px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#111827]"
           >
             Print PDF
           </button>
           <button
             type="button"
-            className="rounded-md bg-[#1ed760] px-5 py-2.5 text-[11px] font-black uppercase tracking-wide text-[#05220f]"
+            className="rounded-md bg-[#1ed760] px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#05220f]"
           >
             Finalize &amp; Submit
           </button>
@@ -411,7 +411,7 @@ function ReferenceInspirationSection() {
         <p className="mt-1 text-[12px] text-[#9ca3af]">Support for JPG, PNG, PDF (Max 10MB per file)</p>
         <button
           type="button"
-          className="mt-5 rounded-md bg-[#0f172a] px-5 py-2.5 text-[11px] font-black uppercase tracking-[0.08em] text-white"
+          className="mt-5 rounded-md bg-[#0f172a] px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-white"
         >
           Browse Files
         </button>
@@ -575,7 +575,7 @@ function ScopeExtrasSection() {
               <circle cx="19" cy="12" r="1.5" />
             </svg>
           </span>
-          <p className="text-[11px] font-black uppercase tracking-[0.08em] text-[#374151]">Miscellaneous Add-ons</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#374151]">Miscellaneous Add-ons</p>
         </div>
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
           {addOns.map((item) => (
@@ -610,7 +610,7 @@ function ScopeExtrasSection() {
               <polyline points="17 8 12 3 7 8" />
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
-            <p className="text-[11px] font-black uppercase tracking-[0.06em] text-[#4b6b8a]">Upload New Plan</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#4b6b8a]">Upload New Plan</p>
             <p className="mt-1 text-[10px] text-[#9ca3af]">PDF, JPG, DWG (Max 10MB)</p>
           </button>
           <button
@@ -630,7 +630,7 @@ function ScopeExtrasSection() {
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
               <circle cx="12" cy="12" r="3" />
             </svg>
-            <p className="text-[11px] font-black uppercase tracking-[0.06em] text-[#4b6b8a]">View Floor Plan</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#4b6b8a]">View Floor Plan</p>
             <p className="mt-1 text-[10px] text-[#9ca3af]">Uploaded on Feb 12</p>
           </button>
         </div>
@@ -686,7 +686,7 @@ function RoomConfigCard({
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#1ed760] text-[11px] font-bold text-white">
             {iconLabel}
           </span>
-          <p className="text-[13px] font-black uppercase tracking-wide text-[#111827]">{title}</p>
+          <p className="text-[13px] font-bold uppercase tracking-wide text-[#111827]">{title}</p>
         </div>
         <button type="button" aria-label={`Remove ${title}`} className="text-[#ef4444]">
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
