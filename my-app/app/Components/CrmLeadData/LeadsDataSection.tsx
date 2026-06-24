@@ -10,6 +10,7 @@ import {
   crmLeadTopLevelStage,
   isCrmLeadVerified,
   mapApiLeadToRow,
+  parseLeadSortTimestamp,
 } from "@/lib/leads-filter";
 import {
   collectHierarchyUserAssigneeAliases,
@@ -37,9 +38,15 @@ import {
   usesAdminSalesPoolForAssigneeScope,
 } from "@/lib/admin-leads-api";
 import {
+  pickLeadTypeCountsFromHeatmap,
+  buildCrossPoolHeatmapFilterInput,
+  type CrossPoolLeadTypeCounts,
+} from "@/lib/lead-type-tile-pool";
+import {
   appendLeadPoolQuery,
   appendWorkspaceMilestoneFilterQuery,
-  defaultLeadsVerificationStatus,
+  defaultVerificationForLeadTypeFilter,
+  isDedicatedFilterLeadType,
   leadMatchesWorkspaceMilestoneFilter,
   pipelineRoleForWorkspace,
   type CrmWorkspace,
@@ -568,16 +575,19 @@ async function fetchMergedPage(
   const resolvedVerification =
     normalizedLeadType === "verified"
       ? "verified"
-      : leadsWorkspace === "presales"
-        ? explicitVerification
-        : explicitVerification ||
-          defaultLeadsVerificationStatus(leadsWorkspace, undefined, viewerRole);
+      : explicitVerification ||
+        defaultVerificationForLeadTypeFilter(
+          normalizedLeadType,
+          leadsWorkspace,
+          verificationStatus,
+          viewerRole,
+        );
 
-  /** Walk-in lives on `/v1/WalkinLead`, not the admin assignee pool — always use merge route. */
-  if (normalizedLeadType === "walkinlead") {
+  /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge filter route. */
+  if (isDedicatedFilterLeadType(normalizedLeadType)) {
     const qs = new URLSearchParams();
     qs.set("mergeAll", "1");
-    qs.set("leadType", "walkinlead");
+    qs.set("leadType", normalizedLeadType);
     qs.set("milestoneScope", "crm");
     qs.set("page", String(page));
     qs.set("size", String(size));
@@ -610,6 +620,8 @@ async function fetchMergedPage(
     return {
       ...pageJson,
       content: Array.isArray(pageJson.content) ? pageJson.content : [],
+      apiUnavailable: pageJson.apiUnavailable,
+      message: pageJson.message,
     };
   }
 
@@ -674,11 +686,9 @@ async function fetchMergedPage(
       const key = leadIdentifier || `__noid_${noIdSeq++}`;
       if (!byId.has(key)) byId.set(key, row);
     }
-    const merged = [...byId.values()].sort((a, b) => {
-      const at = Date.parse(a.updatedAt ?? "");
-      const bt = Date.parse(b.updatedAt ?? "");
-      return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-    });
+    const merged = [...byId.values()].sort(
+      (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+    );
     const countBasis = leadsWorkspace === "sales" ? pickPrimarySourceRows(merged) : merged;
     const start = Math.max(0, page * size);
     const pageRows = countBasis.slice(start, start + size);
@@ -702,7 +712,8 @@ async function fetchMergedPage(
   );
   if (
     (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
-    !usesRoleEndpoint
+    !usesRoleEndpoint &&
+    !isDedicatedFilterLeadType(normalizedLeadType)
   ) {
     const superAdminGlobalSearchAcrossPools =
       normalizeRole(viewerRole) === "SUPER_ADMIN" &&
@@ -737,16 +748,12 @@ async function fetchMergedPage(
           getCrmAuthHeaders(),
         ),
       ]);
-      const primarySorted = [...(primaryAll.leads ?? [])].sort((a, b) => {
-        const at = Date.parse(a.updatedAt ?? "");
-        const bt = Date.parse(b.updatedAt ?? "");
-        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-      });
-      const secondarySorted = [...(secondaryAll.leads ?? [])].sort((a, b) => {
-        const at = Date.parse(a.updatedAt ?? "");
-        const bt = Date.parse(b.updatedAt ?? "");
-        return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-      });
+      const primarySorted = [...(primaryAll.leads ?? [])].sort(
+        (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+      );
+      const secondarySorted = [...(secondaryAll.leads ?? [])].sort(
+        (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+      );
 
       const primaryPoolLeads = dedupeAdminPoolLeads(primarySorted);
       const secondaryPoolLeads = dedupeAdminPoolLeads(secondarySorted);
@@ -934,6 +941,7 @@ function toAssignmentLeadType(leadType: string): string {
   if (leadType === "addlead") return "Add Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";
+  if (leadType === "whatsapplead") return "WhatsApp";
   return "Form Lead";
 }
 
@@ -986,6 +994,7 @@ function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "mlead") return "bulk-delete-mleads";
   if (leadType === "addlead") return "bulk-delete-addleads";
   if (leadType === "walkinlead") return "bulk-delete-walkinleads";
+  if (leadType === "whatsapplead") return "bulk-delete-whatsappleads";
   return "bulk-delete-websiteleads";
 }
 
@@ -995,6 +1004,7 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
   if (leadType === "walkinlead") return "delete-all-walkinleads";
+  if (leadType === "whatsapplead") return "delete-all-whatsappleads";
   return "delete-all-websiteleads";
 }
 
@@ -1078,7 +1088,7 @@ export default function LeadsDataSection({
   currentUserId = 0,
   managerTeamNamesFromHeader = [],
   authRole: authRoleProp,
-  verificationStatus: verificationStatusProp = "",
+  verificationStatus: verificationStatusFromHeader = "",
   crmMonthWindow: crmMonthWindowProp = "",
   leadsWorkspace = "sales",
   onPresalesSummaryClear,
@@ -1136,6 +1146,8 @@ export default function LeadsDataSection({
     sales: number;
     presales: number;
   } | null>(null);
+  const [crossPoolLeadTypeCounts, setCrossPoolLeadTypeCounts] =
+    useState<CrossPoolLeadTypeCounts | null>(null);
   /** Admin + milestone toolbar filter: full pool scanned client-side (RDS `milestone_stage`). */
   const [adminMilestoneTableLeads, setAdminMilestoneTableLeads] = useState<ApiLead[] | null>(
     null,
@@ -1390,7 +1402,7 @@ export default function LeadsDataSection({
     milestoneSubStage,
     sort,
     debouncedSearch,
-    verificationStatusProp,
+    verificationStatusFromHeader,
     crmMonthWindowProp,
     presalesTeamExecutivesOnly,
   ]);
@@ -1812,7 +1824,7 @@ export default function LeadsDataSection({
       if (roleKey === "PRESALES_EXECUTIVE" || roleKey === "PRE_SALES") {
         return shouldPresalesExecutiveSeeLeadInCrmPool(lead, {
           currentUserId,
-          verificationStatusFilter: verificationStatusProp,
+          verificationStatusFilter: verificationStatusFromHeader,
           isSelfLead: leadAssignedToSelf,
         });
       }
@@ -1863,7 +1875,7 @@ export default function LeadsDataSection({
       presalesTeamExecDisplayNames,
       salesExecs,
       currentUserId,
-      verificationStatusProp,
+      verificationStatusFromHeader,
       leadAssignedToSelf,
     ]
   );
@@ -2207,7 +2219,7 @@ export default function LeadsDataSection({
           milestoneSubStage,
           reinquiry,
           leadViewKey,
-          verificationStatusProp,
+          verificationStatusFromHeader,
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
@@ -2234,7 +2246,7 @@ export default function LeadsDataSection({
               milestoneSubStage,
               reinquiry,
               leadViewKey,
-              verificationStatusProp,
+              verificationStatusFromHeader,
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
@@ -2268,11 +2280,9 @@ export default function LeadsDataSection({
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
           );
         }
-        const visibleMerged = roleScopedLeads.sort((a, b) => {
-          const at = Date.parse(a.updatedAt ?? "");
-          const bt = Date.parse(b.updatedAt ?? "");
-          return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-        });
+        const visibleMerged = roleScopedLeads.sort(
+          (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+        );
         const scopedIdRows =
           leadsWorkspace === "sales"
             ? dedupeAdminPoolLeads(visibleMerged as ApiLead[])
@@ -2315,7 +2325,7 @@ export default function LeadsDataSection({
             milestoneSubStage,
             reinquiry,
             leadViewKey,
-            verificationStatusProp,
+            verificationStatusFromHeader,
             crmMonthWindowProp,
             leadsWorkspace,
             clientScopeRoleKey,
@@ -2379,7 +2389,7 @@ export default function LeadsDataSection({
       milestoneSubStage,
       reinquiry,
       leadViewKey,
-      verificationStatusProp,
+      verificationStatusFromHeader,
       crmMonthWindowProp,
       leadsWorkspace,
     ],
@@ -2419,7 +2429,7 @@ export default function LeadsDataSection({
           milestoneSubStage,
           reinquiry,
           leadViewKey,
-          verificationStatusProp,
+          verificationStatusFromHeader,
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
@@ -2446,7 +2456,7 @@ export default function LeadsDataSection({
               milestoneSubStage,
               reinquiry,
               leadViewKey,
-              verificationStatusProp,
+              verificationStatusFromHeader,
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
@@ -2473,11 +2483,9 @@ export default function LeadsDataSection({
       );
       const mergedScopeRows = dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
       return applySuperAdminPool(
-        mergedScopeRows.sort((a: ApiLead, b: ApiLead) => {
-          const at = Date.parse(a.updatedAt ?? "");
-          const bt = Date.parse(b.updatedAt ?? "");
-          return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at);
-        }),
+        mergedScopeRows.sort(
+          (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+        ),
       );
     },
     [
@@ -2495,7 +2503,7 @@ export default function LeadsDataSection({
       milestoneStageCategory,
       milestoneSubStage,
       reinquiry,
-      verificationStatusProp,
+      verificationStatusFromHeader,
       superAdminPresalesPoolActive,
       superAdminPresalesPoolSet,
       leadsWorkspace,
@@ -2570,8 +2578,16 @@ export default function LeadsDataSection({
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusProp.trim() ||
-              defaultLeadsVerificationStatus(leadsWorkspace, undefined, roleKey);
+            : verificationStatusFromHeader.trim() ||
+              defaultVerificationForLeadTypeFilter(
+                summaryLeadType,
+                leadsWorkspace,
+                verificationStatusFromHeader,
+                roleKey,
+              );
+        if (salesHierarchyFilterActive) {
+          return;
+        }
         const filterInput = {
           workspace: leadsWorkspace,
           search: debouncedSearch,
@@ -2587,13 +2603,43 @@ export default function LeadsDataSection({
           milestoneSubStage: "",
           leadType: summaryLeadType,
         };
-        if (salesHierarchyFilterActive) {
-          return;
+        const authHeaders = getCrmAuthHeaders();
+        const fetchCrossPoolCounts = roleKey === "SUPER_ADMIN";
+        let heatmapData;
+        if (fetchCrossPoolCounts) {
+          const crossPoolShared = {
+            search: debouncedSearch,
+            assignee: effectiveAssignee,
+            dateFrom,
+            dateTo,
+            dateField,
+            crmMonthWindow: crmMonthWindowProp,
+            summaryLeadType,
+            verificationStatusProp: verificationStatusFromHeader,
+            reinquiry,
+            roleKey,
+            viewerWorkspace: leadsWorkspace,
+          };
+          const [salesData, presalesData] = await Promise.all([
+            fetchAdminLeadsHeatmapData(
+              buildCrossPoolHeatmapFilterInput("sales", crossPoolShared),
+              authHeaders,
+            ),
+            fetchAdminLeadsHeatmapData(
+              buildCrossPoolHeatmapFilterInput("presales", crossPoolShared),
+              authHeaders,
+            ),
+          ]);
+          if (cancelled) return;
+          setCrossPoolLeadTypeCounts({
+            sales: pickLeadTypeCountsFromHeatmap(salesData),
+            presales: pickLeadTypeCountsFromHeatmap(presalesData),
+          });
+          heatmapData = leadsWorkspace === "presales" ? presalesData : salesData;
+        } else {
+          setCrossPoolLeadTypeCounts(null);
+          heatmapData = await fetchAdminLeadsHeatmapData(filterInput, authHeaders);
         }
-        const heatmapData = await fetchAdminLeadsHeatmapData(
-          filterInput,
-          getCrmAuthHeaders(),
-        );
         if (cancelled) return;
         const poolTotal = Number(heatmapData.totalElements ?? heatmapData.leads.length ?? 0);
         const milestoneToolbarActive = Boolean(
@@ -2673,6 +2719,7 @@ export default function LeadsDataSection({
           setLeadTypeCountsPrimary(null);
           setLeadTypeCountsAllRows(null);
           setAdminPoolDisplayTotals(null);
+          setCrossPoolLeadTypeCounts(null);
         }
       }
     })();
@@ -2692,7 +2739,7 @@ export default function LeadsDataSection({
     milestoneStageCategory,
     milestoneSubStage,
     reinquiry,
-    verificationStatusProp,
+    verificationStatusFromHeader,
     crmMonthWindowProp,
     dateFrom,
     dateTo,
@@ -2736,8 +2783,13 @@ export default function LeadsDataSection({
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusProp.trim() ||
-              defaultLeadsVerificationStatus(leadsWorkspace, undefined, roleKey);
+            : verificationStatusFromHeader.trim() ||
+              defaultVerificationForLeadTypeFilter(
+                summaryLeadType,
+                leadsWorkspace,
+                verificationStatusFromHeader,
+                roleKey,
+              );
         const milestoneAliasSet =
           effectiveAssigneeScope.length > 0
             ? effectiveAssigneeScope
@@ -2820,7 +2872,7 @@ export default function LeadsDataSection({
     debouncedSearch,
     leadType,
     reinquiry,
-    verificationStatusProp,
+    verificationStatusFromHeader,
     crmMonthWindowProp,
     dateFrom,
     dateTo,
@@ -2947,7 +2999,7 @@ export default function LeadsDataSection({
     milestoneStageCategory,
     milestoneSubStage,
     reinquiry,
-    verificationStatusProp,
+    verificationStatusFromHeader,
     crmMonthWindowProp,
     dateFrom,
     dateTo,
@@ -2958,7 +3010,7 @@ export default function LeadsDataSection({
     leadsWorkspace,
   ]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { forceNetwork?: boolean }) => {
     const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
     const insightModeActive = insightTableMode !== null;
     const requestPage = insightModeActive ? 0 : page;
@@ -2978,14 +3030,14 @@ export default function LeadsDataSection({
       milestoneSubStage,
       reinquiry,
       leadViewKey,
-      verificationStatusProp,
+      verificationStatusFromHeader,
       crmMonthWindowProp,
       activeAssigneeScopeKey,
       leadsWorkspace,
       roleKeyForLoad,
       insightModeActive,
     });
-    const cached = readLeadsListCache(cacheKey);
+    const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
     setError(null);
     if (cached) {
@@ -2998,7 +3050,7 @@ export default function LeadsDataSection({
         const scrollY = getPersistedLeadsScrollY();
         if (scrollY !== null) scheduleLeadsListScrollRestore(scrollY);
       }
-    } else {
+    } else if (!opts?.forceNetwork) {
       setLoading(true);
       setData(null);
     }
@@ -3058,6 +3110,9 @@ export default function LeadsDataSection({
           notifyError(
             `Could not load lead types: ${pageJson.accessDeniedLeadTypes.join(", ")}. Check your role or sign in again.`,
           );
+        }
+        if (pageJson.apiUnavailable && pageJson.message?.trim()) {
+          setError(pageJson.message.trim());
         }
         if (
           usePageMetaForUi &&
@@ -3162,7 +3217,7 @@ export default function LeadsDataSection({
     leadViewKey,
     isGlobalSearchActive,
     requiresClientScopedDataset,
-    verificationStatusProp,
+    verificationStatusFromHeader,
     crmMonthWindowProp,
     superAdminPresalesPoolActive,
     notifyError,
@@ -3185,6 +3240,35 @@ export default function LeadsDataSection({
     }
     void load();
   }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+
+  const whatsappListActive = leadType.trim().toLowerCase() === "whatsapplead";
+
+  /** MSG91 inbound hits Hub immediately — refresh on focus when WhatsApp list is open. */
+  useEffect(() => {
+    if (!whatsappListActive) return;
+    const refreshWhatsappList = () => {
+      void load({ forceNetwork: true });
+      setLastRefreshTime(new Date());
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshWhatsappList();
+    };
+    window.addEventListener("focus", refreshWhatsappList);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refreshWhatsappList);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [whatsappListActive, load]);
+
+  useEffect(() => {
+    const onInvalidate = () => {
+      void load({ forceNetwork: true });
+      setLastRefreshTime(new Date());
+    };
+    window.addEventListener("crm:leads-invalidate", onInvalidate);
+    return () => window.removeEventListener("crm:leads-invalidate", onInvalidate);
+  }, [load]);
 
   const handleRefresh = useCallback(async () => {
     setError(null);
@@ -3219,10 +3303,10 @@ export default function LeadsDataSection({
   const hasMilestoneFilter = Boolean(
     milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
   );
-  const walkInTableView = leadType.trim().toLowerCase() === "walkinlead";
+  const dedicatedFilterTableView = isDedicatedFilterLeadType(leadType);
   const content = adminMilestoneTableActive
     ? contentFromApi
-    : hasMilestoneFilter && !walkInTableView
+    : hasMilestoneFilter && !dedicatedFilterTableView
       ? roleScopedContent.filter((lead) =>
           leadMatchesWorkspaceMilestoneFilter(
             lead,
@@ -3632,7 +3716,15 @@ export default function LeadsDataSection({
         if (!res.ok) throw new Error("Delete-all failed.");
         notifyInfo(deleteNoticeText(currentRole, `Delete All (${toAssignmentLeadType(leadType)})`));
       } else {
-        const targets = ["formlead", "glead", "mlead", "addlead", "websitelead", "walkinlead"] as const;
+        const targets = [
+          "formlead",
+          "glead",
+          "mlead",
+          "addlead",
+          "websitelead",
+          "walkinlead",
+          "whatsapplead",
+        ] as const;
         const results = await Promise.all(
           targets.map(async (t) => {
             const res = await fetch(`/api/admin/${toAdminDeleteAllPath(t)}`, {
@@ -3768,6 +3860,7 @@ export default function LeadsDataSection({
           normalizeRole(authRoleProp ?? currentRole) === "SUPER_ADMIN" &&
           debouncedSearch.trim().length > 0
         }
+        crossPoolLeadTypeCounts={crossPoolLeadTypeCounts ?? undefined}
         leadsWorkspace={leadsWorkspace}
         viewerRole={viewerRole}
         authRole={authRoleProp ?? ""}
@@ -4373,7 +4466,17 @@ export default function LeadsDataSection({
               handleRefresh();
             }
           }}
-          title={isMinimized ? "Expand Refresh Button" : (lastRefreshTime ? `Last sync: ${relativeTime}` : "Refresh Leads")}
+          title={
+            isMinimized
+              ? "Expand Refresh Button"
+              : whatsappListActive
+                ? lastRefreshTime
+                  ? `Last sync: ${relativeTime}. Refresh after MSG91 inbound if the list is stale.`
+                  : "Refresh leads after MSG91 inbound."
+                : lastRefreshTime
+                  ? `Last sync: ${relativeTime}`
+                  : "Refresh Leads"
+          }
           className={cn(
             "flex h-11 w-11 items-center justify-center rounded-full bg-blue-600 text-white shadow-xl transition-all duration-300 hover:scale-110 active:scale-95 group",
             isMinimized ? "cursor-e-resize" : "cursor-pointer"

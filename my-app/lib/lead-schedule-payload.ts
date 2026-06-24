@@ -46,8 +46,16 @@ function pickFromDynamic(detail: Record<string, unknown>, ...keys: string[]): st
   return pickStr(df as Record<string, unknown>, ...keys);
 }
 
+/**
+ * Sentinel value sent to backend to CLEAR the follow-up date.
+ * Must be a non-null string so the backend's `!= null` guard passes,
+ * yet will never match a real "today" filter query.
+ */
+export const FOLLOW_UP_DATE_CLEAR_SENTINEL = "0000-00-00T00:00:00";
+
 /** Hub compares by date prefix; normalize space → T for consistency. */
-export function normalizeHubScheduleDateString(raw: string): string {
+export function normalizeHubScheduleDateString(raw: string | null | undefined): string {
+  if (!raw) return "";
   const s = raw.trim();
   if (!s) return "";
   return s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, "$1T$2");
@@ -85,14 +93,14 @@ export function resolveFollowUpValue(body: Record<string, unknown>): string {
   return normalizeHubScheduleDateString(
     pickStr(body, HUB_FOLLOW_UP_DATE_FIELD, ...HUB_FOLLOW_UP_READ_ALIASES) ||
       pickFromDynamic(body, HUB_FOLLOW_UP_DATE_FIELD, ...HUB_FOLLOW_UP_READ_ALIASES),
-  );
+  ) ?? "";
 }
 
 export function resolveMeetingValue(body: Record<string, unknown>): string {
   return normalizeHubScheduleDateString(
     pickStr(body, HUB_MEETING_DATE_FIELD, ...HUB_MEETING_READ_ALIASES) ||
       pickFromDynamic(body, HUB_MEETING_DATE_FIELD, ...HUB_MEETING_READ_ALIASES),
-  );
+  ) ?? "";
 }
 
 /**
@@ -102,8 +110,8 @@ export function resolveMeetingValue(body: Record<string, unknown>): string {
 export function buildHubScheduleDatePutBody(opts: HubScheduleDateInput): Record<string, unknown> {
   const aligned = alignHubScheduleDates(opts);
   const body: Record<string, unknown> = {};
-  if (aligned.followUpDate) body[HUB_FOLLOW_UP_DATE_FIELD] = aligned.followUpDate;
-  if (aligned.meetingDate) body[HUB_MEETING_DATE_FIELD] = aligned.meetingDate;
+  if (aligned.followUpDate !== undefined) body[HUB_FOLLOW_UP_DATE_FIELD] = aligned.followUpDate;
+  if (aligned.meetingDate !== undefined) body[HUB_MEETING_DATE_FIELD] = aligned.meetingDate;
   return body;
 }
 
@@ -111,38 +119,71 @@ export function buildHubScheduleDatePutBody(opts: HubScheduleDateInput): Record<
 export function applyScheduleDatesToHubPayload(
   body: Record<string, unknown>,
 ): Record<string, unknown> {
-  const followUp = resolveFollowUpValue(body);
-  const meeting = resolveMeetingValue(body);
+  // If followUpDate is explicitly the clear sentinel, propagate it to all aliases.
+  const followUpVal = body[HUB_FOLLOW_UP_DATE_FIELD];
+  const followUpClear = typeof followUpVal === "string" && followUpVal === FOLLOW_UP_DATE_CLEAR_SENTINEL;
 
-  if (followUp) {
-    body[HUB_FOLLOW_UP_DATE_FIELD] = followUp;
+  if (followUpClear) {
+    body[HUB_FOLLOW_UP_DATE_FIELD] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
     for (const k of HUB_FOLLOW_UP_READ_ALIASES) {
-      body[k] = followUp;
+      body[k] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+    }
+    const dfClear = body.dynamicFields;
+    if (dfClear && typeof dfClear === "object" && !Array.isArray(dfClear)) {
+      const dfoClear = { ...(dfClear as Record<string, unknown>) };
+      dfoClear[HUB_FOLLOW_UP_DATE_FIELD] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+      dfoClear.nextFollowUp = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+      body.dynamicFields = dfoClear;
+    }
+  } else {
+    const followUp = resolveFollowUpValue(body);
+    if (followUp && followUp !== FOLLOW_UP_DATE_CLEAR_SENTINEL) {
+      body[HUB_FOLLOW_UP_DATE_FIELD] = followUp;
+      for (const k of HUB_FOLLOW_UP_READ_ALIASES) {
+        body[k] = followUp;
+      }
+    }
+
+    const df = body.dynamicFields;
+    if (df && typeof df === "object" && !Array.isArray(df)) {
+      const dfo = { ...(df as Record<string, unknown>) };
+      if (followUp && followUp !== FOLLOW_UP_DATE_CLEAR_SENTINEL) {
+        dfo[HUB_FOLLOW_UP_DATE_FIELD] = followUp;
+        dfo.nextFollowUp = followUp;
+      }
+      body.dynamicFields = dfo;
     }
   }
 
+  const meeting = resolveMeetingValue(body);
   if (meeting) {
     body[HUB_MEETING_DATE_FIELD] = meeting;
     for (const k of HUB_MEETING_READ_ALIASES) {
       body[k] = meeting;
     }
-  }
-
-  const df = body.dynamicFields;
-  if (df && typeof df === "object" && !Array.isArray(df)) {
-    const dfo = { ...(df as Record<string, unknown>) };
-    if (followUp) {
-      dfo[HUB_FOLLOW_UP_DATE_FIELD] = followUp;
-      dfo.nextFollowUp = followUp;
-    }
-    if (meeting) {
+    const df = body.dynamicFields;
+    if (df && typeof df === "object" && !Array.isArray(df)) {
+      const dfo = { ...(df as Record<string, unknown>) };
       dfo[HUB_MEETING_DATE_FIELD] = meeting;
       dfo.siteVisitDate = meeting;
+      body.dynamicFields = dfo;
     }
-    body.dynamicFields = dfo;
   }
 
   return body;
+}
+
+export function clearFollowUpDateAliases(body: Record<string, unknown>): void {
+  body[HUB_FOLLOW_UP_DATE_FIELD] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+  for (const k of HUB_FOLLOW_UP_READ_ALIASES) {
+    body[k] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+  }
+  const df = body.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const dfo = df as Record<string, unknown>;
+    dfo[HUB_FOLLOW_UP_DATE_FIELD] = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+    dfo.nextFollowUp = FOLLOW_UP_DATE_CLEAR_SENTINEL;
+  }
 }
 
 export function hubScheduleDatesPersisted(

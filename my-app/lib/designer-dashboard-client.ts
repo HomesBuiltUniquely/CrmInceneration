@@ -135,6 +135,8 @@ export function flattenDesignerLeadsBundle(data: unknown): DesignerQueueLeadRow[
     ["websiteLeads", "websitelead"],
     ["walkInLeads", "walkinlead"],
     ["walkinLeads", "walkinlead"],
+    ["whatsappLeads", "whatsapplead"],
+    ["whatsAppLeads", "whatsapplead"],
   ];
 
   for (const [key, leadType] of buckets) {

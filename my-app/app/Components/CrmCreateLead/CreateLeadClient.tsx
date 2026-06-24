@@ -2,13 +2,13 @@
 
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
-import { BASE_URL } from "@/lib/base-url";
 import {
   CRM_ROLE_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
@@ -16,6 +16,8 @@ import {
 } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
+import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
+import { parseCrossMergeIntoWhatsapp } from "@/lib/lead-source-utils";
 
 const LEAD_SOURCES = [
   "Website",
@@ -221,6 +223,7 @@ function CreateLeadFieldLabel({
 }
 
 export default function CreateLeadClient() {
+  const router = useRouter();
   const [role, setRole] = useState("SUPER_ADMIN");
   const [currentUserName, setCurrentUserName] = useState("");
   useEffect(() => {
@@ -352,12 +355,13 @@ export default function CreateLeadClient() {
 
     startTransition(async () => {
       try {
-        const response = await fetch(`${BASE_URL}/v1/AddLead`, {
+        const response = await fetch("/api/crm/add-lead", {
           method: "POST",
           headers: getCrmAuthHeaders({
             "Content-Type": "application/json",
           }),
           body: JSON.stringify(payload),
+          credentials: "include",
         });
 
         if (!response.ok) {
@@ -367,21 +371,44 @@ export default function CreateLeadClient() {
           );
           throw new Error(friendlyMessage);
         }
-        const result = await response.json().catch(() => ({}));
+
+        const responseText = await response.text();
+        const crossMerge = parseCrossMergeIntoWhatsapp(responseText);
+
+        if (crossMerge) {
+          setSuccess(
+            "Same phone already on WhatsApp — Add Lead merged into the existing WhatsApp lead.",
+          );
+          setCreatedLeadInfo(null);
+          setForm(INITIAL_FORM);
+          dispatchCrmLeadsInvalidate({
+            leadTypes: ["whatsapplead", "addlead"],
+            reason: "cross-merge-whatsapp",
+          });
+          router.push(`/Leads/whatsapplead/${crossMerge.whatsappLeadId}`);
+          return;
+        }
+
+        let result: Record<string, unknown> = {};
+        try {
+          result = responseText.trim()
+            ? (JSON.parse(responseText) as Record<string, unknown>)
+            : {};
+        } catch {
+          result = { message: responseText.trim() || "Lead saved." };
+        }
 
         setSuccess(
-          typeof result?.message === "string"
+          typeof result.message === "string"
             ? result.message
             : "Lead created successfully.",
         );
         setCreatedLeadInfo({
-          id: result?.id,
-          customerId: result?.customerId,
+          id: result.id as string | number | undefined,
+          customerId: result.customerId as string | undefined,
         });
         setForm(INITIAL_FORM);
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new Event("crm:leads-invalidate"));
-        }
+        dispatchCrmLeadsInvalidate({ leadTypes: ["addlead"], reason: "create" });
       } catch (submitError) {
         setError(
           submitError instanceof Error

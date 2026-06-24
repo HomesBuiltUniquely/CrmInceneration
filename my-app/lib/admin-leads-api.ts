@@ -25,6 +25,10 @@ import {
   mergeWalkInCountIntoSourceCounts,
 } from "@/lib/crm-walkin-leads";
 import {
+  augmentLeadSourceCountsWithWhatsapp,
+  mergeWhatsappCountIntoSourceCounts,
+} from "@/lib/crm-whatsapp-leads";
+import {
   buildAdminPoolDualCounts,
   computeLeadTypeCountsFromRows,
   pickMilestoneRepresentativeRows,
@@ -152,6 +156,7 @@ export function adminByLeadTypeToSourceCounts(
     addlead: 0,
     websitelead: 0,
     walkinlead: 0,
+    whatsapplead: 0,
   };
   if (!byLeadType) return counts;
   for (const t of CRM_LEAD_TYPES) {
@@ -578,46 +583,62 @@ export async function fetchAdminLeadsHeatmapData(
     let leadTypeCountsForUi = leadTypeCounts;
     let leadTypeAllRowsForUi = pool.leadTypeAllRows;
     let leadTypePrimaryForUi = pool.leadTypePrimaryUnique;
-    if (input.workspace === "sales") {
-      const dateFrom = (poolInput.dateFrom ?? "").trim();
-      const dateTo = (poolInput.dateTo ?? "").trim();
-      const walkInCtx = {
-        headers,
-        sort: (poolInput.sort ?? "updatedAt,desc").trim() || "updatedAt,desc",
-        search: (poolInput.search ?? "").trim(),
-        effDates: { from: dateFrom, to: dateTo },
-        extraParams: [
-          { key: "verificationStatus", value: (poolInput.verificationStatus ?? "").trim() },
-          { key: "reinquiry", value: (poolInput.reinquiry ?? "").trim() },
-          { key: "assignee", value: (poolInput.assignee ?? "").trim() },
-          { key: "dateFrom", value: dateFrom },
-          { key: "dateTo", value: dateTo },
-          { key: "dateField", value: (poolInput.dateField ?? "").trim() },
-        ],
-      };
-      try {
-        const augmented = await augmentLeadSourceCountsWithWalkIn(
-          leadTypeCounts,
-          walkInCtx,
-        );
-        leadTypeCountsForUi = augmented;
-        leadTypeAllRowsForUi = mergeWalkInCountIntoSourceCounts(
-          pool.leadTypeAllRows,
-          augmented.walkinlead,
-        );
-        leadTypePrimaryForUi = mergeWalkInCountIntoSourceCounts(
-          pool.leadTypePrimaryUnique,
-          augmented.walkinlead,
-        );
-      } catch {
-        // Walk-in augment is optional; admin pool must still load.
-      }
+    const dateFrom = (poolInput.dateFrom ?? "").trim();
+    const dateTo = (poolInput.dateTo ?? "").trim();
+    const externalLeadCtx = {
+      headers,
+      workspace: input.workspace,
+      sort: (poolInput.sort ?? "updatedAt,desc").trim() || "updatedAt,desc",
+      search: (poolInput.search ?? "").trim(),
+      effDates: { from: dateFrom, to: dateTo },
+      extraParams: [
+        { key: "verificationStatus", value: (poolInput.verificationStatus ?? "").trim() },
+        { key: "reinquiry", value: (poolInput.reinquiry ?? "").trim() },
+        { key: "assignee", value: (poolInput.assignee ?? "").trim() },
+        { key: "dateFrom", value: dateFrom },
+        { key: "dateTo", value: dateTo },
+        { key: "dateField", value: (poolInput.dateField ?? "").trim() },
+        {
+          key: "milestoneStage",
+          value: (poolInput.milestoneStage ?? "").trim(),
+        },
+        {
+          key: "milestoneStageCategory",
+          value: (poolInput.milestoneStageCategory ?? "").trim(),
+        },
+        {
+          key: "milestoneSubStage",
+          value: (poolInput.milestoneSubStage ?? "").trim(),
+        },
+      ],
+    };
+    try {
+      let augmented = await augmentLeadSourceCountsWithWalkIn(leadTypeCounts, externalLeadCtx);
+      augmented = await augmentLeadSourceCountsWithWhatsapp(augmented, externalLeadCtx);
+      leadTypeCountsForUi = augmented;
+      leadTypeAllRowsForUi = mergeWhatsappCountIntoSourceCounts(
+        mergeWalkInCountIntoSourceCounts(pool.leadTypeAllRows, augmented.walkinlead),
+        augmented.whatsapplead,
+      );
+      leadTypePrimaryForUi = mergeWhatsappCountIntoSourceCounts(
+        mergeWalkInCountIntoSourceCounts(pool.leadTypePrimaryUnique, augmented.walkinlead),
+        augmented.whatsapplead,
+      );
+    } catch {
+      // Walk-in / WhatsApp augment is optional; admin pool must still load.
     }
+
+    const displayTotal = Math.max(
+      authoritativeTotal,
+      leadTypeCountsForUi.all,
+      leadTypePrimaryForUi.all,
+      leadTypeAllRowsForUi.all,
+    );
 
     return finalizeAdminHeatmapData(
       milestoneCounts,
       input.workspace,
-      authoritativeTotal,
+      displayTotal,
       pool.uniquePrimaryTotal,
       countsJson?.verifiedCount !== undefined
         ? Number(countsJson.verifiedCount)

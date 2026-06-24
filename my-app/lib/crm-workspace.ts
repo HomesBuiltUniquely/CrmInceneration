@@ -1,5 +1,10 @@
 import { normalizeRole } from "@/lib/auth/api";
 import {
+  assigneeRoleFromLead,
+  isPresalesAssigneeRole,
+  isSalesAssigneeRole,
+} from "@/lib/assignment-reassign";
+import {
   readSalesStageFieldsFromLead,
   SALES_POOL_NO_MILESTONE,
   salesPoolMilestoneStage,
@@ -125,6 +130,47 @@ export function defaultLeadsVerificationStatus(
   const r = normalizeRole(viewerRole ?? "");
   if (isAdminRole(r) || r === "SALES_ADMIN") return "";
   return "unverified";
+}
+
+/** Dedicated walk-in / WhatsApp are not in admin assignee rows — bucket by assignee pool. */
+export function leadBelongsToAdminWorkspacePool(lead: ApiLead, workspace: CrmWorkspace): boolean {
+  const role = assigneeRoleFromLead(lead);
+  return workspace === "presales" ? isPresalesAssigneeRole(role) : isSalesAssigneeRole(role);
+}
+
+export function filterLeadsForAdminWorkspacePool(
+  leads: ApiLead[],
+  workspace: CrmWorkspace,
+): ApiLead[] {
+  return leads.filter((lead) => leadBelongsToAdminWorkspacePool(lead, workspace));
+}
+
+/** Walk-in / WhatsApp use Hub filter or dedicated list — not admin assignee pool rows. */
+export function isDedicatedFilterLeadType(leadType: string): boolean {
+  const lt = leadType.trim().toLowerCase();
+  return lt === "walkinlead" || lt === "whatsapplead";
+}
+
+/**
+ * Per-source verification default when user picks a lead-type tile.
+ * WhatsApp new leads are unverified — avoid sales `verified` default hiding them for admins.
+ */
+export function defaultVerificationForLeadTypeFilter(
+  leadType: string,
+  workspace: CrmWorkspace,
+  explicit?: string,
+  viewerRole?: string,
+): string {
+  if (explicit?.trim()) return explicit.trim();
+  const lt = leadType.trim().toLowerCase();
+  if (lt === "verified") return "verified";
+  if (lt === "whatsapplead") {
+    if (workspace === "presales") return "unverified";
+    const r = normalizeRole(viewerRole ?? "");
+    if (isAdminRole(r) || r === "SUPER_ADMIN" || r === "SALES_ADMIN") return "";
+    return "verified";
+  }
+  return defaultLeadsVerificationStatus(workspace, explicit, viewerRole);
 }
 
 /** Presales routes use Hub `presales-search` (JWT-scoped), not sales filter merge only. */
