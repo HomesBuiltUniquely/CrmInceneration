@@ -9,11 +9,13 @@ export interface EmailRequestPayload {
   subStage: string;
   clientName: string;
   clientEmail: string;
+  leadId?: string;
   meetingDate?: string;
   meetingTime?: string;
   meetingLocation?: string;
   meetingType?: "online" | "physical";
   quotedAmount?: string;
+  quoteLink?: string;
   reconnectDate?: string;
   cancellationReason?: string;
   feedbackFormLink?: string;
@@ -25,12 +27,17 @@ export interface EmailRequestPayload {
  */
 export function buildEmailRequest(
   lead: Lead,
-  substage: string
+  substage: string,
+  manualTrigger: boolean = false
 ): EmailRequestPayload | null {
   const trimmedSubstage = substage.trim();
   const emailSubstage = resolveEmailSubstage(trimmedSubstage);
 
-  if (!emailSubstage || !shouldSendEmail(trimmedSubstage)) {
+  if (!emailSubstage) {
+    return null;
+  }
+  
+  if (!manualTrigger && !shouldSendEmail(trimmedSubstage)) {
     return null;
   }
 
@@ -42,6 +49,7 @@ export function buildEmailRequest(
     subStage: emailSubstage,
     clientName: lead.name?.trim() || "Valued Customer",
     clientEmail: lead.email.trim(),
+    leadId: lead.leadId || lead.id,
   };
 
   // Add optional fields based on substage
@@ -86,6 +94,9 @@ export function buildEmailRequest(
     case "Quote Sent":
       if (lead.budget) {
         payload.quotedAmount = lead.budget;
+      }
+      if (lead.quoteLink) {
+        payload.quoteLink = lead.quoteLink;
       }
       break;
 
