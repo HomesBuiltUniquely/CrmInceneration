@@ -135,7 +135,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               </div>
 
               <Link
-                href={`/Leads/new/${leadType}/${leadId}`}
+                href={`/Leads/${leadType}/${leadId}`}
                 className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
               >
                 Back To Lead Details

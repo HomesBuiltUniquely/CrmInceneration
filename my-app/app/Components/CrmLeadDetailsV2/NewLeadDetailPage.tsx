@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, FieldLabel, Input } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
@@ -61,7 +62,7 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
     <main className="min-h-screen bg-[#eef1f5] px-3 py-4 font-sans md:px-4">
       <div className="mx-auto max-w-[1365px]">
         <section className="rounded-xl border border-[#e1e6ed] bg-[#f3f5f8] p-3">
-          <LeadDetailHeader />
+          <LeadDetailHeader leadType={leadType} leadId={leadId} />
           <div className="mt-3 grid gap-3 lg:grid-cols-[270px_minmax(0,1fr)]">
             <aside className="space-y-3">
               <LeadProfileCard />
@@ -106,7 +107,8 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
   );
 }
 
-function LeadDetailHeader() {
+function LeadDetailHeader({ leadType, leadId }: { leadType: string; leadId: string }) {
+  const router = useRouter();
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timelineValue, setTimelineValue] = useState(mockLeadHeader.timelineOptions[0]?.value ?? "");
   const [quoteFetching, setQuoteFetching] = useState(false);
@@ -296,6 +298,9 @@ function LeadDetailHeader() {
             <div className="mt-2.5 grid grid-cols-2 gap-2.5">
               <button
                 type="button"
+                onClick={() =>
+                  router.push(`/Leads/${leadType}/${leadId}/booking-done?arrived=1`)
+                }
                 className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f]"
               >
                 <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
@@ -924,7 +929,7 @@ function ExperiencePhaseCard({ leadType, leadId }: { leadType: string; leadId: s
             <PhaseFieldLabel className="mb-0">Scope of Work</PhaseFieldLabel>
           </div>
           <Link
-            href={`/Leads/new/${leadType}/${leadId}/configuration-scope`}
+            href={`/Leads/${leadType}/${leadId}/configuration-scope`}
             className="group flex h-[148px] w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-[#c8d0db] bg-white text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#2ee06a] hover:bg-[#f0fdf4] hover:text-[#059669] hover:shadow-[0_8px_24px_rgba(46,224,106,0.15)] active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981]"
           >
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-[#f9fafb] text-[#8a96a8] transition-all duration-200 group-hover:border-[#bbf7d0] group-hover:bg-[#ecfdf5] group-hover:text-[#059669]">
