@@ -103,6 +103,16 @@ import {
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
 import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
+import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
+import {
+  LeadDetailV2Provider,
+  type LeadDetailV2ContextValue,
+} from "@/app/Components/CrmLeadDetailsV2/LeadDetailV2Context";
+import {
+  resolveDesignQaLink,
+  resolveMilestoneLabels,
+  resolveScheduleDisplays,
+} from "@/lib/lead-detail-v2-display";
 
 type SalesExecutiveOption = {
   id: number;
@@ -725,9 +735,11 @@ type PendingSalesClosureState = {
 export default function LeadDetailsApiClient({
   leadType: leadTypeParam,
   leadId,
+  uiVariant = "legacy",
 }: {
   leadType: string;
   leadId: string;
+  uiVariant?: "legacy" | "v2";
 }) {
   const validLeadType = isCrmLeadType(leadTypeParam);
   const leadType = leadTypeParam as CrmLeadType;
@@ -1674,53 +1686,70 @@ export default function LeadDetailsApiClient({
     validLeadType,
   ]);
 
+  const persistLeadDetailFields = useCallback(
+    async (successMessage: string) => {
+      if (!validLeadType) return;
+      const lt = leadTypeParam as CrmLeadType;
+      setSavingSecondBox(true);
+      setSecondBoxError(null);
+      try {
+        const body = mergeLeadIntoDetail(baseDetail, lead);
+        const updated = await putLeadDetail(lt, leadId, body);
+        const stickyQuote = pickPersistedQuoteLink(updated, lead);
+        const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+        setBaseDetail(stickyDetail);
+        const mapped = detailJsonToLead(stickyDetail, lt);
+        setLead((prev) => ({
+          ...mapped,
+          id: leadId,
+          activities: prev.activities,
+          bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+          salesManagerName:
+            mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+          quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+        }));
+        notifySuccess(successMessage);
+        maybeOpenSalesClosureAfterWon([
+          lead.status,
+          lead.stageBlock?.milestoneStage,
+          lead.stageBlock?.milestoneSubStage,
+          body.status,
+          (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+          (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+          updated.status,
+          updated.milestoneStage,
+          updated.milestoneSubStage,
+        ]);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Save failed";
+        setSecondBoxError(message);
+        throw new Error(message);
+      } finally {
+        setSavingSecondBox(false);
+      }
+    },
+    [
+      baseDetail,
+      lead,
+      leadId,
+      leadTypeParam,
+      maybeOpenSalesClosureAfterWon,
+      validLeadType,
+      notifySuccess,
+    ],
+  );
+
   const handleSaveSecondBox = useCallback(async () => {
-    if (!validLeadType) return;
-    const lt = leadTypeParam as CrmLeadType;
-    setSavingSecondBox(true);
-    setSecondBoxError(null);
     try {
-      const body = mergeLeadIntoDetail(baseDetail, lead);
-      const updated = await putLeadDetail(lt, leadId, body);
-      const stickyQuote = pickPersistedQuoteLink(updated, lead);
-      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
-      setBaseDetail(stickyDetail);
-      const mapped = detailJsonToLead(stickyDetail, lt);
-      setLead((prev) => ({
-        ...mapped,
-        id: leadId,
-        activities: prev.activities,
-        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
-        salesManagerName:
-          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
-        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
-      }));
-      notifySuccess("Additional info saved.");
-      maybeOpenSalesClosureAfterWon([
-        lead.status,
-        lead.stageBlock?.milestoneStage,
-        lead.stageBlock?.milestoneSubStage,
-        body.status,
-        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
-        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
-        updated.status,
-        updated.milestoneStage,
-        updated.milestoneSubStage,
-      ]);
-    } catch (e) {
-      setSecondBoxError(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSavingSecondBox(false);
+      await persistLeadDetailFields("Additional info saved.");
+    } catch {
+      // LeadInfoTab keeps edit mode open; error is stored on secondBoxError.
     }
-  }, [
-    baseDetail,
-    lead,
-    leadId,
-    leadTypeParam,
-    maybeOpenSalesClosureAfterWon,
-    validLeadType,
-    notifySuccess,
-  ]);
+  }, [persistLeadDetailFields]);
+
+  const handleConnectionPhaseSave = useCallback(async () => {
+    await persistLeadDetailFields("Connection phase saved.");
+  }, [persistLeadDetailFields]);
 
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;
@@ -2434,7 +2463,13 @@ export default function LeadDetailsApiClient({
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-12 text-center text-[var(--crm-text-muted)]">
+      <main
+        className={
+          uiVariant === "v2"
+            ? "min-h-screen bg-[#eef1f5] px-4 py-12 text-center text-[#8a96a8]"
+            : "min-h-screen bg-[var(--crm-app-bg)] px-4 py-12 text-center text-[var(--crm-text-muted)]"
+        }
+      >
         Loading lead…
       </main>
     );
@@ -2442,9 +2477,213 @@ export default function LeadDetailsApiClient({
 
   if (error) {
     return (
-      <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-8">
+      <main
+        className={
+          uiVariant === "v2"
+            ? "min-h-screen bg-[#eef1f5] px-4 py-8"
+            : "min-h-screen bg-[var(--crm-app-bg)] px-4 py-8"
+        }
+      >
         <p className="text-rose-600">{error}</p>
       </main>
+    );
+  }
+
+  if (uiVariant === "v2") {
+    const { stage, subStage } = resolveMilestoneLabels(lead, viewerRoleKey);
+    const { designQaLink, apiDesignQaLink } = resolveDesignQaLink(lead);
+    const scheduleDisplays = resolveScheduleDisplays(lead);
+    const v2Context: LeadDetailV2ContextValue = {
+      leadType,
+      leadId,
+      lead,
+      viewerRoleKey,
+      presalesHandedOff,
+      inSalesPhase,
+      completeTaskDisabled:
+        (presalesHandedOff && isPresalesRole(viewerRoleKey)) ||
+        (inSalesPhase && isPresalesRole(viewerRoleKey)),
+      canShowGetQuote,
+      canStageRollback: isSuperAdmin,
+      canClosedLeadHeader,
+      createdTimelineOptions,
+      createdTimelineLoading,
+      selectedTimelineValue,
+      onCreatedTimelineChange: (selected) => {
+        if (!selected) return;
+        setSelectedTimelineValue(selected);
+        const chosen = createdTimelineOptions.find((opt) => opt.value === selected);
+        if (!chosen) return;
+        const { leadType: nextLeadType, leadId: nextLeadId } = chosen;
+        if (nextLeadType === leadType && nextLeadId === leadId) return;
+        window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
+      },
+      onGetQuote: () => void handleGetQuote(),
+      quoteFetching,
+      onOpenStageRollback: () => setRollbackOpen(true),
+      onCompleteTask: () => {
+        if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
+        setCompleteTaskOpen(true);
+      },
+      onMarkAsWon: () => {
+        window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
+      },
+      onFloorPlanUpload: handleFloorPlanUpload,
+      onFloorPlanRemove: handleFloorPlanRemove,
+      onFloorPlanMissing: handleFloorPlanMissing,
+      floorPlanUploading,
+      floorPlanRemoving,
+      quoteSending,
+      quoteLinkPersisting,
+      quoteLinkPersistError,
+      onSendQuote: handleSendQuote,
+      onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
+      onDesignQaLinkCopied: handleDesignQaLinkCopied,
+      designQaLink,
+      apiDesignQaLink,
+      meetingDateDisplay: scheduleDisplays.meetingDateDisplay,
+      followUpDateDisplay: scheduleDisplays.followUpDateDisplay,
+      milestoneStageLabel: stage,
+      milestoneSubLabel: subStage,
+      onLeadPatch: patchLead,
+      onConnectionPhaseSave: handleConnectionPhaseSave,
+      connectionPhaseSaving: savingSecondBox,
+    };
+
+    return (
+      <>
+        <LeadDetailV2Provider value={v2Context}>
+          <NewLeadDetailPage leadType={leadType} leadId={leadId} />
+        </LeadDetailV2Provider>
+        <CompleteTaskModal
+          lead={lead}
+          open={completeTaskOpen}
+          onClose={() => {
+            setCompleteTaskOpen(false);
+            setCompleteTaskVerifyFocus(false);
+          }}
+          forcePresalesVerifyPanel={completeTaskVerifyFocus}
+          onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
+          onPresalesApiComplete={
+            usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined
+          }
+          onPresalesVerify={
+            usePresalesCompleteTask && canVerifyCurrentLead
+              ? handlePresalesVerifyFromCompleteTask
+              : undefined
+          }
+          presalesVerifyAvailable={usePresalesCompleteTask && canVerifyCurrentLead}
+          salesExecutiveOptions={salesExecutiveOptions}
+          salesExecutivesLoading={salesExecutivesLoading}
+          salesExecutivesError={salesExecutivesError}
+          salesExecutiveLabel={salesExecutiveLabel}
+          userRole={viewerRoleKey}
+          presalesHandedOff={presalesHandedOff || inSalesPhase}
+          onPhoneCall={handlePhoneCallLog}
+        />
+        {rollbackOpen ? (
+          <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
+            <div className="w-full max-w-lg rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-xl">
+              <h3 className="text-[15px] font-semibold text-[var(--crm-text-primary)]">
+                Stage Rollback (Super Admin)
+              </h3>
+              <p className="mt-1 text-[12px] text-[var(--crm-text-secondary)]">
+                Move lead back to a previous milestone with mandatory reason.
+              </p>
+              <div className="mt-4 space-y-3">
+                <label className="block">
+                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                    Stage *
+                  </span>
+                  <select
+                    value={rollbackStage}
+                    onChange={(e) => setRollbackStage(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                    disabled={rollbackBusy}
+                  >
+                    <option value="">Select stage</option>
+                    {rollbackStages.map((stageOption) => (
+                      <option key={stageOption.stage} value={stageOption.stage}>
+                        {stageOption.stage}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                    Stage category *
+                  </span>
+                  <select
+                    value={rollbackCategory}
+                    onChange={(e) => setRollbackCategory(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                    disabled={rollbackBusy || !rollbackStage}
+                  >
+                    <option value="">Select category</option>
+                    {rollbackCategories.map((cat) => (
+                      <option key={cat.stageCategory} value={cat.stageCategory}>
+                        {cat.stageCategory}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                    Sub-stage *
+                  </span>
+                  <select
+                    value={rollbackSubStage}
+                    onChange={(e) => setRollbackSubStage(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                    disabled={rollbackBusy || !rollbackCategory}
+                  >
+                    <option value="">Select sub-stage</option>
+                    {rollbackSubStages.map((sub) => (
+                      <option key={sub} value={sub}>
+                        {sub}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                    Reason *
+                  </span>
+                  <textarea
+                    value={rollbackReason}
+                    onChange={(e) => setRollbackReason(e.target.value)}
+                    rows={3}
+                    className="mt-1 w-full resize-none rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                    placeholder="Why are you rolling back?"
+                    disabled={rollbackBusy}
+                  />
+                </label>
+                {rollbackError ? (
+                  <p className="text-[12px] text-rose-600">{rollbackError}</p>
+                ) : null}
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRollbackOpen(false)}
+                  className="rounded-lg border border-[var(--crm-border)] px-4 py-2 text-[13px] font-medium text-[var(--crm-text-secondary)]"
+                  disabled={rollbackBusy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleStageRollback()}
+                  className="rounded-lg bg-amber-500 px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
+                  disabled={rollbackBusy}
+                >
+                  {rollbackBusy ? "Rolling back…" : "Confirm Rollback"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </>
     );
   }
 

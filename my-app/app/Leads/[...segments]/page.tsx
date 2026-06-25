@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import LeadDetailsClient from "@/app/Components/CrmLeadDetails/LeadDetailsClient";
-import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
+import NewLeadDetailApiClient from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailApiClient";
 import NewConfigurationScopePage from "@/app/Components/CrmLeadDetailsV2/NewConfigurationScopePage";
 import BookingDonePage from "@/app/Components/CrmLeadDetailsV2/BookingDonePage";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -25,7 +25,7 @@ export default async function LeadDetailsPage({
       return <LeadDetailsClient lead={mock} />;
     }
     if (/^\d+$/.test(slug)) {
-      return <NewLeadDetailPage leadType="formlead" leadId={slug} />;
+      return <NewLeadDetailApiClient leadType="formlead" leadId={slug} />;
     }
     notFound();
   }
@@ -33,7 +33,7 @@ export default async function LeadDetailsPage({
   if (segments.length === 2) {
     const [a, b] = segments;
     if (isCrmLeadType(a) && /^\d+$/.test(b)) {
-      return <NewLeadDetailPage leadType={a} leadId={b} />;
+      return <NewLeadDetailApiClient leadType={a} leadId={b} />;
     }
     notFound();
   }

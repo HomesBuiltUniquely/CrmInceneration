@@ -1,11 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import type { ActivityItem } from "@/lib/data";
+
+export type ActivityHistoryHandle = {
+  openPanel: () => void;
+};
 
 type ActivityKind = "note" | "update" | "call";
 type FilterId = "all" | "calls" | "notes" | "updates";
 
-type ActivityItem = {
+type DisplayActivityItem = {
   id: string;
   kind: ActivityKind;
   title: string;
@@ -14,13 +27,13 @@ type ActivityItem = {
   detail: string;
 };
 
-const SUMMARY_ITEMS = [
+const MOCK_SUMMARY_ITEMS = [
   { title: "Lead Created", time: "Oct 12, 09:15 AM", icon: "user-plus" as const },
   { title: "Meeting Scheduled", time: "Nov 15, 02:30 PM", icon: "calendar" as const },
   { title: "Call Logged", time: "Nov 22, 10:30 AM", icon: "phone" as const },
 ];
 
-const ACTIVITIES: ActivityItem[] = [
+const MOCK_ACTIVITIES: DisplayActivityItem[] = [
   {
     id: "1",
     kind: "note",
@@ -56,15 +69,36 @@ const ACTIVITIES: ActivityItem[] = [
   },
 ];
 
-const FILTER_COUNTS = {
+const MOCK_FILTER_COUNTS = {
   all: 29,
   calls: 1,
   notes: 3,
   updates: 25,
 };
 
+function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
+  if (type === "note") return "note";
+  if (type === "call") return "call";
+  return "update";
+}
+
+function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
+  const detail =
+    activity.note?.trim() ||
+    (activity.change
+      ? `${activity.change.old || "—"} → ${activity.change.new || "—"}`
+      : activity.description);
+  return {
+    id: activity.id,
+    kind: mapApiTypeToKind(activity.type),
+    title: activity.description,
+    timestamp: activity.timestamp,
+    author: activity.by,
+    detail,
+  };
+}
+
 function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
-  const margin = 16;
   const x = (window.innerWidth - panelWidth) / 2;
   const y = (window.innerHeight - panelHeight) / 2;
   return clampPanelPosition(x, y, panelWidth, panelHeight);
@@ -83,7 +117,38 @@ function clampPanelPosition(
   };
 }
 
-export default function ActivityHistoryWithConnector() {
+const ActivityHistoryWithConnector = forwardRef<
+  ActivityHistoryHandle,
+  { activities?: ActivityItem[] }
+>(function ActivityHistoryWithConnector({ activities }, ref) {
+  const hasApiActivities = Boolean(activities && activities.length > 0);
+  const displayActivities =
+    hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
+  const summaryItems = hasApiActivities
+    ? displayActivities.slice(0, 3).map((item) => ({
+        title: item.title,
+        time: item.timestamp,
+        icon:
+          item.kind === "call"
+            ? ("phone" as const)
+            : item.kind === "note"
+              ? ("user-plus" as const)
+              : ("calendar" as const),
+      }))
+    : MOCK_SUMMARY_ITEMS;
+  const filterCounts = hasApiActivities
+    ? displayActivities.reduce(
+        (acc, item) => {
+          acc.all += 1;
+          if (item.kind === "call") acc.calls += 1;
+          if (item.kind === "note") acc.notes += 1;
+          if (item.kind === "update") acc.updates += 1;
+          return acc;
+        },
+        { all: 0, calls: 0, notes: 0, updates: 0 },
+      )
+    : MOCK_FILTER_COUNTS;
+
   const panelRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -94,17 +159,32 @@ export default function ActivityHistoryWithConnector() {
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 });
 
   const [filter, setFilter] = useState<FilterId>("all");
-  const [selectedId, setSelectedId] = useState(ACTIVITIES[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
+  const filteredActivities = displayActivities.filter((item) => {
+    if (filter === "all") return true;
+    if (filter === "calls") return item.kind === "call";
+    if (filter === "notes") return item.kind === "note";
+    return item.kind === "update";
+  });
+  const selected =
+    filteredActivities.find((a) => a.id === selectedId) ||
+    displayActivities.find((a) => a.id === selectedId) ||
+    filteredActivities[0] ||
+    displayActivities[0];
 
-  const selected = ACTIVITIES.find((a) => a.id === selectedId) ?? ACTIVITIES[0];
+  useEffect(() => {
+    setSelectedId(displayActivities[0]?.id ?? "");
+  }, [displayActivities]);
 
-  const openPanel = () => {
+  const openPanel = useCallback(() => {
     const panelWidth = Math.min(920, window.innerWidth - 32);
     const estimatedHeight = Math.min(560, window.innerHeight - 48);
     setPanelPosition(getCenteredPanelPosition(panelWidth, estimatedHeight));
     setPanelEntered(false);
     setOpen(true);
-  };
+  }, []);
+
+  useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
 
   useLayoutEffect(() => {
     if (!open || !panelRef.current) return;
@@ -183,7 +263,7 @@ export default function ActivityHistoryWithConnector() {
         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Activity History</p>
 
         <ul className="mt-3 space-y-3">
-          {SUMMARY_ITEMS.map((item) => (
+          {summaryItems.map((item) => (
             <li key={item.title} className="flex items-start gap-3">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#f3f4f6] text-[#9ca3af]">
                 <SummaryIcon type={item.icon} />
@@ -261,7 +341,7 @@ export default function ActivityHistoryWithConnector() {
                 Activity History
               </h2>
               <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
-                {FILTER_COUNTS.all} EVENTS
+                {filterCounts.all} EVENTS
               </span>
             </div>
             <button
@@ -278,24 +358,24 @@ export default function ActivityHistoryWithConnector() {
             <FilterPill
               active={filter === "all"}
               onClick={() => setFilter("all")}
-              label={`All ${FILTER_COUNTS.all}`}
+              label={`All ${filterCounts.all}`}
             />
             <FilterPill
               active={filter === "calls"}
               onClick={() => setFilter("calls")}
-              label={`Calls ${FILTER_COUNTS.calls}`}
+              label={`Calls ${filterCounts.calls}`}
               icon="📞"
             />
             <FilterPill
               active={filter === "notes"}
               onClick={() => setFilter("notes")}
-              label={`Notes ${FILTER_COUNTS.notes}`}
+              label={`Notes ${filterCounts.notes}`}
               icon="📝"
             />
             <FilterPill
               active={filter === "updates"}
               onClick={() => setFilter("updates")}
-              label={`Updates ${FILTER_COUNTS.updates}`}
+              label={`Updates ${filterCounts.updates}`}
               icon="🔄"
             />
           </div>
@@ -303,10 +383,10 @@ export default function ActivityHistoryWithConnector() {
           <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="min-h-0 border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
               <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                {FILTER_COUNTS.all} In All
+                {filteredActivities.length} In {filter === "all" ? "All" : filter}
               </p>
               <ul className="max-h-[420px] overflow-y-auto">
-                {ACTIVITIES.map((item) => (
+                {filteredActivities.map((item) => (
                   <li key={item.id}>
                     <button
                       type="button"
@@ -359,7 +439,9 @@ export default function ActivityHistoryWithConnector() {
       ) : null}
     </>
   );
-}
+});
+
+export default ActivityHistoryWithConnector;
 
 function FilterPill({
   active,
