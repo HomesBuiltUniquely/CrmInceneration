@@ -13,7 +13,7 @@ function buildProxyHeaders(req: NextRequest): HeadersInit {
       : Array.isArray(upstream)
         ? Object.fromEntries(upstream)
         : { ...upstream };
-  const apiKey = "hi";
+  const apiKey = process.env.EXTERNAL_LEAD_INGEST_API_KEY?.trim();
   if (apiKey) {
     headers["x-external-api-key"] = apiKey;
   }

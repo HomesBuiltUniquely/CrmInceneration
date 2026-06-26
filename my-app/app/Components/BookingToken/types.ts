@@ -25,6 +25,8 @@ export type DealRow = {
   bookingStatus: BookingStatus;
   expClosing: string;
   showConvert?: boolean;
+  /** Set when row came from Booking Done handoff. */
+  fromBookingDone?: boolean;
 };
 
 export type LedgerItem = {
