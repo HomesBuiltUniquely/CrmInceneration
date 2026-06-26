@@ -85,6 +85,96 @@ export function normalizeFloorPlanS3Key(raw: string): string {
   return k;
 }
 
+function floorPlanBasenameFromPath(value: string): string {
+  const trimmed = value.trim().split("?")[0]?.split("#")[0] ?? "";
+  const segment = trimmed.split("/").filter(Boolean).pop() ?? "";
+  if (!segment) return "";
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+const FLOOR_PLAN_UUID_PREFIX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+function floorPlanExtension(name: string): string {
+  const match = name.trim().toLowerCase().match(/\.(pdf|jpe?g|png)$/i);
+  if (!match?.[1]) return "";
+  const ext = match[1].toLowerCase();
+  return ext === "jpeg" ? "jpg" : ext;
+}
+
+function friendlyFloorPlanLabel(extension: string): string {
+  if (extension === "pdf") return "floor-plan.pdf";
+  if (extension === "png") return "floor-plan.png";
+  if (extension === "jpg") return "floor-plan.jpg";
+  return extension ? `floor-plan.${extension}` : "floor-plan";
+}
+
+function looksLikeStorageFileName(name: string): boolean {
+  const base = name.trim();
+  if (!base) return false;
+  if (base.length > 28) return true;
+  if (FLOOR_PLAN_UUID_PREFIX.test(base)) return true;
+
+  const stem = base.includes(".") ? base.slice(0, base.lastIndexOf(".")) : base;
+  if (stem.length >= 18 && /^[0-9a-f-]+$/i.test(stem)) return true;
+  return false;
+}
+
+function shortenFriendlyFileName(name: string, maxStemLength = 16): string {
+  const base = name.trim();
+  if (!base) return "";
+
+  const dot = base.lastIndexOf(".");
+  if (dot > 0) {
+    const stem = base.slice(0, dot);
+    const ext = base.slice(dot);
+    if (stem.length <= maxStemLength) return base;
+    return `${stem.slice(0, maxStemLength)}…${ext.toLowerCase()}`;
+  }
+
+  if (base.length <= maxStemLength + 4) return base;
+  return `${base.slice(0, maxStemLength)}…`;
+}
+
+function normalizeFloorPlanDisplayLabel(name: string): string {
+  const base = name.trim();
+  if (!base) return "";
+
+  const extension = floorPlanExtension(base);
+  if (looksLikeStorageFileName(base)) {
+    return friendlyFloorPlanLabel(extension);
+  }
+
+  return shortenFriendlyFileName(base);
+}
+
+/** User-facing file label for floor plan tiles (e.g. `plan.jpg`, `floor-plan.pdf`). */
+export function floorPlanDisplayFileName(s3Key: string, publicLink?: string): string {
+  const candidates = [s3Key, publicLink ?? ""];
+  for (const raw of candidates) {
+    const base = floorPlanBasenameFromPath(raw);
+    if (base && /\.(pdf|jpe?g|png)$/i.test(base)) {
+      return normalizeFloorPlanDisplayLabel(base);
+    }
+  }
+
+  const normalized = normalizeFloorPlanS3Key(s3Key || publicLink || "");
+  if (!normalized) return "";
+
+  const fromKey = floorPlanBasenameFromPath(normalized);
+  if (fromKey && /\.(pdf|jpe?g|png)$/i.test(fromKey)) {
+    return normalizeFloorPlanDisplayLabel(fromKey);
+  }
+
+  if (isFloorPlanPdfKey(normalized)) return "floor-plan.pdf";
+  if (isFloorPlanImageKey(normalized)) return "floor-plan.jpg";
+  return fromKey ? normalizeFloorPlanDisplayLabel(fromKey) : "floor-plan";
+}
+
 export function leadHasFloorPlan(
   stored: string,
   metaHas?: boolean,
@@ -156,6 +246,32 @@ export type LeadFloorPlanState = {
   viewPath: string;
   openPath: string;
 };
+
+const FLOOR_PLAN_ORIGINAL_NAME_PREFIX = "crm_floor_plan_original_name_";
+
+export function floorPlanOriginalNameStorageKey(leadType: string, leadId: string): string {
+  return `${FLOOR_PLAN_ORIGINAL_NAME_PREFIX}${leadType}_${leadId}`;
+}
+
+export function readStoredFloorPlanOriginalName(leadType: string, leadId: string): string {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(floorPlanOriginalNameStorageKey(leadType, leadId))?.trim() ?? "";
+}
+
+export function writeStoredFloorPlanOriginalName(
+  leadType: string,
+  leadId: string,
+  fileName: string,
+): void {
+  if (typeof window === "undefined") return;
+  const key = floorPlanOriginalNameStorageKey(leadType, leadId);
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  window.localStorage.setItem(key, trimmed);
+}
 
 /** Resolve relative `/v1/public/floor-plan/...` to absolute CRM host. */
 export function normalizeFloorPlanPublicLink(raw: string): string {

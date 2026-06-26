@@ -1,0 +1,138 @@
+import type { Lead } from "@/lib/data";
+import { formatCrmDateTime } from "@/lib/date-time-format";
+import {
+  isLeadHandedOffToSales,
+} from "@/lib/presales-milestone";
+import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
+import {
+  canViewBothMilestonePipelines,
+  isPresalesRole,
+} from "@/lib/roleUtils";
+import {
+  resolveDisplayFollowUpDate,
+  resolveDisplayMeetingDate,
+} from "@/lib/lead-schedule-display";
+
+const DESIGN_QA_BASE_URL = "https://design.hubinterior.com/DesignQA?id=";
+
+export function meetingTypeDisplay(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "—";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  if (key === "SHOWROOM_VISIT") return "Showroom Visit";
+  if (key === "VIRTUAL_MEETING") return "Virtual Meeting";
+  if (key === "SITE_VISIT") return "Site Visit";
+  return raw;
+}
+
+export function bookingTypeDisplay(value: string): string {
+  const raw = value.trim();
+  if (!raw) return "—";
+  return raw
+    .toLowerCase()
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function isDiscoveryStage(lead: Lead): boolean {
+  const normalizeLabel = (value: string) =>
+    value.trim().toLowerCase().replace(/\s+/g, " ");
+  const milestoneStage = normalizeLabel(lead.stageBlock?.milestoneStage ?? "");
+  const legacyStage = normalizeLabel(lead.stageBlock?.stage ?? "");
+  return milestoneStage.includes("discovery") || legacyStage.includes("discovery");
+}
+
+function buildDesignQaLink(lead: Lead, version = 1): string | null {
+  const id = lead.leadId?.trim() || lead.id?.trim();
+  if (!id) return null;
+  return `${DESIGN_QA_BASE_URL}${encodeURIComponent(id)}&v=${version}`;
+}
+
+export function resolveDesignQaLink(lead: Lead): {
+  designQaLink: string;
+  apiDesignQaLink: string;
+} {
+  const apiDesignQaLink = (lead.designQaLink ?? "").trim();
+  const computedDesignQaLink =
+    !apiDesignQaLink && shouldShowDesignQaLink(lead) && !isDiscoveryStage(lead)
+      ? buildDesignQaLink(lead, 1) ?? ""
+      : "";
+  return {
+    apiDesignQaLink,
+    designQaLink: apiDesignQaLink || computedDesignQaLink,
+  };
+}
+
+export function resolveMilestoneLabels(
+  lead: Lead,
+  viewerRoleKey: string,
+): { stage: string; subStage: string } {
+  const inSalesPhase = isLeadHandedOffToSales(lead);
+  const showPresalesMilestone =
+    !inSalesPhase &&
+    (isPresalesRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey));
+
+  if (showPresalesMilestone) {
+    return {
+      stage:
+        lead.stageBlock?.presalesMilestoneStage?.trim() ||
+        lead.stageBlock?.milestoneStage?.trim() ||
+        "Fresh Data",
+      subStage:
+        lead.stageBlock?.presalesMilestoneSubStage?.trim() ||
+        lead.stageBlock?.presalesMilestoneCategory?.trim() ||
+        lead.stageBlock?.milestoneSubStage?.trim() ||
+        "—",
+    };
+  }
+
+  return {
+    stage: lead.stageBlock?.milestoneStage?.trim() || "—",
+    subStage: lead.stageBlock?.milestoneSubStage?.trim() || "—",
+  };
+}
+
+export function formatScheduleDisplay(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "Not scheduled";
+  const friendly = formatCrmDateTime(trimmed);
+  return friendly && friendly !== "—" ? friendly : trimmed;
+}
+
+export function resolveScheduleDisplays(lead: Lead): {
+  meetingDateDisplay: string;
+  followUpDateDisplay: string;
+} {
+  const meetingRaw = resolveDisplayMeetingDate(lead);
+  const followUpRaw = resolveDisplayFollowUpDate(lead);
+  return {
+    meetingDateDisplay: formatScheduleDisplay(meetingRaw),
+    followUpDateDisplay: formatScheduleDisplay(followUpRaw),
+  };
+}
+
+/** Business lead id for UI (`lead_identifier` / BLR-A0010), not numeric Hub row id. */
+export function resolveLeadDisplayIdentifier(
+  sources: {
+    externalReferenceId?: string | null;
+    leadIdentifier?: string | null;
+    leadId?: string | null;
+    customerId?: string | null;
+  },
+  fallbackNumericId?: string,
+): string {
+  const candidates = [
+    sources.externalReferenceId,
+    sources.leadIdentifier,
+    sources.leadId,
+    sources.customerId,
+    fallbackNumericId,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate ?? "").trim();
+    if (value && value !== "—") return value;
+  }
+  return "—";
+}

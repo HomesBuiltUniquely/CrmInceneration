@@ -160,3 +160,42 @@ body {
     transform: scale(0.82);
   }
 }
+
+/* Configuration Scope — full-page print / Save as PDF */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body {
+    background: white !important;
+  }
+
+  .configuration-scope-page [data-print-hide] {
+    display: none !important;
+  }
+
+  .configuration-scope-page .mx-auto.grid {
+    display: block !important;
+    max-width: none !important;
+  }
+
+  .configuration-scope-print-header {
+    display: block !important;
+  }
+
+  .configuration-scope-print-root {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .configuration-scope-print-root article {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+    margin-bottom: 12px;
+  }
+
+  .configuration-scope-print-actions {
+    display: none !important;
+  }
+}

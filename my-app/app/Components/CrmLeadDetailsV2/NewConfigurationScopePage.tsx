@@ -1,7 +1,43 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import ConfigurationScopeFloorPlan from "./ConfigurationScopeFloorPlan";
+import ReferenceViewModal from "./ReferenceViewModal";
+import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
+import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
+import { BOOKING_TYPE_OPTIONS } from "@/lib/data";
+import {
+  createDefaultSelectedRoom,
+  createDefaultRequirements,
+  defaultRoomIcon,
+  deleteConfigurationScopeReference,
+  DEFAULT_ROOM_CATALOG,
+  fetchReferenceContentBlob,
+  getConfigurationScopeReferences,
+  getConfigurationScopeRequirements,
+  mergeRequirementDefaults,
+  miscAddOnOptions,
+  putConfigurationScopeAestheticNotes,
+  putConfigurationScopeRequirements,
+  toPutRequirementsBody,
+  REFERENCE_ACCEPT,
+  REFERENCE_MAX_FILES,
+  referenceDisplayName,
+  referenceViewUrlToProxy,
+  uploadConfigurationScopeReference,
+  validateReferenceFile,
+  type ConfigurationScopeReference,
+  type ConfigurationScopeRequirements,
+  type ScopeSelectedRoom,
+} from "@/lib/configuration-scope-client";
+import { detailJsonToLead, mergeSecondBoxIntoDetail } from "@/lib/lead-detail-mapper";
+import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
+import { formatInvestmentRangeLabel, resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
+import { getLeadDetail, getLeadFloorPlanMeta, putLeadDetail, uploadLeadFloorPlan } from "@/lib/lead-details-client";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import type { CrmLeadType } from "@/lib/leads-filter";
 
 type Props = {
   leadType: string;
@@ -28,8 +64,488 @@ const scopeNavItems: {
   { id: "internal-notes", label: "Internal Notes", icon: "notes" },
 ];
 
+function formatScopeLastSaved(iso: string | null | undefined): string {
+  if (!iso?.trim()) return "Not saved yet";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "Recently";
+  const time = parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const isToday = parsed.toDateString() === new Date().toDateString();
+  if (isToday) return `Today at ${time}`;
+  return `${parsed.toLocaleDateString()} at ${time}`;
+}
+
+function latestIsoTimestamp(...values: Array<string | null | undefined>): string | null {
+  let best: string | null = null;
+  let bestMs = -1;
+  for (const value of values) {
+    if (!value?.trim()) continue;
+    const ms = new Date(value).getTime();
+    if (!Number.isNaN(ms) && ms > bestMs) {
+      bestMs = ms;
+      best = value;
+    }
+  }
+  return best;
+}
+
+/** Shared medium hover motion for Configuration Scope interactive elements. */
+const SCOPE_TRANSITION = "transition-all duration-200 ease-out";
+const SCOPE_BTN_PRIMARY = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:bg-[#14c653] hover:shadow-md active:scale-[0.98]`;
+const SCOPE_BTN_SECONDARY = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:border-[#111827] hover:bg-[#f9fafb] hover:shadow-md active:scale-[0.98]`;
+const SCOPE_BTN_DARK = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:bg-[#1e293b] hover:shadow-md active:scale-[0.98]`;
+const SCOPE_BTN_GHOST = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:border-[#9ca3af] hover:bg-[#f9fafb] hover:shadow-sm active:scale-[0.98]`;
+const SCOPE_BTN_DANGER_ICON = `${SCOPE_TRANSITION} rounded-md p-1 hover:scale-110 hover:bg-[#fee2e2] hover:text-[#dc2626] active:scale-95`;
+const SCOPE_BTN_DELETE_BADGE = `${SCOPE_TRANSITION} hover:scale-110 hover:bg-[#dc2626] hover:shadow-md active:scale-95`;
+const SCOPE_ROOM_SELECTED = `${SCOPE_TRANSITION} hover:border-[#16c956] hover:bg-[#e8fff1] hover:shadow-sm active:scale-[0.99]`;
+const SCOPE_ROOM_UNSELECTED = `${SCOPE_TRANSITION} hover:border-[#bbf7d0] hover:bg-[#f9fdfb] hover:shadow-sm active:scale-[0.99]`;
+const SCOPE_UNIT_ACTIVE = `${SCOPE_TRANSITION} hover:bg-[#14c653] hover:shadow-sm active:scale-95`;
+const SCOPE_UNIT_IDLE = `${SCOPE_TRANSITION} hover:border-[#bbf7d0] hover:bg-[#f0fdf4] hover:text-[#059669] active:scale-95`;
+const SCOPE_TILE_ADD = `${SCOPE_TRANSITION} hover:border-[#bbf7d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-sm active:scale-[0.98]`;
+const SCOPE_UPLOAD_ZONE = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:border-[#1ed760] hover:bg-[#f2fff8] hover:shadow-md`;
+const SCOPE_CHIP = `${SCOPE_TRANSITION} hover:border-[#bbf7d0] hover:bg-[#f9fdfb] hover:shadow-sm`;
+const SCOPE_INPUT = `${SCOPE_TRANSITION} hover:border-[#c5e8d4] focus:border-[#1ed760] focus:outline-none focus:ring-2 focus:ring-[#1ed760]/20`;
+const SCOPE_NAV_IDLE = `${SCOPE_TRANSITION} hover:-translate-y-0.5 hover:border-[#e5e7eb] hover:bg-[#f9fafb] hover:shadow-md active:scale-[0.99]`;
+const SCOPE_BTN_ADD_PLUS = `${SCOPE_TRANSITION} inline-flex shrink-0 items-center justify-center rounded-md border border-[#d1d5db] bg-white text-[#059669] hover:-translate-y-0.5 hover:border-[#1ed760] hover:bg-[#ecfdf5] hover:text-[#047857] hover:shadow-md active:scale-95`;
+
+function ScopePlusIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function ScopeAddPlusButton({
+  onClick,
+  ariaLabel,
+  disabled = false,
+  size = "md",
+}: {
+  onClick: () => void;
+  ariaLabel: string;
+  disabled?: boolean;
+  size?: "md" | "sm";
+}) {
+  const sizeClass = size === "sm" ? "h-8 w-8" : "h-9 w-9";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className={`${SCOPE_BTN_ADD_PLUS} ${sizeClass} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:border-[#d1d5db] disabled:hover:bg-white disabled:hover:text-[#059669] disabled:hover:shadow-none`}
+    >
+      <ScopePlusIcon className={size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} />
+    </button>
+  );
+}
+
 export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
+  const router = useRouter();
   const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
+  const [baseDetail, setBaseDetail] = useState<Record<string, unknown> | null>(null);
+  const [bookingType, setBookingType] = useState("");
+  const [bookingTypeLoading, setBookingTypeLoading] = useState(true);
+  const [bookingTypeSaving, setBookingTypeSaving] = useState(false);
+  const [floorPlanS3Key, setFloorPlanS3Key] = useState("");
+  const [floorPlanPublicLink, setFloorPlanPublicLink] = useState("");
+  const [floorPlanViewPath, setFloorPlanViewPath] = useState("");
+  const [floorPlanOpenPath, setFloorPlanOpenPath] = useState("");
+  const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(
+    () => mergeRequirementDefaults(createDefaultRequirements()).requirements,
+  );
+  const [requirementsLoading, setRequirementsLoading] = useState(true);
+  const [requirementsSaving, setRequirementsSaving] = useState(false);
+  const [references, setReferences] = useState<ConfigurationScopeReference[]>([]);
+  const [aestheticNotes, setAestheticNotes] = useState("");
+  const [referencesLoading, setReferencesLoading] = useState(true);
+  const [referenceUploading, setReferenceUploading] = useState(false);
+  const [aestheticNotesSaving, setAestheticNotesSaving] = useState(false);
+  const [referencesUpdatedAt, setReferencesUpdatedAt] = useState<string | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const requirementsDirtyRef = useRef(false);
+  const aestheticNotesDirtyRef = useRef(false);
+  const requirementsSaveInFlightRef = useRef(false);
+  const { notifyError, notifySuccess } = useGlobalNotifier();
+
+  const validLeadType = useMemo<CrmLeadType | null>(
+    () => (isCrmLeadType(leadType) ? leadType : null),
+    [leadType],
+  );
+
+  useEffect(() => {
+    if (!validLeadType) {
+      setBookingTypeLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setBookingTypeLoading(true);
+
+    void (async () => {
+      try {
+        const detailJson = await getLeadDetail(validLeadType, leadId);
+        if (cancelled) return;
+        setBaseDetail(detailJson);
+        setBookingType(detailJsonToLead(detailJson, validLeadType).bookingType ?? "");
+
+        const meta = await getLeadFloorPlanMeta(validLeadType, leadId);
+        if (cancelled) return;
+        if (meta) {
+          setFloorPlanS3Key(meta.s3Key);
+          setFloorPlanPublicLink(meta.publicLink ?? "");
+          setFloorPlanViewPath(meta.viewPath);
+          setFloorPlanOpenPath(meta.openPath);
+        } else {
+          setFloorPlanS3Key("");
+          setFloorPlanPublicLink("");
+          setFloorPlanViewPath("");
+          setFloorPlanOpenPath("");
+        }
+
+        let reqData: ConfigurationScopeRequirements;
+        try {
+          reqData = await getConfigurationScopeRequirements(validLeadType, leadId);
+        } catch {
+          reqData = createDefaultRequirements();
+        }
+
+        const refData = await getConfigurationScopeReferences(validLeadType, leadId).catch(
+          () => ({ references: [], aestheticNotes: "", updatedAt: null }),
+        );
+        if (cancelled) return;
+
+        const { requirements: mergedReq, needsPersist } = mergeRequirementDefaults(reqData);
+        requirementsDirtyRef.current = false;
+
+        if (needsPersist) {
+          try {
+            const saved = await putConfigurationScopeRequirements(
+              validLeadType,
+              leadId,
+              toPutRequirementsBody(mergedReq),
+            );
+            if (cancelled) return;
+            setRequirements(saved);
+          } catch {
+            if (!cancelled) setRequirements(mergedReq);
+          }
+        } else {
+          setRequirements(mergedReq);
+        }
+
+        setReferences(refData.references);
+        setAestheticNotes(refData.aestheticNotes ?? "");
+        setReferencesUpdatedAt(refData.updatedAt ?? null);
+        aestheticNotesDirtyRef.current = false;
+      } catch {
+        if (!cancelled) {
+          setBaseDetail(null);
+          setBookingType("");
+          const { requirements: fallbackReq } = mergeRequirementDefaults(
+            createDefaultRequirements(),
+          );
+          setRequirements(fallbackReq);
+          setReferences([]);
+          setAestheticNotes("");
+        }
+      } finally {
+        if (!cancelled) {
+          setBookingTypeLoading(false);
+          setRequirementsLoading(false);
+          setReferencesLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, validLeadType]);
+
+  const handleBookingTypeChange = useCallback(
+    async (nextBookingType: string) => {
+      if (!validLeadType || !baseDetail || bookingTypeSaving) return;
+
+      const previous = bookingType;
+      setBookingType(nextBookingType);
+      setBookingTypeSaving(true);
+
+      try {
+        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+        const body = mergeSecondBoxIntoDetail(baseDetail, {
+          ...leadSnapshot,
+          bookingType: nextBookingType,
+        });
+        const updated = await putLeadDetail(validLeadType, leadId, body);
+        setBaseDetail(updated);
+        setBookingType(detailJsonToLead(updated, validLeadType).bookingType ?? nextBookingType);
+      } catch {
+        setBookingType(previous);
+      } finally {
+        setBookingTypeSaving(false);
+      }
+    },
+    [baseDetail, bookingType, bookingTypeSaving, leadId, validLeadType],
+  );
+
+  const handleFloorPlanUpload = useCallback(
+    async (file: File) => {
+      if (!validLeadType) return;
+      setFloorPlanUploading(true);
+      try {
+        const state = await uploadLeadFloorPlan(validLeadType, leadId, file);
+        setFloorPlanS3Key(state.s3Key);
+        setFloorPlanPublicLink(state.publicLink ?? "");
+        setFloorPlanViewPath(state.viewPath);
+        setFloorPlanOpenPath(state.openPath);
+        notifySuccess("Floor plan uploaded.");
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Floor plan upload failed.");
+        throw e;
+      } finally {
+        setFloorPlanUploading(false);
+      }
+    },
+    [leadId, notifyError, notifySuccess, validLeadType],
+  );
+
+  const patchRequirements = useCallback((patch: (prev: ConfigurationScopeRequirements) => ConfigurationScopeRequirements) => {
+    requirementsDirtyRef.current = true;
+    setRequirements((prev) =>
+      patch(prev ?? mergeRequirementDefaults(createDefaultRequirements()).requirements),
+    );
+  }, []);
+
+  const saveRequirements = useCallback(
+    async (payload?: ConfigurationScopeRequirements, isRetry = false): Promise<boolean> => {
+      const toSave = payload ?? requirements;
+      if (!validLeadType || !toSave || requirementsSaveInFlightRef.current) return false;
+
+      requirementsSaveInFlightRef.current = true;
+      setRequirementsSaving(true);
+      try {
+        const saved = await putConfigurationScopeRequirements(
+          validLeadType,
+          leadId,
+          toPutRequirementsBody(toSave),
+        );
+        requirementsDirtyRef.current = false;
+        setRequirements(saved);
+        return true;
+      } catch (e) {
+        const err = e as Error & { status?: number };
+        const message = err.message || "Unable to save requirement scope.";
+        if (err.status === 409 && !isRetry) {
+          try {
+            const fresh = await getConfigurationScopeRequirements(validLeadType, leadId);
+            const merged: ConfigurationScopeRequirements = {
+              ...fresh,
+              selectedRooms: toSave.selectedRooms,
+              availableRoomCatalog: toSave.availableRoomCatalog,
+              miscAddOns: toSave.miscAddOns,
+              kitchenLayout: toSave.kitchenLayout,
+              materialFinish: toSave.materialFinish,
+            };
+            requirementsSaveInFlightRef.current = false;
+            setRequirementsSaving(false);
+            return saveRequirements(merged, true);
+          } catch {
+            notifyError(message);
+          }
+        } else {
+          notifyError(message);
+        }
+        return false;
+      } finally {
+        requirementsSaveInFlightRef.current = false;
+        setRequirementsSaving(false);
+      }
+    },
+    [leadId, notifyError, requirements, validLeadType],
+  );
+
+  useEffect(() => {
+    if (
+      !validLeadType ||
+      !requirements ||
+      requirementsLoading ||
+      !requirementsDirtyRef.current ||
+      requirementsSaveInFlightRef.current
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void saveRequirements();
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [requirements, requirementsLoading, saveRequirements, validLeadType]);
+
+  const handleReferenceUpload = useCallback(
+    async (file: File) => {
+      if (!validLeadType) return;
+      if (references.length >= REFERENCE_MAX_FILES) {
+        notifyError(`Maximum ${REFERENCE_MAX_FILES} reference files per lead.`);
+        return;
+      }
+      const validationError = validateReferenceFile(file);
+      if (validationError) {
+        notifyError(validationError);
+        return;
+      }
+      setReferenceUploading(true);
+      try {
+        const data = await uploadConfigurationScopeReference(validLeadType, leadId, file);
+        setReferences(data.references);
+        setAestheticNotes(data.aestheticNotes ?? aestheticNotes);
+        notifySuccess("Reference uploaded.");
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Reference upload failed.");
+        throw e;
+      } finally {
+        setReferenceUploading(false);
+      }
+    },
+    [aestheticNotes, leadId, notifyError, notifySuccess, references.length, validLeadType],
+  );
+
+  const handleReferenceDelete = useCallback(
+    async (referenceId: string) => {
+      if (!validLeadType) return;
+      try {
+        const data = await deleteConfigurationScopeReference(validLeadType, leadId, referenceId);
+        setReferences(data.references);
+        notifySuccess("Reference removed.");
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Unable to delete reference.");
+      }
+    },
+    [leadId, notifyError, notifySuccess, validLeadType],
+  );
+
+  const saveAestheticNotes = useCallback(
+    async (force = false): Promise<boolean> => {
+      if (!validLeadType || aestheticNotesSaving) return false;
+      if (!force && !aestheticNotesDirtyRef.current) return true;
+
+      setAestheticNotesSaving(true);
+      try {
+        const data = await putConfigurationScopeAestheticNotes(
+          validLeadType,
+          leadId,
+          aestheticNotes,
+        );
+        aestheticNotesDirtyRef.current = false;
+        setReferences(data.references);
+        setAestheticNotes(data.aestheticNotes ?? aestheticNotes);
+        setReferencesUpdatedAt(data.updatedAt ?? null);
+        return true;
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Unable to save aesthetic notes.");
+        return false;
+      } finally {
+        setAestheticNotesSaving(false);
+      }
+    },
+    [aestheticNotes, aestheticNotesSaving, leadId, notifyError, validLeadType],
+  );
+
+  useEffect(() => {
+    if (!validLeadType || referencesLoading || !aestheticNotesDirtyRef.current) return;
+    const timer = window.setTimeout(() => {
+      void saveAestheticNotes();
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [aestheticNotes, referencesLoading, saveAestheticNotes, validLeadType]);
+
+  const viewerName = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim();
+  }, []);
+
+  const lastSavedAt = useMemo(
+    () => latestIsoTimestamp(requirements?.updatedAt, referencesUpdatedAt),
+    [referencesUpdatedAt, requirements?.updatedAt],
+  );
+
+  const lastSavedBy = requirements?.updatedBy?.trim() || viewerName || "Sales Lead";
+
+  const flushAllSaves = useCallback(async (): Promise<boolean> => {
+    if (!validLeadType || !requirements) {
+      notifyError("Configuration scope is still loading.");
+      return false;
+    }
+    const requirementsOk = await saveRequirements(requirements);
+    const notesOk = await saveAestheticNotes(true);
+    return requirementsOk && notesOk;
+  }, [notifyError, requirements, saveAestheticNotes, saveRequirements, validLeadType]);
+
+  const handlePrintPdf = useCallback(() => {
+    window.print();
+  }, []);
+
+  const handleFinalizeSubmit = useCallback(async () => {
+    if (!validLeadType || finalizing) return;
+    setFinalizing(true);
+    try {
+      const ok = await flushAllSaves();
+      if (!ok) return;
+      notifySuccess("Configuration scope saved.");
+      router.push(`/Leads/${validLeadType}/${leadId}`);
+    } finally {
+      setFinalizing(false);
+    }
+  }, [finalizing, flushAllSaves, leadId, notifySuccess, router, validLeadType]);
+
+  const floorPlanProps = {
+    leadType,
+    leadId,
+    floorPlanS3Key,
+    floorPlanPublicLink,
+    floorPlanViewPath,
+    floorPlanOpenPath,
+    floorPlanUploading,
+    onFloorPlanUpload: handleFloorPlanUpload,
+    onFloorPlanError: notifyError,
+  };
+
+  const leadBudget = useMemo(() => {
+    if (!baseDetail || !validLeadType) return "";
+    return detailJsonToLead(baseDetail, validLeadType).budget ?? "";
+  }, [baseDetail, validLeadType]);
+
+  const leadConfiguration = useMemo(() => {
+    if (!baseDetail || !validLeadType) return "";
+    return detailJsonToLead(baseDetail, validLeadType).configuration ?? "";
+  }, [baseDetail, validLeadType]);
+
+  const leadDisplayIdentifier = useMemo(() => {
+    if (baseDetail && validLeadType) {
+      const lead = detailJsonToLead(baseDetail, validLeadType);
+      return resolveLeadDisplayIdentifier(
+        {
+          externalReferenceId: lead.externalReferenceId,
+          leadId: lead.leadId,
+          leadIdentifier: requirements?.leadIdentifier,
+          customerId: lead.customerId,
+        },
+        leadId,
+      );
+    }
+    return resolveLeadDisplayIdentifier(
+      { leadIdentifier: requirements?.leadIdentifier },
+      leadId,
+    );
+  }, [baseDetail, leadId, requirements?.leadIdentifier, validLeadType]);
 
   const scrollToSection = useCallback((sectionId: ScopeSectionId) => {
     setActiveSectionId(sectionId);
@@ -65,13 +581,19 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#f3f5f7] px-4 py-6 font-sans md:px-6">
+    <main className="configuration-scope-page min-h-screen bg-[#f3f5f7] px-4 py-6 font-sans md:px-6">
       <div className="mx-auto grid max-w-[1320px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="sticky top-6 flex h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-white">
+        <aside
+          data-print-hide
+          className="sticky top-6 flex h-[calc(100vh-3rem)] max-h-[calc(100vh-3rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-white"
+        >
           <div className="flex min-h-0 flex-1 flex-col px-4 py-4 lg:py-5">
             <div className="shrink-0">
               <h2 className="text-[22px] font-extrabold leading-tight text-[#101828]">Scope Sections</h2>
               <p className="mt-1 text-[12px] font-semibold text-[#9ca3af]">7 Total Sections</p>
+              <p className="mt-1 text-[11px] font-semibold text-[#9ca3af]">
+                ID: #{leadDisplayIdentifier}
+              </p>
             </div>
 
             <ul className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
@@ -83,10 +605,10 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
                       type="button"
                       onClick={() => scrollToSection(item.id)}
                       aria-current={isActive ? "true" : undefined}
-                      className={`group relative flex w-full items-center gap-3.5 overflow-hidden rounded-lg border px-3 py-2.5 text-left transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
+                      className={`group relative flex w-full items-center gap-3.5 overflow-hidden rounded-lg border px-3 py-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
                         isActive
                           ? "border-[#e5e7eb] bg-[#f3f4f6] shadow-sm"
-                          : "border-transparent bg-white hover:border-[#e5e7eb] hover:bg-[#f9fafb] hover:shadow-sm"
+                          : `border-transparent bg-white ${SCOPE_NAV_IDLE}`
                       }`}
                     >
                       {isActive ? (
@@ -157,21 +679,63 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
           </div>
         </aside>
 
-        <section className="space-y-4">
+        <section className="configuration-scope-print-root space-y-4">
+          <div className="configuration-scope-print-header mb-2 hidden">
+            <h1 className="text-[22px] font-extrabold text-[#101828]">Configuration Scope</h1>
+            <p className="mt-1 text-[13px] text-[#6b7280]">
+              ID: #{leadDisplayIdentifier}
+            </p>
+          </div>
           <div id="basic-understanding" className="scroll-mt-24">
-            <BasicUnderstandingSection />
+            <BasicUnderstandingSection
+              bookingType={bookingType}
+              bookingTypeLoading={bookingTypeLoading}
+              bookingTypeSaving={bookingTypeSaving}
+              onBookingTypeChange={handleBookingTypeChange}
+            />
           </div>
           <div id="requirements" className="scroll-mt-24">
-            <RequirementScopeSection />
+            <RequirementScopeSection
+              {...floorPlanProps}
+              requirements={requirements}
+              loading={requirementsLoading}
+              saving={requirementsSaving}
+              onPatchRequirements={patchRequirements}
+            />
           </div>
           <div id="reference-inspiration" className="scroll-mt-24">
-            <ReferenceInspirationSection />
+            <ReferenceInspirationSection
+              leadType={validLeadType}
+              leadId={leadId}
+              references={references}
+              loading={referencesLoading}
+              uploading={referenceUploading}
+              aestheticNotes={aestheticNotes}
+              aestheticNotesSaving={aestheticNotesSaving}
+              onAestheticNotesChange={(value) => {
+                aestheticNotesDirtyRef.current = true;
+                setAestheticNotes(value);
+              }}
+              onUpload={handleReferenceUpload}
+              onDelete={handleReferenceDelete}
+            />
           </div>
           <div id="budget-alignment" className="scroll-mt-24">
-            <FinancialGuardrailsSection />
+            <FinancialGuardrailsSection
+              budget={leadBudget}
+              configuration={leadConfiguration}
+              loading={bookingTypeLoading}
+            />
           </div>
           <div id="internal-notes" className="scroll-mt-24">
-            <InternalExecutiveNotesSection />
+            <InternalExecutiveNotesSection
+              lastSavedLabel={formatScopeLastSaved(lastSavedAt)}
+              generatedByName={lastSavedBy}
+              onPrintPdf={handlePrintPdf}
+              onFinalizeSubmit={() => void handleFinalizeSubmit()}
+              finalizing={finalizing}
+              saving={requirementsSaving || aestheticNotesSaving}
+            />
           </div>
         </section>
       </div>
@@ -237,7 +801,21 @@ function ScopeNavIcon({
   );
 }
 
-function FinancialGuardrailsSection() {
+function FinancialGuardrailsSection({
+  budget,
+  configuration,
+  loading,
+}: {
+  budget: string;
+  configuration: string;
+  loading: boolean;
+}) {
+  const investmentLabel = formatInvestmentRangeLabel(budget);
+  const luxuryFocus = resolveBudgetLuxuryFocus(budget);
+  const subtitle = configuration.trim()
+    ? `Based on ${configuration.trim()} configuration from lead profile.`
+    : "Budget from lead connection phase.";
+
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-4 flex items-center gap-2.5">
@@ -255,10 +833,10 @@ function FinancialGuardrailsSection() {
         <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#4ade80]">Total Investment Range</p>
-            <p className="mt-1 text-[42px] font-bold leading-none tracking-tight">₹12L - 15L</p>
-            <p className="mt-2 text-[13px] text-[#c5d4f3]">
-              Targeting a &apos;Premium Balanced&apos; finish with 10% buffer.
+            <p className="mt-1 text-[42px] font-bold leading-none tracking-tight">
+              {loading ? "…" : investmentLabel}
             </p>
+            <p className="mt-2 text-[13px] text-[#c5d4f3]">{subtitle}</p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-[#1a2644] px-3 py-2.5">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#7b8db5]">Sensitivity</p>
@@ -277,10 +855,14 @@ function FinancialGuardrailsSection() {
               <span>Luxury Focus</span>
             </div>
             <div className="relative mt-2 h-1.5 rounded-full bg-[#2a3a5c]">
-              <div className="absolute left-[72%] top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#1ed760]" />
+              <div
+                className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#1ed760] transition-all duration-500"
+                style={{ left: loading ? "50%" : `${luxuryFocus.percent}%` }}
+                aria-hidden="true"
+              />
             </div>
             <p className="mt-3 text-[12px] italic text-[#c5d4f3]">
-              Client prefers luxury finishes in Living Area &amp; Kitchen specifically.
+              {loading ? "Loading budget alignment…" : luxuryFocus.note}
             </p>
           </div>
         </div>
@@ -289,7 +871,21 @@ function FinancialGuardrailsSection() {
   );
 }
 
-function InternalExecutiveNotesSection() {
+function InternalExecutiveNotesSection({
+  lastSavedLabel,
+  generatedByName,
+  onPrintPdf,
+  onFinalizeSubmit,
+  finalizing,
+  saving,
+}: {
+  lastSavedLabel: string;
+  generatedByName: string;
+  onPrintPdf: () => void;
+  onFinalizeSubmit: () => void;
+  finalizing: boolean;
+  saving: boolean;
+}) {
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-4 flex items-center gap-2.5">
@@ -353,21 +949,27 @@ function InternalExecutiveNotesSection() {
 
       <div className="mt-5 flex flex-wrap items-end justify-between gap-4 border-t border-[#e5e7eb] pt-4">
         <div>
-          <p className="text-[13px] font-bold text-[#111827]">Last saved: Today at 02:45 PM</p>
-          <p className="mt-0.5 text-[11px] text-[#9ca3af]">Generated by Sales Lead: Vikram Singh</p>
+          <p className="text-[13px] font-bold text-[#111827]">Last saved: {lastSavedLabel}</p>
+          <p className="mt-0.5 text-[11px] text-[#9ca3af]">
+            Generated by Sales Lead: {generatedByName}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="configuration-scope-print-actions flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-md border border-[#111827] bg-white px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#111827]"
+            onClick={onPrintPdf}
+            disabled={finalizing}
+            className={`rounded-md border border-[#111827] bg-white px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#111827] disabled:cursor-wait disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none ${SCOPE_BTN_SECONDARY}`}
           >
             Print PDF
           </button>
           <button
             type="button"
-            className="rounded-md bg-[#1ed760] px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#05220f]"
+            onClick={onFinalizeSubmit}
+            disabled={finalizing || saving}
+            className={`rounded-md bg-[#1ed760] px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-wait disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none ${SCOPE_BTN_PRIMARY}`}
           >
-            Finalize &amp; Submit
+            {finalizing ? "Saving…" : "Finalize & Submit"}
           </button>
         </div>
       </div>
@@ -375,7 +977,47 @@ function InternalExecutiveNotesSection() {
   );
 }
 
-function ReferenceInspirationSection() {
+function ReferenceInspirationSection({
+  leadType,
+  leadId,
+  references,
+  loading,
+  uploading,
+  aestheticNotes,
+  aestheticNotesSaving,
+  onAestheticNotesChange,
+  onUpload,
+  onDelete,
+}: {
+  leadType: CrmLeadType | null;
+  leadId: string;
+  references: ConfigurationScopeReference[];
+  loading: boolean;
+  uploading: boolean;
+  aestheticNotes: string;
+  aestheticNotesSaving: boolean;
+  onAestheticNotesChange: (value: string) => void;
+  onUpload: (file: File) => void | Promise<void>;
+  onDelete: (referenceId: string) => void | Promise<void>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { notifyError } = useGlobalNotifier();
+
+  const openPicker = () => {
+    if (!uploading && !loading) inputRef.current?.click();
+  };
+
+  const processFiles = async (files: FileList | File[] | null) => {
+    if (!files?.length || uploading || loading) return;
+    for (const file of Array.from(files)) {
+      try {
+        await onUpload(file);
+      } catch {
+        break;
+      }
+    }
+  };
+
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-1 flex items-center gap-2.5">
@@ -392,10 +1034,41 @@ function ReferenceInspirationSection() {
         Upload customer reference images, sketches, or style inspiration.
       </p>
 
-      <div className="rounded-xl border border-dashed border-[#cfd6e0] bg-[#fafbfc] px-6 py-10 text-center">
+      <input
+        ref={inputRef}
+        type="file"
+        accept={REFERENCE_ACCEPT}
+        multiple
+        className="hidden"
+        onChange={(e) => void processFiles(e.target.files)}
+      />
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={openPicker}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openPicker();
+          }
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void processFiles(e.dataTransfer.files);
+        }}
+        className={`group rounded-xl border border-dashed border-[#cfd6e0] bg-[#fafbfc] px-6 py-10 text-center ${
+          uploading || loading ? "cursor-wait opacity-60" : `cursor-pointer ${SCOPE_UPLOAD_ZONE}`
+        }`}
+      >
         <svg
           viewBox="0 0 24 24"
-          className="mx-auto mb-4 h-10 w-10 text-[#4b7cff]"
+          className={`mx-auto mb-4 h-10 w-10 text-[#4b7cff] ${SCOPE_TRANSITION} group-hover:scale-110 group-hover:text-[#059669]`}
           fill="none"
           stroke="currentColor"
           strokeWidth="1.75"
@@ -407,11 +1080,18 @@ function ReferenceInspirationSection() {
           <polyline points="17 8 12 3 7 8" />
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
-        <p className="text-[15px] font-bold text-[#111827]">Click or Drag images here to upload</p>
+        <p className="text-[15px] font-bold text-[#111827]">
+          {uploading ? "Uploading…" : "Click or Drag images here to upload"}
+        </p>
         <p className="mt-1 text-[12px] text-[#9ca3af]">Support for JPG, PNG, PDF (Max 10MB per file)</p>
         <button
           type="button"
-          className="mt-5 rounded-md bg-[#0f172a] px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-white"
+          disabled={uploading || loading}
+          onClick={(e) => {
+            e.stopPropagation();
+            openPicker();
+          }}
+          className={`mt-5 rounded-md bg-[#0f172a] px-5 py-2.5 text-[11px] font-bold uppercase tracking-[0.08em] text-white disabled:cursor-wait disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-none ${SCOPE_BTN_DARK}`}
         >
           Browse Files
         </button>
@@ -419,147 +1099,433 @@ function ReferenceInspirationSection() {
 
       <div className="mt-5">
         <FormLabel>Reference Gallery</FormLabel>
-        <div className="mt-2 grid grid-cols-3 gap-3">
-          <GalleryPlaceholder label="REF_01.JPG" />
-          <GalleryPlaceholder label="REF_02.JPG" />
-          <button
-            type="button"
-            aria-label="Add reference image"
-            className="flex min-h-[100px] items-center justify-center rounded-lg border border-[#e4e8ef] bg-[#f3f4f6] text-[28px] font-light text-[#9ca3af]"
-          >
-            +
-          </button>
-        </div>
+        {loading ? (
+          <p className="mt-2 text-[13px] text-[#9ca3af]">Loading references…</p>
+        ) : (
+          <div className="mt-2 grid grid-cols-3 gap-3">
+            {references.map((ref) => (
+              <ReferenceGalleryTile
+                key={ref.id}
+                leadType={leadType}
+                leadId={leadId}
+                reference={ref}
+                onDelete={() => void onDelete(ref.id)}
+                onError={notifyError}
+              />
+            ))}
+            {references.length < REFERENCE_MAX_FILES ? (
+              <button
+                type="button"
+                aria-label="Add reference image"
+                disabled={uploading}
+                onClick={openPicker}
+                className={`flex min-h-[100px] items-center justify-center rounded-lg border border-[#e4e8ef] bg-[#f3f4f6] text-[28px] font-light text-[#9ca3af] disabled:cursor-wait disabled:opacity-60 disabled:hover:translate-y-0 ${SCOPE_TILE_ADD}`}
+              >
+                +
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
 
       <div className="mt-5">
         <FormLabel>Additional Aesthetic Notes</FormLabel>
         <textarea
-          readOnly
+          value={aestheticNotes}
+          disabled={loading || aestheticNotesSaving}
+          onChange={(e) => onAestheticNotesChange(e.target.value)}
           placeholder="Mention specific details about lighting, textures, or mood from these references..."
-          className="mt-1.5 min-h-[100px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#9ca3af] outline-none"
+          className={`mt-1.5 min-h-[100px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
         />
+        {aestheticNotesSaving ? (
+          <p className="mt-1 text-[11px] text-[#9ca3af]">Saving notes…</p>
+        ) : null}
       </div>
     </article>
   );
 }
 
-function GalleryPlaceholder({ label }: { label: string }) {
+function ReferenceGalleryTile({
+  leadType,
+  leadId,
+  reference,
+  onDelete,
+  onError,
+}: {
+  leadType: CrmLeadType | null;
+  leadId: string;
+  reference: ConfigurationScopeReference;
+  onDelete: () => void;
+  onError: (message: string) => void;
+}) {
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [viewOpen, setViewOpen] = useState(false);
+  const blobUrlRef = useRef("");
+
+  const label = referenceDisplayName(reference);
+  const isPdf =
+    reference.mimeType === "application/pdf" ||
+    label.toLowerCase().endsWith(".pdf");
+
+  const contentPath =
+    leadType != null
+      ? referenceViewUrlToProxy(reference.viewUrl, leadType, leadId, reference.id)
+      : "";
+
+  useEffect(() => {
+    if (!leadType) return;
+    let cancelled = false;
+
+    void fetchReferenceContentBlob(contentPath)
+      .then(({ blob }) => {
+        if (cancelled) return;
+        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        blobUrlRef.current = url;
+        setPreviewUrl(url);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          onError(e instanceof Error ? e.message : "Unable to load reference preview.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = "";
+      }
+    };
+  }, [contentPath, leadId, leadType, onError, reference.id, reference.viewUrl]);
+
+  const openPreview = () => {
+    if (!contentPath) return;
+    setViewOpen(true);
+  };
+
   return (
-    <div className="relative min-h-[100px] rounded-lg border border-[#e4e8ef] bg-[#f3f4f6]">
-      <div className="flex h-full min-h-[100px] items-center justify-center">
-        <svg viewBox="0 0 24 24" className="h-8 w-8 text-[#c4cad4]" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          <circle cx="8.5" cy="8.5" r="1.5" />
-          <polyline points="21 15 16 10 5 21" />
-        </svg>
+    <>
+      <div
+        className={`group relative min-h-[100px] overflow-hidden rounded-lg border border-[#e4e8ef] bg-[#f3f4f6] ${SCOPE_TRANSITION} hover:border-[#bbf7d0] hover:shadow-md`}
+      >
+        <button
+          type="button"
+          onClick={openPreview}
+          disabled={!contentPath}
+          className="flex h-full min-h-[100px] w-full cursor-pointer flex-col items-stretch text-left disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={`View ${label}`}
+        >
+          {previewUrl && !isPdf ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={previewUrl} alt={label} className="h-full min-h-[100px] w-full object-cover" />
+          ) : (
+            <div className="flex h-full min-h-[100px] w-full items-center justify-center">
+              <svg viewBox="0 0 24 24" className="h-8 w-8 text-[#c4cad4]" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </div>
+          )}
+          <span className="absolute bottom-2 left-2 max-w-[calc(100%-2.5rem)] truncate rounded bg-white/95 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#111827] shadow-sm">
+            {label}
+          </span>
+        </button>
+        <button
+          type="button"
+          aria-label={`Remove ${label}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className={`absolute right-2 top-2 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white ${SCOPE_BTN_DELETE_BADGE}`}
+        >
+          ×
+        </button>
       </div>
-      <span className="absolute bottom-2 left-2 text-[9px] font-semibold uppercase tracking-wide text-[#9ca3af]">
-        {label}
-      </span>
-    </div>
+
+      <ReferenceViewModal
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+        title={label}
+        viewHref={contentPath}
+        previewUrl={previewUrl}
+        isPdf={isPdf}
+      />
+    </>
   );
 }
 
-function RequirementScopeSection() {
-  const availableRooms = [
-    { name: "Living Room", selected: true },
-    { name: "Modular Kitchen", selected: true },
-    { name: "Foyer", selected: false },
-    { name: "Master Bedroom", selected: false },
-    { name: "Guest Bedroom", selected: false },
-  ];
+function RequirementScopeSection({
+  leadType,
+  leadId,
+  floorPlanS3Key,
+  floorPlanPublicLink,
+  floorPlanViewPath,
+  floorPlanUploading,
+  onFloorPlanUpload,
+  onFloorPlanError,
+  requirements,
+  loading,
+  saving,
+  onPatchRequirements,
+}: {
+  leadType: string;
+  leadId: string;
+  floorPlanS3Key: string;
+  floorPlanPublicLink: string;
+  floorPlanViewPath: string;
+  floorPlanOpenPath: string;
+  floorPlanUploading: boolean;
+  onFloorPlanUpload: (file: File) => void | Promise<void>;
+  onFloorPlanError: (message: string) => void;
+  requirements: ConfigurationScopeRequirements | null;
+  loading: boolean;
+  saving: boolean;
+  onPatchRequirements: (
+    patch: (prev: ConfigurationScopeRequirements) => ConfigurationScopeRequirements,
+  ) => void;
+}) {
+  const [newRoomName, setNewRoomName] = useState("");
+  const catalog =
+    requirements?.availableRoomCatalog?.length
+      ? requirements.availableRoomCatalog
+      : [...DEFAULT_ROOM_CATALOG];
+  const selectedRooms = requirements?.selectedRooms ?? [];
+  const selectedNames = new Set(
+    selectedRooms.map((room) => room.roomName.trim().toLowerCase()),
+  );
+
+  const toggleRoom = (roomName: string) => {
+    const key = roomName.trim().toLowerCase();
+    onPatchRequirements((prev) => {
+      const exists = prev.selectedRooms.some(
+        (room) => room.roomName.trim().toLowerCase() === key,
+      );
+      if (exists) {
+        return {
+          ...prev,
+          selectedRooms: prev.selectedRooms.filter(
+            (room) => room.roomName.trim().toLowerCase() !== key,
+          ),
+        };
+      }
+      const nextRoom = createDefaultSelectedRoom(roomName, prev.selectedRooms.length);
+      return {
+        ...prev,
+        selectedRooms: [...prev.selectedRooms, nextRoom],
+      };
+    });
+  };
+
+  const addCatalogRoom = () => {
+    const trimmed = newRoomName.trim();
+    if (!trimmed) return;
+    onPatchRequirements((prev) => {
+      const catalogSet = new Set(prev.availableRoomCatalog);
+      catalogSet.add(trimmed);
+      const exists = prev.selectedRooms.some(
+        (room) => room.roomName.trim().toLowerCase() === trimmed.toLowerCase(),
+      );
+      const selectedRooms = exists
+        ? prev.selectedRooms
+        : [...prev.selectedRooms, createDefaultSelectedRoom(trimmed, prev.selectedRooms.length)];
+      return {
+        ...prev,
+        availableRoomCatalog: Array.from(catalogSet),
+        selectedRooms,
+      };
+    });
+    setNewRoomName("");
+  };
+
+  const updateRoom = (roomId: string, patch: Partial<ScopeSelectedRoom>) => {
+    onPatchRequirements((prev) => ({
+      ...prev,
+      selectedRooms: prev.selectedRooms.map((room) =>
+        room.id === roomId ? { ...room, ...patch } : room,
+      ),
+    }));
+  };
+
+  const removeRoom = (room: ScopeSelectedRoom) => {
+    const key = room.roomName.trim().toLowerCase();
+    onPatchRequirements((prev) => ({
+      ...prev,
+      selectedRooms: prev.selectedRooms.filter(
+        (entry) => entry.roomName.trim().toLowerCase() !== key,
+      ),
+      availableRoomCatalog: prev.availableRoomCatalog.filter(
+        (name) => name.trim().toLowerCase() !== key,
+      ),
+    }));
+  };
+
+  const toggleMiscAddOn = (item: string) => {
+    onPatchRequirements((prev) => {
+      const selected = new Set(prev.miscAddOns);
+      if (selected.has(item)) selected.delete(item);
+      else selected.add(item);
+      return { ...prev, miscAddOns: Array.from(selected) };
+    });
+  };
 
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
-      <div className="mb-4 flex items-center gap-2.5">
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#1ed760] text-white">
-          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
-        </span>
-        <h3 className="text-[20px] font-extrabold text-[#101828]">2. Requirement Scope</h3>
-      </div>
-
-      <div className="rounded-lg border border-[#e4e8ef] p-4">
-        <FormLabel>Spaces to be Designed</FormLabel>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-          <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Available Rooms</p>
-            <div className="space-y-2">
-              {availableRooms.map((room) => (
-                <button
-                  key={room.name}
-                  type="button"
-                  className={`flex w-full items-center justify-between rounded-md border px-3 py-2.5 text-left text-[13px] font-semibold ${
-                    room.selected
-                      ? "border-[#1ed760] bg-[#f2fff8] text-[#0f8f3d]"
-                      : "border-[#e4e8ef] bg-white text-[#4b5563]"
-                  }`}
-                >
-                  {room.name}
-                  <span
-                    className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
-                      room.selected
-                        ? "bg-[#1ed760] text-white"
-                        : "border border-[#d1d5db] bg-white text-[#9ca3af]"
-                    }`}
-                  >
-                    {room.selected ? "✓" : "+"}
-                  </span>
-                </button>
-              ))}
-              <button
-                type="button"
-                className="flex w-full items-center justify-between rounded-md border border-dashed border-[#d1d5db] bg-white px-3 py-2.5 text-[13px] font-medium text-[#9ca3af]"
-              >
-                Add New Room
-                <span className="text-[16px] leading-none">+</span>
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-              Configuring Selected Spaces (2)
-            </p>
-            <div className="space-y-4">
-              <RoomConfigCard
-                title="Living Room"
-                iconLabel="🛋"
-                units={[
-                  { label: "TV Unit", active: true },
-                  { label: "Sofa", active: false },
-                  { label: "Center Table", active: false },
-                ]}
-                notesPlaceholder="e.g. Minimalist vibe..."
-              />
-              <RoomConfigCard
-                title="Modular Kitchen"
-                iconLabel="B"
-                units={[
-                  { label: "Base Units", active: true },
-                  { label: "Wall Units", active: true },
-                  { label: "Tall Unit", active: false },
-                ]}
-                notesPlaceholder="e.g. Quartz countertop preferred..."
-              />
-            </div>
-          </div>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[#1ed760] text-white">
+            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" y1="13" x2="8" y2="13" />
+              <line x1="16" y1="17" x2="8" y2="17" />
+            </svg>
+          </span>
+          <h3 className="text-[20px] font-extrabold text-[#101828]">2. Requirement Scope</h3>
         </div>
-
-        <ScopeExtrasSection />
+        {saving ? (
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[#9ca3af]">
+            Saving…
+          </span>
+        ) : null}
       </div>
+
+      {loading ? (
+        <p className="text-[13px] text-[#9ca3af]">Loading requirement scope…</p>
+      ) : (
+        <div className="rounded-lg border border-[#e4e8ef] p-4">
+          <FormLabel>Spaces to be Designed</FormLabel>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Available Rooms</p>
+              <div className="space-y-2">
+                {catalog.map((roomName) => {
+                  const selected = selectedNames.has(roomName.trim().toLowerCase());
+                  return (
+                    <button
+                      key={roomName}
+                      type="button"
+                      onClick={() => toggleRoom(roomName)}
+                      className={`flex w-full items-center justify-between rounded-md border px-3 py-2.5 text-left text-[13px] font-semibold ${
+                        selected
+                          ? `border-[#1ed760] bg-[#f2fff8] text-[#0f8f3d] ${SCOPE_ROOM_SELECTED}`
+                          : `border-[#e4e8ef] bg-white text-[#4b5563] ${SCOPE_ROOM_UNSELECTED}`
+                      }`}
+                    >
+                      {roomName}
+                      <span
+                        className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${
+                          selected
+                            ? "bg-[#1ed760] text-white"
+                            : "border border-[#d1d5db] bg-white text-[#9ca3af]"
+                        }`}
+                      >
+                        {selected ? "✓" : "+"}
+                      </span>
+                    </button>
+                  );
+                })}
+                <div className="flex items-center gap-2">
+                  <input
+                    value={newRoomName}
+                    onChange={(e) => setNewRoomName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addCatalogRoom();
+                      }
+                    }}
+                    placeholder="New room name"
+                    className={`min-w-0 flex-1 rounded-md border border-dashed border-[#d1d5db] bg-white px-3 py-2 text-[13px] text-[#374151] outline-none ${SCOPE_INPUT}`}
+                  />
+                  <ScopeAddPlusButton onClick={addCatalogRoom} ariaLabel="Add new room" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                Configuring Selected Spaces ({selectedRooms.length})
+              </p>
+              {selectedRooms.length === 0 ? (
+                <p className="text-[13px] text-[#9ca3af]">Select rooms from the catalog to configure units and notes.</p>
+              ) : (
+                <div className="space-y-4">
+                  {selectedRooms.map((room) => (
+                    <RoomConfigCard
+                      key={room.id}
+                      room={room}
+                      onUpdate={(patch) => updateRoom(room.id, patch)}
+                      onRemove={() => removeRoom(room)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <ScopeExtrasSection
+            leadType={leadType}
+            leadId={leadId}
+            floorPlanS3Key={floorPlanS3Key}
+            floorPlanPublicLink={floorPlanPublicLink}
+            floorPlanViewPath={floorPlanViewPath}
+            floorPlanUploading={floorPlanUploading}
+            onFloorPlanUpload={onFloorPlanUpload}
+            onFloorPlanError={onFloorPlanError}
+            miscAddOns={requirements?.miscAddOns ?? []}
+            kitchenLayout={requirements?.kitchenLayout ?? ""}
+            materialFinish={requirements?.materialFinish ?? ""}
+            onMiscAddOnToggle={toggleMiscAddOn}
+            onKitchenLayoutChange={(value) =>
+              onPatchRequirements((prev) => ({ ...prev, kitchenLayout: value || null }))
+            }
+            onMaterialFinishChange={(value) =>
+              onPatchRequirements((prev) => ({ ...prev, materialFinish: value || null }))
+            }
+          />
+        </div>
+      )}
     </article>
   );
 }
 
-function ScopeExtrasSection() {
-  const addOns = ["Painting", "Granite", "Kitchen Tile", "Wallpaper", "Appliance", "Wooden Flooring"];
+function ScopeExtrasSection({
+  leadType,
+  leadId,
+  floorPlanS3Key,
+  floorPlanPublicLink,
+  floorPlanViewPath,
+  floorPlanUploading,
+  onFloorPlanUpload,
+  onFloorPlanError,
+  miscAddOns,
+  kitchenLayout,
+  materialFinish,
+  onMiscAddOnToggle,
+  onKitchenLayoutChange,
+  onMaterialFinishChange,
+}: {
+  leadType: string;
+  leadId: string;
+  floorPlanS3Key: string;
+  floorPlanPublicLink: string;
+  floorPlanViewPath: string;
+  floorPlanUploading: boolean;
+  onFloorPlanUpload: (file: File) => void | Promise<void>;
+  onFloorPlanError: (message: string) => void;
+  miscAddOns: string[];
+  kitchenLayout: string;
+  materialFinish: string;
+  onMiscAddOnToggle: (item: string) => void;
+  onKitchenLayoutChange: (value: string) => void;
+  onMaterialFinishChange: (value: string) => void;
+}) {
+  const addOnOptions = miscAddOnOptions([], miscAddOns);
+  const selectedAddOns = new Set(miscAddOns);
 
   return (
     <>
@@ -578,89 +1544,63 @@ function ScopeExtrasSection() {
           <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#374151]">Miscellaneous Add-ons</p>
         </div>
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-          {addOns.map((item) => (
-            <label
-              key={item}
-              className="flex min-h-[42px] items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] font-medium text-[#374151]"
-            >
-              {item}
-              <span className="inline-flex h-[18px] w-[18px] shrink-0 rounded-[3px] border border-[#d1d5db] bg-white" />
-            </label>
-          ))}
+          {addOnOptions.map((item) => {
+            const checked = selectedAddOns.has(item);
+            return (
+              <label
+                key={item}
+                className={`flex min-h-[42px] cursor-pointer items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] font-medium text-[#374151] ${SCOPE_CHIP}`}
+              >
+                {item}
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onMiscAddOnToggle(item)}
+                  className="sr-only"
+                />
+                <span
+                  className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border ${
+                    checked ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white" : "border-[#d1d5db] bg-white"
+                  }`}
+                >
+                  {checked ? "✓" : ""}
+                </span>
+              </label>
+            );
+          })}
         </div>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-dashed border-[#cfd6e0] bg-white">
-          <button
-            type="button"
-            className="flex min-h-[120px] flex-col items-center justify-center border-r border-dashed border-[#cfd6e0] px-4 py-6 text-center"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="mb-3 h-8 w-8 text-[#4b6b8a]"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#4b6b8a]">Upload New Plan</p>
-            <p className="mt-1 text-[10px] text-[#9ca3af]">PDF, JPG, DWG (Max 10MB)</p>
-          </button>
-          <button
-            type="button"
-            className="flex min-h-[120px] flex-col items-center justify-center px-4 py-6 text-center"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="mb-3 h-8 w-8 text-[#4b6b8a]"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-            <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#4b6b8a]">View Floor Plan</p>
-            <p className="mt-1 text-[10px] text-[#9ca3af]">Uploaded on Feb 12</p>
-          </button>
-        </div>
+        <ConfigurationScopeFloorPlan
+          leadType={leadType}
+          leadId={leadId}
+          floorPlanS3Key={floorPlanS3Key}
+          floorPlanPublicLink={floorPlanPublicLink}
+          floorPlanViewPath={floorPlanViewPath}
+          uploading={floorPlanUploading}
+          onUpload={onFloorPlanUpload}
+          onError={onFloorPlanError}
+        />
 
         <div className="flex flex-col justify-center gap-4">
           <div>
             <FormLabel>Kitchen Layout</FormLabel>
-            <div className="relative mt-1.5">
-              <select
-                disabled
-                className="h-[42px] w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 text-[14px] font-medium text-[#374151] outline-none"
-                defaultValue="L-Shaped with Island"
-              >
-                <option>L-Shaped with Island</option>
-              </select>
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
-            </div>
+            <input
+              value={kitchenLayout}
+              onChange={(e) => onKitchenLayoutChange(e.target.value)}
+              placeholder="e.g. L-Shaped with Island"
+              className={`mt-1.5 h-[42px] w-full rounded-md border border-[#dfe5ec] bg-white px-3 text-[14px] font-medium text-[#374151] outline-none ${SCOPE_INPUT}`}
+            />
           </div>
           <div>
             <FormLabel>Material Finish</FormLabel>
-            <div className="relative mt-1.5">
-              <select
-                disabled
-                className="h-[42px] w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 text-[14px] font-medium text-[#374151] outline-none"
-                defaultValue="High Gloss Acrylic"
-              >
-                <option>High Gloss Acrylic</option>
-              </select>
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
-            </div>
+            <input
+              value={materialFinish}
+              onChange={(e) => onMaterialFinishChange(e.target.value)}
+              placeholder="e.g. High Gloss Acrylic"
+              className={`mt-1.5 h-[42px] w-full rounded-md border border-[#dfe5ec] bg-white px-3 text-[14px] font-medium text-[#374151] outline-none ${SCOPE_INPUT}`}
+            />
           </div>
         </div>
       </div>
@@ -669,26 +1609,47 @@ function ScopeExtrasSection() {
 }
 
 function RoomConfigCard({
-  title,
-  iconLabel,
-  units,
-  notesPlaceholder,
+  room,
+  onUpdate,
+  onRemove,
 }: {
-  title: string;
-  iconLabel: string;
-  units: Array<{ label: string; active: boolean }>;
-  notesPlaceholder: string;
+  room: ScopeSelectedRoom;
+  onUpdate: (patch: Partial<ScopeSelectedRoom>) => void;
+  onRemove: () => void;
 }) {
+  const [newUnitLabel, setNewUnitLabel] = useState("");
+
+  const toggleUnit = (label: string) => {
+    onUpdate({
+      units: room.units.map((unit) =>
+        unit.label === label ? { ...unit, selected: !unit.selected } : unit,
+      ),
+    });
+  };
+
+  const addUnit = () => {
+    const trimmed = newUnitLabel.trim();
+    if (!trimmed) return;
+    if (room.units.some((unit) => unit.label.toLowerCase() === trimmed.toLowerCase())) {
+      setNewUnitLabel("");
+      return;
+    }
+    onUpdate({
+      units: [...room.units, { label: trimmed, selected: true }],
+    });
+    setNewUnitLabel("");
+  };
+
   return (
     <div className="rounded-lg border border-[#b8f0cc] bg-[#f6fff9] p-4">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#1ed760] text-[11px] font-bold text-white">
-            {iconLabel}
+            {room.iconLabel || defaultRoomIcon(room.roomName)}
           </span>
-          <p className="text-[13px] font-bold uppercase tracking-wide text-[#111827]">{title}</p>
+          <p className="text-[13px] font-bold uppercase tracking-wide text-[#111827]">{room.roomName}</p>
         </div>
-        <button type="button" aria-label={`Remove ${title}`} className="text-[#ef4444]">
+        <button type="button" aria-label={`Remove ${room.roomName}`} onClick={onRemove} className={`text-[#ef4444] ${SCOPE_BTN_DANGER_ICON}`}>
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="3 6 5 6 21 6" />
             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
@@ -702,27 +1663,55 @@ function RoomConfigCard({
         <div>
           <FormLabel>Units Required</FormLabel>
           <div className="mt-2 flex flex-wrap gap-2">
-            {units.map((unit) => (
-              <span
+            {room.units.map((unit) => (
+              <button
                 key={unit.label}
+                type="button"
+                onClick={() => toggleUnit(unit.label)}
                 className={`rounded-md px-3 py-1.5 text-[12px] font-semibold ${
-                  unit.active
-                    ? "bg-[#1ed760] text-[#05220f]"
-                    : "border border-[#e4e8ef] bg-white text-[#6b7280]"
+                  unit.selected
+                    ? `bg-[#1ed760] text-[#05220f] ${SCOPE_UNIT_ACTIVE}`
+                    : `border border-[#e4e8ef] bg-white text-[#6b7280] ${SCOPE_UNIT_IDLE}`
                 }`}
               >
                 {unit.label}
-              </span>
+              </button>
             ))}
-            <span className="rounded-md border border-dashed border-[#d1d5db] bg-white px-3 py-1.5 text-[12px] font-medium text-[#9ca3af]">
-              + Add Unit
+            <span className={`inline-flex items-center gap-1.5 rounded-md border border-dashed border-[#d1d5db] bg-white py-1 pl-2 pr-1 ${SCOPE_CHIP}`}>
+              <input
+                value={newUnitLabel}
+                onChange={(e) => setNewUnitLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addUnit();
+                  }
+                }}
+                placeholder="Add unit"
+                className="w-20 bg-transparent text-[12px] text-[#374151] outline-none"
+              />
+              <ScopeAddPlusButton onClick={addUnit} ariaLabel="Add unit" size="sm" />
             </span>
           </div>
         </div>
         <div>
           <FormLabel>False Ceiling</FormLabel>
-          <label className="mt-2 flex items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2">
-            <span className="inline-flex h-4 w-4 rounded-[3px] border border-[#d1d5db] bg-white" />
+          <label className={`mt-2 flex cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${SCOPE_CHIP}`}>
+            <input
+              type="checkbox"
+              checked={Boolean(room.falseCeilingRequired)}
+              onChange={(e) => onUpdate({ falseCeilingRequired: e.target.checked })}
+              className="sr-only"
+            />
+            <span
+              className={`inline-flex h-4 w-4 items-center justify-center rounded-[3px] border ${
+                room.falseCeilingRequired
+                  ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white"
+                  : "border-[#d1d5db] bg-white"
+              }`}
+            >
+              {room.falseCeilingRequired ? "✓" : ""}
+            </span>
             <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">Required</span>
           </label>
         </div>
@@ -731,16 +1720,27 @@ function RoomConfigCard({
       <div className="mt-4">
         <FormLabel>Specific Room Notes</FormLabel>
         <textarea
-          readOnly
-          placeholder={notesPlaceholder}
-          className="mt-1 min-h-[72px] w-full rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] text-[#9ca3af] outline-none"
+          value={room.notes ?? ""}
+          onChange={(e) => onUpdate({ notes: e.target.value })}
+          placeholder="e.g. Minimalist vibe, warm lighting..."
+          className={`mt-1 min-h-[72px] w-full rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] text-[#374151] outline-none ${SCOPE_INPUT}`}
         />
       </div>
     </div>
   );
 }
 
-function BasicUnderstandingSection() {
+function BasicUnderstandingSection({
+  bookingType,
+  bookingTypeLoading,
+  bookingTypeSaving,
+  onBookingTypeChange,
+}: {
+  bookingType: string;
+  bookingTypeLoading: boolean;
+  bookingTypeSaving: boolean;
+  onBookingTypeChange: (value: string) => void;
+}) {
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-4 flex items-center gap-2.5">
@@ -786,11 +1786,17 @@ function BasicUnderstandingSection() {
               <FormLabel>Type</FormLabel>
               <div className="relative mt-1">
                 <select
-                  disabled
-                  className="w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none"
-                  defaultValue="Apartment"
+                  value={bookingType}
+                  disabled={bookingTypeLoading || bookingTypeSaving}
+                  onChange={(e) => void onBookingTypeChange(e.target.value)}
+                  className={`w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
                 >
-                  <option>Apartment</option>
+                  <option value="">{bookingTypeLoading ? "Loading…" : "Select Type"}</option>
+                  {BOOKING_TYPE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {bookingTypeDisplay(option)}
+                    </option>
+                  ))}
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
               </div>
@@ -822,7 +1828,7 @@ function FormLabel({ children }: { children: ReactNode }) {
 
 function CheckboxField({ label, checked }: { label: string; checked: boolean }) {
   return (
-    <label className="inline-flex items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2">
+    <label className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${SCOPE_CHIP}`}>
       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">{label}</span>
       <span
         className={`inline-flex h-4 w-4 items-center justify-center rounded-[3px] border ${
@@ -837,7 +1843,7 @@ function CheckboxField({ label, checked }: { label: string; checked: boolean }) 
 
 function RadioOption({ label, selected }: { label: string; selected: boolean }) {
   return (
-    <label className="flex cursor-default items-center gap-2">
+    <label className={`flex cursor-pointer items-center gap-2 rounded-md px-1 py-0.5 ${SCOPE_TRANSITION} hover:bg-[#f0fdf4]`}>
       <span
         className={`inline-flex h-4 w-4 items-center justify-center rounded-full border-2 ${
           selected ? "border-[#1ed760]" : "border-[#d1d5db]"
