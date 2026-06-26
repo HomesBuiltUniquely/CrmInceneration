@@ -54,8 +54,10 @@ import {
 import {
   buildSalesClosureUrl,
   canAccessClosedLeadHeaderActions,
+  canShowClosedLeadQuickAction,
   isCloserStageBookingDone,
   maybeOpenSalesClosureOnWon,
+  validateClosedLeadQuickAction,
 } from "@/lib/sales-closure";
 import { clearFollowUpDateAliases, FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
@@ -1267,6 +1269,10 @@ export default function LeadDetailsApiClient({
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
     [viewerRoleKey],
   );
+  const showMarkAsWon = useMemo(
+    () => canClosedLeadHeader && canShowClosedLeadQuickAction(lead),
+    [canClosedLeadHeader, lead],
+  );
   const canShowGetQuote = useMemo(
     () => isExperienceDesignQuoteSentStage(lead),
     [lead],
@@ -2436,7 +2442,14 @@ export default function LeadDetailsApiClient({
   };
 
   const handleCallClosed = () => {
-    if (!canClosedLeadHeader) return;
+    const validationError = validateClosedLeadQuickAction({
+      role: viewerRoleKey,
+      lead,
+    });
+    if (validationError) {
+      notifyError(validationError);
+      return;
+    }
     void handleCompleteTaskApi({
       feedback: "Booking Done (Booking)",
       milestoneStage: "Closed",
@@ -2449,6 +2462,18 @@ export default function LeadDetailsApiClient({
       );
     });
   };
+
+  const handleMarkAsWon = useCallback(() => {
+    const validationError = validateClosedLeadQuickAction({
+      role: viewerRoleKey,
+      lead,
+    });
+    if (validationError) {
+      notifyError(validationError);
+      return;
+    }
+    window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
+  }, [lead, leadId, leadType, notifyError, viewerRoleKey]);
 
   if (!validLeadType) {
     return (
@@ -2506,6 +2531,7 @@ export default function LeadDetailsApiClient({
       canShowGetQuote,
       canStageRollback: isSuperAdmin,
       canClosedLeadHeader,
+      showMarkAsWon,
       createdTimelineOptions,
       createdTimelineLoading,
       selectedTimelineValue,
@@ -2525,9 +2551,7 @@ export default function LeadDetailsApiClient({
         if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
         setCompleteTaskOpen(true);
       },
-      onMarkAsWon: () => {
-        window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
-      },
+      onMarkAsWon: handleMarkAsWon,
       onFloorPlanUpload: handleFloorPlanUpload,
       onFloorPlanRemove: handleFloorPlanRemove,
       onFloorPlanMissing: handleFloorPlanMissing,
@@ -2709,15 +2733,8 @@ export default function LeadDetailsApiClient({
           onGetQuote={() => void handleGetQuote()}
           quoteFetching={quoteFetching}
           showGetQuote={canShowGetQuote}
-          onCallClosed={canClosedLeadHeader ? handleCallClosed : undefined}
-          showCallClosed={
-            canClosedLeadHeader &&
-            (lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "decision" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "closed" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience & design" ||
-              lead.stageBlock?.milestoneStage?.trim().toLowerCase() === "experience and design") &&
-            !isClosedWonCustomerSubstage(lead.stageBlock?.milestoneSubStage ?? "")
-          }
+          onCallClosed={showMarkAsWon ? handleCallClosed : undefined}
+          showCallClosed={showMarkAsWon}
           canStageRollback={isSuperAdmin}
           onOpenStageRollback={() => setRollbackOpen(true)}
           showSalesClosure={canClosedLeadHeader && isCloserStageBookingDone(lead)}

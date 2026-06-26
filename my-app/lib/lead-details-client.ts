@@ -486,6 +486,46 @@ export async function getNewCrmQuoteInternalLinkByLead(
   return parsed ?? {};
 }
 
+/** `GET /api/new-crm/quotes/by-lead/{leadId}` — all quote versions when upstream supports it. */
+export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
+  const id = leadId.trim();
+  if (!id) throw new Error("Lead ID is required to list quotes.");
+  const res = await fetch(
+    `/api/new-crm/quotes/by-lead/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: authHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!res.ok) {
+    const row =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const rawMessage =
+      (typeof row?.message === "string" && row.message.trim()) ||
+      (typeof row?.error === "string" && row.error.trim()) ||
+      text.trim();
+    const message = isHtmlLikePayload(rawMessage)
+      ? `List quotes failed (${res.status}). Upstream service returned an invalid response.`
+      : sanitizeErrorMessage(
+          rawMessage,
+          "Unable to list quote versions right now. Please try again.",
+        );
+    throw new Error(message);
+  }
+  return parsed ?? {};
+}
+
 export type FloorPlanUploadResponse = FloorPlanMetaResponse & {
   userMessage?: string;
   debugMessage?: string;
