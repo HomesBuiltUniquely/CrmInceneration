@@ -20,8 +20,10 @@ Five sections are shown in the UI sidebar:
 | 1 | Basic Understanding | **Partial** — `bookingType` on lead detail PUT | Wired (`bookingType` only; rest mock) |
 | 2 | **Requirement Scope** | **GET/PUT** `/configuration-scope/requirements` | **Wired** — rooms, units, add-ons, kitchen, autosave |
 | 3 | **Reference & Inspiration** | **GET/POST/PUT/DELETE** `/configuration-scope/references` | **Wired** — upload, gallery, preview modal, notes |
-| 4 | Financial Guardrails | None | Mock UI |
+| 4 | Financial Guardrails | None (uses lead `budget`) | Wired display + luxury slider from budget |
 | 5 | Internal Executive Notes | None | Mock UI + Finalize & Submit / Print PDF |
+
+**Pending backend fields (8 total):** see **[CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md](./CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md)** — family contact (2), basic understanding (3), internal notes (3). WFH, Pet Friendly, and Closure Probability are **frontend-only**.
 
 **Hub storage (2026):** single `configuration_scope` row per lead; catalog/rooms/add-ons/references stored as **JSON columns** (not separate child tables). API JSON shape unchanged for the frontend.
 
@@ -358,9 +360,9 @@ Metadata + notes can live in GET/PUT document; binaries via POST multipart.
 
 | Priority | Deliverable |
 |----------|-------------|
-| **P0** | Requirement Scope GET/PUT + Reference GET/POST/DELETE + aesthetic notes PUT |
-| **P1** | `originalFileName` on floor plan + reference upload responses |
-| **P2** | Master catalogs (rooms, units, add-ons, kitchen layouts) as lookup endpoints |
-| **P3** | Basic Understanding, Financial Guardrails, Internal Notes sections |
+| **Done** | Requirement Scope GET/PUT + references upload/list/delete + aesthetic notes |
+| **P1** | **8 pending fields** — [CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md](./CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md) |
+| P2 | Optional unified `GET/PUT /configuration-scope` document |
+| P3 | Master catalogs (rooms, units, add-ons, kitchen layouts) as lookup endpoints |
 
-**Yes — Requirement Scope and Reference & Inspiration should be created on the backend now** if the Configuration Scope page is going live beyond a UI demo. The frontend is ready to integrate once these contracts are available.
+**Requirement Scope and Reference & Inspiration are live on the frontend.** Remaining work is the 8-field handoff doc above plus optional catalog lookups.

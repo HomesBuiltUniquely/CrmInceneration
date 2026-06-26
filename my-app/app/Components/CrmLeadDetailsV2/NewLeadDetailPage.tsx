@@ -140,6 +140,7 @@ function LeadDetailHeader() {
     onCompleteTask,
     completeTaskDisabled,
     onMarkAsWon,
+    showMarkAsWon,
     followUpDateDisplay,
     milestoneStageLabel,
     milestoneSubLabel,
@@ -315,17 +316,21 @@ function LeadDetailHeader() {
             </div>
           </div>
 
-          <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-            <button
-              type="button"
-              onClick={onMarkAsWon}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f]"
-            >
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
-                ✓
-              </span>
-              Mark As Won
-            </button>
+          <div
+            className={`mt-2.5 grid gap-2.5 ${showMarkAsWon ? "grid-cols-2" : "grid-cols-1"}`}
+          >
+            {showMarkAsWon ? (
+              <button
+                type="button"
+                onClick={onMarkAsWon}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f]"
+              >
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
+                  ✓
+                </span>
+                Mark As Won
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onCompleteTask}

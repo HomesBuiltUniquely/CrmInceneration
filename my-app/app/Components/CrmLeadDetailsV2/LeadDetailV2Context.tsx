@@ -22,6 +22,7 @@ export type LeadDetailV2ContextValue = {
   canShowGetQuote: boolean;
   canStageRollback: boolean;
   canClosedLeadHeader: boolean;
+  showMarkAsWon: boolean;
   createdTimelineOptions: TimelineOption[];
   createdTimelineLoading: boolean;
   selectedTimelineValue: string;
