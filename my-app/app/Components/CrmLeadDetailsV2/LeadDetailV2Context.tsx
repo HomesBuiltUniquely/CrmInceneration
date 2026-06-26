@@ -48,10 +48,15 @@ export type LeadDetailV2ContextValue = {
   meetingDateDisplay: string;
   followUpDateDisplay: string;
   milestoneStageLabel: string;
+  milestoneCategoryLabel: string;
   milestoneSubLabel: string;
   onLeadPatch: (patch: Partial<Lead>) => void;
   onConnectionPhaseSave: () => void | Promise<void>;
   connectionPhaseSaving: boolean;
+  canEditLeadPhoneEmail: boolean;
+  shouldMaskLeadPhone: boolean;
+  onLeadContactSave: (patch: Partial<Lead>) => void | Promise<void>;
+  leadContactSaving: boolean;
 };
 
 const LeadDetailV2Context = createContext<LeadDetailV2ContextValue | null>(null);

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
+import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
 import ActivityHistoryWithConnector, {
@@ -10,12 +10,37 @@ import ActivityHistoryWithConnector, {
 } from "./ActivityHistoryWithConnector";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
+import {
+  V2_BTN_AMBER,
+  V2_BTN_DONE,
+  V2_BTN_DROPDOWN,
+  V2_BTN_GHOST_ICON,
+  V2_BTN_ICON,
+  V2_BTN_LIST_ITEM,
+  V2_BTN_PRIMARY,
+  V2_BTN_SECONDARY,
+  V2_BTN_VIOLET,
+  V2_INPUT,
+  V2_CARD_LINK,
+  V2_LINK_TEXT,
+} from "./lead-detail-v2-motion";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
+import {
+  createDefaultRequirements,
+  getConfigurationScopeRequirements,
+  mergeRequirementDefaults,
+  putConfigurationScopeRequirements,
+  toPutRequirementsBody,
+  type ConfigurationScopeRequirements,
+} from "@/lib/configuration-scope-client";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { BUDGET_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
 import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
 import { meetingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
+import { resolveLeadPhoneDisplayForRole } from "@/lib/lead-display";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, Lead } from "@/lib/data";
 
 type ConnectionPhaseDraft = Pick<
@@ -143,6 +168,7 @@ function LeadDetailHeader() {
     showMarkAsWon,
     followUpDateDisplay,
     milestoneStageLabel,
+    milestoneCategoryLabel,
     milestoneSubLabel,
   } = useLeadDetailV2();
   const [timelineOpen, setTimelineOpen] = useState(false);
@@ -191,9 +217,10 @@ function LeadDetailHeader() {
             </span>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <InfoPill title="Stage" value={milestoneStageLabel || "—"} />
-            <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} wide />
+          <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
+            <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
+            <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
+            <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
           </div>
 
           <div className="mt-3 max-w-[560px]">
@@ -209,7 +236,7 @@ function LeadDetailHeader() {
                 type="button"
                 onClick={onGetQuote}
                 disabled={quoteFetching}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#c4b5fd] bg-[#f5f3ff] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#5b21b6] transition hover:bg-[#ede9fe] disabled:cursor-not-allowed disabled:opacity-60"
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#c4b5fd] bg-[#f5f3ff] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#5b21b6] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
               >
                 <span aria-hidden>🔎</span>
                 {quoteFetching ? "Getting Quote..." : "Get Quote"}
@@ -219,7 +246,7 @@ function LeadDetailHeader() {
               <button
                 type="button"
                 onClick={onOpenStageRollback}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#fcd34d] bg-[#fffbeb] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#92400e] transition hover:bg-[#fef3c7]"
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#fcd34d] bg-[#fffbeb] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#92400e] ${V2_BTN_AMBER}`}
               >
                 <span aria-hidden>↩</span>
                 Stage Rollback
@@ -258,7 +285,7 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Call"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90]"
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -276,7 +303,7 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Message"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90]"
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -294,7 +321,7 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Schedule"
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90]"
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -323,7 +350,7 @@ function LeadDetailHeader() {
               <button
                 type="button"
                 onClick={onMarkAsWon}
-                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f]"
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f] ${V2_BTN_PRIMARY}`}
               >
                 <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
                   ✓
@@ -335,7 +362,7 @@ function LeadDetailHeader() {
               type="button"
               onClick={onCompleteTask}
               disabled={completeTaskDisabled}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#d6dce6] bg-white text-[12px] font-bold uppercase tracking-wide text-[#111827] disabled:cursor-not-allowed disabled:opacity-60"
+              className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#d6dce6] bg-white text-[12px] font-bold uppercase tracking-wide text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_SECONDARY}`}
             >
               <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#7d8998] text-[10px] leading-none text-[#7d8998]">
                 ⊙
@@ -347,7 +374,7 @@ function LeadDetailHeader() {
           <div className="mt-2.5 w-full" ref={timelineWrapRef}>
             <button
               type="button"
-              className="inline-flex w-full items-center justify-between gap-2 rounded-[8px] border border-[#d6dce6] bg-[#f8fafc] px-3 py-2 text-left text-[12px] font-semibold text-[#334155] outline-none transition hover:border-[#c5ced9] hover:bg-[#f1f5f9] focus:border-[#94a3b8] focus:ring-2 focus:ring-[#e2e8f0] disabled:cursor-not-allowed disabled:opacity-60"
+              className={`inline-flex w-full items-center justify-between gap-2 rounded-[8px] border border-[#d6dce6] bg-[#f8fafc] px-3 py-2 text-left text-[12px] font-semibold text-[#334155] outline-none focus:border-[#94a3b8] focus:ring-2 focus:ring-[#e2e8f0] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DROPDOWN}`}
               aria-haspopup="listbox"
               aria-expanded={timelineOpen}
               aria-label="Lead come history"
@@ -378,7 +405,7 @@ function LeadDetailHeader() {
                       className={`block w-full rounded-[6px] px-2.5 py-2 text-left text-[12px] ${
                         isSelected
                           ? "bg-[#e8fbf0] font-semibold text-[#0f8f3d]"
-                          : "text-[#475569] hover:bg-[#f8fafc]"
+                          : `text-[#475569] ${V2_BTN_LIST_ITEM}`
                       }`}
                       title={item.fullLabel}
                       onClick={() => {
@@ -435,51 +462,295 @@ function AssigneeBadge({ name }: { name: string }) {
   );
 }
 
+function familyContactRoleStorageKey(leadId: string): string {
+  return `crm-family-contact-role:${leadId.trim()}`;
+}
+
+function readFamilyContactRole(leadId: string): string {
+  if (typeof window === "undefined") return "";
+  return (sessionStorage.getItem(familyContactRoleStorageKey(leadId)) ?? "").trim();
+}
+
+function persistFamilyContactRole(leadId: string, role: string): void {
+  if (typeof window === "undefined") return;
+  const key = familyContactRoleStorageKey(leadId);
+  const value = role.trim();
+  if (!value) sessionStorage.removeItem(key);
+  else sessionStorage.setItem(key, value);
+}
+
+type FamilyContactDraft = {
+  name: string;
+  role: string;
+  phone: string;
+};
+
+function readFamilyContactDraft(
+  requirements: ConfigurationScopeRequirements | null,
+  lead: Lead,
+  role: string,
+): FamilyContactDraft {
+  return {
+    name: requirements?.familyContactName?.trim() ?? "",
+    role,
+    phone:
+      requirements?.familyContactPhone?.trim() ||
+      lead.altPhone?.trim() ||
+      "",
+  };
+}
+
+function familyContactDraftsEqual(a: FamilyContactDraft, b: FamilyContactDraft): boolean {
+  return a.name === b.name && a.role === b.role && a.phone === b.phone;
+}
+
 function FamilyContactCard() {
+  const {
+    leadType,
+    leadId,
+    lead,
+    shouldMaskLeadPhone,
+    canEditLeadPhoneEmail,
+  } = useLeadDetailV2();
+  const { notifyError, notifySuccess } = useGlobalNotifier();
+  const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
+
+  const [editing, setEditing] = useState(false);
+  const [editSnapshot, setEditSnapshot] = useState<FamilyContactDraft | null>(null);
+  const [draft, setDraft] = useState<FamilyContactDraft>({ name: "", role: "", phone: "" });
+  const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!validLeadType) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+
+    void (async () => {
+      try {
+        const data = await getConfigurationScopeRequirements(validLeadType, leadId);
+        if (cancelled) return;
+        setRequirements(mergeRequirementDefaults(data).requirements);
+      } catch {
+        if (!cancelled) {
+          setRequirements(mergeRequirementDefaults(createDefaultRequirements()).requirements);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, validLeadType]);
+
+  useEffect(() => {
+    const role = readFamilyContactRole(leadId);
+    setDraft(readFamilyContactDraft(requirements, lead, role));
+  }, [lead, leadId, requirements]);
+
+  const isDirty =
+    editing && editSnapshot !== null && !familyContactDraftsEqual(draft, editSnapshot);
+
+  const startEditing = () => {
+    setEditSnapshot({ ...draft });
+    setEditing(true);
+  };
+
+  const exitEditing = () => {
+    setEditSnapshot(null);
+    setEditing(false);
+  };
+
+  const handleCancel = () => {
+    if (editSnapshot) setDraft(editSnapshot);
+    exitEditing();
+  };
+
+  const handleSave = async () => {
+    if (!validLeadType || !requirements) {
+      notifyError("Family contact is still loading.");
+      return;
+    }
+    if (!isDirty) {
+      exitEditing();
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const nextRequirements: ConfigurationScopeRequirements = {
+        ...requirements,
+        familyContactName: draft.name.trim() || null,
+        familyContactPhone: draft.phone.trim() || null,
+      };
+      const saved = await putConfigurationScopeRequirements(
+        validLeadType,
+        leadId,
+        toPutRequirementsBody(nextRequirements),
+      );
+      setRequirements(saved);
+      persistFamilyContactRole(leadId, draft.role);
+      notifySuccess("Family contact saved.");
+      exitEditing();
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save family contact.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const displayName = draft.name.trim() || "—";
+  const displayRole = draft.role.trim() || "—";
+  const displayPhone = editing
+    ? draft.phone
+    : resolveLeadPhoneDisplayForRole(draft.phone, shouldMaskLeadPhone);
+
   return (
     <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Family Contact</p>
-
-      <div className="mt-3 flex items-start gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#f3f4f6] text-[#9ca3af]">
-          <svg
-            viewBox="0 0 24 24"
-            className="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-        </div>
-        <div>
-          <p className="text-[15px] font-bold text-[#111827]">Ananya Sharma</p>
-          <p className="text-[12px] text-[#9ca3af]">Spouse</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Family Contact</p>
+        <div className="flex items-center gap-2">
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={saving}
+                aria-label="Cancel editing family contact"
+                className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+              {isDirty ? (
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                  className={`inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DONE}`}
+                >
+                  {saving ? "Saving..." : "Done"}
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={startEditing}
+              disabled={loading || !canEditLeadPhoneEmail}
+              aria-label="Update family contact"
+              className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="mt-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Phone</p>
-        <p className="mt-1 inline-flex items-center gap-2 text-[14px] font-medium text-[#374151]">
-          <svg
-            viewBox="0 0 24 24"
-            className="h-3.5 w-3.5 text-[#6b7280]"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.2 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.8.62 2.66a2 2 0 0 1-.45 2.11L8 9.92a16 16 0 0 0 6.08 6.08l1.43-1.28a2 2 0 0 1 2.11-.45c.86.29 1.76.5 2.66.62A2 2 0 0 1 22 16.92z" />
-          </svg>
-          +91 98765 43210
-        </p>
-      </div>
+      {editing ? (
+        <div className="mt-3 space-y-3">
+          <div>
+            <FieldLabel>Name</FieldLabel>
+            <Input
+              value={draft.name}
+              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Ananya Sharma"
+              className={`mt-1 ${V2_INPUT}`}
+            />
+          </div>
+          <div>
+            <FieldLabel>Relationship</FieldLabel>
+            <Input
+              value={draft.role}
+              onChange={(e) => setDraft((prev) => ({ ...prev, role: e.target.value }))}
+              placeholder="Spouse"
+              className={`mt-1 ${V2_INPUT}`}
+            />
+          </div>
+          <div>
+            <FieldLabel>Phone</FieldLabel>
+            <Input
+              value={draft.phone}
+              onChange={(e) => setDraft((prev) => ({ ...prev, phone: e.target.value }))}
+              placeholder="+91 98765 43210"
+              className={`mt-1 ${V2_INPUT}`}
+            />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#f3f4f6] text-[#9ca3af]">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-[15px] font-bold text-[#111827]">{displayName}</p>
+              <p className="text-[12px] text-[#9ca3af]">{displayRole}</p>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Phone</p>
+            <p className="mt-1 inline-flex items-center gap-2 text-[14px] font-medium text-[#374151]">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5 text-[#6b7280]"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.2 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.8.62 2.66a2 2 0 0 1-.45 2.11L8 9.92a16 16 0 0 0 6.08 6.08l1.43-1.28a2 2 0 0 1 2.11-.45c.86.29 1.76.5 2.66.62A2 2 0 0 1 22 16.92z" />
+              </svg>
+              {displayPhone}
+            </p>
+          </div>
+        </>
+      )}
     </article>
   );
 }
@@ -636,14 +907,14 @@ function MeetingScheduleSection() {
             readOnly
             className="flex-1"
           />
-          <Button
+          <button
             type="button"
-            variant="primary"
             disabled={quoteSending || quoteLinkPersisting}
             onClick={() => void onSendQuote()}
+            className={`inline-flex h-10 shrink-0 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
           >
             {quoteSending ? "Sending…" : "Send"}
-          </Button>
+          </button>
         </div>
         {quoteLinkPersisting ? (
           <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">Saving quote link…</p>
@@ -655,7 +926,7 @@ function MeetingScheduleSection() {
               <button
                 type="button"
                 onClick={() => void onRetrySaveQuoteLink()}
-                className="font-semibold underline"
+                className={`font-semibold underline ${V2_LINK_TEXT}`}
               >
                 Retry
               </button>
@@ -684,7 +955,7 @@ function MeetingScheduleSection() {
           <button
             type="button"
             aria-label="Copy Design QA Link"
-            className="inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-primary)] transition hover:bg-[var(--crm-surface)]"
+            className={`inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-primary)] ${V2_BTN_ICON}`}
             onClick={() => {
               const value = apiDesignQaLink || designQaLink;
               void navigator.clipboard.writeText(value).then(() => {
@@ -727,9 +998,44 @@ function LockedField({ label }: { label: string }) {
 }
 
 function LeadProfileCard() {
-  const { lead, leadId } = useLeadDetailV2();
+  const {
+    lead,
+    leadId,
+    canEditLeadPhoneEmail,
+    shouldMaskLeadPhone,
+    onLeadContactSave,
+    leadContactSaving,
+  } = useLeadDetailV2();
+  const { notifyError } = useGlobalNotifier();
+  const [editingContact, setEditingContact] = useState(false);
+  const [contactDraft, setContactDraft] = useState({ phone: "", email: "" });
   const locationValue = lead.propertyLocation || lead.pincode || "—";
   const designerName = lead.designerName?.trim() || "—";
+  const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", shouldMaskLeadPhone);
+
+  const startContactEdit = () => {
+    setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
+    setEditingContact(true);
+  };
+
+  const cancelContactEdit = () => {
+    setEditingContact(false);
+    setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
+  };
+
+  const saveContactEdit = async () => {
+    const patch = {
+      phone: contactDraft.phone.trim(),
+      email: contactDraft.email.trim(),
+    };
+    try {
+      await onLeadContactSave(patch);
+      setEditingContact(false);
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save contact details.");
+    }
+  };
+
   return (
     <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
       <div className="mb-4 flex items-start gap-3">
@@ -748,11 +1054,75 @@ function LeadProfileCard() {
             )}
           </p>
         </div>
+        {canEditLeadPhoneEmail ? (
+          <div className="flex items-center gap-2">
+            {editingContact ? (
+              <>
+                <button
+                  type="button"
+                  onClick={cancelContactEdit}
+                  disabled={leadContactSaving}
+                  aria-label="Cancel contact edit"
+                  className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
+                >
+                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveContactEdit()}
+                  disabled={leadContactSaving}
+                  className={`inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] disabled:opacity-60 ${V2_BTN_DONE}`}
+                >
+                  {leadContactSaving ? "Saving..." : "Done"}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={startContactEdit}
+                aria-label="Update phone and email"
+                className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <div className="space-y-3">
-        <ProfileField label="Phone" value={lead.phone || "—"} />
-        <ProfileField label="Email" value={lead.email || "—"} />
+        {editingContact ? (
+          <>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Phone</p>
+              <Input
+                value={contactDraft.phone}
+                onChange={(e) => setContactDraft((prev) => ({ ...prev, phone: e.target.value }))}
+                className={`mt-1 ${V2_INPUT}`}
+              />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Email</p>
+              <Input
+                type="email"
+                value={contactDraft.email}
+                onChange={(e) => setContactDraft((prev) => ({ ...prev, email: e.target.value }))}
+                className={`mt-1 ${V2_INPUT}`}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <ProfileField label="Phone" value={phoneDisplay} />
+            <ProfileField label="Email" value={lead.email || "—"} />
+          </>
+        )}
         <ProfileField label="Location" value={locationValue} />
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Lead Source</p>
@@ -885,7 +1255,7 @@ function ExperiencePhaseCard({ leadType, leadId }: { leadType: string; leadId: s
           </div>
           <Link
             href={`/Leads/${leadType}/${leadId}/configuration-scope`}
-            className="group flex h-[148px] w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-[#c8d0db] bg-white text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#2ee06a] hover:bg-[#f0fdf4] hover:text-[#059669] hover:shadow-[0_8px_24px_rgba(46,224,106,0.15)] active:scale-[0.99] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981]"
+            className={`group flex h-[148px] w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-[#c8d0db] bg-white text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] ${V2_CARD_LINK}`}
           >
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-[#f9fafb] text-[#8a96a8] transition-all duration-200 group-hover:border-[#bbf7d0] group-hover:bg-[#ecfdf5] group-hover:text-[#059669]">
               <svg
@@ -980,7 +1350,7 @@ function ConnectionPhaseCard() {
                 onClick={handleCancel}
                 disabled={connectionPhaseSaving}
                 aria-label="Cancel editing"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#6b7280] transition hover:bg-[#f3f4f6] disabled:cursor-not-allowed disabled:opacity-60"
+                className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -1001,7 +1371,7 @@ function ConnectionPhaseCard() {
                   type="button"
                   onClick={() => void handleSave()}
                   disabled={connectionPhaseSaving}
-                  className="inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] transition hover:bg-[#f9fafb] disabled:cursor-not-allowed disabled:opacity-60"
+                  className={`inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DONE}`}
                 >
                   {connectionPhaseSaving ? "Saving..." : "Done"}
                 </button>
@@ -1012,7 +1382,7 @@ function ConnectionPhaseCard() {
               type="button"
               onClick={startEditing}
               aria-label="Update connection phase"
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#6b7280] transition hover:bg-[#f3f4f6]"
+              className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
             >
               <svg
                 viewBox="0 0 24 24"
@@ -1060,6 +1430,7 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
               placeholder="Property name / site"
               value={lead.propertyLocation ?? ""}
               onChange={(e) => onLeadPatch({ propertyLocation: e.target.value })}
+              className={V2_INPUT}
             />
           ) : (
             <ValuePill
@@ -1082,6 +1453,7 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
             <Select
               value={lead.budget ?? ""}
               onChange={(e) => onLeadPatch({ budget: e.target.value })}
+              className={V2_INPUT}
             >
               <option value="">Select Budget</option>
               {budgetOptions.map((budget) => (
@@ -1101,6 +1473,7 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
             <Select
               value={lead.language ?? ""}
               onChange={(e) => onLeadPatch({ language: e.target.value })}
+              className={V2_INPUT}
             >
               {LANGUAGE_OPTIONS.map((language) => (
                 <option key={language} value={language}>
@@ -1159,6 +1532,7 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
                 placeholder={isAdsLead ? "e.g. 2 BHK — add here if not from the ad" : "e.g. 2 BHK"}
                 value={lead.configuration ?? ""}
                 onChange={(e) => onLeadPatch({ configuration: e.target.value })}
+                className={V2_INPUT}
               />
               {isAdsLead && !(lead.configuration ?? "").trim() ? (
                 <p className="mt-1.5 text-[11px] text-[#9ca3af]">
@@ -1212,6 +1586,7 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
               placeholder="Add extra property notes..."
               value={lead.propertyNotes ?? ""}
               onChange={(e) => onLeadPatch({ propertyNotes: e.target.value })}
+              className={V2_INPUT}
             />
           ) : (
             <ValuePill
@@ -1294,11 +1669,29 @@ function InfoPill({
   title,
   value,
   wide = false,
+  compact = false,
 }: {
   title: string;
   value: string;
   wide?: boolean;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <div className="min-w-0 rounded-[8px] border border-[#dce2ea] bg-[#f8fafc] px-2.5 py-1.5">
+        <p className="truncate text-[9px] font-bold uppercase tracking-[0.1em] text-[#8f9bad]">
+          {title}
+        </p>
+        <p
+          className="mt-0.5 truncate text-[13px] font-bold uppercase leading-tight tracking-[-0.01em] text-[#121926]"
+          title={value}
+        >
+          {value}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`rounded-[8px] border border-[#dce2ea] bg-[#f8fafc] px-3 py-1.5 ${

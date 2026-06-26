@@ -6,6 +6,7 @@ import { getConfigurationScopeRequirements } from "@/lib/configuration-scope-cli
 import { computeLeadDataCompleteness } from "@/lib/lead-data-completeness";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { V2_LINK_TEXT } from "./lead-detail-v2-motion";
 
 function scrollToTarget(targetId: string) {
   document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -105,7 +106,7 @@ export default function DataCompletenessMeter() {
                   <button
                     type="button"
                     onClick={() => scrollToTarget(item.scrollTargetId!)}
-                    className="underline decoration-[#fca5a5] underline-offset-2 transition hover:text-[#dc2626]"
+                    className={`underline decoration-[#fca5a5] underline-offset-2 ${V2_LINK_TEXT}`}
                   >
                     {item.label}
                   </button>

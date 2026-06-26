@@ -26,10 +26,54 @@ export type ConfigurationScopeRequirements = {
   miscAddOns: string[];
   kitchenLayout: string | null;
   materialFinish: string | null;
+  familyContactName: string | null;
+  familyContactPhone: string | null;
+  bookingType: string | null;
+  projectUnderstanding: string | null;
+  designStylePreference: string | null;
+  expectedTimeline: string | null;
+  internalExecutiveNotes: string | null;
+  salesRiskNotes: string | null;
+  designHandoffNotes: string | null;
   version: number;
   updatedAt?: string | null;
   updatedBy?: string | null;
 };
+
+export const TIMELINE_EXPECTATION_OPTIONS = [
+  { value: "45 Days (Express)", label: "45 Days (Express)" },
+  { value: "90 Days (Standard)", label: "90 Days (Standard)" },
+] as const;
+
+const PROJECT_UNDERSTANDING_SEP = "\n---\n";
+
+/** Split Hub `projectUnderstanding` into property + family fields for §1 UI. */
+export function splitProjectUnderstanding(value: string | null | undefined): {
+  propertyNameSite: string;
+  familySizeDetails: string;
+} {
+  const raw = (value ?? "").trim();
+  if (!raw) return { propertyNameSite: "", familySizeDetails: "" };
+  const idx = raw.indexOf(PROJECT_UNDERSTANDING_SEP);
+  if (idx === -1) return { propertyNameSite: raw, familySizeDetails: "" };
+  return {
+    propertyNameSite: raw.slice(0, idx).trim(),
+    familySizeDetails: raw.slice(idx + PROJECT_UNDERSTANDING_SEP.length).trim(),
+  };
+}
+
+/** Join §1 property + family inputs for Hub `projectUnderstanding`. */
+export function joinProjectUnderstanding(
+  propertyNameSite: string,
+  familySizeDetails: string,
+): string | null {
+  const property = propertyNameSite.trim();
+  const family = familySizeDetails.trim();
+  if (!property && !family) return null;
+  if (!family) return property;
+  if (!property) return family;
+  return `${property}${PROJECT_UNDERSTANDING_SEP}${family}`;
+}
 
 export type ConfigurationScopeReference = {
   id: string;
@@ -123,10 +167,31 @@ export function createDefaultRequirements(): ConfigurationScopeRequirements {
     miscAddOns: [],
     kitchenLayout: null,
     materialFinish: null,
+    familyContactName: null,
+    familyContactPhone: null,
+    bookingType: null,
+    projectUnderstanding: null,
+    designStylePreference: null,
+    expectedTimeline: null,
+    internalExecutiveNotes: null,
+    salesRiskNotes: null,
+    designHandoffNotes: null,
     version: 0,
     updatedAt: null,
     updatedBy: null,
   };
+}
+
+function readNullableString(
+  data: Record<string, unknown>,
+  camel: string,
+  snake: string,
+): string | null {
+  const camelVal = data[camel];
+  if (typeof camelVal === "string") return camelVal;
+  const snakeVal = data[snake];
+  if (typeof snakeVal === "string") return snakeVal;
+  return null;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -271,6 +336,15 @@ export function toPutRequirementsBody(
     miscAddOns: req.miscAddOns,
     kitchenLayout: req.kitchenLayout,
     materialFinish: req.materialFinish,
+    familyContactName: req.familyContactName,
+    familyContactPhone: req.familyContactPhone,
+    bookingType: req.bookingType,
+    projectUnderstanding: req.projectUnderstanding,
+    designStylePreference: req.designStylePreference,
+    expectedTimeline: req.expectedTimeline,
+    internalExecutiveNotes: req.internalExecutiveNotes,
+    salesRiskNotes: req.salesRiskNotes,
+    designHandoffNotes: req.designHandoffNotes,
   };
 }
 
@@ -281,6 +355,15 @@ export type PutConfigurationScopeRequirementsBody = {
   miscAddOns: string[];
   kitchenLayout: string | null;
   materialFinish: string | null;
+  familyContactName: string | null;
+  familyContactPhone: string | null;
+  bookingType: string | null;
+  projectUnderstanding: string | null;
+  designStylePreference: string | null;
+  expectedTimeline: string | null;
+  internalExecutiveNotes: string | null;
+  salesRiskNotes: string | null;
+  designHandoffNotes: string | null;
 };
 
 function requirementsPath(leadType: CrmLeadType, id: string): string {
@@ -406,6 +489,27 @@ function normalizeRequirements(
         : typeof data.material_finish === "string"
           ? data.material_finish
           : null,
+    familyContactName: readNullableString(data, "familyContactName", "family_contact_name"),
+    familyContactPhone: readNullableString(data, "familyContactPhone", "family_contact_phone"),
+    bookingType: readNullableString(data, "bookingType", "booking_type"),
+    projectUnderstanding: readNullableString(
+      data,
+      "projectUnderstanding",
+      "project_understanding",
+    ),
+    designStylePreference: readNullableString(
+      data,
+      "designStylePreference",
+      "design_style_preference",
+    ),
+    expectedTimeline: readNullableString(data, "expectedTimeline", "expected_timeline"),
+    internalExecutiveNotes: readNullableString(
+      data,
+      "internalExecutiveNotes",
+      "internal_executive_notes",
+    ),
+    salesRiskNotes: readNullableString(data, "salesRiskNotes", "sales_risk_notes"),
+    designHandoffNotes: readNullableString(data, "designHandoffNotes", "design_handoff_notes"),
     version: typeof data.version === "number" ? data.version : 0,
     updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : null,
     updatedBy: typeof data.updatedBy === "string" ? data.updatedBy : null,

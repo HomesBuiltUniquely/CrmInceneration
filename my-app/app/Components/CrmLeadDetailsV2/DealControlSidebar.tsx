@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
+import { V2_BTN_NAV } from "./lead-detail-v2-motion";
 
 export type DealControlSectionId =
   | "deal-overview"
@@ -179,10 +180,10 @@ export default function DealControlSidebar({
                 type="button"
                 onClick={() => scrollToSection(item.id)}
                 aria-current={isActive ? "true" : undefined}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ${
                   isActive
                     ? "bg-white text-[#111827] shadow-sm"
-                    : "text-[#6b7280] hover:bg-white/70 hover:text-[#374151]"
+                    : `text-[#6b7280] ${V2_BTN_NAV}`
                 }`}
               >
                 <NavIcon type={item.icon} active={isActive} />

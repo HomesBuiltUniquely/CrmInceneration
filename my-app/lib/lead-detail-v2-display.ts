@@ -1,5 +1,6 @@
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import {
   isLeadHandedOffToSales,
 } from "@/lib/presales-milestone";
@@ -65,16 +66,30 @@ export function resolveDesignQaLink(lead: Lead): {
   };
 }
 
+export function formatMilestoneCategoryDisplay(category: string): string {
+  const raw = category.trim();
+  if (!raw) return "—";
+  if (isLostCategory(raw)) return "LOST";
+  if (isWonCategory(raw)) return "WON";
+  const key = raw.toUpperCase().replace(/\s+/g, " ");
+  if (key === "PIPELINE") return "PIPELINE";
+  return key;
+}
+
 export function resolveMilestoneLabels(
   lead: Lead,
   viewerRoleKey: string,
-): { stage: string; subStage: string } {
+): { stage: string; subStage: string; category: string } {
   const inSalesPhase = isLeadHandedOffToSales(lead);
   const showPresalesMilestone =
     !inSalesPhase &&
     (isPresalesRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey));
 
   if (showPresalesMilestone) {
+    const categoryRaw =
+      lead.stageBlock?.presalesMilestoneCategory?.trim() ||
+      lead.stageBlock?.milestoneStageCategory?.trim() ||
+      "";
     return {
       stage:
         lead.stageBlock?.presalesMilestoneStage?.trim() ||
@@ -82,15 +97,17 @@ export function resolveMilestoneLabels(
         "Fresh Data",
       subStage:
         lead.stageBlock?.presalesMilestoneSubStage?.trim() ||
-        lead.stageBlock?.presalesMilestoneCategory?.trim() ||
         lead.stageBlock?.milestoneSubStage?.trim() ||
         "—",
+      category: formatMilestoneCategoryDisplay(categoryRaw || "PIPELINE"),
     };
   }
 
+  const categoryRaw = lead.stageBlock?.milestoneStageCategory?.trim() || "PIPELINE";
   return {
     stage: lead.stageBlock?.milestoneStage?.trim() || "—",
     subStage: lead.stageBlock?.milestoneSubStage?.trim() || "—",
+    category: formatMilestoneCategoryDisplay(categoryRaw),
   };
 }
 

@@ -10,6 +10,12 @@ import {
   useState,
 } from "react";
 import type { ActivityItem } from "@/lib/data";
+import {
+  V2_BTN_ACTIVITY_OPEN,
+  V2_BTN_FILTER_PILL,
+  V2_BTN_GHOST_ICON,
+  V2_BTN_LIST_ITEM,
+} from "./lead-detail-v2-motion";
 
 export type ActivityHistoryHandle = {
   openPanel: () => void;
@@ -280,10 +286,10 @@ const ActivityHistoryWithConnector = forwardRef<
           type="button"
           onClick={openPanel}
           aria-expanded={open}
-          className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-bold uppercase tracking-wide transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] active:scale-[0.97] ${
+          className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-bold uppercase tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
             open
               ? "border-[#10b981] bg-[#d1fae5] text-[#047857] shadow-md"
-              : "border-[#a7f3d0] bg-[#ecfdf5] text-[#059669] hover:-translate-y-0.5 hover:border-[#10b981] hover:bg-[#d1fae5] hover:text-[#047857] hover:shadow-lg"
+              : `border-[#a7f3d0] bg-[#ecfdf5] text-[#059669] ${V2_BTN_ACTIVITY_OPEN}`
           }`}
         >
           View All Activity
@@ -347,7 +353,7 @@ const ActivityHistoryWithConnector = forwardRef<
             <button
               type="button"
               onClick={closePanel}
-              className="rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] hover:bg-[#f3f4f6]"
+              className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
               aria-label="Close activity history"
             >
               ×
@@ -391,8 +397,10 @@ const ActivityHistoryWithConnector = forwardRef<
                     <button
                       type="button"
                       onClick={() => setSelectedId(item.id)}
-                      className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left transition ${
-                        selectedId === item.id ? "bg-[#eff6ff]" : "hover:bg-[#f9fafb]"
+                      className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
+                        selectedId === item.id
+                          ? "bg-[#eff6ff]"
+                          : `text-[#475569] ${V2_BTN_LIST_ITEM}`
                       }`}
                     >
                       <div className="flex items-start gap-3">
@@ -458,10 +466,10 @@ function FilterPill({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold ${
         active
           ? "border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]"
-          : "border-[#e5e7eb] bg-white text-[#6b7280] hover:border-[#d1d5db] hover:bg-[#f9fafb]"
+          : `border-[#e5e7eb] bg-white text-[#6b7280] ${V2_BTN_FILTER_PILL}`
       }`}
     >
       {icon ? <span>{icon}</span> : null}

@@ -27,6 +27,10 @@ import {
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import {
+  canEditLeadPhoneAndEmail,
+  shouldMaskLeadPhoneForRole,
+} from "@/lib/lead-contact-access";
 import TopBar from "./TopBar";
 import LeadHeader from "./LeadHeader";
 import DesignQaPanel from "./DesignQaPanel";
@@ -81,7 +85,12 @@ import {
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline, isLostCategory } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
-import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import {
+  canShowGetQuoteButton,
+  isExperienceDesignQuoteSentStage,
+  persistGetQuoteUnlock,
+  readPersistedGetQuoteUnlock,
+} from "@/lib/quote-email-stage";
 import {
   isClosedWonBookingDoneSubstage,
   isClosedWonCustomerSubstage,
@@ -782,6 +791,7 @@ export default function LeadDetailsApiClient({
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteFetching, setQuoteFetching] = useState(false);
+  const [getQuoteUnlockedSticky, setGetQuoteUnlockedSticky] = useState(false);
   const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
   const [quoteLinkPersistError, setQuoteLinkPersistError] = useState("");
   const [quoteSubject, setQuoteSubject] = useState(
@@ -1273,9 +1283,32 @@ export default function LeadDetailsApiClient({
     () => canClosedLeadHeader && canShowClosedLeadQuickAction(lead),
     [canClosedLeadHeader, lead],
   );
+
+  useEffect(() => {
+    if (readPersistedGetQuoteUnlock(leadId)) {
+      setGetQuoteUnlockedSticky(true);
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    if (!isExperienceDesignQuoteSentStage(lead)) return;
+    setGetQuoteUnlockedSticky(true);
+    persistGetQuoteUnlock(leadId);
+  }, [lead, leadId]);
+
+  useEffect(() => {
+    if (lead.quoteLink?.trim()) {
+      setGetQuoteUnlockedSticky(true);
+      persistGetQuoteUnlock(leadId);
+    }
+  }, [lead.quoteLink, leadId]);
+
   const canShowGetQuote = useMemo(
-    () => isExperienceDesignQuoteSentStage(lead),
-    [lead],
+    () =>
+      canShowGetQuoteButton(lead, {
+        quoteUnlockedInSession: getQuoteUnlockedSticky,
+      }),
+    [getQuoteUnlockedSticky, lead],
   );
 
   const loadSalesClosureAuthUser = useCallback(async () => {
@@ -1752,6 +1785,41 @@ export default function LeadDetailsApiClient({
       // LeadInfoTab keeps edit mode open; error is stored on secondBoxError.
     }
   }, [persistLeadDetailFields]);
+
+  const handleLeadContactSave = useCallback(
+    async (patch: Partial<Lead>) => {
+      if (!validLeadType) return;
+      const lt = leadTypeParam as CrmLeadType;
+      const mergedLead = { ...lead, ...patch };
+      setLead((prev) => ({ ...prev, ...patch }));
+      setSavingSecondBox(true);
+      setSecondBoxError(null);
+      try {
+        const body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        const updated = await putLeadDetail(lt, leadId, body);
+        const stickyQuote = pickPersistedQuoteLink(updated, mergedLead);
+        const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+        setBaseDetail(stickyDetail);
+        const mapped = detailJsonToLead(stickyDetail, lt);
+        setLead((prev) => ({
+          ...mapped,
+          id: leadId,
+          activities: prev.activities,
+          bookingType: mapped.bookingType || prev.bookingType,
+          salesManagerName: mapped.salesManagerName || prev.salesManagerName,
+          quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+        }));
+        notifySuccess("Contact details saved.");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Save failed";
+        setSecondBoxError(message);
+        throw new Error(message);
+      } finally {
+        setSavingSecondBox(false);
+      }
+    },
+    [baseDetail, lead, leadId, leadTypeParam, notifySuccess, validLeadType],
+  );
 
   const handleConnectionPhaseSave = useCallback(async () => {
     await persistLeadDetailFields("Connection phase saved.");
@@ -2515,7 +2583,7 @@ export default function LeadDetailsApiClient({
   }
 
   if (uiVariant === "v2") {
-    const { stage, subStage } = resolveMilestoneLabels(lead, viewerRoleKey);
+    const { stage, subStage, category } = resolveMilestoneLabels(lead, viewerRoleKey);
     const { designQaLink, apiDesignQaLink } = resolveDesignQaLink(lead);
     const scheduleDisplays = resolveScheduleDisplays(lead);
     const v2Context: LeadDetailV2ContextValue = {
@@ -2568,10 +2636,15 @@ export default function LeadDetailsApiClient({
       meetingDateDisplay: scheduleDisplays.meetingDateDisplay,
       followUpDateDisplay: scheduleDisplays.followUpDateDisplay,
       milestoneStageLabel: stage,
+      milestoneCategoryLabel: category,
       milestoneSubLabel: subStage,
       onLeadPatch: patchLead,
       onConnectionPhaseSave: handleConnectionPhaseSave,
       connectionPhaseSaving: savingSecondBox,
+      canEditLeadPhoneEmail: canEditLeadPhoneAndEmail(viewerRoleKey),
+      shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
+      onLeadContactSave: handleLeadContactSave,
+      leadContactSaving: savingSecondBox,
     };
 
     return (
@@ -2756,12 +2829,13 @@ export default function LeadDetailsApiClient({
           }}
         />
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
-        <StatsRow lead={lead} />
+        <StatsRow lead={lead} viewerRole={viewerRoleKey} />
         <Tabs active={activeTab} onChange={setActiveTab} />
 
         {activeTab === "lead" && (
           <LeadInfoTab
             lead={lead}
+            viewerRole={viewerRoleKey}
             onLeadChange={patchLead}
             onFloorPlanUpload={handleFloorPlanUpload}
             onFloorPlanMissing={handleFloorPlanMissing}
@@ -2781,6 +2855,7 @@ export default function LeadDetailsApiClient({
               quotePersisting: quoteLinkPersisting,
               quoteLinkPersistError,
               onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
+              quotePanelVisible: canShowGetQuote,
             }}
           />
         )}
