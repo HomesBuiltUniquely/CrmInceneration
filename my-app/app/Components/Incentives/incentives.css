@@ -1,0 +1,19 @@
+.inc-root {
+  --inc-bg: #f4f5f7;
+  --inc-surface: #ffffff;
+  --inc-border: #e8eaed;
+  --inc-text: #0f172a;
+  --inc-muted: #64748b;
+  --inc-navy: #0b1220;
+  --inc-green: #1ed760;
+  --inc-green-dark: #0f9d3d;
+  --inc-green-soft: #ecfdf5;
+  --inc-green-border: #bbf7d0;
+  --inc-orange: #f97316;
+  --inc-yellow: #eab308;
+  --inc-blue: #38bdf8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--inc-bg);
+  color: var(--inc-text);
+  min-height: 100vh;
+}
