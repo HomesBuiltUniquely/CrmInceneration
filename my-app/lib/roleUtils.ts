@@ -21,6 +21,11 @@ export function canViewBothMilestonePipelines(role: string): boolean {
   return isAdminRole(r) || r === "SALES_ADMIN";
 }
 
+/** Presales Manager / Executive hierarchy filters (leads toolbar + dashboard). */
+export function canUsePresalesHierarchyFilters(role: string): boolean {
+  return canViewBothMilestonePipelines(role);
+}
+
 /** Hub `GET /v1/Leads/crm-pipeline?role=` value for the signed-in viewer. */
 export function crmPipelineRoleParam(role: string): string {
   const r = normalizeRole(role);

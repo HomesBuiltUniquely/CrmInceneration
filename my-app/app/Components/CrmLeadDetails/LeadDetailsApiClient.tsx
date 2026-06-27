@@ -81,6 +81,7 @@ import {
   getMe,
   getNameFromUser,
   getRoleFromUser,
+  fetchSalesExecutivesForManager,
   getSalesExecEndpointForVerify,
   normalizeRole,
   unwrapAuthUserPayload,
@@ -102,6 +103,10 @@ import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-exec
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
 import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
+import {
+  canEditLeadEmailAndPhone,
+  stripUnauthorizedLeadEmailPhoneFromPutBody,
+} from "@/lib/lead-identity-edit-access";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   collectHierarchyUserAssigneeAliases,
@@ -781,6 +786,7 @@ export default function LeadDetailsApiClient({
   >(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [verifyPresalesTeamNames, setVerifyPresalesTeamNames] = useState<string[]>([]);
+  const [salesManagerTeamNames, setSalesManagerTeamNames] = useState<string[]>([]);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
@@ -1266,6 +1272,42 @@ export default function LeadDetailsApiClient({
     };
   }, [salesClosureAuthUser, viewerRoleKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (viewerRoleKey !== "SALES_MANAGER" && viewerRoleKey !== "MANAGER") {
+      setSalesManagerTeamNames([]);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
+    const token = raw.trim();
+    if (!token) {
+      setSalesManagerTeamNames([]);
+      return;
+    }
+    void fetchSalesExecutivesForManager(
+      token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+    )
+      .then((users) => {
+        if (cancelled) return;
+        setSalesManagerTeamNames(
+          users
+            .map((user) =>
+              hierarchyUserDisplayName(
+                user as { fullName?: string; name?: string; username?: string },
+              ),
+            )
+            .filter(Boolean),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSalesManagerTeamNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewerRoleKey]);
+
   const verifyLeadRecord = useMemo<ApiLead>(
     () =>
       ({
@@ -1274,6 +1316,17 @@ export default function LeadDetailsApiClient({
         salesOwner: (baseDetail as ApiLead).salesOwner,
       }) as ApiLead,
     [baseDetail, lead.assignee],
+  );
+
+  const canEditLeadEmailPhone = useMemo(
+    () =>
+      canEditLeadEmailAndPhone({
+        viewerRole: viewerRoleKey,
+        lead: verifyLeadRecord,
+        managerTeamNames: salesManagerTeamNames,
+        viewerAliases: [...verifyViewerAliasSet],
+      }),
+    [viewerRoleKey, verifyLeadRecord, salesManagerTeamNames, verifyViewerAliasSet],
   );
 
   const canVerifyCurrentLead = useMemo(() => {
@@ -1687,6 +1740,9 @@ export default function LeadDetailsApiClient({
     setSaveError(null);
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (!canEditLeadEmailPhone) {
+        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+      }
       if (
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
@@ -1748,6 +1804,7 @@ export default function LeadDetailsApiClient({
     validLeadType,
     verifyLeadRecord,
     viewerRoleKey,
+    canEditLeadEmailPhone,
     whatsappNameLockedFromServer,
   ]);
 
@@ -1759,6 +1816,9 @@ export default function LeadDetailsApiClient({
     setSecondBoxError(null);
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (!canEditLeadEmailPhone) {
+        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+      }
       if (
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
@@ -1818,6 +1878,7 @@ export default function LeadDetailsApiClient({
     notifySuccess,
     verifyLeadRecord,
     viewerRoleKey,
+    canEditLeadEmailPhone,
     whatsappNameLockedFromServer,
   ]);
 
@@ -2679,6 +2740,7 @@ export default function LeadDetailsApiClient({
           <LeadInfoTab
             lead={lead}
             onLeadChange={patchLead}
+            canEditEmailPhone={canEditLeadEmailPhone}
             nameFieldLocked={nameFieldLocked}
             showWhatsappPresalesNameHint={showWhatsappPresalesNameHint}
             onWhatsappNameSave={handleWhatsappNameSave}

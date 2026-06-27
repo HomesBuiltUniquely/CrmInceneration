@@ -26,7 +26,7 @@ import { normalizeRole } from "@/lib/auth/api";
 import { isSalesPoolNoMilestoneFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { SALES_POOL_NO_MILESTONE } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
-import { isAdminRole } from "@/lib/roleUtils";
+import { canUsePresalesHierarchyFilters, isAdminRole } from "@/lib/roleUtils";
 import {
   crmDateFieldToolbarOptionsForViewer,
   isToolbarDateFilterActive,
@@ -514,6 +514,7 @@ export default function LeadsToolbar({
   const isPresalesManager = role === "PRESALES_MANAGER";
   const isPresalesExecutive = toRoleKey(role) === "PRESALES_EXECUTIVE";
   const isPresalesFlow = isPresalesManager || isPresalesExecutive;
+  const showPresalesHierarchyFilters = canUsePresalesHierarchyFilters(role);
   const isSalesWorkspace = leadsWorkspace === "sales";
   const isPresalesWorkspace = leadsWorkspace === "presales";
   const dateFieldToolbarOptions = useMemo(
@@ -635,8 +636,8 @@ export default function LeadsToolbar({
     if (salesAdminFilter) c += 1;
     if (salesManagerFilter) c += 1;
     if (salesExecFilter) c += 1;
-    if (isSalesWorkspace && presalesManagerFilter) c += 1;
-    if (isSalesWorkspace && presalesExecFilter) c += 1;
+    if (isPresalesWorkspace && showPresalesHierarchyFilters && presalesManagerFilter) c += 1;
+    if (isPresalesWorkspace && showPresalesHierarchyFilters && presalesExecFilter) c += 1;
     if (dateFilterActive) c += 1;
     if (isPresalesWorkspace && reinquiry) c += 1;
     return c;
@@ -1097,19 +1098,36 @@ export default function LeadsToolbar({
                   </FilterSelectField>
                 </>
               ) : null}
-              {isSalesWorkspace && isPresalesManager ? (
-                <FilterSelectField
-                  label="Presales Exec"
-                  value={presalesExecFilter}
-                  onChange={onPresalesExecFilterChange}
-                >
-                  <option value="">All</option>
-                  {presalesExecOptions.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </FilterSelectField>
+              {isPresalesWorkspace && showPresalesHierarchyFilters ? (
+                <>
+                  <FilterSelectField
+                    label="Presales Mgr"
+                    value={presalesManagerFilter}
+                    onChange={(next) => {
+                      onPresalesManagerFilterChange(next);
+                      if (next) onPresalesExecFilterChange("");
+                    }}
+                  >
+                    <option value="">All</option>
+                    {presalesManagerOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </FilterSelectField>
+                  <FilterSelectField
+                    label="Presales Exec"
+                    value={presalesExecFilter}
+                    onChange={onPresalesExecFilterChange}
+                  >
+                    <option value="">All</option>
+                    {presalesExecOptions.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </FilterSelectField>
+                </>
               ) : null}
               <FilterSelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
                 {leadTypeOptions.map((option) => (

@@ -54,7 +54,7 @@ import {
   pipelineRoleForWorkspace,
   type CrmWorkspace,
 } from "@/lib/crm-workspace";
-import { crmPipelineRoleParam } from "@/lib/roleUtils";
+import { canUsePresalesHierarchyFilters, crmPipelineRoleParam } from "@/lib/roleUtils";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
@@ -1900,6 +1900,15 @@ export default function LeadsDataSection({
     ]
   );
   const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const showPresalesHierarchyFilters = canUsePresalesHierarchyFilters(clientScopeRoleKey);
+  const effectivePresalesManagerFilter = showPresalesHierarchyFilters ? presalesManagerFilter : "";
+  const effectivePresalesExecFilter = showPresalesHierarchyFilters ? presalesExecFilter : "";
+
+  useEffect(() => {
+    if (showPresalesHierarchyFilters) return;
+    if (presalesManagerFilter) setPresalesManagerFilter("");
+    if (presalesExecFilter) setPresalesExecFilter("");
+  }, [showPresalesHierarchyFilters, presalesManagerFilter, presalesExecFilter]);
   const managerTeamRoster =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const salesExecOptionsResolved = useMemo(() => {
@@ -1962,9 +1971,9 @@ export default function LeadsDataSection({
     leadView === "my" || leadView === "team" ? leadView : "default";
   const effectiveAssignee =
     salesExecFilter ||
-    presalesExecFilter ||
+    effectivePresalesExecFilter ||
     salesManagerFilter ||
-    presalesManagerFilter ||
+    effectivePresalesManagerFilter ||
     salesAdminFilter ||
     assignee;
   const hierarchyScopedAssignees = useMemo(
@@ -1973,18 +1982,19 @@ export default function LeadsDataSection({
         workspace: leadsWorkspace,
         salesManagerFilter,
         salesExecFilter,
-        presalesManagerFilter,
-        presalesExecFilter,
+        presalesManagerFilter: effectivePresalesManagerFilter,
+        presalesExecFilter: effectivePresalesExecFilter,
         salesManagers,
         salesExecs,
         presalesManagers,
         presalesExecs,
       }),
     [
+      leadsWorkspace,
       salesManagerFilter,
       salesExecFilter,
-      presalesManagerFilter,
-      presalesExecFilter,
+      effectivePresalesManagerFilter,
+      effectivePresalesExecFilter,
       salesManagers,
       salesExecs,
       presalesManagers,
@@ -1996,14 +2006,14 @@ export default function LeadsDataSection({
     if (salesExecFilter.trim()) {
       return resolveAssigneeScopeForDisplayName(salesExecFilter, salesExecs);
     }
-    if (presalesExecFilter.trim()) {
-      return resolveAssigneeScopeForDisplayName(presalesExecFilter, presalesExecs);
+    if (effectivePresalesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(effectivePresalesExecFilter, presalesExecs);
     }
     return [];
   }, [
     hierarchyScopedAssignees,
     salesExecFilter,
-    presalesExecFilter,
+    effectivePresalesExecFilter,
     salesExecs,
     presalesExecs,
   ]);
@@ -2021,18 +2031,18 @@ export default function LeadsDataSection({
     if (effectiveAssigneeScope.length > 0) return effectiveAssigneeScope;
     const fallbacks: string[] = [];
     if (salesExecFilter.trim()) fallbacks.push(salesExecFilter.trim());
-    if (presalesExecFilter.trim()) fallbacks.push(presalesExecFilter.trim());
+    if (effectivePresalesExecFilter.trim()) fallbacks.push(effectivePresalesExecFilter.trim());
     if (salesManagerFilter.trim()) fallbacks.push(salesManagerFilter.trim());
-    if (presalesManagerFilter.trim()) fallbacks.push(presalesManagerFilter.trim());
+    if (effectivePresalesManagerFilter.trim()) fallbacks.push(effectivePresalesManagerFilter.trim());
     if (salesAdminFilter.trim()) fallbacks.push(salesAdminFilter.trim());
     if (assignee.trim()) fallbacks.push(assignee.trim());
     return fallbacks;
   }, [
     effectiveAssigneeScope,
     salesExecFilter,
-    presalesExecFilter,
+    effectivePresalesExecFilter,
     salesManagerFilter,
-    presalesManagerFilter,
+    effectivePresalesManagerFilter,
     salesAdminFilter,
     assignee,
   ]);
