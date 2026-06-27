@@ -45,11 +45,12 @@ export function readMilestoneStageCategoryNorm(lead: ApiLead): string {
 
 /** Classify a lead into one of the five lost-segment buckets (or null). */
 export function classifyLostSegment(lead: ApiLead): LostSegmentMode | null {
-  const categoryRaw = String(lead.stage?.milestoneStageCategory ?? "").trim();
-  if (!categoryRaw && !readMilestoneStageNorm(lead)) return null;
+  const sales = readSalesStageFieldsFromLead(lead);
+  const categoryRaw = sales.milestoneStageCategory;
+  const stage = sales.milestoneStage.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!categoryRaw && !stage) return null;
 
-  const cat = readMilestoneStageCategoryNorm(lead);
-  const stage = readMilestoneStageNorm(lead);
+  const cat = categoryRaw.trim().toLowerCase().replace(/\s+/g, " ");
   const combined = `${cat} ${stage}`.trim();
 
   if (!isLostCategory(categoryRaw) && !/\blost\b/.test(combined)) {
