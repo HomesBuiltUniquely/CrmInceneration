@@ -6,7 +6,9 @@ import {
 } from "@/lib/lead-follow-up-insights";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
+import { normalizeRole } from "@/lib/auth/api";
 import { pickPrimarySourceRows } from "@/lib/primary-source-leads";
+import { isAdminRole } from "@/lib/roleUtils";
 
 /**
  * One row per customer phone for insight tiles (matches heatmap / hierarchy table totals).
@@ -16,10 +18,10 @@ export function salesInsightCountLeads(leads: ApiLead[]): ApiLead[] {
   return pickPrimarySourceRows(leads);
 }
 
-/** Roles that use Hub admin pool APIs but still show sales insight tiles in Lead Types. */
+/** Roles on Hub admin pool that show sales insight tiles (follow-up, overdue, lost segment). */
 export function roleUsesAdminPoolInsightTiles(roleKey: string): boolean {
-  const r = roleKey.trim().toUpperCase();
-  return r === "SALES_ADMIN";
+  const r = normalizeRole(roleKey);
+  return r === "SALES_ADMIN" || isAdminRole(r);
 }
 
 /** Full sales-pool scope for follow-up / overdue / meeting insight tiles. */

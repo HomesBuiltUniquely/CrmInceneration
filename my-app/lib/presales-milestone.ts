@@ -92,17 +92,22 @@ export function readPresalesMilestoneFromLead(lead: ApiLead | Record<string, unk
       ? (r.stage as Record<string, unknown>)
       : {};
   const stage = String(
-    pickLeadScalar(r, ["presalesMilestoneStage"]) ??
+    pickLeadScalar(r, ["presalesMilestoneStage", "presales_milestone_stage"]) ??
       st.presalesMilestoneStage ??
       "",
   ).trim();
   const category = String(
-    pickLeadScalar(r, ["presalesMilestoneCategory"]) ??
+    pickLeadScalar(r, [
+      "presalesMilestoneCategory",
+      "presales_milestone_category",
+      "presalesMilestoneStageCategory",
+    ]) ??
       st.presalesMilestoneCategory ??
+      st.presalesMilestoneStageCategory ??
       "",
   ).trim();
   const subStage = String(
-    pickLeadScalar(r, ["presalesMilestoneSubStage"]) ??
+    pickLeadScalar(r, ["presalesMilestoneSubStage", "presales_milestone_sub_stage"]) ??
       st.presalesMilestoneSubStage ??
       "",
   ).trim();

@@ -153,6 +153,65 @@ function normalizeLeadUpdatePayload(
   return applyScheduleDatesToHubPayload(normalizedBody);
 }
 
+/** Presales milestone PUT — never normalizes `propertyDetails` (avoids wiping Hub rows). */
+function normalizePresalesMilestonePayload(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalizedBody: Record<string, unknown> = { ...input };
+
+  const psStage = String(
+    normalizedBody.presalesMilestoneStage ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneStage ??
+      "",
+  ).trim();
+  const psCat = String(
+    normalizedBody.presalesMilestoneCategory ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneCategory ??
+      "",
+  ).trim();
+  const psSub = String(
+    normalizedBody.presalesMilestoneSubStage ??
+      (normalizedBody.stage as Record<string, unknown> | undefined)?.presalesMilestoneSubStage ??
+      "",
+  ).trim();
+
+  if (psStage || psCat || psSub) {
+    normalizedBody.presalesMilestoneStage = psStage;
+    normalizedBody.presalesMilestoneCategory = psCat;
+    normalizedBody.presalesMilestoneSubStage = psSub;
+    normalizedBody.presales_milestone_stage = psStage;
+    normalizedBody.presales_milestone_category = psCat;
+    normalizedBody.presales_milestone_sub_stage = psSub;
+    normalizedBody.presalesMilestoneStageCategory = psCat;
+
+    const prevStage =
+      normalizedBody.stage && typeof normalizedBody.stage === "object" && !Array.isArray(normalizedBody.stage)
+        ? (normalizedBody.stage as Record<string, unknown>)
+        : {};
+    normalizedBody.stage = {
+      ...prevStage,
+      presalesMilestoneStage: psStage,
+      presalesMilestoneCategory: psCat,
+      presalesMilestoneSubStage: psSub,
+    };
+
+    const df = normalizedBody.dynamicFields;
+    const dfo =
+      df && typeof df === "object" && !Array.isArray(df)
+        ? { ...(df as Record<string, unknown>) }
+        : {};
+    if (psStage) dfo.presalesMilestoneStage = psStage;
+    if (psCat) {
+      dfo.presalesMilestoneCategory = psCat;
+      dfo.presalesMilestoneStageCategory = psCat;
+    }
+    if (psSub) dfo.presalesMilestoneSubStage = psSub;
+    normalizedBody.dynamicFields = dfo;
+  }
+
+  return applyScheduleDatesToHubPayload(normalizedBody);
+}
+
 async function parseApiError(response: Response): Promise<ParsedApiError> {
   let payload: Record<string, unknown> | null = null;
   let text = "";
@@ -260,6 +319,32 @@ export async function putLeadDetail(
     throw await buildApiError(res, "Unable to save lead");
   }
   return res.json() as Promise<Record<string, unknown>>;
+}
+
+/** Presales Complete Task — minimal body; skips `propertyDetails` normalization. */
+export async function putPresalesMilestoneDetail(
+  leadType: CrmLeadType,
+  id: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const normalizedBody = normalizePresalesMilestonePayload(body);
+  const requestBody = JSON.stringify(normalizedBody);
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: authHeaders(),
+    body: requestBody,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw await buildApiError(res, "Unable to save presales milestone");
+  }
+  try {
+    const text = await res.text();
+    return text.trim() ? (JSON.parse(text) as Record<string, unknown>) : normalizedBody;
+  } catch {
+    return normalizedBody;
+  }
 }
 
 /**

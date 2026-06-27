@@ -12,7 +12,7 @@ function whatsappContextFromRequest(req: NextRequest): WhatsappFetchContext {
     "milestoneStageCategory",
     "milestoneSubStage",
     "presalesMilestoneStage",
-    "presalesMilestoneStageCategory",
+    "presalesMilestoneCategory",
     "presalesMilestoneSubStage",
     "verificationStatus",
     "reinquiry",

@@ -1,4 +1,4 @@
-import { crmLeadAssigneeAliasNorms, type ApiLead } from "@/lib/leads-filter";
+import { crmLeadAssigneeAliasNorms, readSalesStageFieldsFromLead, type ApiLead } from "@/lib/leads-filter";
 import { isLostCategory } from "@/lib/crm-pipeline";
 import type { InsightCountOpts } from "@/lib/lead-follow-up-insights";
 
@@ -45,11 +45,12 @@ export function readMilestoneStageCategoryNorm(lead: ApiLead): string {
 
 /** Classify a lead into one of the five lost-segment buckets (or null). */
 export function classifyLostSegment(lead: ApiLead): LostSegmentMode | null {
-  const categoryRaw = String(lead.stage?.milestoneStageCategory ?? "").trim();
-  if (!categoryRaw && !readMilestoneStageNorm(lead)) return null;
+  const sales = readSalesStageFieldsFromLead(lead);
+  const categoryRaw = sales.milestoneStageCategory;
+  const stage = sales.milestoneStage.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!categoryRaw && !stage) return null;
 
-  const cat = readMilestoneStageCategoryNorm(lead);
-  const stage = readMilestoneStageNorm(lead);
+  const cat = categoryRaw.trim().toLowerCase().replace(/\s+/g, " ");
   const combined = `${cat} ${stage}`.trim();
 
   if (!isLostCategory(categoryRaw) && !/\blost\b/.test(combined)) {
@@ -91,6 +92,35 @@ export function classifyLostSegment(lead: ApiLead): LostSegmentMode | null {
 
 export function isLostSegmentLead(lead: ApiLead): boolean {
   return classifyLostSegment(lead) !== null;
+}
+
+/** Any lead on a LOST milestone category/path (broader than segment bucket). */
+export function isLostPathLead(lead: ApiLead): boolean {
+  const sales = readSalesStageFieldsFromLead(lead);
+  if (isLostCategory(sales.milestoneStageCategory)) return true;
+  const st = lead.stage;
+  const presalesCategory = String(
+    st?.presalesMilestoneCategory ?? lead.presalesMilestoneCategory ?? "",
+  ).trim();
+  if (isLostCategory(presalesCategory)) return true;
+  const stage = sales.milestoneStage.trim().toLowerCase().replace(/\s+/g, " ");
+  const cat = sales.milestoneStageCategory.trim().toLowerCase().replace(/\s+/g, " ");
+  return /\blost\b/.test(`${cat} ${stage}`.trim());
+}
+
+export function shouldShowLostPathLeadsInTable(args: {
+  searchActive: boolean;
+  insightTableMode: string | null;
+  milestoneStageCategory: string;
+  milestoneSubStage: string;
+}): boolean {
+  if (args.searchActive) return true;
+  if (isLostSegmentInsightMode(args.insightTableMode)) return true;
+  const filterText = `${args.milestoneStageCategory} ${args.milestoneSubStage}`.trim();
+  if (isLostCategory(args.milestoneStageCategory) || /\blost\b/i.test(filterText)) {
+    return true;
+  }
+  return false;
 }
 
 function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {

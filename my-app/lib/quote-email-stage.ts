@@ -70,11 +70,31 @@ export function shouldOpenQuoteSentPanelInCompleteTask(status: string, feedback:
  * with substage **MEETING SUCCESSFUL** (matches CRM milestone labels).
  */
 export function isExperienceDesignQuoteSentStage(lead: Lead): boolean {
-  const ms = (lead.stageBlock?.milestoneStage ?? "").trim().toLowerCase();
-  const msub = lead.stageBlock?.milestoneSubStage ?? "";
-  const st = lead.status ?? "";
+  if (lead.quoteLink?.trim()) {
+    return true;
+  }
 
-  return isExperienceDesignStageName(ms) && (isQuoteSentFeedbackName(msub) || isQuoteSentFeedbackName(st));
+  const ms = (lead.stageBlock?.milestoneStage ?? "").trim().toLowerCase();
+  const msub = (lead.stageBlock?.milestoneSubStage ?? "").toLowerCase();
+  const st = (lead.status ?? "").toLowerCase();
+
+  // Keep visible in subsequent pipeline stages
+  if (ms === "decision" || ms === "closed") {
+    return true;
+  }
+
+  if (isExperienceDesignStageName(ms)) {
+    // Current requirement: "Meeting Successful"
+    if (isQuoteSentFeedbackName(msub) || isQuoteSentFeedbackName(st)) {
+      return true;
+    }
+    // Also keep visible if they advance to design refinement within the same stage
+    if (msub.includes("design refinement") || st.includes("design refinement")) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 } from "@/lib/presales-milestone";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { formatFollowUpDueDateLabel, resolveEffectiveFollowUpDateRaw } from "@/lib/follow-up-date";
 
 export const CRM_LEAD_TYPES = [
   "formlead",
@@ -146,6 +147,7 @@ export type LeadRowModel = {
   };
   owner: { name: string };
   engagement: { time: string; action: string; tone?: "ok" | "late" };
+  dueDate: { label: string; detail: string; tone: "today" | "tomorrow" | "yesterday" | "overdue" | "default" };
   actionIcon?: "bolt" | "alert";
   /** Orange = presales pipeline, blue = sales pipeline (list journey column). */
   pipelineBadge?: "presales" | "sales";
@@ -604,6 +606,23 @@ export function mapApiLeadToRow(
       action: "Updated",
       tone: "ok",
     },
+    dueDate: formatFollowUpDueDateLabel(
+      resolveEffectiveFollowUpDateRaw(
+        String(
+          pickLeadScalar(lead, [
+            "followUpDate",
+            "nextFollowUp",
+            "follow_up_date",
+            "FollowUpDate",
+          ]) ?? "",
+        ),
+        leadCreatedAtRaw(lead),
+        {
+          isReinquiry: hasReinquiry(lead),
+          updatedRaw: readLeadUpdatedAtRaw(lead),
+        },
+      ),
+    ),
     actionIcon: "bolt",
     pipelineBadge: usePresalesDisplay ? "presales" : "sales",
     handedOffReadOnly: isPresalesHandedOffReadOnly(lead, userRole),

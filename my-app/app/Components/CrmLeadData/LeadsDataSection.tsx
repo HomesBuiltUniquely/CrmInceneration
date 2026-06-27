@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
-import type { ApiLead, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
+import type { ApiLead, CrmLeadType, LeadRowModel, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import {
   asCrmLeadType,
@@ -20,6 +20,9 @@ import {
   resolveHierarchyUserByDisplayName,
 } from "@/lib/hierarchy-user-display";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
+import {
+  applyStoredPresalesMilestoneToApiLead,
+} from "@/lib/lead-presales-milestone-store";
 import {
   computeLeadTypeCountsFromRows,
   pickMilestoneRepresentativeRows,
@@ -51,7 +54,7 @@ import {
   pipelineRoleForWorkspace,
   type CrmWorkspace,
 } from "@/lib/crm-workspace";
-import { crmPipelineRoleParam } from "@/lib/roleUtils";
+import { canUsePresalesHierarchyFilters, crmPipelineRoleParam } from "@/lib/roleUtils";
 import { nestedStageForSelection } from "@/lib/milestone-filter-tree";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
@@ -84,8 +87,12 @@ import {
   normalizeInsightCountOpts,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
-import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
-import { isExecutiveAssigneeRole, isUserActive } from "@/lib/user-active";
+import {
+  computeAutoFollowUpDateToPersist,
+  persistAutoFollowUpDatesForLeads,
+} from "@/lib/lead-follow-up-persist";
+import { computeLostSegmentCounts, isLostPathLead, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
+import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
   roleUsesAdminPoolInsightTiles,
@@ -206,12 +213,12 @@ import {
 } from "@/lib/leads-view-persist";
 
 function isHierarchyAdminRole(role?: string): boolean {
-  const r = normalizeRole(role ?? "");
-  return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
+  return includeInactiveExecutivesInHierarchyFilters(role);
 }
 
 async function fetchMergedSalesExecutivesForFilters(
   authHeaders: HeadersInit,
+  includeInactive = false,
 ): Promise<HierarchyUser[]> {
   const authBase = getAuthApiBaseUrl();
   const [byRoleRes, legacyRes] = await Promise.all([
@@ -261,7 +268,8 @@ async function fetchMergedSalesExecutivesForFilters(
       username: row.username ?? prev?.username,
     });
   }
-  return [...byId.values()].filter((u) => isUserActive(u));
+  const merged = [...byId.values()].filter((u) => Number(u.id ?? 0) > 0);
+  return includeInactive ? merged : merged.filter((u) => isUserActive(u));
 }
 
 function getAllowedRoleQueries(role?: string): string[] {
@@ -1664,8 +1672,12 @@ export default function LeadsDataSection({
         if (cancelled) return;
 
         let mergedSalesExecs: HierarchyUser[] = [];
+        const includeInactiveExecs = includeInactiveExecutivesInHierarchyFilters(currentRole);
         if (isHierarchyAdminRole(currentRole)) {
-          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(auth);
+          mergedSalesExecs = await fetchMergedSalesExecutivesForFilters(
+            auth,
+            includeInactiveExecs,
+          );
         }
 
         const byRole = new Map<string, HierarchyUser[]>(pairs);
@@ -1683,13 +1695,21 @@ export default function LeadsDataSection({
 
         setSalesAdmins(saJ.filter((u) => isUserActive(u)));
         setSalesManagers(smJ);
-        setSalesExecs(salesExecList.filter((u) => isUserActive(u)));
+        setSalesExecs(
+          includeInactiveExecs
+            ? salesExecList.filter((u) => Number(u.id ?? 0) > 0)
+            : salesExecList.filter((u) => Number(u.id ?? 0) > 0 && isUserActive(u)),
+        );
         setPresalesManagers(pmJ);
-        const mergedPresalesExecs = [...peJ, ...preJ].filter((u) => isUserActive(u));
+        const mergedPresalesExecs = [...peJ, ...preJ];
         const dedupedPresalesExecs = Array.from(
           new Map(mergedPresalesExecs.map((u) => [u.id, u])).values(),
         );
-        setPresalesExecs(dedupedPresalesExecs);
+        setPresalesExecs(
+          includeInactiveExecs
+            ? dedupedPresalesExecs
+            : dedupedPresalesExecs.filter((u) => isUserActive(u)),
+        );
       } catch {
         if (cancelled) return;
         setSalesAdmins([]);
@@ -1880,6 +1900,15 @@ export default function LeadsDataSection({
     ]
   );
   const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
+  const showPresalesHierarchyFilters = canUsePresalesHierarchyFilters(clientScopeRoleKey);
+  const effectivePresalesManagerFilter = showPresalesHierarchyFilters ? presalesManagerFilter : "";
+  const effectivePresalesExecFilter = showPresalesHierarchyFilters ? presalesExecFilter : "";
+
+  useEffect(() => {
+    if (showPresalesHierarchyFilters) return;
+    if (presalesManagerFilter) setPresalesManagerFilter("");
+    if (presalesExecFilter) setPresalesExecFilter("");
+  }, [showPresalesHierarchyFilters, presalesManagerFilter, presalesExecFilter]);
   const managerTeamRoster =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const salesExecOptionsResolved = useMemo(() => {
@@ -1942,9 +1971,9 @@ export default function LeadsDataSection({
     leadView === "my" || leadView === "team" ? leadView : "default";
   const effectiveAssignee =
     salesExecFilter ||
-    presalesExecFilter ||
+    effectivePresalesExecFilter ||
     salesManagerFilter ||
-    presalesManagerFilter ||
+    effectivePresalesManagerFilter ||
     salesAdminFilter ||
     assignee;
   const hierarchyScopedAssignees = useMemo(
@@ -1953,18 +1982,19 @@ export default function LeadsDataSection({
         workspace: leadsWorkspace,
         salesManagerFilter,
         salesExecFilter,
-        presalesManagerFilter,
-        presalesExecFilter,
+        presalesManagerFilter: effectivePresalesManagerFilter,
+        presalesExecFilter: effectivePresalesExecFilter,
         salesManagers,
         salesExecs,
         presalesManagers,
         presalesExecs,
       }),
     [
+      leadsWorkspace,
       salesManagerFilter,
       salesExecFilter,
-      presalesManagerFilter,
-      presalesExecFilter,
+      effectivePresalesManagerFilter,
+      effectivePresalesExecFilter,
       salesManagers,
       salesExecs,
       presalesManagers,
@@ -1976,14 +2006,14 @@ export default function LeadsDataSection({
     if (salesExecFilter.trim()) {
       return resolveAssigneeScopeForDisplayName(salesExecFilter, salesExecs);
     }
-    if (presalesExecFilter.trim()) {
-      return resolveAssigneeScopeForDisplayName(presalesExecFilter, presalesExecs);
+    if (effectivePresalesExecFilter.trim()) {
+      return resolveAssigneeScopeForDisplayName(effectivePresalesExecFilter, presalesExecs);
     }
     return [];
   }, [
     hierarchyScopedAssignees,
     salesExecFilter,
-    presalesExecFilter,
+    effectivePresalesExecFilter,
     salesExecs,
     presalesExecs,
   ]);
@@ -2001,18 +2031,18 @@ export default function LeadsDataSection({
     if (effectiveAssigneeScope.length > 0) return effectiveAssigneeScope;
     const fallbacks: string[] = [];
     if (salesExecFilter.trim()) fallbacks.push(salesExecFilter.trim());
-    if (presalesExecFilter.trim()) fallbacks.push(presalesExecFilter.trim());
+    if (effectivePresalesExecFilter.trim()) fallbacks.push(effectivePresalesExecFilter.trim());
     if (salesManagerFilter.trim()) fallbacks.push(salesManagerFilter.trim());
-    if (presalesManagerFilter.trim()) fallbacks.push(presalesManagerFilter.trim());
+    if (effectivePresalesManagerFilter.trim()) fallbacks.push(effectivePresalesManagerFilter.trim());
     if (salesAdminFilter.trim()) fallbacks.push(salesAdminFilter.trim());
     if (assignee.trim()) fallbacks.push(assignee.trim());
     return fallbacks;
   }, [
     effectiveAssigneeScope,
     salesExecFilter,
-    presalesExecFilter,
+    effectivePresalesExecFilter,
     salesManagerFilter,
-    presalesManagerFilter,
+    effectivePresalesManagerFilter,
     salesAdminFilter,
     assignee,
   ]);
@@ -3317,6 +3347,39 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
+  const showLostPathLeadsInTable = shouldShowLostPathLeadsInTable({
+    searchActive: isGlobalSearchActive,
+    insightTableMode,
+    milestoneStageCategory,
+    milestoneSubStage,
+  });
+  const tableContent = showLostPathLeadsInTable
+    ? content
+    : content.filter((lead) => !isLostPathLead(lead));
+  const leadTypeFallbackForPersist = asCrmLeadType(
+    leadType,
+    (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+      ? "formlead"
+      : leadType.trim().toLowerCase()) as CrmLeadType,
+  );
+  const autoFollowUpPersistSignature = useMemo(
+    () =>
+      content
+        .map((lead) => {
+          const followUp = computeAutoFollowUpDateToPersist(lead);
+          if (!followUp) return "";
+          const lt = asCrmLeadType(lead.leadType, leadTypeFallbackForPersist);
+          return `${lt}:${lead.id}`;
+        })
+        .filter(Boolean)
+        .sort()
+        .join("|"),
+    [content, leadTypeFallbackForPersist],
+  );
+  useEffect(() => {
+    if (!autoFollowUpPersistSignature) return;
+    void persistAutoFollowUpDatesForLeads(content, leadTypeFallbackForPersist);
+  }, [autoFollowUpPersistSignature, content, leadTypeFallbackForPersist]);
   const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
   const insightOpts = normalizeInsightCountOpts({
     viewerRole: roleKeyForInsight,
@@ -3327,25 +3390,23 @@ export default function LeadsDataSection({
     dateTo,
   });
   const insightFilteredContent = filterLeadsForInsightMode(
-    content,
+    tableContent,
     insightTableMode,
     insightOpts,
   );
-  const baseRows = insightFilteredContent.map((lead) => ({
-    ...mapApiLeadToRow(
-      lead,
-      asCrmLeadType(
-        lead.leadType,
-        (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
-          ? "formlead"
-          : leadType.trim().toLowerCase()) as any
-      ),
-      stageOrder,
-      scopeRoleKey,
-      leadsWorkspace,
-    ),
-    callDelayed: isFirstCallDelayedLead(lead),
-  }));
+  const baseRows = insightFilteredContent.map((lead) => {
+    const sourceLt = asCrmLeadType(
+      lead.leadType,
+      (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
+        ? "formlead"
+        : leadType.trim().toLowerCase()) as CrmLeadType,
+    );
+    const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
+    return {
+      ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
+      callDelayed: isFirstCallDelayedLead(lead),
+    };
+  });
   const norm = (v: string) => v.trim().toLowerCase();
   const myName = norm(currentUserName);
   const scopedTeamNames = managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;

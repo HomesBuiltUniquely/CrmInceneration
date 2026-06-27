@@ -66,8 +66,12 @@ type Props = {
   viewerRole?: string;
   /** When set, fields are controlled and edits merge into parent state (API detail page). */
   onLeadChange?: (patch: Partial<Lead>) => void;
+  /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — can edit email & phone. */
+  canEditEmailPhone?: boolean;
   /** Save callback for Additional Information section when user clicks Done. */
   onAdditionalInfoSave?: () => void | Promise<void>;
+  /** Save callback for Contact Details email & phone when user clicks Done. */
+  onContactDetailsSave?: () => void | Promise<void>;
   /** Logs `POST …/activity` with CALL then opens dialer — API lead details only. */
   onLogCall?: () => void | Promise<void>;
   /** Optional activity hook for Design QA link copy tracking. */
@@ -78,6 +82,13 @@ type Props = {
   onFloorPlanRemove?: () => void | Promise<void>;
   floorPlanUploading?: boolean;
   floorPlanRemoving?: boolean;
+  /** API detail: Full Name read-only (WhatsApp presales one-time lock). */
+  nameFieldLocked?: boolean;
+  /** Hint when presales may edit WhatsApp name once before verify/handoff. */
+  showWhatsappPresalesNameHint?: boolean;
+  /** Inline save for WhatsApp one-time name update. */
+  onWhatsappNameSave?: () => void | Promise<void>;
+  whatsappNameSaving?: boolean;
   /** Quote email (`POST /v1/quote/send`) — only on API-backed lead details. */
   quoteExtras?: {
     subject: string;
@@ -98,6 +109,7 @@ export default function LeadInfoTab({
   viewerRole = "",
   onLeadChange,
   onAdditionalInfoSave,
+  onContactDetailsSave,
   onLogCall,
   onDesignQaLinkCopied,
   onFloorPlanUpload,
@@ -105,6 +117,11 @@ export default function LeadInfoTab({
   onFloorPlanRemove,
   floorPlanUploading = false,
   floorPlanRemoving = false,
+  nameFieldLocked,
+  showWhatsappPresalesNameHint = false,
+  onWhatsappNameSave,
+  whatsappNameSaving = false,
+  canEditEmailPhone = false,
   quoteExtras,
 }: Props) {
   const c = onLeadChange;
@@ -114,6 +131,8 @@ export default function LeadInfoTab({
   const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", maskPhone);
   const altPhoneDisplay = resolveLeadPhoneDisplayForRole(lead.altPhone ?? "", maskPhone);
   const [additionalInfoEditable, setAdditionalInfoEditable] = useState(false);
+  const [contactDetailsEditable, setContactDetailsEditable] = useState(false);
+  const [contactEditBaseline, setContactEditBaseline] = useState({ email: "", phone: "" });
   const quoteEligible = Boolean(
     c &&
       quoteExtras &&
@@ -138,12 +157,26 @@ export default function LeadInfoTab({
 
   useEffect(() => {
     setLockedIdentityFields({
-      // Lock only if backend already had a value for this lead.
-      name: Boolean((lead.name ?? "").trim()),
-      email: Boolean((lead.email ?? "").trim()),
-      phone: Boolean((lead.phone ?? "").trim()),
+      name:
+        nameFieldLocked !== undefined
+          ? nameFieldLocked
+          : Boolean((lead.name ?? "").trim()),
+      email: !canEditEmailPhone || !contactDetailsEditable,
+      phone: !canEditEmailPhone || !contactDetailsEditable,
       pincode: Boolean((lead.pincode ?? "").trim()),
     });
+  }, [
+    lead.id,
+    nameFieldLocked,
+    lead.email,
+    lead.phone,
+    canEditEmailPhone,
+    contactDetailsEditable,
+  ]);
+
+  useEffect(() => {
+    setContactDetailsEditable(false);
+    setContactEditBaseline({ email: lead.email ?? "", phone: lead.phone ?? "" });
   }, [lead.id]);
 
   useEffect(() => {
@@ -207,6 +240,7 @@ export default function LeadInfoTab({
       : null;
   const designQaLink = apiDesignQaLink || computedDesignQaLink;
   const [additionalInfoSaving, setAdditionalInfoSaving] = useState(false);
+  const [contactDetailsSaving, setContactDetailsSaving] = useState(false);
   const normalizedBudget = lead.budget?.trim() ?? "";
   const budgetOptions = normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
     ? [normalizedBudget, ...BUDGET_OPTIONS]
@@ -247,32 +281,160 @@ export default function LeadInfoTab({
     }
   };
 
+  const handleContactDetailsCancel = () => {
+    if (c) {
+      c({
+        email: contactEditBaseline.email,
+        phone: contactEditBaseline.phone,
+      });
+    }
+    setContactDetailsEditable(false);
+  };
+
+  const handleContactDetailsToggle = async () => {
+    if (!contactDetailsEditable) {
+      setContactEditBaseline({
+        email: lead.email ?? "",
+        phone: lead.phone ?? "",
+      });
+      setContactDetailsEditable(true);
+      return;
+    }
+    const emailChanged = (lead.email ?? "") !== contactEditBaseline.email;
+    const phoneChanged = (lead.phone ?? "") !== contactEditBaseline.phone;
+    if (!emailChanged && !phoneChanged) {
+      setContactDetailsEditable(false);
+      return;
+    }
+    if (!onContactDetailsSave) {
+      setContactDetailsEditable(false);
+      return;
+    }
+    try {
+      setContactDetailsSaving(true);
+      await onContactDetailsSave();
+      setContactDetailsEditable(false);
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save contact details.");
+    } finally {
+      setContactDetailsSaving(false);
+    }
+  };
+
+  const editableContactInputClass = canEditEmailPhone
+    ? contactDetailsEditable
+      ? "border-[var(--crm-accent)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
+      : "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]/60"
+    : "";
+  const lockedContactInputClass = canEditEmailPhone
+    ? "cursor-default bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]"
+    : "";
+
   return (
     <div className="space-y-5 animate-fade-up delay-3">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <Card>
-          <CardTitle icon="👤" color="blue">Contact Details</CardTitle>
+          <CardTitle
+            icon="👤"
+            color="blue"
+            action={
+              canEditEmailPhone ? (
+                <div className="flex items-center gap-1.5">
+                  {contactDetailsEditable ? (
+                    <>
+                      <Button
+                        variant="ghost"
+                        className="!py-1 !px-3 !text-[11px]"
+                        icon="✕"
+                        onClick={handleContactDetailsCancel}
+                        disabled={contactDetailsSaving}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="!py-1 !px-3 !text-[11px]"
+                        onClick={() => void handleContactDetailsToggle()}
+                        disabled={contactDetailsSaving}
+                      >
+                        {contactDetailsSaving ? "Saving..." : "Done"}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="!py-1 !px-3 !text-[11px]"
+                      onClick={() => void handleContactDetailsToggle()}
+                    >
+                      ✎ Update
+                    </Button>
+                  )}
+                </div>
+              ) : undefined
+            }
+          >
+            Contact Details
+          </CardTitle>
+          {canEditEmailPhone ? (
+            <p className="-mt-3 mb-4 text-[11px] text-[var(--crm-text-muted)]">
+              Only{" "}
+              <span className="font-semibold text-[var(--crm-accent)]">email</span> and{" "}
+              <span className="font-semibold text-[var(--crm-accent)]">phone</span> can be
+              updated here. Tap <strong className="text-[var(--crm-text-secondary)]">✎ Update</strong>{" "}
+              to edit.
+            </p>
+          ) : null}
 
           <div className="mb-4">
             <FieldLabel>Full Name</FieldLabel>
-            <Input
-              placeholder="Customer name"
-              {...(c
-                ? {
-                    value: lead.name,
-                    onChange: (e) => c({ name: e.target.value }),
-                    readOnly: lockedIdentityFields.name,
-                  }
-                : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
-            />
+            <div className="flex items-stretch gap-2">
+              <Input
+                className={`min-w-0 flex-1 ${
+                  canEditEmailPhone && lockedIdentityFields.name ? lockedContactInputClass : ""
+                }`.trim()}
+                placeholder="Customer name"
+                {...(c
+                  ? {
+                      value: lead.name,
+                      onChange: (e) => c({ name: e.target.value }),
+                      readOnly: lockedIdentityFields.name,
+                    }
+                  : { defaultValue: lead.name, readOnly: lockedIdentityFields.name })}
+              />
+              {onWhatsappNameSave && showWhatsappPresalesNameHint ? (
+                <button
+                  type="button"
+                  title="Save name"
+                  aria-label="Save name"
+                  disabled={whatsappNameSaving || lockedIdentityFields.name}
+                  onClick={() => void onWhatsappNameSave()}
+                  className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-[var(--crm-accent)] bg-[var(--crm-accent)] text-[15px] text-white transition-all duration-200 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {whatsappNameSaving ? "…" : "💾"}
+                </button>
+              ) : null}
+            </div>
+            {showWhatsappPresalesNameHint ? (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                Enter the customer name and tap save — can only be updated once before verify or sales assignment.
+              </p>
+            ) : null}
           </div>
 
           <div className="mb-4">
-            <FieldLabel required>Email Address</FieldLabel>
+            <FieldLabel required>
+              Email Address
+              {canEditEmailPhone ? (
+                <span className="ml-1.5 font-normal normal-case text-[var(--crm-accent)]">
+                  (editable)
+                </span>
+              ) : null}
+            </FieldLabel>
             <Input
               type="email"
               placeholder="Not provided — add email"
               missing={!lead.email}
+              className={editableContactInputClass}
               {...(c
                 ? {
                     value: lead.email,
@@ -293,10 +455,17 @@ export default function LeadInfoTab({
 
           <div className="grid grid-cols-2 gap-3.5">
             <div>
-              <FieldLabel>Phone</FieldLabel>
+              <FieldLabel>
+                Phone
+                {canEditEmailPhone ? (
+                  <span className="ml-1.5 font-normal normal-case text-[var(--crm-accent)]">
+                    (editable)
+                  </span>
+                ) : null}
+              </FieldLabel>
               <div className="mt-1.5">
                 <Input
-                  className="min-w-0"
+                  className={`min-w-0 ${editableContactInputClass}`.trim()}
                   {...(c
                     ? {
                         value: canEditContact ? lead.phone : phoneDisplay,
@@ -314,6 +483,8 @@ export default function LeadInfoTab({
               <FieldLabel>Alternate Phone</FieldLabel>
               <Input
                 placeholder="—"
+                className={lockedContactInputClass}
+                readOnly={canEditEmailPhone}
                 {...(c
                   ? {
                       value: canEditContact ? lead.altPhone : altPhoneDisplay,

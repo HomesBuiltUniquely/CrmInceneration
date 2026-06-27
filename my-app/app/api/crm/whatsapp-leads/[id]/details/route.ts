@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
-import { detailsUrl } from "@/lib/crm-lead-endpoints";
+import { detailsUrl, isCrmLeadType, leadUpdatePutPaths } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
@@ -47,35 +47,50 @@ export async function PUT(
 ) {
   try {
     const { id } = await ctx.params;
-    const url = `${BASE_URL}${detailsUrl("whatsapplead", id)}`;
     const body = await req.text();
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: {
-        ...upstreamAuthHeaders(req),
-        "Content-Type": req.headers.get("Content-Type") ?? "application/json",
-      },
-      body,
-      cache: "no-store",
-    });
-    const payload = await readUpstreamPayload(res);
-    if (!res.ok) {
-      if (payload.text.trim()) {
+    const putHeaders = {
+      ...upstreamAuthHeaders(req),
+      "Content-Type": req.headers.get("Content-Type") ?? "application/json",
+    };
+    const paths = leadUpdatePutPaths("whatsapplead", id);
+    let lastPayload: Awaited<ReturnType<typeof readUpstreamPayload>> | null = null;
+    let lastStatus = 500;
+
+    for (let i = 0; i < paths.length; i += 1) {
+      const url = `${BASE_URL}${paths[i]}`;
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: putHeaders,
+        body,
+        cache: "no-store",
+      });
+      const payload = await readUpstreamPayload(res);
+      lastPayload = payload;
+      lastStatus = res.status;
+      if (res.ok) {
         return new NextResponse(payload.text, {
           status: res.status,
           headers: { "Content-Type": payload.contentType },
         });
       }
-      return proxyJsonError(
-        res.status,
-        payload,
-        "Unable to save WhatsApp lead details. Please try again.",
-      );
+      if (i < paths.length - 1 && (res.status === 404 || res.status === 405)) {
+        continue;
+      }
+      break;
     }
-    return new NextResponse(payload.text, {
-      status: res.status,
-      headers: { "Content-Type": payload.contentType },
-    });
+
+    const payload = lastPayload!;
+    if (payload.text.trim()) {
+      return new NextResponse(payload.text, {
+        status: lastStatus,
+        headers: { "Content-Type": payload.contentType },
+      });
+    }
+    return proxyJsonError(
+      lastStatus,
+      payload,
+      "Unable to save WhatsApp lead details. Please try again.",
+    );
   } catch (error) {
     return NextResponse.json(
       {

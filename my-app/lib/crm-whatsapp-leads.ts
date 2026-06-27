@@ -164,7 +164,7 @@ const WHATSAPP_FILTER_QUERY_KEYS = new Set([
   "dateTo",
   "dateField",
   "presalesMilestoneStage",
-  "presalesMilestoneStageCategory",
+  "presalesMilestoneCategory",
   "presalesMilestoneSubStage",
 ]);
 
