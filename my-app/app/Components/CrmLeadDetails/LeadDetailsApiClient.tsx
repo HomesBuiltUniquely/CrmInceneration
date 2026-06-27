@@ -1808,6 +1808,81 @@ export default function LeadDetailsApiClient({
     whatsappNameLockedFromServer,
   ]);
 
+  const handleSaveContactDetails = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    const previousLead = lead;
+    setSavingSecondBox(true);
+    setSecondBoxError(null);
+    try {
+      let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (!canEditLeadEmailPhone) {
+        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+      }
+      if (
+        shouldShowWhatsappPresalesNameHint({
+          leadType: lt,
+          leadId,
+          phone: previousLead.phone,
+          handedOffToSales:
+            isLeadHandedOffToSales(previousLead) ||
+            isLeadHandedOffToSales(verifyLeadRecord),
+          viewerRoleKey,
+          nameLockedFromServer: whatsappNameLockedFromServer,
+          nameHasValue: Boolean((previousLead.name ?? "").trim()),
+        })
+      ) {
+        body = applyCustomerNameToDetail(
+          body,
+          pickCustomerNameFromDetail(baseDetail),
+        );
+      }
+      const updated = await putLeadDetail(lt, leadId, body);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
+      setLead((prev) => ({
+        ...mapped,
+        id: leadId,
+        activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+      }));
+      notifySuccess("Contact details saved.");
+      maybeOpenSalesClosureAfterWon([
+        lead.status,
+        lead.stageBlock?.milestoneStage,
+        lead.stageBlock?.milestoneSubStage,
+        body.status,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+        updated.status,
+        updated.milestoneStage,
+        updated.milestoneSubStage,
+      ]);
+    } catch (e) {
+      setSecondBoxError(e instanceof Error ? e.message : "Save failed");
+      throw e;
+    } finally {
+      setSavingSecondBox(false);
+    }
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    maybeOpenSalesClosureAfterWon,
+    validLeadType,
+    notifySuccess,
+    verifyLeadRecord,
+    viewerRoleKey,
+    canEditLeadEmailPhone,
+    whatsappNameLockedFromServer,
+  ]);
+
   const handleSaveSecondBox = useCallback(async () => {
     if (!validLeadType) return;
     const lt = leadTypeParam as CrmLeadType;
@@ -1865,6 +1940,7 @@ export default function LeadDetailsApiClient({
       ]);
     } catch (e) {
       setSecondBoxError(e instanceof Error ? e.message : "Save failed");
+      throw e;
     } finally {
       setSavingSecondBox(false);
     }
@@ -2751,6 +2827,7 @@ export default function LeadDetailsApiClient({
             floorPlanUploading={floorPlanUploading}
             floorPlanRemoving={floorPlanRemoving}
             onAdditionalInfoSave={handleSaveSecondBox}
+            onContactDetailsSave={handleSaveContactDetails}
             onLogCall={handlePhoneCallLog}
             onDesignQaLinkCopied={handleDesignQaLinkCopied}
             quoteExtras={{
