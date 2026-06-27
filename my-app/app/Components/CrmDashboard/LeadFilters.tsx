@@ -16,6 +16,7 @@ import {
 } from "@/lib/hierarchy-user-display";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
+import { canUsePresalesHierarchyFilters } from "@/lib/roleUtils";
 
 type DashboardRole = "sales_admin" | "sales_manager" | "super_admin";
 
@@ -155,6 +156,17 @@ export default function LeadFilters({
   const isSalesAdmin =
     viewerRole === "SALES_ADMIN" ||
     (viewerRole === "" && role === "sales_admin");
+  const normalizedViewerRole = normalizeRole(
+    viewerRole ||
+      (role === "super_admin"
+        ? "SUPER_ADMIN"
+        : role === "sales_admin"
+          ? "SALES_ADMIN"
+          : role === "sales_manager"
+            ? "SALES_MANAGER"
+            : ""),
+  );
+  const showPresalesHierarchyFilters = canUsePresalesHierarchyFilters(normalizedViewerRole);
   const [quickRange, setQuickRange] =
     useState<(typeof QUICK_RANGES)[number]["id"] | "">("");
 
@@ -188,6 +200,12 @@ export default function LeadFilters({
     if (!viewerMe?.id) return;
     setSalesManagerId(String(viewerMe.id));
   }, [isSalesWorkspace, role, viewerMe]);
+
+  useEffect(() => {
+    if (showPresalesHierarchyFilters) return;
+    setPresalesManagerId("");
+    setPresalesExecId("");
+  }, [showPresalesHierarchyFilters]);
 
   useEffect(() => {
     if (isSalesWorkspace) {
@@ -337,6 +355,9 @@ export default function LeadFilters({
 
   const effectiveFilters = useMemo(() => {
     if (isPresalesWorkspace) {
+      if (!showPresalesHierarchyFilters) {
+        return { assignee: "", assignees: [] as string[] };
+      }
       const selectedPresalesExec = visiblePresalesExecs.find(
         (u) => String(u.id) === presalesExecId,
       );
@@ -390,6 +411,7 @@ export default function LeadFilters({
     salesExecId,
     salesManagerId,
     salesManagers,
+    showPresalesHierarchyFilters,
     visiblePresalesExecs,
     visibleSalesExecs,
   ]);
@@ -466,10 +488,16 @@ export default function LeadFilters({
         <div className="px-6 pb-5 pt-5">
           <div
             className={`grid gap-x-4 gap-y-4 ${
-              isPresalesWorkspace ? "grid-cols-2" : isManager ? "grid-cols-1" : "grid-cols-5"
+              isPresalesWorkspace
+                ? showPresalesHierarchyFilters
+                  ? "grid-cols-2"
+                  : "hidden"
+                : isManager
+                  ? "grid-cols-1"
+                  : "grid-cols-5"
             }`}
           >
-            {isPresalesWorkspace ? (
+            {isPresalesWorkspace && showPresalesHierarchyFilters ? (
               <>
                 <label className="col-span-1 min-w-0">
                   <span className={labelClass}>Presales Mgr</span>

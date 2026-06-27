@@ -60,6 +60,8 @@ type Props = {
   lead: Lead;
   /** When set, fields are controlled and edits merge into parent state (API detail page). */
   onLeadChange?: (patch: Partial<Lead>) => void;
+  /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — can edit email & phone. */
+  canEditEmailPhone?: boolean;
   /** Save callback for Additional Information section when user clicks Done. */
   onAdditionalInfoSave?: () => void | Promise<void>;
   /** Logs `POST …/activity` with CALL then opens dialer — API lead details only. */
@@ -108,6 +110,7 @@ export default function LeadInfoTab({
   showWhatsappPresalesNameHint = false,
   onWhatsappNameSave,
   whatsappNameSaving = false,
+  canEditEmailPhone = false,
   quoteExtras,
 }: Props) {
   const c = onLeadChange;
@@ -138,11 +141,11 @@ export default function LeadInfoTab({
         nameFieldLocked !== undefined
           ? nameFieldLocked
           : Boolean((lead.name ?? "").trim()),
-      email: Boolean((lead.email ?? "").trim()),
-      phone: Boolean((lead.phone ?? "").trim()),
+      email: !canEditEmailPhone,
+      phone: !canEditEmailPhone,
       pincode: Boolean((lead.pincode ?? "").trim()),
     });
-  }, [lead.id, nameFieldLocked]);
+  }, [lead.id, nameFieldLocked, lead.email, lead.phone, canEditEmailPhone]);
 
   useEffect(() => {
     const storageKey = `${DESIGN_QA_STATE_KEY_PREFIX}${lead.id}`;
