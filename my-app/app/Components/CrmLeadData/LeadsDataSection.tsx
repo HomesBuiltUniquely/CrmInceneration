@@ -91,7 +91,7 @@ import {
   computeAutoFollowUpDateToPersist,
   persistAutoFollowUpDatesForLeads,
 } from "@/lib/lead-follow-up-persist";
-import { computeLostSegmentCounts } from "@/lib/lead-lost-segment";
+import { computeLostSegmentCounts, isLostPathLead, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
 import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
@@ -3347,6 +3347,15 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
+  const showLostPathLeadsInTable = shouldShowLostPathLeadsInTable({
+    searchActive: isGlobalSearchActive,
+    insightTableMode,
+    milestoneStageCategory,
+    milestoneSubStage,
+  });
+  const tableContent = showLostPathLeadsInTable
+    ? content
+    : content.filter((lead) => !isLostPathLead(lead));
   const leadTypeFallbackForPersist = asCrmLeadType(
     leadType,
     (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
@@ -3381,7 +3390,7 @@ export default function LeadsDataSection({
     dateTo,
   });
   const insightFilteredContent = filterLeadsForInsightMode(
-    content,
+    tableContent,
     insightTableMode,
     insightOpts,
   );
