@@ -559,11 +559,8 @@ export async function fetchNewCrmQuotePayloads(
   const payloads: unknown[] = [];
 
   if (id) {
-    try {
-      payloads.push(await listNewCrmQuotesByLead(id));
-    } catch {
-      // Version list may not exist upstream yet.
-    }
+    // `GET /api/new-crm/quotes/by-lead/{id}` is not deployed upstream yet (404).
+    // Quotes load via internal-link + Prolance revisions below.
     try {
       payloads.push(await getNewCrmQuoteInternalLinkByLead(id));
     } catch {

@@ -17,10 +17,18 @@ import { buildLeadQuoteOptionsFromProlance } from "@/lib/prolance-quote-api";
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import {
-  buildBookingTokenLeadFromBookingDone,
-  upsertBookingTokenLead,
+  buildBookingDoneSubmitPayload,
   validateBookingDoneHandoff,
 } from "@/lib/booking-token-leads";
+import {
+  submitBookingDone,
+  uploadBookingPaymentProofs,
+} from "@/lib/booking-done-api";
+import {
+  clearBookingDoneDraft,
+  paymentProofsToFiles,
+  readPaymentProofs,
+} from "@/lib/booking-done-payment-storage";
 import {
   getLeadDetail,
   fetchNewCrmQuotePayloads,
@@ -68,9 +76,10 @@ async function fetchQuoteOptionsForLead(
     }
   }
 
+  const savedOption = savedQuoteLink ? leadQuoteOptionFromSavedLink(savedQuoteLink) : null;
   const fallback = mergeQuoteOptions(
     ...payloads.map((payload) => normalizeLeadQuoteOptions(payload)),
-    ...(savedQuoteLink ? [leadQuoteOptionFromSavedLink(savedQuoteLink)].filter(Boolean) : []),
+    ...(savedOption ? [[savedOption]] : []),
   );
   return { options: fallback, hubLeadId };
 }
@@ -131,8 +140,6 @@ export default function BookingDonePage({ leadType, leadId }: Props) {
   const [quoteOptions, setQuoteOptions] = useState<LeadQuoteOption[]>([]);
   const [selectedQuoteId, setSelectedQuoteId] = useState("");
   const [hubLeadId, setHubLeadId] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [businessLeadId, setBusinessLeadId] = useState("");
   const [handoffError, setHandoffError] = useState("");
   const [handoffPending, setHandoffPending] = useState(false);
 
@@ -171,16 +178,6 @@ export default function BookingDonePage({ leadType, leadId }: Props) {
         if (cancelled) return;
 
         const resolvedBusinessLeadId = pickDetailStr(detail, "leadId", "leadRef", "leadCode", "customerId");
-        const resolvedCustomerName = pickDetailStr(
-          detail,
-          "name",
-          "customerName",
-          "leadName",
-          "fullName",
-          "contactName",
-        );
-        setBusinessLeadId(resolvedBusinessLeadId);
-        setCustomerName(resolvedCustomerName);
         const externalReferenceId = pickDetailStr(
           detail,
           "uniqueId",
@@ -241,8 +238,6 @@ export default function BookingDonePage({ leadType, leadId }: Props) {
     const validation = validateBookingDoneHandoff({
       leadType,
       leadId,
-      customerName,
-      businessLeadId,
       hubLeadId,
       selectedQuote,
     });
@@ -251,18 +246,38 @@ export default function BookingDonePage({ leadType, leadId }: Props) {
       return;
     }
 
+    if (!isCrmLeadType(leadType)) {
+      setHandoffError("Invalid lead type.");
+      return;
+    }
+
+    const payload = buildBookingDoneSubmitPayload({
+      leadType,
+      leadId,
+      hubLeadId,
+      selectedQuote,
+    });
+    if (!payload) {
+      setHandoffError("Unable to prepare booking submission. Check quote and payment amount.");
+      return;
+    }
+
     setHandoffPending(true);
     try {
-      const record = buildBookingTokenLeadFromBookingDone({
-        leadType,
-        leadId,
-        customerName,
-        businessLeadId,
-        hubLeadId,
-        selectedQuote,
-      });
-      upsertBookingTokenLead(record);
+      const record = await submitBookingDone(leadType, leadId, payload);
+      const draftProofs = readPaymentProofs(leadType, leadId);
+      if (draftProofs.length > 0) {
+        const files = await paymentProofsToFiles(draftProofs);
+        if (files.length > 0) {
+          await uploadBookingPaymentProofs(leadType, leadId, record.id, files);
+        }
+      }
+      clearBookingDoneDraft(leadType, leadId);
       router.push(`/booking-token?from=booking-done&highlight=${encodeURIComponent(record.id)}`);
+    } catch (error) {
+      setHandoffError(
+        error instanceof Error ? error.message : "Unable to submit Booking Done record.",
+      );
     } finally {
       setHandoffPending(false);
     }

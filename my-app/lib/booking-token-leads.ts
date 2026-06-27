@@ -9,35 +9,34 @@ import {
   readPaymentProofs,
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount, resolveQuoteVerifyUrl, type LeadQuoteOption } from "@/lib/crm-quote-links";
+import {
+  canShowCancellation,
+  canShowConvert,
+  canShowPay,
+  isCancelListingType,
+  resolveListingType,
+} from "@/lib/booking-token-listing-type";
+import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
+import type { BookingTokenDeal } from "@/lib/booking-done-api";
 import type { BookingStatus, DealRow, LedgerItem, TokenStatus } from "@/app/Components/BookingToken/types";
 
-export type BookingTokenLeadRecord = {
-  id: string;
-  crmLeadType: string;
-  crmLeadId: string;
-  businessLeadId?: string;
+export type BuildBookingDoneSubmitInput = {
+  leadType: string;
+  leadId: string;
   hubLeadId?: string;
-  customerName: string;
-  quoteId?: string;
-  quoteVersionLabel?: string;
-  quoteAmount: number | null;
-  quoteVerifyUrl?: string;
-  tenPercentAmount: number | null;
-  amountReceived: number | null;
-  paymentKind: BookingPaymentKind | null;
-  paymentProofCount: number;
-  tokenStatus: TokenStatus;
-  bookingStatus: BookingStatus;
-  submittedAt: string;
-  source: "booking-done";
-  showConvert?: boolean;
+  selectedQuote: LeadQuoteOption | null;
 };
 
-const STORAGE_KEY = "booking-token-leads:v1";
-
-function bookingTokenLeadId(leadType: string, leadId: string): string {
-  return `${leadType}-${leadId}`;
-}
+export type BookingDoneSubmitPayload = {
+  hubLeadId?: string;
+  quoteId?: string;
+  quoteVersionLabel?: string;
+  quoteAmount: number;
+  tenPercentAmount: number | null;
+  amountReceived: number;
+  paymentKind: BookingPaymentKind;
+  quoteVerifyUrl?: string;
+};
 
 function initialsFromName(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -58,91 +57,48 @@ function formatExpClosing(submittedAt: string): string {
   });
 }
 
-function tokenStatusForPayment(kind: BookingPaymentKind | null): TokenStatus {
-  if (kind === "FULL_10%") return "issued";
-  if (kind === "TOKEN") return "pending";
-  return "minting";
+function mapHubTokenStatus(status: string, paymentKind: string): TokenStatus {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "pending") return "pending";
+  if (normalized === "issued" || normalized === "not_applicable") return "issued";
+  if (normalized === "minting") return "minting";
+  if (paymentKind.toUpperCase() === "TOKEN") return "pending";
+  return "issued";
 }
 
-function bookingStatusForPayment(kind: BookingPaymentKind | null): BookingStatus {
-  if (kind === "FULL_10%") return "confirmed";
+function mapHubBookingStatus(status: string): BookingStatus {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "confirmed") return "confirmed";
+  if (normalized === "cancelled") return "cancelled";
   return "in_progress";
 }
 
-export function readBookingTokenLeads(): BookingTokenLeadRecord[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (row): row is BookingTokenLeadRecord =>
-        Boolean(row) &&
-        typeof row === "object" &&
-        typeof (row as BookingTokenLeadRecord).id === "string" &&
-        typeof (row as BookingTokenLeadRecord).crmLeadId === "string",
-    );
-  } catch {
-    return [];
-  }
-}
+export function buildBookingDoneSubmitPayload(
+  input: BuildBookingDoneSubmitInput,
+): BookingDoneSubmitPayload | null {
+  const { hubLeadId, selectedQuote } = input;
+  if (!selectedQuote || selectedQuote.amount == null) return null;
 
-export function writeBookingTokenLeads(leads: BookingTokenLeadRecord[]): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(leads));
-}
+  const amountReceived = parsePaymentAmountInput(
+    readPaymentAmount(input.leadType, input.leadId),
+  );
+  if (amountReceived == null || amountReceived <= 0) return null;
 
-export function upsertBookingTokenLead(record: BookingTokenLeadRecord): BookingTokenLeadRecord {
-  const existing = readBookingTokenLeads();
-  const next = [record, ...existing.filter((row) => row.id !== record.id)];
-  writeBookingTokenLeads(next);
-  return record;
-}
-
-export type BuildBookingTokenLeadInput = {
-  leadType: string;
-  leadId: string;
-  customerName: string;
-  businessLeadId?: string;
-  hubLeadId?: string;
-  selectedQuote: LeadQuoteOption | null;
-};
-
-export function buildBookingTokenLeadFromBookingDone(
-  input: BuildBookingTokenLeadInput,
-): BookingTokenLeadRecord {
-  const { leadType, leadId, customerName, businessLeadId, hubLeadId, selectedQuote } = input;
-  const amountRaw = readPaymentAmount(leadType, leadId);
-  const amountReceived = parsePaymentAmountInput(amountRaw);
-  const quoteAmount = selectedQuote?.amount ?? null;
+  const quoteAmount = selectedQuote.amount;
   const tenPercentAmount = calculateBookingTenPercent(quoteAmount);
   const paymentKind = classifyBookingPayment(amountReceived, quoteAmount);
-  const paymentProofCount = readPaymentProofs(leadType, leadId).length;
-  const submittedAt = new Date().toISOString();
+  if (!paymentKind) return null;
 
   return {
-    id: bookingTokenLeadId(leadType, leadId),
-    crmLeadType: leadType,
-    crmLeadId: leadId,
-    businessLeadId,
-    hubLeadId,
-    customerName: customerName.trim() || `Lead #${leadId}`,
-    quoteId: selectedQuote?.quoteId,
-    quoteVersionLabel: selectedQuote?.label,
+    hubLeadId: hubLeadId || undefined,
+    quoteId: selectedQuote.quoteId,
+    quoteVersionLabel: selectedQuote.label,
     quoteAmount,
-    quoteVerifyUrl: selectedQuote
-      ? resolveQuoteVerifyUrl(selectedQuote, hubLeadId ?? "") || undefined
-      : undefined,
     tenPercentAmount,
     amountReceived,
     paymentKind,
-    paymentProofCount,
-    tokenStatus: tokenStatusForPayment(paymentKind),
-    bookingStatus: bookingStatusForPayment(paymentKind),
-    submittedAt,
-    source: "booking-done",
-    showConvert: paymentKind === "TOKEN",
+    quoteVerifyUrl:
+      resolveQuoteVerifyUrl(selectedQuote, hubLeadId ?? "") || undefined,
   };
 }
 
@@ -154,10 +110,13 @@ export type BookingDoneHandoffValidation = {
 };
 
 export function validateBookingDoneHandoff(
-  input: BuildBookingTokenLeadInput,
+  input: BuildBookingDoneSubmitInput,
 ): BookingDoneHandoffValidation {
   if (!input.selectedQuote) {
     return { ok: false, message: "Select a quotation version before opening Booking & Token." };
+  }
+  if (input.selectedQuote.amount == null) {
+    return { ok: false, message: "Selected quotation has no amount. Choose another version." };
   }
   const amountReceived = parsePaymentAmountInput(readPaymentAmount(input.leadType, input.leadId));
   if (amountReceived == null || amountReceived <= 0) {
@@ -166,43 +125,72 @@ export function validateBookingDoneHandoff(
   return { ok: true };
 }
 
-export function bookingTokenLeadToDealRow(record: BookingTokenLeadRecord): DealRow {
+function resolveRemainingAmount(deal: BookingTokenDeal): number {
+  if (deal.remainingAmount != null && Number.isFinite(deal.remainingAmount)) {
+    return Math.max(0, deal.remainingAmount);
+  }
+  const ten = deal.tenPercentAmount ?? 0;
+  return Math.max(0, ten - deal.preBookingAmount);
+}
+
+export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
+  const paymentKind = String(deal.paymentKind ?? "").toUpperCase();
   const assetParts = [
-    record.quoteVersionLabel,
-    record.quoteId ? `Quote ${record.quoteId}` : null,
-    `Lead #${record.crmLeadId}`,
+    deal.quoteId ? `Quote ${deal.quoteId}` : null,
+    deal.leadIdentifier ? deal.leadIdentifier : `Lead #${deal.leadId}`,
   ].filter(Boolean);
+  const remaining = resolveRemainingAmount(deal);
+  const listingType = resolveListingType(deal);
+  const isCancelled = isCancelListingType(listingType) || isCancelledBookingStatus(deal.bookingStatus);
 
   return {
-    id: record.id,
-    initials: initialsFromName(record.customerName),
-    customer: record.customerName,
+    id: deal.id,
+    leadType: deal.leadType,
+    leadId: deal.leadId,
+    leadIdentifier: deal.leadIdentifier,
+    initials: initialsFromName(deal.customerName),
+    customer: deal.customerName,
     asset: assetParts.join(" · "),
-    dealValue: formatQuoteAmount(record.quoteAmount),
-    preBooking: formatQuoteAmount(record.amountReceived),
-    tokenStatus: record.tokenStatus,
-    bookingStatus: record.bookingStatus,
-    expClosing: formatExpClosing(record.submittedAt),
-    showConvert: record.showConvert,
+    dealValue: formatQuoteAmount(deal.dealValue),
+    dealValueAmount: deal.dealValue,
+    preBooking: formatQuoteAmount(deal.preBookingAmount),
+    paidAmount: deal.preBookingAmount,
+    tenPercentTarget: formatQuoteAmount(deal.tenPercentAmount),
+    tenPercentAmount: deal.tenPercentAmount ?? Math.round(deal.dealValue * 0.1),
+    remaining: formatQuoteAmount(remaining),
+    remainingAmount: remaining,
+    tokenStatus: mapHubTokenStatus(deal.tokenStatus, paymentKind),
+    bookingStatus: mapHubBookingStatus(deal.bookingStatus),
+    expClosing: formatExpClosing(deal.submittedAt),
+    submittedAt: deal.submittedAt,
+    isCancelled,
+    listingType,
+    showCancellation: canShowCancellation(listingType, deal.submittedAt),
+    showPay: canShowPay(listingType),
+    showConvert: canShowConvert(listingType),
+    cancellationReason: deal.cancellationReason ?? null,
+    cancelledAt: deal.cancelledAt ?? null,
     fromBookingDone: true,
   };
 }
 
-export function bookingTokenLeadToLedgerItem(record: BookingTokenLeadRecord): LedgerItem {
-  const received = formatQuoteAmount(record.amountReceived);
+export function bookingTokenDealToLedgerItem(deal: BookingTokenDeal): LedgerItem {
+  const paymentKind = String(deal.paymentKind ?? "").toUpperCase();
+  const received = formatQuoteAmount(deal.preBookingAmount);
+  const remaining = formatQuoteAmount(resolveRemainingAmount(deal));
   const kindLabel =
-    record.paymentKind === "FULL_10%"
+    paymentKind === "FULL_10%"
       ? "Full 10% booking advance"
-      : record.paymentKind === "TOKEN"
+      : paymentKind === "TOKEN"
         ? "Token amount"
         : "Pre-booking deposit";
 
   return {
-    id: `ledger-${record.id}-${record.submittedAt}`,
+    id: `ledger-${deal.id}-${deal.submittedAt}`,
     title: "Booking Done handoff",
-    detail: `${record.customerName} — ${received} (${kindLabel})`,
-    time: formatRelativeTime(record.submittedAt),
-    tone: record.paymentKind === "FULL_10%" ? "success" : "warning",
+    detail: `${deal.customerName} — ${received} (${kindLabel}) · Remaining ${remaining}`,
+    time: formatRelativeTime(deal.submittedAt),
+    tone: paymentKind === "FULL_10%" ? "success" : "warning",
   };
 }
 
@@ -218,6 +206,6 @@ function formatRelativeTime(iso: string): string {
   return date.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
 }
 
-export function findBookingTokenLead(id: string): BookingTokenLeadRecord | null {
-  return readBookingTokenLeads().find((row) => row.id === id) ?? null;
+export function readDraftPaymentProofCount(leadType: string, leadId: string): number {
+  return readPaymentProofs(leadType, leadId).length;
 }

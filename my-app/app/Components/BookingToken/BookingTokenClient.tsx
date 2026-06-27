@@ -14,12 +14,20 @@ import UrgentTasks from "./components/UrgentTasks";
 import PipelineVelocity from "./components/PipelineVelocity";
 import type { BookingTokenTab } from "./types";
 
+const TAB_ITEMS: { id: BookingTokenTab; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "token", label: "Token" },
+  { id: "booking", label: "Booking" },
+  { id: "cancel", label: "Cancel" },
+];
+
 export default function BookingTokenClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fromBookingDone = searchParams.get("from") === "booking-done";
   const highlightId = searchParams.get("highlight") ?? "";
-  const [tab, setTab] = useState<BookingTokenTab>("bookings");
+  const [tab, setTab] = useState<BookingTokenTab>("all");
+  const [kpiRefresh, setKpiRefresh] = useState(0);
   const [role, setRole] = useState("SUPER_ADMIN");
   const [allowed, setAllowed] = useState(false);
 
@@ -49,6 +57,8 @@ export default function BookingTokenClient() {
         .join(" "),
     [role],
   );
+
+  const showDashboardExtras = tab !== "cancel";
 
   if (!allowed) {
     return (
@@ -88,34 +98,23 @@ export default function BookingTokenClient() {
                 <h2 className="text-2xl font-bold uppercase tracking-tight text-[var(--bt-text)] md:text-3xl">
                   Booking & Token Management
                 </h2>
-                <p className="mt-1 text-sm text-[var(--bt-muted)]">
-                  Simplified view of active deal progress and tokenization.
-                </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex rounded-lg border border-[var(--bt-border)] bg-[var(--bt-surface)] p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setTab("bookings")}
-                    className={`rounded-md px-4 py-2 text-xs font-bold uppercase tracking-wide transition ${
-                      tab === "bookings"
-                        ? "bg-[var(--bt-navy)] text-white"
-                        : "text-[var(--bt-muted)] hover:text-[var(--bt-text)]"
-                    }`}
-                  >
-                    Bookings
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTab("tokens")}
-                    className={`rounded-md px-4 py-2 text-xs font-bold uppercase tracking-wide transition ${
-                      tab === "tokens"
-                        ? "bg-[var(--bt-navy)] text-white"
-                        : "text-[var(--bt-muted)] hover:text-[var(--bt-text)]"
-                    }`}
-                  >
-                    Tokens
-                  </button>
+                  {TAB_ITEMS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setTab(item.id)}
+                      className={`rounded-md px-4 py-2 text-xs font-bold uppercase tracking-wide transition ${
+                        tab === item.id
+                          ? "bg-[var(--bt-navy)] text-white"
+                          : "text-[var(--bt-muted)] hover:text-[var(--bt-text)]"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
                 <button
                   type="button"
@@ -133,18 +132,29 @@ export default function BookingTokenClient() {
             </header>
 
             <div className="space-y-6">
-              {fromBookingDone ? (
+              {fromBookingDone && (tab === "all" || tab === "token") ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                   Lead from Booking Done is now listed in active deals below.
                 </div>
               ) : null}
-              <KpiCards />
-              <DealsTable />
-              <RecentLedger />
-              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                <UrgentTasks />
-                <PipelineVelocity />
-              </div>
+
+              {showDashboardExtras ? <KpiCards refreshSignal={kpiRefresh} /> : null}
+
+              <DealsTable
+                tab={tab}
+                onDealCancelled={() => setTab("cancel")}
+                onDealsChanged={() => setKpiRefresh((n) => n + 1)}
+              />
+
+              {showDashboardExtras ? (
+                <>
+                  <RecentLedger />
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    <UrgentTasks />
+                    <PipelineVelocity />
+                  </div>
+                </>
+              ) : null}
             </div>
           </main>
         </div>
