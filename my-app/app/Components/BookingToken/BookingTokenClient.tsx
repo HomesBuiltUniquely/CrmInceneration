@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
@@ -16,6 +16,9 @@ import type { BookingTokenTab } from "./types";
 
 export default function BookingTokenClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromBookingDone = searchParams.get("from") === "booking-done";
+  const highlightId = searchParams.get("highlight") ?? "";
   const [tab, setTab] = useState<BookingTokenTab>("bookings");
   const [role, setRole] = useState("SUPER_ADMIN");
   const [allowed, setAllowed] = useState(false);
@@ -29,6 +32,13 @@ export default function BookingTokenClient() {
     setRole(stored);
     setAllowed(true);
   }, [router]);
+
+  useEffect(() => {
+    if (!fromBookingDone || !highlightId) return;
+    const target = document.getElementById(`deal-${highlightId}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [fromBookingDone, highlightId, allowed]);
 
   const roleLabel = useMemo(
     () =>
@@ -123,6 +133,11 @@ export default function BookingTokenClient() {
             </header>
 
             <div className="space-y-6">
+              {fromBookingDone ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  Lead from Booking Done is now listed in active deals below.
+                </div>
+              ) : null}
               <KpiCards />
               <DealsTable />
               <RecentLedger />

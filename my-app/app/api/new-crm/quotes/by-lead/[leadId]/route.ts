@@ -20,6 +20,7 @@ function buildProxyHeaders(req: NextRequest): HeadersInit {
   return headers;
 }
 
+/** Proxies quote version list for a lead (`GET /api/new-crm/quotes/by-lead/{leadId}`). */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ leadId: string }> },
@@ -34,7 +35,7 @@ export async function GET(
   }
 
   const res = await fetch(
-    `${EXTERNAL_API_BASE}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+    `${EXTERNAL_API_BASE}/api/new-crm/quotes/by-lead/${encodeURIComponent(id)}`,
     {
       method: "GET",
       headers: buildProxyHeaders(req),

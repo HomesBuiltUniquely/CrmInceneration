@@ -5,6 +5,7 @@ import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
   getLeadDetail,
+  getNewCrmQuoteInternalLinkByExternal,
   getNewCrmQuoteInternalLinkByLead,
   postManualActivity,
   postQuoteSend,
@@ -1833,7 +1834,14 @@ export default function LeadDetailsApiClient({
       const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
       if (leadIdentifier) {
         try {
-          const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+          let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
+          try {
+            res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+          } catch {
+            const externalId = lead.externalReferenceId?.trim() ?? "";
+            if (!externalId) throw new Error("Quote link unavailable");
+            res = await getNewCrmQuoteInternalLinkByExternal(externalId);
+          }
           link =
             (res.internalQuoteUrl ?? "").trim() ||
             (res.customerQuoteUrl ?? "").trim();
@@ -1968,7 +1976,14 @@ export default function LeadDetailsApiClient({
     setQuoteFetching(true);
     setQuoteLinkPersistError("");
     try {
-      const res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+      let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
+      try {
+        res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
+      } catch (byLeadError) {
+        const externalId = lead.externalReferenceId?.trim() ?? "";
+        if (!externalId) throw byLeadError;
+        res = await getNewCrmQuoteInternalLinkByExternal(externalId);
+      }
       const customerLink = extractCustomerQuoteLink(res);
       const internalLink = extractInternalQuoteLink(res);
       if (!customerLink) {
@@ -2003,6 +2018,7 @@ export default function LeadDetailsApiClient({
       setQuoteFetching(false);
     }
   }, [
+    lead.externalReferenceId,
     lead.leadId,
     leadId,
     notifyError,
