@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { LEDGER_ITEMS } from "../data/mock-data";
+import { useCallback, useEffect, useState } from "react";
 import type { LedgerItem } from "../types";
-import {
-  bookingTokenLeadToLedgerItem,
-  readBookingTokenLeads,
-} from "@/lib/booking-token-leads";
+import { fetchBookingTokenDeals } from "@/lib/booking-done-api";
+import { bookingTokenDealToLedgerItem } from "@/lib/booking-token-leads";
 
 function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
   const bg =
@@ -23,43 +20,50 @@ function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
 }
 
 export default function RecentLedger() {
-  const [handoffItems, setHandoffItems] = useState<LedgerItem[]>([]);
+  const [items, setItems] = useState<LedgerItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    function loadHandoffs() {
-      const items = readBookingTokenLeads()
-        .slice(0, 5)
-        .map(bookingTokenLeadToLedgerItem);
-      setHandoffItems(items);
+  const loadLedger = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchBookingTokenDeals({ page: 0, size: 5 });
+      setItems(response.deals.map(bookingTokenDealToLedgerItem));
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
     }
-    loadHandoffs();
-    window.addEventListener("storage", loadHandoffs);
-    return () => window.removeEventListener("storage", loadHandoffs);
   }, []);
 
-  const items = useMemo(() => {
-    const handoffIds = new Set(handoffItems.map((item) => item.id));
-    const mockItems = LEDGER_ITEMS.filter((item) => !handoffIds.has(item.id));
-    return [...handoffItems, ...mockItems].slice(0, 6);
-  }, [handoffItems]);
+  useEffect(() => {
+    void loadLedger();
+  }, [loadLedger]);
 
   return (
     <section className="rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] p-5 shadow-sm">
       <h2 className="text-[10px] font-bold uppercase tracking-wider text-[var(--bt-muted)]">
         Recent Token & Booking Ledger
       </h2>
-      <ul className="mt-4 divide-y divide-[var(--bt-border)]">
-        {items.map((item) => (
-          <li key={item.id} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
-            <LedgerIcon tone={item.tone} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-[var(--bt-text)]">{item.title}</p>
-              <p className="text-xs text-[var(--bt-muted)]">{item.detail}</p>
-            </div>
-            <span className="shrink-0 text-xs font-medium text-[var(--bt-muted)]">{item.time}</span>
-          </li>
-        ))}
-      </ul>
+      {loading ? (
+        <p className="mt-4 text-sm text-[var(--bt-muted)]">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="mt-4 text-sm text-[var(--bt-muted)]">
+          No recent booking activity yet.
+        </p>
+      ) : (
+        <ul className="mt-4 divide-y divide-[var(--bt-border)]">
+          {items.map((item) => (
+            <li key={item.id} className="flex items-center gap-4 py-4 first:pt-0 last:pb-0">
+              <LedgerIcon tone={item.tone} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[var(--bt-text)]">{item.title}</p>
+                <p className="text-xs text-[var(--bt-muted)]">{item.detail}</p>
+              </div>
+              <span className="shrink-0 text-xs font-medium text-[var(--bt-muted)]">{item.time}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

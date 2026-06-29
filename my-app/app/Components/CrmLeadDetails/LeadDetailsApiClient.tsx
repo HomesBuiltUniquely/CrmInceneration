@@ -2830,7 +2830,7 @@ export default function LeadDetailsApiClient({
     });
   };
 
-  const handleMarkAsWon = useCallback(() => {
+  const handleMarkAsWon = useCallback(async () => {
     const validationError = validateClosedLeadQuickAction({
       role: viewerRoleKey,
       lead,
@@ -2839,8 +2839,33 @@ export default function LeadDetailsApiClient({
       notifyError(validationError);
       return;
     }
+    if (!validLeadType) return;
+
+    try {
+      const prevStage =
+        baseDetail.stage && typeof baseDetail.stage === "object" && !Array.isArray(baseDetail.stage)
+          ? (baseDetail.stage as Record<string, unknown>)
+          : {};
+      await putLeadDetail(leadType, leadId, {
+        ...baseDetail,
+        stage: {
+          ...prevStage,
+          milestoneStage: "Closed",
+          milestoneStageCategory: "Closed Won",
+          milestoneSubStage: "Booking Done (Booking)",
+        },
+      });
+    } catch (error) {
+      notifyError(
+        error instanceof Error
+          ? error.message
+          : "Unable to update milestone before Booking Done.",
+      );
+      return;
+    }
+
     window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
-  }, [lead, leadId, leadType, notifyError, viewerRoleKey]);
+  }, [baseDetail, lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
 
   if (!validLeadType) {
     return (

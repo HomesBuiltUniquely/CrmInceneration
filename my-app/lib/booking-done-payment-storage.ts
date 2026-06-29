@@ -113,3 +113,32 @@ function readFileAsDataUrl(file: File): Promise<string> {
 export function getPaymentProofLimits() {
   return { maxFiles: MAX_FILES, maxFileBytes: MAX_FILE_BYTES };
 }
+
+/** Clear draft amount + proof screenshots after successful Hub submit. */
+export function clearBookingDoneDraft(leadType: string, leadId: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(amountStorageKey(leadType, leadId));
+  window.localStorage.removeItem(storageKey(leadType, leadId));
+}
+
+/** Reconstruct uploadable files from draft data URLs (for multipart POST). */
+export async function paymentProofsToFiles(proofs: PaymentProofFile[]): Promise<File[]> {
+  const files: File[] = [];
+  for (const proof of proofs) {
+    const file = await paymentProofToFile(proof);
+    if (file) files.push(file);
+  }
+  return files;
+}
+
+async function paymentProofToFile(proof: PaymentProofFile): Promise<File | null> {
+  try {
+    const res = await fetch(proof.previewUrl);
+    const blob = await res.blob();
+    return new File([blob], proof.name || "payment-proof.png", {
+      type: proof.mimeType || blob.type || "image/png",
+    });
+  } catch {
+    return null;
+  }
+}
