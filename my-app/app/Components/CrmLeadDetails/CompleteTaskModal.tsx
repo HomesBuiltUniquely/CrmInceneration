@@ -149,6 +149,8 @@ export default function CompleteTaskModal({
   userRole = "",
   presalesHandedOff = false,
   presalesVerifyAvailable = false,
+  /** Opened from footer Verify — show handoff panel without picking Assigned first. */
+  forcePresalesVerifyPanel = false,
   salesExecutiveOptions = [],
   salesExecutivesLoading = false,
   salesExecutivesError = null,
@@ -172,6 +174,7 @@ export default function CompleteTaskModal({
   presalesHandedOff?: boolean;
   /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
   presalesVerifyAvailable?: boolean;
+  forcePresalesVerifyPanel?: boolean;
   salesExecutiveOptions?: PresalesSalesExecutiveOption[];
   salesExecutivesLoading?: boolean;
   salesExecutivesError?: string | null;
@@ -653,13 +656,14 @@ export default function CompleteTaskModal({
       onPresalesVerify &&
       !presalesLeadVerified &&
       !presalesHandedOff &&
-      selectedFeedbackOption &&
-      isPresalesVerifyHandoffSelection({
-        stage: selectedFeedbackOption.stage,
-        category: selectedFeedbackOption.stageCategory,
-        subStage: selectedFeedbackOption.subStageName,
-        feedbackLabel: feedback,
-      }),
+      (forcePresalesVerifyPanel ||
+        (selectedFeedbackOption &&
+          isPresalesVerifyHandoffSelection({
+            stage: selectedFeedbackOption.stage,
+            category: selectedFeedbackOption.stageCategory,
+            subStage: selectedFeedbackOption.subStageName,
+            feedbackLabel: feedback,
+          }))),
   );
   const presalesDataConversionWonVisible = useMemo(
     () =>
@@ -809,7 +813,14 @@ export default function CompleteTaskModal({
       return;
     }
 
-    if (nextCallDateMissing || noteMissing || feedbackMissing) {
+    const verifyOnlyFromFooter = Boolean(
+      presalesMode && verifyHandoffMode && forcePresalesVerifyPanel,
+    );
+    if (
+      nextCallDateMissing ||
+      noteMissing ||
+      (feedbackMissing && !verifyOnlyFromFooter)
+    ) {
       return;
     }
 

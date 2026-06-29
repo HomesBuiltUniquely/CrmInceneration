@@ -784,6 +784,7 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
   const [error, setError] = useState<string | null>(null);
@@ -3175,12 +3176,30 @@ export default function LeadDetailsApiClient({
         {secondBoxError ? (
           <p className="mt-2 text-[12px] text-rose-600">{secondBoxError}</p>
         ) : null}
-        <FooterActions onSave={handleSave} saving={saving} />
+        <FooterActions
+          onSave={handleSave}
+          saving={saving}
+          onVerify={
+            usePresalesCompleteTask &&
+            canVerifyCurrentLead &&
+            !presalesHandedOff &&
+            !inSalesPhase
+              ? () => {
+                  setCompleteTaskVerifyFocus(true);
+                  setCompleteTaskOpen(true);
+                }
+              : undefined
+          }
+        />
       </div>
       <CompleteTaskModal
         lead={lead}
         open={completeTaskOpen}
-        onClose={() => setCompleteTaskOpen(false)}
+        onClose={() => {
+          setCompleteTaskOpen(false);
+          setCompleteTaskVerifyFocus(false);
+        }}
+        forcePresalesVerifyPanel={completeTaskVerifyFocus}
         onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
         onPresalesApiComplete={
           usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined
