@@ -6,12 +6,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import {
+  DEFAULT_BOOKING_DATE_FILTER,
+  type BookingDateFilterState,
+} from "@/lib/booking-token-date-filter";
 import "./booking-token.css";
 import KpiCards from "./components/KpiCards";
 import DealsTable from "./components/DealsTable";
 import RecentLedger from "./components/RecentLedger";
 import UrgentTasks from "./components/UrgentTasks";
 import PipelineVelocity from "./components/PipelineVelocity";
+import BookingTokenDateFilterPanel from "./components/BookingTokenDateFilterPanel";
 import type { BookingTokenTab } from "./types";
 
 const TAB_ITEMS: { id: BookingTokenTab; label: string }[] = [
@@ -27,6 +32,9 @@ export default function BookingTokenClient() {
   const fromBookingDone = searchParams.get("from") === "booking-done";
   const highlightId = searchParams.get("highlight") ?? "";
   const [tab, setTab] = useState<BookingTokenTab>("all");
+  const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
+    DEFAULT_BOOKING_DATE_FILTER,
+  );
   const [kpiRefresh, setKpiRefresh] = useState(0);
   const [role, setRole] = useState("SUPER_ADMIN");
   const [allowed, setAllowed] = useState(false);
@@ -59,6 +67,9 @@ export default function BookingTokenClient() {
   );
 
   const showDashboardExtras = tab !== "cancel";
+
+  const ledgerTab = tab === "cancel" ? "all" : tab;
+  const pipelineTab = tab === "cancel" ? "all" : tab;
 
   if (!allowed) {
     return (
@@ -106,25 +117,18 @@ export default function BookingTokenClient() {
                       key={item.id}
                       type="button"
                       onClick={() => setTab(item.id)}
-                      className={`rounded-md px-4 py-2 text-xs font-bold uppercase tracking-wide transition ${
-                        tab === item.id
-                          ? "bg-[var(--bt-navy)] text-white"
-                          : "text-[var(--bt-muted)] hover:text-[var(--bt-text)]"
+                      className={`bt-btn bt-btn-tab ${
+                        tab === item.id ? "bt-btn-tab-active" : ""
                       }`}
                     >
                       {item.label}
                     </button>
                   ))}
                 </div>
+                <BookingTokenDateFilterPanel value={dateFilter} onChange={setDateFilter} />
                 <button
                   type="button"
-                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--bt-border)] bg-[var(--bt-surface)] px-4 py-2 text-xs font-bold uppercase text-[var(--bt-text)] hover:bg-slate-50"
-                >
-                  Filter
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-lg border border-[var(--bt-border)] bg-[var(--bt-surface)] px-4 py-2 text-xs font-bold uppercase text-[var(--bt-text)] hover:bg-slate-50"
+                  className="bt-btn bt-btn-toolbar"
                 >
                   Export
                 </button>
@@ -138,20 +142,30 @@ export default function BookingTokenClient() {
                 </div>
               ) : null}
 
-              {showDashboardExtras ? <KpiCards refreshSignal={kpiRefresh} /> : null}
+              <KpiCards refreshSignal={kpiRefresh} dateFilter={dateFilter} tab={tab} />
 
               <DealsTable
                 tab={tab}
+                dateFilter={dateFilter}
                 onDealCancelled={() => setTab("cancel")}
                 onDealsChanged={() => setKpiRefresh((n) => n + 1)}
+                onConvertedToBooking={() => setTab("booking")}
               />
 
               {showDashboardExtras ? (
                 <>
-                  <RecentLedger />
+                  <RecentLedger
+                    refreshSignal={kpiRefresh}
+                    dateFilter={dateFilter}
+                    tab={ledgerTab}
+                  />
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     <UrgentTasks />
-                    <PipelineVelocity />
+                    <PipelineVelocity
+                      refreshSignal={kpiRefresh}
+                      dateFilter={dateFilter}
+                      tab={pipelineTab}
+                    />
                   </div>
                 </>
               ) : null}

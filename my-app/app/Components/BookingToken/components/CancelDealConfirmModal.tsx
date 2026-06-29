@@ -313,7 +313,7 @@ export default function CancelDealConfirmModal({
             type="button"
             onClick={handleClose}
             disabled={submitting}
-            className="rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] hover:bg-[#f3f4f6] disabled:opacity-50"
+            className="bt-btn bt-btn-modal-close disabled:opacity-50"
             aria-label="Close cancellation panel"
           >
             ×
@@ -392,14 +392,14 @@ export default function CancelDealConfirmModal({
                   <button
                     type="button"
                     onClick={selectAllPayments}
-                    className="text-[10px] font-semibold text-[#2563eb] hover:underline"
+                    className="bt-btn bt-btn-link"
                   >
                     Select all
                   </button>
                   <button
                     type="button"
                     onClick={clearPaymentSelection}
-                    className="text-[10px] font-semibold text-[#6b7280] hover:underline"
+                    className="bt-btn bt-btn-link text-[#6b7280]"
                   >
                     Clear
                   </button>
@@ -519,7 +519,7 @@ export default function CancelDealConfirmModal({
                   type="button"
                   onClick={handleClose}
                   disabled={submitting}
-                  className="flex-1 rounded-lg border border-[#d1d5db] px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] hover:bg-[#f9fafb] disabled:opacity-60"
+                  className="bt-btn bt-btn-modal bt-btn-modal-secondary disabled:opacity-60"
                 >
                   Keep booking
                 </button>
@@ -527,7 +527,7 @@ export default function CancelDealConfirmModal({
                   type="button"
                   onClick={handleSubmit}
                   disabled={submitting}
-                  className="flex-1 rounded-lg bg-red-600 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-white hover:bg-red-700 disabled:opacity-60"
+                  className="bt-btn bt-btn-modal bt-btn-modal-danger disabled:opacity-60"
                 >
                   {submitting
                     ? "Cancelling…"

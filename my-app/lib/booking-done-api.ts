@@ -183,6 +183,9 @@ export async function fetchBookingTokenDeals(opts?: {
   search?: string;
   /** Hub filter: token | booking | cancel — omit for All tab (token + booking) */
   listingType?: "token" | "booking" | "cancel";
+  /** ISO instant — filter by handoff / createdAt (inclusive) */
+  submittedFrom?: string;
+  submittedTo?: string;
 }): Promise<BookingTokenDealsResponse> {
   const params = new URLSearchParams();
   params.set("page", String(opts?.page ?? 0));
@@ -192,6 +195,12 @@ export async function fetchBookingTokenDeals(opts?: {
   }
   if (opts?.listingType) {
     params.set("listingType", opts.listingType);
+  }
+  if (opts?.submittedFrom) {
+    params.set("submittedFrom", opts.submittedFrom);
+  }
+  if (opts?.submittedTo) {
+    params.set("submittedTo", opts.submittedTo);
   }
 
   const res = await fetch(`/api/crm/booking-token/deals?${params.toString()}`, {
@@ -249,4 +258,32 @@ export async function cancelBookingTokenDeal(
     throw new Error(parseApiError(text, "Unable to cancel this booking deal."));
   }
   return JSON.parse(text) as BookingTokenCancelResponse;
+}
+
+export type BookingTokenConvertResponse = {
+  id: string;
+  listingType?: "booking" | "token" | string;
+  paymentKind?: string;
+  remainingAmount?: number;
+  bookingStatus?: string;
+};
+
+export async function convertBookingTokenDeal(
+  recordId: string,
+): Promise<BookingTokenConvertResponse> {
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/convert`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ confirm: true }),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to convert this deal to booking."));
+  }
+  return JSON.parse(text) as BookingTokenConvertResponse;
 }

@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { LedgerItem } from "../types";
-import { fetchBookingTokenDeals } from "@/lib/booking-done-api";
-import { bookingTokenDealToLedgerItem } from "@/lib/booking-token-leads";
+import { fetchPaymentHistory } from "@/lib/booking-payment-history-api";
+import {
+  bookingTokenDealToDealRow,
+  buildRecentLedgerItems,
+  RECENT_LEDGER_ITEM_LIMIT,
+} from "@/lib/booking-token-leads";
+import { fetchDashboardBookingTokenDeals } from "@/lib/booking-token-deals-fetch";
+import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
 
 function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
   const bg =
@@ -19,25 +25,54 @@ function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
   );
 }
 
-export default function RecentLedger() {
+type Props = {
+  refreshSignal?: number;
+  dateFilter: BookingDateFilterState;
+  tab: "all" | "token" | "booking";
+};
+
+export default function RecentLedger({ refreshSignal = 0, dateFilter, tab }: Props) {
   const [items, setItems] = useState<LedgerItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadLedger = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetchBookingTokenDeals({ page: 0, size: 5 });
-      setItems(response.deals.map(bookingTokenDealToLedgerItem));
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadLedger() {
+      setLoading(true);
+      try {
+        const deals = await fetchDashboardBookingTokenDeals({ tab, dateFilter });
+        const histories = new Map<
+          string,
+          Awaited<ReturnType<typeof fetchPaymentHistory>>["history"]
+        >();
+
+        await Promise.all(
+          deals.map(async (deal) => {
+            try {
+              const history = await fetchPaymentHistory(bookingTokenDealToDealRow(deal));
+              histories.set(deal.id, history.history);
+            } catch {
+              /* fall back to deal-level handoff row in buildRecentLedgerItems */
+            }
+          }),
+        );
+
+        if (!cancelled) {
+          setItems(buildRecentLedgerItems(deals, histories, RECENT_LEDGER_ITEM_LIMIT));
+        }
+      } catch {
+        if (!cancelled) setItems([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
     void loadLedger();
-  }, [loadLedger]);
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSignal, dateFilter, tab]);
 
   return (
     <section className="rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] p-5 shadow-sm">

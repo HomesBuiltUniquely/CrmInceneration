@@ -18,6 +18,12 @@ import {
 } from "@/lib/booking-payment-history-api";
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import PaymentProofViewModal from "./PaymentProofViewModal";
+import BookingLeadDetailsGrid from "./BookingLeadDetailsGrid";
+import {
+  EMPTY_BOOKING_LEAD_DETAILS,
+  fetchBookingLeadDetails,
+  type BookingLeadDetails,
+} from "@/lib/booking-token-lead-details";
 import {
   formatPaymentAmountInput,
   parsePaymentAmountInput,
@@ -102,6 +108,10 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [draftProofs, setDraftProofs] = useState<DraftProof[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [draftProofViewer, setDraftProofViewer] = useState<DraftProof | null>(null);
+  const [leadDetails, setLeadDetails] = useState<BookingLeadDetails>(EMPTY_BOOKING_LEAD_DETAILS);
+  const [loadingLead, setLoadingLead] = useState(false);
+
+  const isBookingView = mode === "view" && deal?.listingType === "booking";
 
   const summary = historyData ?? (deal ? buildSummaryFromDeal(deal) : null);
   const history = summary?.history ?? [];
@@ -129,8 +139,29 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setNotes("");
     setDraftProofs([]);
     setHistoryData(null);
+    setLeadDetails(EMPTY_BOOKING_LEAD_DETAILS);
     void loadHistory();
   }, [open, deal, loadHistory]);
+
+  useEffect(() => {
+    if (!open || !deal || !isBookingView) return;
+    let cancelled = false;
+    setLoadingLead(true);
+    void (async () => {
+      const details = await fetchBookingLeadDetails({
+        leadType: deal.leadType,
+        leadId: deal.leadId,
+        fallbackName: deal.customer,
+      });
+      if (!cancelled) {
+        setLeadDetails(details);
+        setLoadingLead(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deal, isBookingView, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -292,8 +323,65 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   if (!open || !deal || !summary) return null;
 
-  const title = mode === "pay" ? "Record Payment" : "Payment History";
+  const title = mode === "pay" ? "Record Payment" : isBookingView ? "Booking details" : "Payment History";
   const canPay = summary.remainingAmount > 0;
+
+  const paymentHistoryBlock = (
+    <div className="overflow-hidden rounded-xl border border-[#e5e7eb] bg-[#fafbfc]">
+      <div className="border-b border-[#eef1f5] bg-white px-4 py-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+          Payment history
+          {summary.summary ? (
+            <span className="ml-2 font-normal normal-case tracking-normal text-[#6b7280]">
+              · {summary.summary.paymentCount} payment
+              {summary.summary.paymentCount === 1 ? "" : "s"}
+            </span>
+          ) : null}
+        </p>
+      </div>
+      <div className="grid lg:grid-cols-2 lg:divide-x lg:divide-[#eef1f5]">
+        <div className="min-h-[200px] border-b border-[#eef1f5] lg:min-h-[240px] lg:border-b-0">
+          {loading ? (
+            <p className="px-4 py-8 text-center text-sm text-[#6b7280]">Loading history…</p>
+          ) : history.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-[#6b7280]">No payments recorded yet.</p>
+          ) : (
+            <ul>
+              {history.map((entry) => (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedEntryId(entry.id)}
+                    className={`bt-btn bt-btn-list-row ${
+                      selectedEntry?.id === entry.id ? "bt-btn-list-row-active" : ""
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[13px] font-bold text-[#111827]">
+                          Payment {entry.sequence} · {formatQuoteAmount(entry.amount)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-[#6b7280]">
+                          Paid {formatQuoteAmount(entry.cumulativeReceived)}
+                          {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-right text-[10px] leading-snug text-[#9ca3af]">
+                        {formatHistoryDate(entry.createdAt)}
+                      </p>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="min-h-[200px] bg-white p-4 lg:min-h-[240px]">
+          <HistoryDetailSection deal={deal} entry={selectedEntry} />
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -338,13 +426,52 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] hover:bg-[#f3f4f6]"
+            className="bt-btn bt-btn-modal-close"
             aria-label="Close payment panel"
           >
             ×
           </button>
         </div>
 
+        {isBookingView ? (
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
+            <div className="space-y-5">
+              <section>
+                <p className="border-b border-[#f1f5f9] pb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                  Lead details
+                </p>
+                <div className="mt-3">
+                  <BookingLeadDetailsGrid details={leadDetails} loading={loadingLead} />
+                </div>
+              </section>
+
+              <section>
+                <p className="border-b border-[#f1f5f9] pb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                  Deal summary
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                  <SummaryCard label="Lead ID" value={deal.leadIdentifier ?? `#${deal.leadId}`} />
+                  <SummaryCard label="Deal value" value={deal.dealValue} />
+                  <SummaryCard label="Token status" value={deal.tokenStatus.replace(/_/g, " ")} />
+                  <SummaryCard label="Booking status" value={deal.bookingStatus.replace(/_/g, " ")} />
+                  <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
+                  <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
+                  <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
+                  <SummaryCard label="Remaining (10%)" value={formatQuoteAmount(summary.remainingAmount)} />
+                </div>
+              </section>
+
+              {paymentHistoryBlock}
+
+              {error ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <>
         <div className="grid gap-3 border-b border-[#eef1f5] px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
           <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
           <SummaryCard label="10% amount" value={formatQuoteAmount(summary.tenPercentAmount)} />
@@ -381,8 +508,8 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                     <button
                       type="button"
                       onClick={() => setSelectedEntryId(entry.id)}
-                      className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left transition ${
-                        selectedEntry?.id === entry.id ? "bg-[#eff6ff]" : "hover:bg-[#f9fafb]"
+                      className={`bt-btn bt-btn-list-row ${
+                        selectedEntry?.id === entry.id ? "bt-btn-list-row-active" : ""
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -480,7 +607,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   type="button"
                   onClick={() => void handleSubmitPayment()}
                   disabled={submitting}
-                  className="flex h-10 w-full items-center justify-center rounded-lg bg-[var(--bt-navy)] text-[11px] font-bold uppercase tracking-wide text-white transition hover:brightness-110 disabled:opacity-60"
+                  className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
                 >
                   {submitting ? "Saving payment…" : "Save payment"}
                 </button>
@@ -488,6 +615,8 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             ) : null}
           </div>
         </div>
+          </>
+        )}
       </div>
 
       <PaymentProofViewModal
@@ -648,7 +777,7 @@ function PayFormSection({
       <button
         type="button"
         onClick={onUseRemaining}
-        className="mt-2 text-[11px] font-semibold text-[#2563eb] hover:underline"
+        className="bt-btn bt-btn-link mt-2"
       >
         Use full remaining ({formatQuoteAmount(remainingAmount)})
       </button>
@@ -687,7 +816,7 @@ function PayFormSection({
         <button
           type="button"
           onClick={onPickFiles}
-          className="mt-2 rounded-md border border-[#d1d5db] bg-white px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] hover:bg-[#f3f4f6]"
+          className="bt-btn bt-btn-upload"
         >
           Upload proofs
         </button>
@@ -709,7 +838,7 @@ function PayFormSection({
               <button
                 type="button"
                 onClick={() => onRemoveProof(proof.id)}
-                className="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold text-white"
+                className="bt-btn absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-black/80"
               >
                 Remove
               </button>

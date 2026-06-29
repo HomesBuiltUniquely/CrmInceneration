@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { ActivityItem } from "@/lib/data";
+import { formatCrmDateTime } from "@/lib/date-time-format";
 import {
   V2_BTN_ACTIVITY_OPEN,
   V2_BTN_FILTER_PILL,
@@ -34,9 +35,9 @@ type DisplayActivityItem = {
 };
 
 const MOCK_SUMMARY_ITEMS = [
-  { title: "Lead Created", time: "Oct 12, 09:15 AM", icon: "user-plus" as const },
-  { title: "Meeting Scheduled", time: "Nov 15, 02:30 PM", icon: "calendar" as const },
-  { title: "Call Logged", time: "Nov 22, 10:30 AM", icon: "phone" as const },
+  { id: "mock-1", title: "Lead Created", time: "Oct 12, 09:15 AM", icon: "user-plus" as const },
+  { id: "mock-2", title: "Meeting Scheduled", time: "Nov 15, 02:30 PM", icon: "calendar" as const },
+  { id: "mock-3", title: "Call Logged", time: "Nov 22, 10:30 AM", icon: "phone" as const },
 ];
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
@@ -97,11 +98,56 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
   return {
     id: activity.id,
     kind: mapApiTypeToKind(activity.type),
-    title: activity.description,
-    timestamp: activity.timestamp,
+    title: formatActivitySummaryTitle(activity.description),
+    timestamp: formatActivityDisplayTime(activity.timestamp),
     author: activity.by,
-    detail,
+    detail: formatActivityDetailText(detail),
   };
+}
+
+/** Short, readable label for sidebar summary rows. */
+function formatActivitySummaryTitle(raw: string): string {
+  const text = raw.trim();
+  if (!text) return "Activity";
+
+  const quoteMatch = text.match(/quote\s*link\s*set\s*to:\s*(https?:\/\/\S+)/i);
+  if (quoteMatch) {
+    try {
+      const url = new URL(quoteMatch[1]);
+      const quoteId = url.pathname.split("/").filter(Boolean).pop();
+      return quoteId ? `Quote link set · #${quoteId}` : "Quote link set";
+    } catch {
+      return "Quote link set";
+    }
+  }
+
+  const followUpMatch = text.match(
+    /follow\s*up\s*date\s*changed\s*from\s*(.+?)\s*to\s*(.+)/i,
+  );
+  if (followUpMatch) {
+    const next = formatActivityDisplayTime(followUpMatch[2].trim());
+    return `Follow-up date updated · ${next}`;
+  }
+
+  if (text.length > 80) return `${text.slice(0, 77)}…`;
+  return text;
+}
+
+function formatActivityDisplayTime(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "—";
+  const formatted = formatCrmDateTime(trimmed);
+  return formatted === "—" ? trimmed : formatted;
+}
+
+function formatActivityDetailText(value: string): string {
+  const text = value.trim();
+  if (!text) return "—";
+
+  return text.replace(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?/g,
+    (iso) => formatActivityDisplayTime(iso),
+  );
 }
 
 function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
@@ -132,6 +178,7 @@ const ActivityHistoryWithConnector = forwardRef<
     hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
   const summaryItems = hasApiActivities
     ? displayActivities.slice(0, 3).map((item) => ({
+        id: item.id,
         title: item.title,
         time: item.timestamp,
         icon:
@@ -266,17 +313,24 @@ const ActivityHistoryWithConnector = forwardRef<
   return (
     <>
       <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
-        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Activity History</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+          Activity History
+        </p>
 
-        <ul className="mt-3 space-y-3">
+        <ul className="mt-3 divide-y divide-[#f1f5f9]">
           {summaryItems.map((item) => (
-            <li key={item.title} className="flex items-start gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#f3f4f6] text-[#9ca3af]">
+            <li key={item.id} className="flex gap-3 py-3 first:pt-0 last:pb-0">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#6b7280]">
                 <SummaryIcon type={item.icon} />
               </div>
-              <div>
-                <p className="text-[13px] font-semibold text-[#111827]">{item.title}</p>
-                <p className="text-[11px] text-[#9ca3af]">{item.time}</p>
+              <div className="min-w-0 flex-1 self-center">
+                <p
+                  className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#111827]"
+                  title={item.title}
+                >
+                  {item.title}
+                </p>
+                <p className="mt-1 text-[11px] leading-none text-[#9ca3af]">{item.time}</p>
               </div>
             </li>
           ))}
@@ -406,16 +460,19 @@ const ActivityHistoryWithConnector = forwardRef<
                       <div className="flex items-start gap-3">
                         <KindBadge kind={item.kind} />
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center justify-between gap-2">
                             <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">
                               {item.kind}
                             </p>
                             <p className="shrink-0 text-[10px] text-[#9ca3af]">{item.timestamp}</p>
                           </div>
-                          <p className="mt-1 text-[12px] font-semibold leading-snug text-[#111827]">
+                          <p
+                            className="mt-1 line-clamp-2 text-[12px] font-semibold leading-snug text-[#111827]"
+                            title={item.title}
+                          >
                             {item.title}
                           </p>
-                          <p className="mt-1 text-[11px] text-[#9ca3af]">{item.author}</p>
+                          <p className="mt-1 truncate text-[11px] text-[#9ca3af]">{item.author}</p>
                         </div>
                       </div>
                     </button>
@@ -434,9 +491,9 @@ const ActivityHistoryWithConnector = forwardRef<
                   </div>
                   <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">{selected.title}</p>
                   <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
-                    <p className="text-[12px] text-[#6b7280]">—</p>
-                    <p className="mt-2 text-[12px] text-[#9ca3af]">→</p>
-                    <p className="mt-2 font-mono text-[12px] font-semibold text-[#10b981]">{selected.detail}</p>
+                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
+                      {selected.detail}
+                    </p>
                   </div>
                   <p className="mt-3 text-[11px] text-[#9ca3af]">👤 By: {selected.author}</p>
                 </div>

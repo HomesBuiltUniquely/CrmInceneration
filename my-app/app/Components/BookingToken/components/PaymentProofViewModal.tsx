@@ -162,7 +162,7 @@ export default function PaymentProofViewModal({
           <button
             type="button"
             onClick={closePanel}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-xl leading-none text-white hover:bg-white/20"
+            className="bt-btn bt-btn-modal-close-dark"
             aria-label="Close payment proof preview"
           >
             ×

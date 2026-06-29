@@ -135,6 +135,7 @@ import {
 } from "@/lib/presales-milestone-ui";
 import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
+import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
 import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
@@ -784,6 +785,7 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
@@ -942,6 +944,17 @@ export default function LeadDetailsApiClient({
     }
     void load();
   }, [load, validLeadType]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || uiVariant !== "v2") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bookingDone") !== "1") return;
+    setBookingDoneOpen(true);
+    params.delete("bookingDone");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [leadId, leadType, uiVariant]);
 
   const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
     Record<string, unknown> | null
@@ -2830,7 +2843,7 @@ export default function LeadDetailsApiClient({
     });
   };
 
-  const handleMarkAsWon = useCallback(async () => {
+  const handleMarkAsWon = useCallback(() => {
     const validationError = validateClosedLeadQuickAction({
       role: viewerRoleKey,
       lead,
@@ -2841,31 +2854,9 @@ export default function LeadDetailsApiClient({
     }
     if (!validLeadType) return;
 
-    try {
-      const prevStage =
-        baseDetail.stage && typeof baseDetail.stage === "object" && !Array.isArray(baseDetail.stage)
-          ? (baseDetail.stage as Record<string, unknown>)
-          : {};
-      await putLeadDetail(leadType, leadId, {
-        ...baseDetail,
-        stage: {
-          ...prevStage,
-          milestoneStage: "Closed",
-          milestoneStageCategory: "Closed Won",
-          milestoneSubStage: "Booking Done (Booking)",
-        },
-      });
-    } catch (error) {
-      notifyError(
-        error instanceof Error
-          ? error.message
-          : "Unable to update milestone before Booking Done.",
-      );
-      return;
-    }
-
-    window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
-  }, [baseDetail, lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
+    // Milestone updates after payment handoff — open popup on lead details (no full-page navigation).
+    setBookingDoneOpen(true);
+  }, [lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
 
   if (!validLeadType) {
     return (
@@ -3001,6 +2992,16 @@ export default function LeadDetailsApiClient({
           userRole={viewerRoleKey}
           presalesHandedOff={presalesHandedOff || inSalesPhase}
           onPhoneCall={handlePhoneCallLog}
+        />
+        <BookingDoneModal
+          open={bookingDoneOpen}
+          leadType={leadType}
+          leadId={leadId}
+          onClose={() => setBookingDoneOpen(false)}
+          onHandoffComplete={() => {
+            void load();
+            dispatchCrmLeadsInvalidate();
+          }}
         />
         {rollbackOpen ? (
           <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">

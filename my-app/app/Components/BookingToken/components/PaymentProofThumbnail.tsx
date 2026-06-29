@@ -82,7 +82,7 @@ export default function PaymentProofThumbnail({ recordId, proofId, fileName, mim
       <button
         type="button"
         onClick={() => setViewerOpen(true)}
-        className="w-full overflow-hidden rounded-lg border border-[#e5e7eb] bg-[#f9fafb] text-left hover:border-[#059669]"
+        className="bt-btn w-full overflow-hidden rounded-lg border border-[#e5e7eb] bg-[#f9fafb] text-left hover:border-[#059669] hover:shadow-md"
         title="Click to view full size"
       >
         {isPdf ? (
