@@ -27,8 +27,10 @@ export type AvailableSlotsResponse = {
 
 export type CreateAppointmentBody = {
   designerName: string;
-  date: string;
-  slotId: string;
+  date?: string;
+  slotId?: string;
+  startTime?: string;
+  endTime?: string;
   meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   description: string;
   leadType: string;
@@ -172,36 +174,6 @@ export async function fetchMyAppointments(): Promise<unknown[]> {
   return [];
 }
 
-export type DesignModuleDesigner = {
-  id: number;
-  name: string;
-  email: string;
-};
-
-/**
- * Fetch designers from Design Module (source of truth).
- * Returns { id, name, email } — name for slot matching, email for Google Calendar.
- */
-export async function fetchDesignersFromDesignModule(): Promise<DesignModuleDesigner[]> {
-  const res = await fetch("/api/crm/designers", {
-    cache: "no-store",
-    credentials: "include",
-    headers: getCrmAuthHeaders({ Accept: "application/json" }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-  const data = JSON.parse(text) as unknown;
-  if (
-    data &&
-    typeof data === "object" &&
-    "designers" in data &&
-    Array.isArray((data as { designers: unknown }).designers)
-  ) {
-    return (data as { designers: DesignModuleDesigner[] }).designers;
-  }
-  return [];
-}
-
 export async function deleteAppointment(id: number | string): Promise<void> {
   const res = await fetch(`/api/crm/appointment/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
@@ -213,12 +185,43 @@ export async function deleteAppointment(id: number | string): Promise<void> {
   if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
 }
 
+export async function fetchDesignerAppointments(designerName: string): Promise<unknown[]> {
+  const res = await fetch(`/api/crm/appointment/designer/${encodeURIComponent(designerName)}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+  let data: unknown;
+  try {
+    data = text ? JSON.parse(text) : [];
+  } catch {
+    throw new Error(text || "Invalid JSON");
+  }
+  return Array.isArray(data) ? data : [];
+}
+
 export async function createAppointment(body: CreateAppointmentBody): Promise<CreateAppointmentResponse> {
+  const payload: Record<string, unknown> = {
+    designerName: body.designerName,
+    description: body.description,
+    leadType: body.leadType,
+    leadId: body.leadId,
+  };
+  if (body.meetingType) payload.meetingType = body.meetingType;
+  if (body.startTime && body.endTime) {
+    payload.startTime = body.startTime;
+    payload.endTime = body.endTime;
+  } else if (body.date && body.slotId) {
+    payload.date = body.date;
+    payload.slotId = body.slotId;
+  }
   const res = await fetch("/api/crm/appointment", {
     method: "POST",
     credentials: "include",
     headers: authJson(),
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     cache: "no-store",
   });
   const text = await res.text();
