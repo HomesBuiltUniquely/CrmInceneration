@@ -2557,15 +2557,22 @@ export default function LeadDetailsApiClient({
 
         if (args.meetingAppointment) {
           const leadIdNum = Number(leadId);
-          const appt = await createAppointment({
+          const apptBody: import("@/lib/appointment-client").CreateAppointmentBody = {
             designerName: args.meetingAppointment.designerName,
-            date: args.meetingAppointment.date,
-            slotId: args.meetingAppointment.slotId,
             meetingType: args.meetingAppointment.meetingType,
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
-          });
+          };
+          if (args.meetingAppointment.startTime && args.meetingAppointment.endTime) {
+            apptBody.startTime = args.meetingAppointment.startTime;
+            apptBody.endTime = args.meetingAppointment.endTime;
+            apptBody.date = args.meetingAppointment.date;
+          } else if (args.meetingAppointment.slotId) {
+            apptBody.date = args.meetingAppointment.date;
+            apptBody.slotId = args.meetingAppointment.slotId;
+          }
+          const appt = await createAppointment(apptBody);
           if (typeof appt.startTime === "string" && appt.startTime.trim()) {
             followUpDate = appt.startTime;
             meetingDate = appt.startTime;
@@ -2697,9 +2704,15 @@ export default function LeadDetailsApiClient({
           updated.milestoneStage,
           updated.milestoneSubStage,
         ]);
-        void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
-          /* keep save fast even if note activity fails */
-        });
+        const trimmedNote = args.note.trim();
+        if (trimmedNote) {
+          try {
+            await postManualActivity(lt, leadId, "NOTE", trimmedNote);
+          } catch {
+            /* keep save success even if note activity fails */
+          }
+        }
+        await refreshActivities();
 
         const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
         if (emailPayload) {
@@ -2709,7 +2722,6 @@ export default function LeadDetailsApiClient({
             }
           });
         }
-        void refreshActivities();
       } catch (e) {
         throw new Error(mapMilestoneValidationError(e));
       }
