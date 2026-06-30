@@ -38,6 +38,10 @@ export type BookingTokenRecord = {
   createdAt?: string;
   updatedAt?: string;
   paymentProofCount?: number;
+  financeReviewStatus?: string;
+  financeReviewAt?: string | null;
+  financeReviewBy?: string | null;
+  financeRejectReason?: string | null;
 };
 
 export type BookingTokenDeal = {
@@ -62,6 +66,10 @@ export type BookingTokenDeal = {
   hubLeadId?: string;
   submittedAt: string;
   paymentProofCount?: number;
+  financeReviewStatus?: string;
+  financeReviewAt?: string | null;
+  financeReviewBy?: string | null;
+  financeRejectReason?: string | null;
 };
 
 export type BookingTokenDealsResponse = {
@@ -266,6 +274,8 @@ export type BookingTokenConvertResponse = {
   paymentKind?: string;
   remainingAmount?: number;
   bookingStatus?: string;
+  designLeadId?: number | null;
+  designSyncError?: string | null;
 };
 
 export async function convertBookingTokenDeal(
@@ -285,5 +295,11 @@ export async function convertBookingTokenDeal(
   if (!res.ok) {
     throw new Error(parseApiError(text, "Unable to convert this deal to booking."));
   }
-  return JSON.parse(text) as BookingTokenConvertResponse;
+  const parsed = JSON.parse(text) as BookingTokenConvertResponse;
+  if (parsed.designSyncError?.trim()) {
+    throw new Error(
+      `Booking converted in CRM, but Design Module finance sync failed: ${parsed.designSyncError.trim()}`,
+    );
+  }
+  return parsed;
 }

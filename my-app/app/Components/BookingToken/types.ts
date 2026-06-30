@@ -2,6 +2,12 @@ export type BookingTokenTab = "all" | "booking" | "token" | "cancel";
 
 export type BookingListingType = "token" | "booking" | "cancel";
 
+export type FinanceReviewStatus =
+  | "NOT_READY"
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED";
+
 export type TokenStatus = "issued" | "minting" | "pending";
 export type BookingStatus = "confirmed" | "in_progress" | "cancelled";
 
@@ -50,6 +56,10 @@ export type DealRow = {
   cancelledAt?: string | null;
   /** Set when row came from Booking Done handoff. */
   fromBookingDone?: boolean;
+  financeReviewStatus?: FinanceReviewStatus;
+  financeReviewAt?: string | null;
+  financeReviewBy?: string | null;
+  financeRejectReason?: string | null;
 };
 
 export type LedgerItem = {

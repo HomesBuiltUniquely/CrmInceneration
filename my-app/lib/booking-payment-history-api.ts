@@ -1,4 +1,5 @@
 import type { DealRow } from "@/app/Components/BookingToken/types";
+import type { FinanceReviewStatus } from "@/app/Components/BookingToken/types";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 
@@ -24,6 +25,10 @@ export type PaymentHistoryEntry = {
   notes?: string;
   createdAt: string;
   proofs: PaymentHistoryProof[];
+  financeReviewStatus?: FinanceReviewStatus | string;
+  financeReviewAt?: string | null;
+  financeReviewBy?: string | null;
+  financeRejectReason?: string | null;
 };
 
 export type PaymentHistoryResponse = {
@@ -36,11 +41,21 @@ export type PaymentHistoryResponse = {
   tenPercentAmount: number;
   amountReceived: number;
   remainingAmount: number;
+  financeReviewStatus?: FinanceReviewStatus | string;
+  financeReviewAt?: string | null;
+  financeReviewBy?: string | null;
+  financeRejectReason?: string | null;
+  financePaymentHistoryId?: string | null;
   history: PaymentHistoryEntry[];
   summary?: {
     paymentCount: number;
     proofCount: number;
     lastPaymentAt?: string | null;
+    financeReviewStatus?: FinanceReviewStatus | string;
+    financeReviewAt?: string | null;
+    financeReviewBy?: string | null;
+    financeRejectReason?: string | null;
+    financePaymentHistoryId?: string | null;
   };
 };
 
@@ -75,6 +90,10 @@ export function buildFallbackPaymentHistory(deal: DealRow): PaymentHistoryRespon
             notes: "Initial payment from Booking Done handoff",
             createdAt: new Date().toISOString(),
             proofs: [],
+            financeReviewStatus: deal.financeReviewStatus,
+            financeReviewAt: deal.financeReviewAt ?? null,
+            financeReviewBy: deal.financeReviewBy ?? null,
+            financeRejectReason: deal.financeRejectReason ?? null,
           },
         ]
       : [];
@@ -110,6 +129,58 @@ export async function fetchPaymentHistory(deal: DealRow): Promise<PaymentHistory
     throw new Error(parseApiError(text, "Unable to load payment history."));
   }
   const parsed = JSON.parse(text) as PaymentHistoryResponse;
+  return {
+    ...parsed,
+    history: Array.isArray(parsed.history) ? parsed.history : [],
+  };
+}
+
+export async function fetchPaymentHistoryEntry(
+  recordId: string,
+  paymentHistoryId: string,
+): Promise<PaymentHistoryEntry> {
+  const params = new URLSearchParams({ paymentHistoryId });
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payment-history/entry?${params.toString()}`,
+    {
+      credentials: "include",
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to load payment entry."));
+  }
+  return JSON.parse(text) as PaymentHistoryEntry;
+}
+
+export type RemoveBookingPaymentResponse = PaymentHistoryResponse & {
+  listingType?: string;
+  bookingStatus?: string;
+  tokenStatus?: string;
+  paymentKind?: string;
+};
+
+export async function removeBookingPayment(
+  recordId: string,
+  paymentHistoryId: string,
+): Promise<RemoveBookingPaymentResponse> {
+  const params = new URLSearchParams({ paymentHistoryId });
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payment-history/entry?${params.toString()}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to remove payment."));
+  }
+  const parsed = JSON.parse(text) as RemoveBookingPaymentResponse;
   return {
     ...parsed,
     history: Array.isArray(parsed.history) ? parsed.history : [],
@@ -152,7 +223,8 @@ export async function submitBookingPayment(
 
 /** Always route proof bytes through the Next.js BFF (img tags cannot send Bearer auth to Hub). */
 export function paymentProofViewUrl(recordId: string, proofId: string): string {
-  return `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payment-proofs/${encodeURIComponent(proofId)}/content`;
+  const params = new URLSearchParams({ proofId });
+  return `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payment-proof/content?${params.toString()}`;
 }
 
 export function formatPaymentSummaryLine(label: string, amount: number): string {

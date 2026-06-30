@@ -10,8 +10,16 @@ import {
   type DragEvent,
 } from "react";
 import type { DealRow } from "@/app/Components/BookingToken/types";
+import type { FinanceReviewStatus } from "@/app/Components/BookingToken/types";
+import {
+  financeReviewBadgeClass,
+  financeReviewLabel,
+  normalizeFinanceReviewStatus,
+  shouldShowFinanceReview,
+} from "@/lib/booking-token-finance-status";
 import {
   fetchPaymentHistory,
+  removeBookingPayment,
   submitBookingPayment,
   type PaymentHistoryEntry,
   type PaymentHistoryResponse,
@@ -100,6 +108,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 });
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
   const [historyData, setHistoryData] = useState<PaymentHistoryResponse | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
@@ -117,6 +126,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const history = summary?.history ?? [];
   const selectedEntry =
     history.find((entry) => entry.id === selectedEntryId) ?? history[history.length - 1] ?? null;
+  const lastHistoryEntry = history[history.length - 1] ?? null;
+  const canRemoveSelectedPayment =
+    selectedEntry != null &&
+    lastHistoryEntry?.id === selectedEntry.id &&
+    normalizeFinanceReviewStatus(selectedEntry.financeReviewStatus) !== "APPROVED";
 
   const loadHistory = useCallback(async () => {
     if (!deal) return;
@@ -321,6 +335,27 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     }
   }, [amountInput, deal, draftProofs, handleClose, loadHistory, mode, notes, onUpdated, summary]);
 
+  const handleRemovePayment = useCallback(async () => {
+    if (!deal || !selectedEntry) return;
+    const confirmed = window.confirm(
+      `Remove payment ${formatQuoteAmount(selectedEntry.amount)}? If 10% is no longer complete, the deal returns to the Token tab so you can Convert to Booking again.`,
+    );
+    if (!confirmed) return;
+
+    setRemoving(true);
+    setError("");
+    try {
+      const data = await removeBookingPayment(deal.id, selectedEntry.id);
+      setHistoryData(data);
+      setSelectedEntryId(data.history[data.history.length - 1]?.id ?? "");
+      onUpdated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to remove payment.");
+    } finally {
+      setRemoving(false);
+    }
+  }, [deal, onUpdated, selectedEntry]);
+
   if (!open || !deal || !summary) return null;
 
   const title = mode === "pay" ? "Record Payment" : isBookingView ? "Booking details" : "Payment History";
@@ -365,6 +400,17 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                           Paid {formatQuoteAmount(entry.cumulativeReceived)}
                           {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
                         </p>
+                        {entry.remainingAfter <= 0 &&
+                        shouldShowFinanceReview(
+                          normalizeFinanceReviewStatus(entry.financeReviewStatus),
+                          entry.remainingAfter,
+                        ) ? (
+                          <span
+                            className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase ${financeReviewBadgeClass(normalizeFinanceReviewStatus(entry.financeReviewStatus))}`}
+                          >
+                            Finance: {financeReviewLabel(normalizeFinanceReviewStatus(entry.financeReviewStatus))}
+                          </span>
+                        ) : null}
                       </div>
                       <p className="shrink-0 text-right text-[10px] leading-snug text-[#9ca3af]">
                         {formatHistoryDate(entry.createdAt)}
@@ -377,7 +423,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           )}
         </div>
         <div className="min-h-[200px] bg-white p-4 lg:min-h-[240px]">
-          <HistoryDetailSection deal={deal} entry={selectedEntry} />
+          <HistoryDetailSection
+            deal={deal}
+            entry={selectedEntry}
+            canRemove={canRemoveSelectedPayment}
+            removing={removing}
+            onRemove={() => void handleRemovePayment()}
+          />
         </div>
       </div>
     </div>
@@ -458,6 +510,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
                   <SummaryCard label="Remaining (10%)" value={formatQuoteAmount(summary.remainingAmount)} />
+                  {deal && shouldShowFinanceReview(deal.financeReviewStatus ?? "NOT_READY", deal.remainingAmount) ? (
+                    <SummaryCard
+                      label="Finance review"
+                      value={financeReviewLabel(deal.financeReviewStatus ?? "NOT_READY")}
+                      highlight={deal.financeReviewStatus === "PENDING"}
+                    />
+                  ) : null}
                 </div>
               </section>
 
@@ -578,7 +637,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   onPreviewProof={setDraftProofViewer}
                 />
               ) : (
-                <HistoryDetailSection deal={deal} entry={selectedEntry} />
+                <HistoryDetailSection
+                  deal={deal}
+                  entry={selectedEntry}
+                  canRemove={canRemoveSelectedPayment}
+                  removing={removing}
+                  onRemove={() => void handleRemovePayment()}
+                />
               )}
 
               {mode === "pay" && !canPay ? (
@@ -669,9 +734,15 @@ function SummaryCard({
 function HistoryDetailSection({
   deal,
   entry,
+  canRemove = false,
+  removing = false,
+  onRemove,
 }: {
   deal: DealRow;
   entry: PaymentHistoryEntry | null;
+  canRemove?: boolean;
+  removing?: boolean;
+  onRemove?: () => void;
 }) {
   if (!entry) {
     return <p className="text-sm text-[#6b7280]">Select a payment from the list.</p>;
@@ -679,7 +750,19 @@ function HistoryDetailSection({
 
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Payment detail</p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Payment detail</p>
+        {canRemove && onRemove ? (
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={removing}
+            className="shrink-0 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em] text-red-700 hover:bg-red-100 disabled:opacity-60"
+          >
+            {removing ? "Removing…" : "Remove payment"}
+          </button>
+        ) : null}
+      </div>
       <p className="mt-2 text-[14px] font-bold text-[#111827]">
         {formatQuoteAmount(entry.amount)} received
         {entry.paymentKind ? (
@@ -696,6 +779,21 @@ function HistoryDetailSection({
         <p className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3 text-[12px] text-[#374151]">
           {entry.notes}
         </p>
+      ) : null}
+      {entry.remainingAfter <= 0 &&
+      shouldShowFinanceReview(normalizeFinanceReviewStatus(entry.financeReviewStatus), entry.remainingAfter) ? (
+        <div className="mt-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Finance review</p>
+          <p className="mt-1 text-[13px] font-semibold text-[#111827]">
+            {financeReviewLabel(normalizeFinanceReviewStatus(entry.financeReviewStatus))}
+          </p>
+          {entry.financeReviewBy ? (
+            <p className="mt-1 text-[11px] text-[#6b7280]">By {entry.financeReviewBy}</p>
+          ) : null}
+          {entry.financeRejectReason ? (
+            <p className="mt-1 text-[11px] text-red-600">{entry.financeRejectReason}</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="mt-4">
         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">

@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import type { BookingStatus, BookingTokenTab, DealRow, TokenStatus } from "../types";
+import type { BookingStatus, BookingTokenTab, DealRow, FinanceReviewStatus, TokenStatus } from "../types";
+import {
+  financeReviewBadgeClass,
+  financeReviewLabel,
+  shouldShowFinanceReview,
+} from "@/lib/booking-token-finance-status";
 import BookingPaymentPanel, {
   type BookingPaymentPanelMode,
 } from "./BookingPaymentPanel";
@@ -40,25 +45,27 @@ const STICKY_ACTION_CELL =
 const ACTION_COL_WIDTH = "152px";
 
 const COLUMN_WIDTHS_WITH_REMAINING = [
-  "24%",
-  "10%",
-  "9%",
-  "9%",
+  "22%",
   "9%",
   "8%",
   "8%",
   "8%",
+  "7%",
+  "7%",
+  "7%",
+  "7%",
   ACTION_COL_WIDTH,
 ] as const;
 
 const COLUMN_WIDTHS_WITHOUT_REMAINING = [
-  "28%",
-  "12%",
-  "11%",
-  "11%",
+  "25%",
   "10%",
-  "10%",
-  "10%",
+  "9%",
+  "9%",
+  "9%",
+  "8%",
+  "8%",
+  "8%",
   ACTION_COL_WIDTH,
 ] as const;
 
@@ -118,6 +125,30 @@ function BookingStatusText({ status }: { status: BookingStatus }) {
     return <span className="text-[10px] font-bold uppercase text-emerald-600">Confirmed</span>;
   }
   return <span className="text-[10px] font-bold uppercase text-orange-600">In Progress</span>;
+}
+
+function FinanceReviewBadge({
+  status,
+  remainingAmount,
+  rejectReason,
+}: {
+  status?: FinanceReviewStatus;
+  remainingAmount: number;
+  rejectReason?: string | null;
+}) {
+  const normalized = status ?? "NOT_READY";
+  if (!shouldShowFinanceReview(normalized, remainingAmount)) {
+    return <span className="text-[10px] text-[var(--bt-muted)]">—</span>;
+  }
+  const label = financeReviewLabel(normalized);
+  return (
+    <span
+      className={`inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase ${financeReviewBadgeClass(normalized)}`}
+      title={normalized === "REJECTED" && rejectReason ? rejectReason : undefined}
+    >
+      {label}
+    </span>
+  );
 }
 
 function DealRowActions({
@@ -251,7 +282,7 @@ export default function DealsTable({
     [displayRows],
   );
 
-  const columnCount = showRemainingColumn ? 9 : 8;
+  const columnCount = showRemainingColumn ? 10 : 9;
   const columnWidths = showRemainingColumn
     ? COLUMN_WIDTHS_WITH_REMAINING
     : COLUMN_WIDTHS_WITHOUT_REMAINING;
@@ -456,6 +487,7 @@ export default function DealsTable({
                 {showRemainingColumn ? <th className={MONEY_HEAD}>Remaining</th> : null}
                 <th className={STATUS_HEAD}>Token</th>
                 <th className={STATUS_HEAD}>Booking</th>
+                <th className={STATUS_HEAD}>Finance</th>
                 <th className={`${MONEY_HEAD} text-center`}>Exp. Close</th>
                 <th className={STICKY_ACTION_HEAD}>Action</th>
               </tr>
@@ -531,6 +563,13 @@ export default function DealsTable({
                     </td>
                     <td className={STATUS_CELL}>
                       <BookingStatusText status={row.bookingStatus} />
+                    </td>
+                    <td className={STATUS_CELL}>
+                      <FinanceReviewBadge
+                        status={row.financeReviewStatus}
+                        remainingAmount={row.remainingAmount}
+                        rejectReason={row.financeRejectReason}
+                      />
                     </td>
                     <td className={`${MONEY_CELL} text-center text-[10px] text-[var(--bt-muted)]`}>
                       {row.expClosing}

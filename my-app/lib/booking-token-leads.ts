@@ -17,6 +17,7 @@ import {
   resolveListingType,
 } from "@/lib/booking-token-listing-type";
 import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
+import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status";
 import type { BookingTokenDeal } from "@/lib/booking-done-api";
 import type { PaymentHistoryEntry } from "@/lib/booking-payment-history-api";
 import type { BookingStatus, DealRow, LedgerItem, TokenStatus } from "@/app/Components/BookingToken/types";
@@ -175,6 +176,10 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     cancellationReason: deal.cancellationReason ?? null,
     cancelledAt: deal.cancelledAt ?? null,
     fromBookingDone: true,
+    financeReviewStatus: normalizeFinanceReviewStatus(deal.financeReviewStatus),
+    financeReviewAt: deal.financeReviewAt ?? null,
+    financeReviewBy: deal.financeReviewBy ?? null,
+    financeRejectReason: deal.financeRejectReason ?? null,
   };
 }
 

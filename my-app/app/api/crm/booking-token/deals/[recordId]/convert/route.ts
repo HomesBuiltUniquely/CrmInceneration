@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import { bookingTokenConvertUpstreamCandidates } from "@/lib/booking-token-upstream";
+import { syncConvertBookingToDesignModule } from "@/lib/design-module-hub-sync";
 
 export async function POST(
   req: NextRequest,
@@ -38,11 +39,25 @@ export async function POST(
             remainingAmount?: number | null;
             listingType?: string | null;
           };
+          let designSync: { designLeadId?: number } | null = null;
+          let designSyncError: string | null = null;
+          try {
+            designSync = await syncConvertBookingToDesignModule(recordId, headers, req.nextUrl.origin);
+          } catch (syncErr) {
+            designSyncError =
+              syncErr instanceof Error ? syncErr.message : "Design Module finance sync failed";
+            console.warn("[booking-token/convert] design module sync failed", {
+              recordId,
+              error: designSyncError,
+            });
+          }
           return NextResponse.json(
             {
               ...parsed,
               listingType: "booking",
               bookingStatus: parsed.bookingStatus ?? "confirmed",
+              designLeadId: designSync?.designLeadId ?? null,
+              designSyncError,
             },
             { status: res.status },
           );

@@ -634,6 +634,56 @@ async function postExternalIntakeLead(args: {
       `External intake failed (${res.status})${msg ? `: ${msg}` : ""}`,
     );
   }
+}
+
+async function postDesignModuleCrmLeadUpsert(args: {
+  leadType: CrmLeadType;
+  leadId: number;
+  leadIdentifier: string;
+  projectName?: string;
+  contactNo?: string;
+  clientEmail?: string;
+  designerName?: string;
+  schedule?: {
+    appointmentDate?: string;
+    appointmentSlot?: string;
+    scheduleTimezone?: string;
+  };
+}): Promise<void> {
+  if (!args.leadIdentifier.trim() || !Number.isFinite(args.leadId)) {
+    return;
+  }
+  const body: Record<string, unknown> = {
+    leadType: args.leadType,
+    leadId: args.leadId,
+    leadIdentifier: args.leadIdentifier.trim(),
+    externalLeadId: args.leadIdentifier.trim(),
+  };
+  if (args.projectName?.trim()) body.projectName = args.projectName.trim();
+  if (args.contactNo?.trim()) body.contactNo = args.contactNo.trim();
+  if (args.clientEmail?.trim()) body.clientEmail = args.clientEmail.trim();
+  if (args.designerName?.trim()) body.designerName = args.designerName.trim();
+  if (args.schedule?.appointmentDate?.trim()) {
+    body.appointmentDate = args.schedule.appointmentDate.trim();
+  }
+  if (args.schedule?.appointmentSlot?.trim()) {
+    body.appointmentSlot = args.schedule.appointmentSlot.trim();
+  }
+  if (args.schedule?.scheduleTimezone?.trim()) {
+    body.scheduleTimezone = args.schedule.scheduleTimezone.trim();
+  }
+
+  const res = await fetch("/api/crm/design-module/crm-lead/upsert", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(
+      `Design Module CRM lead upsert failed (${res.status})${msg ? `: ${msg}` : ""}`,
+    );
+  }
 } 
 
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
@@ -2702,12 +2752,48 @@ export default function LeadDetailsApiClient({
               schedule.designerName
                 ? schedule
                 : undefined,
-          }).catch((e) => {
-            console.error(
-              "External intake API call failed after meeting schedule:",
-              e,
-            );
-          });
+          })
+            .then(() => {
+              const numericLeadId = Number(
+                baseDetail.id ?? baseDetail.leadId ?? lead.id,
+              );
+              const externalLeadId =
+                typeof lead.leadId === "string" && lead.leadId.trim()
+                  ? lead.leadId.trim()
+                  : String(baseDetail.leadId ?? baseDetail.externalLeadId ?? "").trim();
+              if (Number.isFinite(numericLeadId) && externalLeadId) {
+                void postDesignModuleCrmLeadUpsert({
+                  leadType: lt,
+                  leadId: numericLeadId,
+                  leadIdentifier: externalLeadId,
+                  projectName:
+                    lead.fullName?.trim() ||
+                    String(baseDetail.fullName ?? baseDetail.customerName ?? "").trim(),
+                  contactNo: String(
+                    baseDetail.phone ??
+                      baseDetail.phoneNumber ??
+                      baseDetail.mobile ??
+                      "",
+                  ).trim(),
+                  clientEmail: String(
+                    baseDetail.email ?? baseDetail.emailAddress ?? "",
+                  ).trim(),
+                  designerName: args.meetingAppointment.designerName,
+                  schedule,
+                }).catch((e) => {
+                  console.error(
+                    "Design Module CRM lead upsert failed after meeting schedule:",
+                    e,
+                  );
+                });
+              }
+            })
+            .catch((e) => {
+              console.error(
+                "External intake API call failed after meeting schedule:",
+                e,
+              );
+            });
         }
 
         if (
