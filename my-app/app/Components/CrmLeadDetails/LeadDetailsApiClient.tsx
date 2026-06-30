@@ -2046,7 +2046,7 @@ export default function LeadDetailsApiClient({
   );
 
   const handleConnectionPhaseSave = useCallback(async () => {
-    await persistLeadDetailFields("Connection phase saved.");
+    await persistLeadDetailFields("Discovery phase saved.");
   }, [persistLeadDetailFields]);
 
   const handleSendQuote = useCallback(async () => {
@@ -2660,6 +2660,7 @@ export default function LeadDetailsApiClient({
           : (args.nextCallDateLocal.trim() || lead.followUpDate);
         let meetingDate = lead.meetingDate;
         let designerName = lead.designerName;
+        let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
 
         if (args.meetingAppointment) {
           const leadIdNum = Number(leadId);
@@ -2672,6 +2673,9 @@ export default function LeadDetailsApiClient({
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
           });
+          if (typeof appt.meetingType === "string" && appt.meetingType.trim()) {
+            meetingType = appt.meetingType.trim();
+          }
           if (typeof appt.startTime === "string" && appt.startTime.trim()) {
             followUpDate = appt.startTime;
             meetingDate = appt.startTime;
@@ -2745,7 +2749,7 @@ export default function LeadDetailsApiClient({
           meetingDate,
           followUpDate,
           designerName,
-          meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
+          meetingType: meetingType ?? lead.meetingType,
           status: persistedSubstage,
           stageBlock: nextStage,
           budget: args.budget ?? lead.budget,
@@ -2785,6 +2789,7 @@ export default function LeadDetailsApiClient({
           activities: prev.activities,
           bookingType: leadForSave.bookingType || prev.bookingType,
           salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
+          meetingType: leadForSave.meetingType || prev.meetingType,
           stageBlock: nextStage,
           quoteLink: stickyQuote || prev.quoteLink || "",
         }));

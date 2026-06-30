@@ -164,3 +164,75 @@ export async function createAppointment(body: CreateAppointmentBody): Promise<Cr
   }
   return parsed;
 }
+
+export type AppointmentRow = {
+  id?: number;
+  leadId?: number;
+  meetingType?: string;
+  startTime?: string;
+  endTime?: string;
+  createdAt?: string;
+  designerName?: string;
+};
+
+function parseAppointmentRows(data: unknown): AppointmentRow[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter((row): row is AppointmentRow => Boolean(row) && typeof row === "object");
+}
+
+/** Existing API: GET /v1/Appointment/designer/{designerName} */
+export async function fetchAppointmentsByDesigner(designerName: string): Promise<AppointmentRow[]> {
+  const name = designerName.trim();
+  if (!name) return [];
+
+  const res = await fetch(`/api/crm/appointment/designer/${encodeURIComponent(name)}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  if (!res.ok) return [];
+
+  try {
+    return parseAppointmentRows(JSON.parse(text));
+  } catch {
+    return [];
+  }
+}
+
+function pickLatestAppointmentForLead(
+  rows: AppointmentRow[],
+  leadId: number | string,
+): AppointmentRow | null {
+  const numericLeadId = Number(leadId);
+  if (!Number.isFinite(numericLeadId)) return null;
+
+  const matches = rows.filter((row) => Number(row.leadId) === numericLeadId);
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => {
+    const aKey = String(a.createdAt ?? a.startTime ?? "");
+    const bKey = String(b.createdAt ?? b.startTime ?? "");
+    return bKey.localeCompare(aKey);
+  });
+
+  return matches[0] ?? null;
+}
+
+/**
+ * Resolve meeting type from existing appointment GET APIs (no dedicated lead endpoint).
+ * Prefers designer-scoped list when designerName is known; otherwise GET /v1/Appointment.
+ */
+export async function resolveMeetingTypeForLead(
+  leadId: number | string,
+  options: { designerName?: string } = {},
+): Promise<string | null> {
+  const designerName = options.designerName?.trim() ?? "";
+  const rows = designerName
+    ? await fetchAppointmentsByDesigner(designerName)
+    : parseAppointmentRows(await fetchMyAppointments());
+
+  const latest = pickLatestAppointmentForLead(rows, leadId);
+  const meetingType = latest?.meetingType?.trim();
+  return meetingType || null;
+}
