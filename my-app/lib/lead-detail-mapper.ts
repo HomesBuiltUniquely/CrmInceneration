@@ -640,7 +640,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     bookingType: pickStr(detail, "bookingType", "booking_type", "BookingType") || "",
-    meetingType: pickStr(detail, "meetingType", "meeting") || "",
+    meetingType: pickStr(detail, "meetingType", "meeting_type", "meeting") || "",
     propertyNotes: pickPropertyNotesFromDetail(detail, leadType),
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",

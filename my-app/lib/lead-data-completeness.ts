@@ -41,9 +41,9 @@ export function buildLeadDataCompletenessItems(
     },
     {
       id: "location",
-      label: "Property location",
-      complete: isFilled(lead.propertyLocation) || isFilled(lead.pincode),
-      scrollTargetId: "deal-property",
+      label: "Pincode",
+      complete: isFilled(lead.pincode) || isFilled(lead.propertyLocation),
+      scrollTargetId: "deal-overview",
     },
     {
       id: "budget",
@@ -61,13 +61,13 @@ export function buildLeadDataCompletenessItems(
       id: "booking-type",
       label: "Booking type",
       complete: !gateMissing.has("Booking type"),
-      scrollTargetId: "deal-scope-of-work",
+      scrollTargetId: "deal-property",
     },
     {
       id: "floor-plan",
       label: "Floor Plan",
       complete: hasFloorPlan(lead),
-      scrollTargetId: "deal-experience-floor-plan",
+      scrollTargetId: "deal-connection-floor-plan",
     },
     {
       id: "scope-of-work",

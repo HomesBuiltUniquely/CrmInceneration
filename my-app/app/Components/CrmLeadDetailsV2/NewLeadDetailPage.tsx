@@ -34,37 +34,48 @@ import {
   toPutRequirementsBody,
   type ConfigurationScopeRequirements,
 } from "@/lib/configuration-scope-client";
+import { resolveMeetingTypeForLead } from "@/lib/appointment-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { BUDGET_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
+import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
 import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
-import { meetingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
+import {
+  bookingTypeDisplay,
+  meetingTypeDisplay,
+  resolveLeadDetailUiPhase,
+  resolveLeadDisplayIdentifier,
+  resolvePhaseAccessState,
+  type LeadDetailUiPhaseId,
+  type PhaseAccessState,
+} from "@/lib/lead-detail-v2-display";
 import { resolveLeadPhoneDisplayForRole } from "@/lib/lead-display";
 import { formatCrmDateTime } from "@/lib/date-time-format";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, Lead } from "@/lib/data";
 
-type ConnectionPhaseDraft = Pick<
+type DiscoveryPhaseDraft = Pick<
   Lead,
-  "propertyLocation" | "budget" | "language" | "configuration" | "propertyNotes"
+  "propertyLocation" | "budget" | "language" | "configuration" | "propertyNotes" | "bookingType"
 >;
 
-function readConnectionPhaseDraft(lead: Lead): ConnectionPhaseDraft {
+function readDiscoveryPhaseDraft(lead: Lead): DiscoveryPhaseDraft {
   return {
     propertyLocation: lead.propertyLocation ?? "",
     budget: lead.budget ?? "",
     language: lead.language ?? "",
     configuration: lead.configuration ?? "",
     propertyNotes: lead.propertyNotes ?? "",
+    bookingType: lead.bookingType ?? "",
   };
 }
 
-function connectionPhaseDraftsEqual(a: ConnectionPhaseDraft, b: ConnectionPhaseDraft): boolean {
+function discoveryPhaseDraftsEqual(a: DiscoveryPhaseDraft, b: DiscoveryPhaseDraft): boolean {
   return (
     a.propertyLocation === b.propertyLocation &&
     a.budget === b.budget &&
     a.language === b.language &&
     a.configuration === b.configuration &&
-    a.propertyNotes === b.propertyNotes
+    a.propertyNotes === b.propertyNotes &&
+    a.bookingType === b.bookingType
   );
 }
 
@@ -74,21 +85,21 @@ type Props = {
 };
 
 type PhaseItem = {
-  id: string;
+  id: LeadDetailUiPhaseId;
   title: string;
-  badge?: string;
-  muted?: boolean;
 };
 
 const phaseItems: PhaseItem[] = [
-  { id: "connection", title: "1. Connection Phase" },
-  { id: "experience", title: "2. Experience Phase", badge: "Current Phase" },
-  { id: "decision", title: "3. Decision Phase", muted: true },
+  { id: "discovery", title: "1. Discovery Phase" },
+  { id: "connection", title: "2. Connection Phase" },
+  { id: "experience", title: "3. Experience Phase" },
+  { id: "decision", title: "4. Decision Phase" },
 ];
 
 export default function NewLeadDetailPage({ leadType, leadId }: Props) {
   const { lead } = useLeadDetailV2();
   const activityPanelRef = useRef<ActivityHistoryHandle>(null);
+  const currentPhaseId = resolveLeadDetailUiPhase(lead);
 
   const openActivityPanel = useCallback(() => {
     activityPanelRef.current?.openPanel();
@@ -117,28 +128,40 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
 
               <section className="space-y-3">
                 {phaseItems.map((phase) => {
-                  if (phase.id === "experience") {
-                    return <ExperiencePhaseCard key={phase.id} leadType={leadType} leadId={leadId} />;
-                  }
-                  if (phase.id === "decision") {
+                  const accessState = resolvePhaseAccessState(currentPhaseId, phase.id);
+                  if (phase.id === "discovery") {
                     return (
-                      <div key={phase.id} id="deal-blockers" className="scroll-mt-24">
-                        <DecisionPhaseCard />
+                      <div key={phase.id} id="deal-property" className="scroll-mt-24">
+                        <DiscoveryPhaseCard accessState={accessState} />
                       </div>
                     );
                   }
                   if (phase.id === "connection") {
                     return (
-                      <div key={phase.id} id="deal-property" className="scroll-mt-24">
-                        <ConnectionPhaseCard />
+                      <div key={phase.id} id="deal-connection" className="scroll-mt-24">
+                        <ConnectionPhaseCard accessState={accessState} />
+                      </div>
+                    );
+                  }
+                  if (phase.id === "experience") {
+                    return (
+                      <ExperiencePhaseCard
+                        key={phase.id}
+                        leadType={leadType}
+                        leadId={leadId}
+                        accessState={accessState}
+                      />
+                    );
+                  }
+                  if (phase.id === "decision") {
+                    return (
+                      <div key={phase.id} id="deal-blockers" className="scroll-mt-24">
+                        <DecisionPhaseCard accessState={accessState} />
                       </div>
                     );
                   }
                   return null;
                 })}
-                <div id="deal-follow-ups" className="scroll-mt-24">
-                  <MeetingScheduleSection />
-                </div>
               </section>
             </div>
           </section>
@@ -157,9 +180,6 @@ function LeadDetailHeader() {
     createdTimelineLoading,
     selectedTimelineValue,
     onCreatedTimelineChange,
-    canShowGetQuote,
-    onGetQuote,
-    quoteFetching,
     canStageRollback,
     onOpenStageRollback,
     onCompleteTask,
@@ -230,18 +250,6 @@ function LeadDetailHeader() {
 
         <div className="w-full lg:mb-8">
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
-            <AssigneeBadge name={lead.assignee || "—"} />
-            {canShowGetQuote ? (
-              <button
-                type="button"
-                onClick={onGetQuote}
-                disabled={quoteFetching}
-                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#c4b5fd] bg-[#f5f3ff] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#5b21b6] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
-              >
-                <span aria-hidden>🔎</span>
-                {quoteFetching ? "Getting Quote..." : "Get Quote"}
-              </button>
-            ) : null}
             {canStageRollback ? (
               <button
                 type="button"
@@ -441,24 +449,6 @@ function CreatedMetaChip({ createdAt }: { createdAt: string }) {
       <span aria-hidden>🕐</span>
       <span>Created {createdAt}</span>
     </span>
-  );
-}
-
-function AssigneeBadge({ name }: { name: string }) {
-  const initials =
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((w) => w[0])
-      .join("") || "—";
-
-  return (
-    <div className="inline-flex h-10 items-center gap-2 rounded-[8px] border border-[#dde3ec] bg-white px-3 text-[13px] font-semibold text-[#1f2937]">
-      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-[#60a5fa] to-[#a78bfa] text-[10px] font-bold text-white">
-        {initials}
-      </div>
-      {name}
-    </div>
   );
 }
 
@@ -755,12 +745,47 @@ function FamilyContactCard() {
   );
 }
 
-function DecisionPhaseCard() {
+function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
+  const { lead, leadType, leadId } = useLeadDetailV2();
+  const isLocked = accessState === "locked";
+  const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
+  const [expectedTimeline, setExpectedTimeline] = useState("");
+  const [timelineLoading, setTimelineLoading] = useState(true);
+
+  useEffect(() => {
+    if (!validLeadType) {
+      setTimelineLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setTimelineLoading(true);
+
+    void (async () => {
+      try {
+        const data = await getConfigurationScopeRequirements(validLeadType, leadId);
+        if (cancelled) return;
+        setExpectedTimeline(data.expectedTimeline?.trim() ?? "");
+      } catch {
+        if (!cancelled) setExpectedTimeline("");
+      } finally {
+        if (!cancelled) setTimelineLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, validLeadType]);
+
+  const salesPersonName = lead.assignee?.trim() || "—";
+  const timelineDisplay = timelineLoading ? "Loading…" : expectedTimeline || "Not set";
+
   return (
-    <article className="rounded-xl border border-[#e6ebf1] bg-[#f5f7fa] p-4">
+    <PhaseCardShell accessState={accessState}>
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] bg-[#e8ecf1] text-[#9ca3af]">
+          <div className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] bg-[#d4f5e2]">
             <svg
               viewBox="0 0 24 24"
               className="h-3.5 w-3.5"
@@ -777,214 +802,32 @@ function DecisionPhaseCard() {
               <path d="m12 7 5 5" />
             </svg>
           </div>
-          <h2 className="text-[22px] font-semibold leading-none text-[#9ca3af]">3. Decision Phase</h2>
+          <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">
+            4. Decision Phase
+          </h2>
         </div>
-        <svg
-          viewBox="0 0 24 24"
-          className="h-4 w-4 text-[#c4cad4]"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-        </svg>
+        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <LockedField label="Final Budget" />
-        <LockedField label="Decision Maker" />
-        <LockedField label="Timeline" />
-      </div>
-    </article>
+      <PhaseAccessGate locked={isLocked}>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <LockedField label="Final Budget" />
+          <DecisionReadField label="Decision Maker" value={salesPersonName} />
+          <DecisionReadField label="Timeline" value={timelineDisplay} />
+        </div>
+      </PhaseAccessGate>
+    </PhaseCardShell>
   );
 }
 
-function MeetingScheduleSection() {
-  const {
-    lead,
-    quoteSending,
-    quoteLinkPersisting,
-    quoteLinkPersistError,
-    onSendQuote,
-    onRetrySaveQuoteLink,
-    onDesignQaLinkCopied,
-    designQaLink,
-    apiDesignQaLink,
-    meetingDateDisplay,
-    followUpDateDisplay,
-  } = useLeadDetailV2();
-  const [copiedDesignQa, setCopiedDesignQa] = useState(false);
-
-  const calendarIcon = (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-3.5 w-3.5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  );
-
+function DecisionReadField({ label, value }: { label: string; value: string }) {
   return (
-    <article className="rounded-lg border border-[#e4e8ef] bg-white p-4">
-      <div className="mb-1 flex items-center gap-2.5">
-        <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] bg-[#ede9fe] text-[#7c3aed]">
-          <svg
-            viewBox="0 0 24 24"
-            className="h-3.5 w-3.5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-          </svg>
-        </span>
-        <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">Schedule</h2>
+    <div>
+      <PhaseFieldLabel>{label}</PhaseFieldLabel>
+      <div className="flex min-h-[42px] items-center rounded-lg border border-[#e4e8ef] bg-[#fafbfc] px-3 py-2.5">
+        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">{value}</span>
       </div>
-      <p className="mb-4 text-[12px] text-[#8a96a8]">
-        Read-only — updated from Complete Task (meeting milestones) and CRM follow-up.
-      </p>
-
-      <div className="grid gap-x-10 gap-y-5 sm:grid-cols-2">
-        <div>
-          <PhaseFieldLabel>Meeting Date</PhaseFieldLabel>
-          <ValuePill icon={calendarIcon}>{meetingDateDisplay || "Not scheduled"}</ValuePill>
-        </div>
-        <div>
-          <PhaseFieldLabel>Follow-up Date</PhaseFieldLabel>
-          <ValuePill icon={calendarIcon}>{followUpDateDisplay || "Not scheduled"}</ValuePill>
-        </div>
-        <div>
-          <PhaseFieldLabel>Meeting Type</PhaseFieldLabel>
-          <ValuePill
-            icon={
-              <svg
-                viewBox="0 0 24 24"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            }
-          >
-            {meetingTypeDisplay(lead.meetingType ?? "")}
-          </ValuePill>
-        </div>
-      </div>
-
-      <div className="mt-4 border-t border-[var(--crm-border)] pt-4">
-        <FieldLabel>Quote link</FieldLabel>
-        <div className="mt-1.5 flex gap-2">
-          <Input
-            placeholder="https://… (PDF or proposal URL)"
-            value={lead.quoteLink ?? ""}
-            readOnly
-            className="flex-1"
-          />
-          <button
-            type="button"
-            disabled={quoteSending || quoteLinkPersisting}
-            onClick={() => void onSendQuote()}
-            className={`inline-flex h-10 shrink-0 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
-          >
-            {quoteSending ? "Sending…" : "Send"}
-          </button>
-        </div>
-        {quoteLinkPersisting ? (
-          <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">Saving quote link…</p>
-        ) : null}
-        {quoteLinkPersistError ? (
-          <div className="mt-1 flex items-center gap-2 text-[11px] text-[#dc2626]">
-            <span>{quoteLinkPersistError}</span>
-            {onRetrySaveQuoteLink ? (
-              <button
-                type="button"
-                onClick={() => void onRetrySaveQuoteLink()}
-                className={`font-semibold underline ${V2_LINK_TEXT}`}
-              >
-                Retry
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <p className="mt-1 text-[11px] text-[var(--crm-text-muted)]">
-          Auto-mapped quote link (read-only). Use Send to email quote.
-        </p>
-      </div>
-
-      {designQaLink ? (
-        <div className="mt-3.5">
-        <FieldLabel>
-          Design QA Link
-          <span className="ml-1.5 font-normal normal-case text-[var(--crm-text-muted)]">
-            (read-only, from CRM)
-          </span>
-        </FieldLabel>
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <Input
-            value={apiDesignQaLink || designQaLink}
-            readOnly
-            className="h-[34px] min-w-0 flex-1 px-2.5 text-[11px]"
-          />
-          <button
-            type="button"
-            aria-label="Copy Design QA Link"
-            className={`inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-md border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-primary)] ${V2_BTN_ICON}`}
-            onClick={() => {
-              const value = apiDesignQaLink || designQaLink;
-              void navigator.clipboard.writeText(value).then(() => {
-                void onDesignQaLinkCopied?.(value);
-                setCopiedDesignQa(true);
-                window.setTimeout(() => setCopiedDesignQa(false), 2000);
-              });
-            }}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-3.5 w-3.5 fill-none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="9" y="9" width="11" height="11" rx="2" />
-              <rect x="4" y="4" width="11" height="11" rx="2" />
-            </svg>
-          </button>
-        </div>
-        {copiedDesignQa ? (
-          <p className="mt-1 text-[11px] font-medium text-[#059669]">Design QA Link copied</p>
-        ) : null}
-        </div>
-      ) : null}
-    </article>
+    </div>
   );
 }
 
@@ -1009,7 +852,14 @@ function LeadProfileCard() {
   const { notifyError } = useGlobalNotifier();
   const [editingContact, setEditingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState({ phone: "", email: "" });
-  const locationValue = lead.propertyLocation || lead.pincode || "—";
+  const pincodeValue = lead.pincode?.trim() || "—";
+  const possessionDateRaw = lead.possessionDate?.trim() ?? "";
+  const possessionDateFormatted = formatCrmDateTime(lead.possessionDate);
+  const possessionDisplay = possessionDateRaw
+    ? possessionDateFormatted !== "—"
+      ? possessionDateFormatted
+      : possessionDateRaw
+    : "Not set";
   const designerName = lead.designerName?.trim() || "—";
   const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", shouldMaskLeadPhone);
 
@@ -1123,13 +973,9 @@ function LeadProfileCard() {
             <ProfileField label="Email" value={lead.email || "—"} />
           </>
         )}
-        <ProfileField label="Location" value={locationValue} />
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Lead Source</p>
-          <span className="mt-1 inline-flex rounded-full bg-[#f3f4f6] px-3 py-1 text-[13px] font-semibold text-[#374151]">
-            {formatLeadSourceLabel(lead.leadSource)}
-          </span>
-        </div>
+        <ProfileField label="Pincode" value={pincodeValue} />
+        <ProfilePillField label="Lead Source" value={formatLeadSourceLabel(lead.leadSource)} />
+        <ProfilePillField label="Possession Date" value={possessionDisplay} />
       </div>
 
       <div className="my-4 border-t border-[#e5e7eb]" />
@@ -1172,7 +1018,18 @@ function ProfileField({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{label}</p>
-      <p className="mt-0.5 text-[14px] font-medium text-[#1f2937]">{value}</p>
+      <p className="mt-1 text-[14px] font-medium leading-snug text-[#1f2937]">{value}</p>
+    </div>
+  );
+}
+
+function ProfilePillField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{label}</p>
+      <span className="mt-1 inline-flex rounded-full bg-[#f3f4f6] px-3 py-1 text-[13px] font-semibold text-[#374151]">
+        {value}
+      </span>
     </div>
   );
 }
@@ -1197,62 +1054,36 @@ function RelatedContact({
   );
 }
 
-function ExperiencePhaseCard({ leadType, leadId }: { leadType: string; leadId: string }) {
+function ExperiencePhaseContent({
+  leadType,
+  leadId,
+  disabled = false,
+}: {
+  leadType: string;
+  leadId: string;
+  disabled?: boolean;
+}) {
   const {
     lead,
-    onFloorPlanUpload,
-    onFloorPlanRemove,
-    onFloorPlanMissing,
-    floorPlanUploading,
+    canShowGetQuote,
+    onGetQuote,
+    quoteFetching,
+    quoteSending,
+    quoteLinkPersisting,
+    quoteLinkPersistError,
+    onSendQuote,
+    onRetrySaveQuoteLink,
   } = useLeadDetailV2();
-  const designQaLeadId = lead.leadId?.trim() || "";
+  const canInteract = !disabled;
+  const quoteLinkValue = lead.quoteLink?.trim() || "";
+
   return (
-    <article className="relative rounded-xl border-2 border-[#2ee06a] bg-white px-4 pb-4 pt-7">
-      <span className="absolute -top-3 left-4 rounded-full bg-[#2ee06a] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#0f1729]">
-        Current Phase
-      </span>
-
-      <div className="mb-5 flex items-center gap-2.5">
-        <span className="inline-block h-[22px] w-[22px] shrink-0 rounded-[5px] bg-[#d4f5e2]" />
-        <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">
-          2. Experience Phase
-        </h2>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-        <div className="space-y-4">
-          <div id="deal-experience-floor-plan" className="scroll-mt-24">
-            <div className="mb-1.5 flex h-5 items-center justify-between gap-2">
-              <PhaseFieldLabel className="mb-0">Floor Plan</PhaseFieldLabel>
-              <div className="flex flex-wrap gap-1">
-                <FloorPlanFileTypeBadge label="PDF" />
-                <FloorPlanFileTypeBadge label="JPG" />
-                <FloorPlanFileTypeBadge label="PNG" />
-              </div>
-            </div>
-            <FloorPlanUpload
-              hasFloorPlan={Boolean(lead.floorPlan?.trim())}
-              viewHref={lead.floorPlanViewPath ?? ""}
-              openHref={lead.floorPlanOpenPath ?? ""}
-              canUpload
-              compact
-              hideHeader
-              uploading={floorPlanUploading}
-              onFileSelect={(file) => void onFloorPlanUpload(file)}
-              onRemove={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
-              onFloorPlanMissing={onFloorPlanMissing}
-            />
-          </div>
-
-          <div>
-            <DesignPreferencesWithModal leadId={designQaLeadId} />
-          </div>
-        </div>
-
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-stretch">
+      <section className="rounded-xl border border-[#e8ecf1] bg-[#fafbfc] p-4">
+        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
+          Scope of Work
+        </p>
         <div id="deal-scope-of-work" className="scroll-mt-24">
-          <div className="mb-1.5 flex h-5 items-center">
-            <PhaseFieldLabel className="mb-0">Scope of Work</PhaseFieldLabel>
-          </div>
           <Link
             href={`/Leads/${leadType}/${leadId}/configuration-scope`}
             className={`group flex h-[148px] w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-[#c8d0db] bg-white text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] ${V2_CARD_LINK}`}
@@ -1290,23 +1121,232 @@ function ExperiencePhaseCard({ leadType, leadId }: { leadType: string; leadId: s
             </span>
           </Link>
         </div>
-      </div>
-    </article>
+      </section>
+
+      <section
+        id="deal-experience-quote"
+        className="flex flex-col rounded-xl border border-[#e8ecf1] border-l-[3px] border-l-[#7c3aed] bg-[#f8fafc] p-4 scroll-mt-24"
+      >
+        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
+          Quote &amp; Proposal
+        </p>
+
+        {canShowGetQuote ? (
+          <button
+            type="button"
+            onClick={onGetQuote}
+            disabled={!canInteract || quoteFetching}
+            className={`mb-4 inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-lg border border-[#c4b5fd] bg-[#f5f3ff] text-[12px] font-bold uppercase tracking-wide text-[#5b21b6] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
+          >
+            <span aria-hidden>🔎</span>
+            {quoteFetching ? "Getting Quote…" : "Get Quote"}
+          </button>
+        ) : null}
+
+        <div>
+          <PhaseFieldLabel>Quote Link</PhaseFieldLabel>
+          {quoteLinkValue ? (
+            <Input
+              value={quoteLinkValue}
+              readOnly
+              className="h-[42px] rounded-lg border-[#e4e8ef] bg-white px-3 text-[12px] text-[#374151]"
+            />
+          ) : (
+            <div className="flex h-[42px] items-center rounded-lg border border-[#e4e8ef] bg-white px-3">
+              <span className="text-[11px] font-normal italic text-[#9ca3af]">Not generated yet</span>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            disabled={!canInteract || quoteSending || quoteLinkPersisting || !quoteLinkValue}
+            onClick={() => void onSendQuote()}
+            className={`inline-flex h-[42px] flex-1 items-center justify-center rounded-lg bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
+          >
+            {quoteSending ? "Sending…" : "Send Quote"}
+          </button>
+        </div>
+
+        {quoteLinkPersisting ? (
+          <p className="mt-2 text-[11px] text-[#9ca3af]">Saving quote link…</p>
+        ) : null}
+        {quoteLinkPersistError ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#dc2626]">
+            <span>{quoteLinkPersistError}</span>
+            {onRetrySaveQuoteLink ? (
+              <button
+                type="button"
+                disabled={!canInteract}
+                onClick={() => void onRetrySaveQuoteLink()}
+                className={`font-semibold underline ${V2_LINK_TEXT}`}
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <p className="mt-auto pt-4 text-[11px] leading-relaxed text-[#9ca3af]">
+          {canShowGetQuote
+            ? "Fetch the quote after a successful meeting, then send it to the customer."
+            : "Quote tools unlock after meeting is marked successful in Complete Task."}
+        </p>
+      </section>
+    </div>
   );
 }
 
-function ConnectionPhaseCard() {
+function ExperiencePhaseCard({
+  leadType,
+  leadId,
+  accessState,
+}: {
+  leadType: string;
+  leadId: string;
+  accessState: PhaseAccessState;
+}) {
+  const isLocked = accessState === "locked";
+
+  return (
+    <PhaseCardShell accessState={accessState} rounded="xl">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className={`inline-block h-[22px] w-[22px] shrink-0 rounded-[5px] bg-[#d4f5e2]`}
+          />
+          <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">
+            3. Experience Phase
+          </h2>
+        </div>
+        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
+      </div>
+
+      <PhaseAccessGate locked={isLocked}>
+        <ExperiencePhaseContent disabled={isLocked} leadType={leadType} leadId={leadId} />
+      </PhaseAccessGate>
+    </PhaseCardShell>
+  );
+}
+
+function PhaseCardShell({
+  accessState,
+  rounded = "lg",
+  children,
+}: {
+  accessState: PhaseAccessState;
+  rounded?: "lg" | "xl";
+  children: ReactNode;
+}) {
+  const radius = rounded === "xl" ? "rounded-xl" : "rounded-lg";
+  const isCurrent = accessState === "current";
+  const isLocked = accessState === "locked";
+
+  if (isCurrent) {
+    return (
+      <article className={`relative ${radius} border-2 border-[#2ee06a] bg-white px-4 pb-4 pt-7`}>
+        <span className="absolute -top-3 left-4 rounded-full bg-[#2ee06a] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#0f1729]">
+          Current Phase
+        </span>
+        {children}
+      </article>
+    );
+  }
+
+  if (isLocked) {
+    return (
+      <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>{children}</article>
+    );
+  }
+
+  return (
+    <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>{children}</article>
+  );
+}
+
+function PhaseLockIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4 text-[#c4cad4]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
+function PhaseDoneIcon() {
+  return (
+    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#1ed760] text-[12px] font-bold text-white">
+      ✓
+    </span>
+  );
+}
+
+/** Shows full phase content but blocks interaction when the phase is not yet unlocked. */
+function PhaseAccessGate({ locked, children }: { locked: boolean; children: ReactNode }) {
+  if (!locked) return <>{children}</>;
+
+  return (
+    <div className="relative">
+      <div className="pointer-events-none select-none">{children}</div>
+      <div
+        className="pointer-events-auto absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/55"
+        aria-hidden="true"
+      >
+        <div className="flex max-w-[90%] items-center gap-2.5 rounded-full border border-[#dce2ea] bg-white px-4 py-2 shadow-sm">
+          <PhaseLockIcon />
+          <span className="text-[12px] font-semibold text-[#6b7280]">
+            Complete previous phases to unlock
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionReadField({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+}) {
+  return (
+    <div>
+      <PhaseFieldLabel>{label}</PhaseFieldLabel>
+      <div className="flex min-h-[42px] items-center gap-2.5 rounded-lg border border-[#e4e8ef] bg-white px-3 py-2.5">
+        <span className="shrink-0 text-[#6b7280]">{icon}</span>
+        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
   const [editing, setEditing] = useState(false);
-  const [editSnapshot, setEditSnapshot] = useState<ConnectionPhaseDraft | null>(null);
+  const [editSnapshot, setEditSnapshot] = useState<DiscoveryPhaseDraft | null>(null);
   const { lead, connectionPhaseSaving, onConnectionPhaseSave, onLeadPatch } = useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
+  const isLocked = accessState === "locked";
+  const canEdit = !isLocked;
 
-  const currentDraft = readConnectionPhaseDraft(lead);
+  const currentDraft = readDiscoveryPhaseDraft(lead);
   const isDirty =
-    editing && editSnapshot !== null && !connectionPhaseDraftsEqual(currentDraft, editSnapshot);
+    editing && editSnapshot !== null && !discoveryPhaseDraftsEqual(currentDraft, editSnapshot);
 
   const startEditing = () => {
-    setEditSnapshot(readConnectionPhaseDraft(lead));
+    setEditSnapshot(readDiscoveryPhaseDraft(lead));
     setEditing(true);
   };
 
@@ -1329,28 +1369,63 @@ function ConnectionPhaseCard() {
       await onConnectionPhaseSave();
       exitEditing();
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Could not save connection phase.");
+      notifyError(e instanceof Error ? e.message : "Could not save discovery phase.");
     }
   };
 
   return (
-    <article className="rounded-lg border border-[#e4e8ef] bg-white p-4">
+    <PhaseCardShell accessState={accessState}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="inline-block h-[22px] w-[22px] shrink-0 rounded-[5px] bg-[#d4f5e2]" />
+          <span
+            className={`inline-block h-[22px] w-[22px] shrink-0 rounded-[5px] bg-[#d4f5e2]`}
+          />
           <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">
-            1. Connection Phase
+            1. Discovery Phase
           </h2>
         </div>
         <div className="flex items-center gap-2">
-          {editing ? (
-            <>
+          {canEdit ? (
+            editing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={connectionPhaseSaving}
+                  aria-label="Cancel editing"
+                  className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+                {isDirty ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={connectionPhaseSaving}
+                    className={`inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DONE}`}
+                  >
+                    {connectionPhaseSaving ? "Saving..." : "Done"}
+                  </button>
+                ) : null}
+              </>
+            ) : (
               <button
                 type="button"
-                onClick={handleCancel}
-                disabled={connectionPhaseSaving}
-                aria-label="Cancel editing"
-                className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
+                onClick={startEditing}
+                aria-label="Update discovery phase"
+                className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -1362,63 +1437,32 @@ function ConnectionPhaseCard() {
                   strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                 </svg>
               </button>
-              {isDirty ? (
-                <button
-                  type="button"
-                  onClick={() => void handleSave()}
-                  disabled={connectionPhaseSaving}
-                  className={`inline-flex h-7 items-center justify-center rounded-md border border-[#111827] bg-white px-3 text-[11px] font-semibold text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DONE}`}
-                >
-                  {connectionPhaseSaving ? "Saving..." : "Done"}
-                </button>
-              ) : null}
-            </>
+            )
           ) : (
-            <button
-              type="button"
-              onClick={startEditing}
-              aria-label="Update connection phase"
-              className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-            </button>
+            <PhaseLockIcon />
           )}
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#1ed760] text-[12px] font-bold text-white">
-            ✓
-          </span>
+          {!isLocked && accessState === "completed" ? <PhaseDoneIcon /> : null}
         </div>
       </div>
-      <ConnectionPhaseContent editing={editing} />
-    </article>
+      <PhaseAccessGate locked={isLocked}>
+        <DiscoveryPhaseContent editing={editing && canEdit} />
+      </PhaseAccessGate>
+    </PhaseCardShell>
   );
 }
 
-function ConnectionPhaseContent({ editing }: { editing: boolean }) {
+function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
   const { lead, onLeadPatch } = useLeadDetailV2();
-  const possessionDate = formatCrmDateTime(lead.possessionDate);
   const normalizedBudget = lead.budget?.trim() ?? "";
   const budgetOptions =
     normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
       ? [normalizedBudget, ...BUDGET_OPTIONS]
       : BUDGET_OPTIONS;
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
-  const pincodeLocked = Boolean((lead.pincode ?? "").trim());
 
   return (
     <div className="grid gap-x-10 gap-y-5 lg:grid-cols-2">
@@ -1508,23 +1552,6 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
 
       <div className="space-y-5">
         <div>
-          <PhaseFieldLabel>Property Pincode</PhaseFieldLabel>
-          <ValuePill
-            icon={
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                <circle cx="12" cy="10" r="3" />
-              </svg>
-            }
-          >
-            {lead.pincode || "—"}
-          </ValuePill>
-          {editing && pincodeLocked ? (
-            <p className="mt-1 text-[11px] text-[#9ca3af]">Pincode is locked once set on the lead.</p>
-          ) : null}
-        </div>
-
-        <div>
           <PhaseFieldLabel>Configuration</PhaseFieldLabel>
           {editing ? (
             <>
@@ -1548,35 +1575,23 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
         </div>
 
         <div>
-          <PhaseFieldLabel>Possession Date</PhaseFieldLabel>
-          <ValuePill
-            icon={
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                <line x1="16" y1="2" x2="16" y2="6" />
-                <line x1="8" y1="2" x2="8" y2="6" />
-                <line x1="3" y1="10" x2="21" y2="10" />
-              </svg>
-            }
-          >
-            {lead.possessionDate?.trim()
-              ? possessionDate !== "—"
-                ? possessionDate
-                : lead.possessionDate
-              : "Not set"}
-          </ValuePill>
-        </div>
-      </div>
-
-      <div className="grid gap-x-10 gap-y-5 lg:col-span-2 lg:grid-cols-2">
-        <div>
-          <PhaseFieldLabel>Property Status</PhaseFieldLabel>
-          <p className="inline-flex items-center gap-1.5 text-[13px] font-semibold italic text-[#e84c4c]">
-            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#e84c4c] text-[10px] not-italic">
-              i
-            </span>
-            Action required: Site visit not scheduled
-          </p>
+          <PhaseFieldLabel>Type</PhaseFieldLabel>
+          {editing ? (
+            <Select
+              value={lead.bookingType ?? ""}
+              onChange={(e) => onLeadPatch({ bookingType: e.target.value })}
+              className={V2_INPUT}
+            >
+              <option value="">Select Type</option>
+              {BOOKING_TYPE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {bookingTypeDisplay(option)}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
+          )}
         </div>
 
         <div>
@@ -1613,6 +1628,223 @@ function ConnectionPhaseContent({ editing }: { editing: boolean }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ConnectionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
+  const isLocked = accessState === "locked";
+
+  return (
+    <PhaseCardShell accessState={accessState}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span
+            className={`inline-block h-[22px] w-[22px] shrink-0 rounded-[5px] bg-[#d4f5e2]`}
+          />
+          <h2 className="text-[22px] font-bold leading-none tracking-[-0.015em] text-[#101828]">
+            2. Connection Phase
+          </h2>
+        </div>
+        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
+      </div>
+      <PhaseAccessGate locked={isLocked}>
+        <ConnectionPhaseContent disabled={isLocked} />
+      </PhaseAccessGate>
+    </PhaseCardShell>
+  );
+}
+
+function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
+  const {
+    lead,
+    leadId,
+    onFloorPlanUpload,
+    onFloorPlanRemove,
+    onFloorPlanMissing,
+    floorPlanUploading,
+    meetingDateDisplay,
+    designQaLink,
+    apiDesignQaLink,
+    onDesignQaLinkCopied,
+  } = useLeadDetailV2();
+  const designQaLeadId = lead.leadId?.trim() || "";
+  const canInteract = !disabled;
+  const designQaValue = apiDesignQaLink || designQaLink || "";
+  const [appointmentMeetingType, setAppointmentMeetingType] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void resolveMeetingTypeForLead(leadId, { designerName: lead.designerName }).then((meetingType) => {
+      if (cancelled) return;
+      setAppointmentMeetingType(meetingType ?? "");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, lead.designerName, lead.meetingType, lead.meetingDate, lead.followUpDate]);
+
+  const resolvedMeetingType = lead.meetingType?.trim() || appointmentMeetingType;
+
+  const calendarIcon = (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+
+  const meetingTypeIcon = (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-stretch">
+      <section className="rounded-xl border border-[#e8ecf1] bg-[#fafbfc] p-4">
+        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
+          Documents &amp; Design
+        </p>
+
+        <div id="deal-connection-floor-plan" className="scroll-mt-24">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <PhaseFieldLabel className="mb-0">Floor Plan</PhaseFieldLabel>
+            <div className="flex flex-wrap gap-1">
+              <FloorPlanFileTypeBadge label="PDF" />
+              <FloorPlanFileTypeBadge label="JPG" />
+              <FloorPlanFileTypeBadge label="PNG" />
+            </div>
+          </div>
+          <FloorPlanUpload
+            hasFloorPlan={Boolean(lead.floorPlan?.trim())}
+            viewHref={lead.floorPlanViewPath ?? ""}
+            openHref={lead.floorPlanOpenPath ?? ""}
+            canUpload={canInteract}
+            compact
+            hideHeader
+            uploading={floorPlanUploading}
+            onFileSelect={(file) => void onFloorPlanUpload(file)}
+            onRemove={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
+            onFloorPlanMissing={onFloorPlanMissing}
+          />
+        </div>
+
+        <div className="mt-4 border-t border-[#e8ecf1] pt-4">
+          <DesignPreferencesWithModal leadId={designQaLeadId} />
+        </div>
+      </section>
+
+      <section className="flex flex-col rounded-xl border border-[#e8ecf1] border-l-[3px] border-l-[#1ed760] bg-[#f8fafc] p-4">
+        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
+          Meeting &amp; Links
+        </p>
+
+        <div className="space-y-4">
+          <ConnectionReadField
+            label="Meeting Date"
+            icon={calendarIcon}
+            value={meetingDateDisplay || "Not scheduled"}
+          />
+          <ConnectionReadField
+            label="Meeting Type"
+            icon={meetingTypeIcon}
+            value={meetingTypeDisplay(resolvedMeetingType)}
+          />
+          <DesignQaLinkField
+            value={designQaValue}
+            onCopied={onDesignQaLinkCopied}
+            disabled={disabled}
+          />
+        </div>
+
+        <p className="mt-auto pt-4 text-[11px] leading-relaxed text-[#9ca3af]">
+          Meeting details are updated from Complete Task. Design QA link is synced from CRM.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function DesignQaLinkField({
+  value,
+  onCopied,
+  disabled = false,
+}: {
+  value: string;
+  onCopied?: (link: string) => void | Promise<void>;
+  disabled?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const displayValue = value.trim() || "Not available yet";
+
+  return (
+    <div>
+      <FieldLabel>
+        Design QA Link
+        <span className="ml-1.5 font-normal normal-case text-[var(--crm-text-muted)]">
+          (read-only, from CRM)
+        </span>
+      </FieldLabel>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <Input
+          value={displayValue}
+          readOnly
+          className="h-[42px] min-w-0 flex-1 rounded-lg border-[#e4e8ef] bg-white px-3 text-[12px] text-[#374151]"
+        />
+        <button
+          type="button"
+          aria-label="Copy Design QA Link"
+          disabled={disabled || !value.trim()}
+          className={`inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-lg border border-[#e4e8ef] bg-white text-[var(--crm-text-primary)] disabled:cursor-not-allowed disabled:opacity-45 ${V2_BTN_ICON}`}
+          onClick={() => {
+            if (!value.trim()) return;
+            void navigator.clipboard.writeText(value).then(() => {
+              void onCopied?.(value);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 2000);
+            });
+          }}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5 fill-none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <rect x="4" y="4" width="11" height="11" rx="2" />
+          </svg>
+        </button>
+      </div>
+      {copied ? (
+        <p className="mt-1 text-[11px] font-medium text-[#059669]">Design QA Link copied</p>
+      ) : null}
     </div>
   );
 }
