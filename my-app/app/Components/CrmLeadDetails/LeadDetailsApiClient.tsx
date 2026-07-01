@@ -115,6 +115,7 @@ import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-exec
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
 import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
+import { openWhatsAppChat } from "@/lib/whatsapp-chat";
 import {
   canEditLeadEmailAndPhone,
   stripUnauthorizedLeadEmailPhoneFromPutBody,
@@ -2367,6 +2368,17 @@ export default function LeadDetailsApiClient({
     await refreshActivities();
   }, [lead.phone, leadId, leadTypeParam, refreshActivities, validLeadType]);
 
+  const handleWhatsAppMessage = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    const phone = lead.phone?.trim();
+    if (!phone || !openWhatsAppChat(phone)) return;
+    await postManualActivity(lt, leadId, "WHATSAPP", `Opened WhatsApp chat with ${phone}`).catch(
+      () => undefined,
+    );
+    await refreshActivities().catch(() => undefined);
+  }, [lead.phone, leadId, leadTypeParam, refreshActivities, validLeadType]);
+
   const handleDesignQaLinkCopied = useCallback(
     async (link: string) => {
       if (!validLeadType) return;
@@ -3064,6 +3076,8 @@ export default function LeadDetailsApiClient({
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
+      onPhoneCall: handlePhoneCallLog,
+      onWhatsAppMessage: handleWhatsAppMessage,
     };
 
     return (

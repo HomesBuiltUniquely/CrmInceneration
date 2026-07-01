@@ -57,6 +57,8 @@ export type LeadDetailV2ContextValue = {
   shouldMaskLeadPhone: boolean;
   onLeadContactSave: (patch: Partial<Lead>) => void | Promise<void>;
   leadContactSaving: boolean;
+  onPhoneCall?: () => void | Promise<void>;
+  onWhatsAppMessage?: () => void | Promise<void>;
 };
 
 const LeadDetailV2Context = createContext<LeadDetailV2ContextValue | null>(null);

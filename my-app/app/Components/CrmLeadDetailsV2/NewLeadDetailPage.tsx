@@ -190,7 +190,10 @@ function LeadDetailHeader() {
     milestoneStageLabel,
     milestoneCategoryLabel,
     milestoneSubLabel,
+    onPhoneCall,
+    onWhatsAppMessage,
   } = useLeadDetailV2();
+  const { notifyError } = useGlobalNotifier();
   const [timelineOpen, setTimelineOpen] = useState(false);
   const timelineWrapRef = useRef<HTMLDivElement | null>(null);
   const selectedTimeline =
@@ -211,6 +214,32 @@ function LeadDetailHeader() {
     followUpDateDisplay && followUpDateDisplay !== "Not scheduled"
       ? followUpDateDisplay
       : formatCrmDateTime(lead.followUpDate);
+
+  const leadPhone = lead.phone?.trim() ?? "";
+  const hasLeadPhone = leadPhone.length > 0;
+
+  const handleHeaderCall = useCallback(() => {
+    if (!hasLeadPhone) {
+      notifyError("No phone number on this lead.");
+      return;
+    }
+    void (async () => {
+      try {
+        await onPhoneCall?.();
+      } catch {
+        /* still open dialer */
+      }
+      window.location.href = `tel:${leadPhone.replace(/\s+/g, "")}`;
+    })();
+  }, [hasLeadPhone, leadPhone, notifyError, onPhoneCall]);
+
+  const handleHeaderWhatsApp = useCallback(() => {
+    if (!hasLeadPhone) {
+      notifyError("No phone number on this lead.");
+      return;
+    }
+    void onWhatsAppMessage?.();
+  }, [hasLeadPhone, notifyError, onWhatsAppMessage]);
 
   return (
     <div className="py-4 lg:py-5">
@@ -293,7 +322,9 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Call"
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
+                  disabled={!hasLeadPhone}
+                  onClick={handleHeaderCall}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -310,8 +341,11 @@ function LeadDetailHeader() {
                 </button>
                 <button
                   type="button"
-                  aria-label="Message"
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
+                  aria-label="WhatsApp message"
+                  title="Open WhatsApp chat"
+                  disabled={!hasLeadPhone}
+                  onClick={handleHeaderWhatsApp}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
