@@ -1,9 +1,10 @@
 import type { Lead } from "@/lib/data";
 import { getRoleFromUser, normalizeRole } from "@/lib/auth/api";
+import { isClosedWonCustomerSubstage } from "@/lib/milestone-substage-map";
 
 export const SALES_CLOSURE_ORIGIN = (
   process.env.NEXT_PUBLIC_SALES_CLOSURE_ORIGIN?.trim() ||
-  "https://design.hubinterior.com"
+  "http://localhost:3002"
 ).replace(/\/+$/, "");
 
 /** Avoid oversized URLs when property notes are long. */
@@ -236,6 +237,42 @@ export function isCloserStageBookingDone(lead: Lead): boolean {
 export function canAccessClosedLeadHeaderActions(role: string): boolean {
   const r = normalizeRole(role);
   return r !== "ADMIN" && r !== "SALES_ADMIN";
+}
+
+/** Same stage gate as legacy header “Closed (Won)” quick action. */
+export function canShowClosedLeadQuickAction(lead: Pick<Lead, "stageBlock">): boolean {
+  const milestoneStage = (lead.stageBlock?.milestoneStage ?? "").trim().toLowerCase();
+  const allowedStage =
+    milestoneStage === "decision" ||
+    milestoneStage === "closed" ||
+    milestoneStage === "experience & design" ||
+    milestoneStage === "experience and design";
+  if (!allowedStage) return false;
+  return !isClosedWonCustomerSubstage(lead.stageBlock?.milestoneSubStage ?? "");
+}
+
+/** Returns an error message when the Closed / Mark As Won quick action is blocked. */
+export function validateClosedLeadQuickAction(args: {
+  role: string;
+  lead: Pick<Lead, "stageBlock">;
+}): string | null {
+  if (!canAccessClosedLeadHeaderActions(args.role)) {
+    return "Sales closure is not available for Admin or Sales Admin accounts.";
+  }
+  if (isClosedWonCustomerSubstage(args.lead.stageBlock?.milestoneSubStage ?? "")) {
+    return "This lead is already in Booking Done or Token Done.";
+  }
+  const milestoneStage = (args.lead.stageBlock?.milestoneStage ?? "").trim().toLowerCase();
+  const allowedStage =
+    milestoneStage === "decision" ||
+    milestoneStage === "closed" ||
+    milestoneStage === "experience & design" ||
+    milestoneStage === "experience and design";
+  if (!allowedStage) {
+    const stageLabel = (args.lead.stageBlock?.milestoneStage ?? "").trim() || "—";
+    return `Closed (Won) is only available when the lead is in Decision, Closed, or Experience & Design stage. Current stage: ${stageLabel}.`;
+  }
+  return null;
 }
 
 function normalizeWonCandidate(value: unknown): string {

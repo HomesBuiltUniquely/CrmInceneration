@@ -1,6 +1,9 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import LeadDetailsApiClient from "@/app/Components/CrmLeadDetails/LeadDetailsApiClient";
 import LeadDetailsClient from "@/app/Components/CrmLeadDetails/LeadDetailsClient";
+import NewLeadDetailApiClient from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailApiClient";
+import NewConfigurationScopePage from "@/app/Components/CrmLeadDetailsV2/NewConfigurationScopePage";
+import BookingDonePage from "@/app/Components/CrmLeadDetailsV2/BookingDonePage";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { getLeadById } from "@/lib/data";
 
@@ -22,7 +25,7 @@ export default async function LeadDetailsPage({
       return <LeadDetailsClient lead={mock} />;
     }
     if (/^\d+$/.test(slug)) {
-      return <LeadDetailsApiClient leadType="formlead" leadId={slug} />;
+      return <NewLeadDetailApiClient leadType="formlead" leadId={slug} />;
     }
     notFound();
   }
@@ -30,7 +33,30 @@ export default async function LeadDetailsPage({
   if (segments.length === 2) {
     const [a, b] = segments;
     if (isCrmLeadType(a) && /^\d+$/.test(b)) {
-      return <LeadDetailsApiClient leadType={a} leadId={b} />;
+      return <NewLeadDetailApiClient leadType={a} leadId={b} />;
+    }
+    notFound();
+  }
+
+  if (segments.length === 3) {
+    const [leadType, leadId, tail] = segments;
+    if (
+      isCrmLeadType(leadType) &&
+      /^\d+$/.test(leadId) &&
+      tail === "configuration-scope"
+    ) {
+      return <NewConfigurationScopePage leadType={leadType} leadId={leadId} />;
+    }
+    if (
+      isCrmLeadType(leadType) &&
+      /^\d+$/.test(leadId) &&
+      tail === "booking-done"
+    ) {
+      return (
+        <Suspense fallback={null}>
+          <BookingDonePage leadType={leadType} leadId={leadId} />
+        </Suspense>
+      );
     }
     notFound();
   }

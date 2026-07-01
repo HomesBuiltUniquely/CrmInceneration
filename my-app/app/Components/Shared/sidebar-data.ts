@@ -15,11 +15,19 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
         href: "/",
       },
       { id: "crm-my-leads", label: "My Leads", description: "View and manage pipeline", icon: "chart", href: "/Leads" },
+      { id: "crm-incentives", label: "Incentives", description: "Performance incentives & bonuses", icon: "receipt", href: "/incentives" },
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
       { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar", href: "/google-calendar" },
       { id: "crm-sales-managers", label: "Sales Managers", description: "View managers list", icon: "id-card", href: "/admin-panel" },
       { id: "crm-presales-executives", label: "Presales Executives", description: "View presales executives", icon: "users", href: "/admin-panel" },
+      {
+        id: "crm-booking-token",
+        label: "Booking & Token",
+        description: "Manage bookings & tokens",
+        icon: "receipt",
+        href: "/booking-token",
+      },
     ],
   },
   {
@@ -37,21 +45,6 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       },
       { id: "presales-my-leads", label: "My Leads", description: "Presales team pipeline & month totals", icon: "chart", href: "/presales-leads" },
       { id: "presales-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
-    ],
-  },
-  {
-    id: "booking-token",
-    label: "Booking & Token",
-    subtitle: "Everything booked. Nothing missed.",
-    icon: "receipt",
-    items: [
-      {
-        id: "booking-token-dashboard",
-        label: "Dashboard",
-        description: "Manage bookings & tokens",
-        icon: "chart",
-        href: "/booking-token",
-      },
     ],
   },
   {

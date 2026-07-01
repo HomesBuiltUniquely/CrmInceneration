@@ -549,6 +549,10 @@ export async function getNewCrmQuoteInternalLinkByLead(
     },
   );
   const text = await res.text();
+  return parseNewCrmQuoteResponse(res, text);
+}
+
+async function parseNewCrmQuoteResponse(res: Response, text: string): Promise<NewCrmQuoteResponse> {
   let parsed: NewCrmQuoteResponse | null = null;
   try {
     parsed = text ? (JSON.parse(text) as NewCrmQuoteResponse) : null;
@@ -569,6 +573,95 @@ export async function getNewCrmQuoteInternalLinkByLead(
     throw new Error(message);
   }
   return parsed ?? {};
+}
+
+/** `GET /api/new-crm/quotes/internal-link/by-external/{externalLeadId}` via Hub proxy. */
+export async function getNewCrmQuoteInternalLinkByExternal(
+  externalLeadId: string,
+): Promise<NewCrmQuoteResponse> {
+  const id = externalLeadId.trim();
+  if (!id) throw new Error("External lead ID is required to fetch quote.");
+  const res = await fetch(
+    `/api/new-crm/quotes/internal-link/by-external/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: authHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  return parseNewCrmQuoteResponse(res, text);
+}
+
+/** `GET /api/new-crm/quotes/by-lead/{leadId}` — all quote versions when upstream supports it. */
+export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
+  const id = leadId.trim();
+  if (!id) throw new Error("Lead ID is required to list quotes.");
+  const res = await fetch(
+    `/api/new-crm/quotes/by-lead/${encodeURIComponent(id)}`,
+    {
+      method: "GET",
+      credentials: "include",
+      headers: authHeaders(),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  if (!res.ok) {
+    const row =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const rawMessage =
+      (typeof row?.message === "string" && row.message.trim()) ||
+      (typeof row?.error === "string" && row.error.trim()) ||
+      text.trim();
+    const message = isHtmlLikePayload(rawMessage)
+      ? `List quotes failed (${res.status}). Upstream service returned an invalid response.`
+      : sanitizeErrorMessage(
+          rawMessage,
+          "Unable to list quote versions right now. Please try again.",
+        );
+    throw new Error(message);
+  }
+  return parsed ?? {};
+}
+
+/** Try list + internal-link routes for one business lead id (with optional external ref fallback). */
+export async function fetchNewCrmQuotePayloads(
+  businessLeadId: string,
+  externalReferenceId = "",
+): Promise<unknown[]> {
+  const id = businessLeadId.trim();
+  const externalId = externalReferenceId.trim();
+  const payloads: unknown[] = [];
+
+  if (id) {
+    // `GET /api/new-crm/quotes/by-lead/{id}` is not deployed upstream yet (404).
+    // Quotes load via internal-link + Prolance revisions below.
+    try {
+      payloads.push(await getNewCrmQuoteInternalLinkByLead(id));
+    } catch {
+      // Fall through to by-external.
+    }
+  }
+
+  if (externalId) {
+    try {
+      payloads.push(await getNewCrmQuoteInternalLinkByExternal(externalId));
+    } catch {
+      // No quote on external id either.
+    }
+  }
+
+  return payloads;
 }
 
 export type FloorPlanUploadResponse = FloorPlanMetaResponse & {

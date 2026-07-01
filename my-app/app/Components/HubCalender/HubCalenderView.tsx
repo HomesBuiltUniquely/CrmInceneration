@@ -299,7 +299,16 @@ export default function HubCalendarPage(): React.ReactElement | null {
 
   // Logic to plot events onto the 24-hr `weekGridRef` timeline grid
   const positionedEvents = useMemo(() => {
-    const validEvents = events.filter(e => e.start && e.end && e.start.includes("T"));
+    // Deduplicate by event ID first — same event can appear multiple times if two
+    // calendar sources (Design Module + CRM Java) both created a GCal event for the same meeting.
+    const seenIds = new Set<string>();
+    const uniqueEvents = events.filter(e => {
+      if (!e.id) return true;
+      if (seenIds.has(e.id)) return false;
+      seenIds.add(e.id);
+      return true;
+    });
+    const validEvents = uniqueEvents.filter(e => e.start && e.end && e.start.includes("T"));
     
     // Group by day index (0-6) based on weekStart reference
     const ds = Array.from({length: 7}, () => [] as any[]);
@@ -372,57 +381,110 @@ export default function HubCalendarPage(): React.ReactElement | null {
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-      {/* Intelligent Event Modal */}
+      {/* Event Details Popup — Google Calendar style (matches Design Module) */}
       {modalEvent && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-              <div className="w-full max-w-md rounded-2xl bg-[var(--crm-surface)] shadow-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                  <div className="bg-[var(--crm-accent)] p-5 flex items-start justify-between text-white">
-                      <div>
-                         <h3 className="text-xl font-bold pr-4">{modalEvent.summary || "(No Title)"}</h3>
-                         <p className="text-sm opacity-90 mt-1">
-                            {new Date(modalEvent.start!).toLocaleString()} - {new Date(modalEvent.end!).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                         </p>
-                      </div>
-                      <button onClick={() => setModalEvent(null)} className="opacity-80 hover:opacity-100 p-1 text-xl font-bold">✕</button>
-                  </div>
-                  <div className="p-6 space-y-5 text-sm text-[var(--crm-text-primary)]">
-                      {modalEvent.organizer && (
-                          <div className="flex items-start gap-3">
-                              <span className="font-semibold text-[var(--crm-text-muted)] w-20 shrink-0">Organizer:</span>
-                              <span className="break-all">{modalEvent.organizer.displayName || modalEvent.organizer.email}</span>
-                          </div>
-                      )}
-                      {modalEvent.attendees && modalEvent.attendees.length > 0 && (
-                          <div className="flex items-start gap-3">
-                              <span className="font-semibold text-[var(--crm-text-muted)] w-20 shrink-0">Attendees:</span>
-                              <div className="flex flex-wrap gap-1.5">
-                                 {modalEvent.attendees.map((a, i) => (
-                                    <span key={i} className="bg-[var(--crm-surface-subtle)] border border-[var(--crm-border)] px-2 py-0.5 rounded-full text-xs font-medium">
-                                       {a.displayName || a.email}
-                                    </span>
-                                 ))}
-                              </div>
-                          </div>
-                      )}
-                      {modalEvent.description && (
-                          <div className="flex items-start gap-3">
-                              <span className="font-semibold text-[var(--crm-text-muted)] w-20 shrink-0">Details:</span>
-                              <div dangerouslySetInnerHTML={{__html: modalEvent.description}} className="prose prose-sm prose-p:my-1 opacity-80 max-h-32 overflow-y-auto" />
-                          </div>
-                      )}
-                  </div>
-                  <div className="bg-[var(--crm-surface-elevated)] px-6 py-4 border-t border-[var(--crm-border)] flex justify-end">
-                      <a 
-                         href={modalEvent.htmlLink || "#"} 
-                         target="_blank" 
-                         rel="noopener noreferrer"
-                         className="rounded-full bg-[var(--crm-accent)] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 shadow-sm"
-                      >
-                         Open in Web App
-                      </a>
-                  </div>
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center bg-black/20 px-4 py-10"
+          onClick={() => setModalEvent(null)}
+        >
+          <div
+            className="w-full max-w-xl rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between border-b border-gray-100 px-6 py-5 dark:border-[var(--crm-border)]">
+              <div className="flex items-start gap-4">
+                <span className="mt-2 h-3 w-3 shrink-0 rounded-full bg-[#1a73e8]" />
+                <div>
+                  <h3 className="text-[26px] font-normal text-[#1f1f1f] dark:text-[var(--crm-text-primary)]">
+                    {modalEvent.summary || "(No Title)"}
+                  </h3>
+                  <p className="mt-1 text-[14px] text-[#444746] dark:text-[var(--crm-text-secondary)]">
+                    {modalEvent.start ? new Date(modalEvent.start).toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                    {modalEvent.end ? ` – ${new Date(modalEvent.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setModalEvent(null)}
+                className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-[var(--crm-surface-subtle)]"
+                aria-label="Close"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                  <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.4 4.29 19.7 2.88 18.29 9.17 12 2.88 5.71 4.29 4.3l6.3 6.29 6.29-6.3z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="space-y-5 px-6 py-6 text-[15px] text-[#3c4043] dark:text-[var(--crm-text-primary)]">
+              {/* Date/time row */}
+              <div className="grid gap-4 sm:grid-cols-[28px_1fr]">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="mt-0.5 h-6 w-6 text-[#5f6368]">
+                  <path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 15H5V10h14v9Z" />
+                </svg>
+                <div>
+                  <p>{modalEvent.start ? new Date(modalEvent.start).toLocaleString([], { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                  <p className="text-[#5f6368]">{modalEvent.end ? `Ends ${new Date(modalEvent.end).toLocaleString([], { hour: "2-digit", minute: "2-digit", month: "short", day: "numeric" })}` : ""}</p>
+                </div>
+              </div>
+
+              {/* Organizer / attendees row */}
+              {(modalEvent.organizer || (modalEvent.attendees && modalEvent.attendees.length > 0)) && (
+                <div className="grid gap-4 sm:grid-cols-[28px_1fr]">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="mt-0.5 h-6 w-6 text-[#5f6368]">
+                    <path d="M12 12c2.7 0 8 1.34 8 4v2H4v-2c0-2.66 5.3-4 8-4Zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+                  </svg>
+                  <div className="space-y-1">
+                    {modalEvent.organizer && (
+                      <p className="font-medium text-[#1f1f1f] dark:text-[var(--crm-text-primary)]">
+                        {modalEvent.organizer.displayName || modalEvent.organizer.email}
+                        <span className="ml-1 text-xs font-normal text-[#5f6368]">(organizer)</span>
+                      </p>
+                    )}
+                    {modalEvent.attendees && modalEvent.attendees.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {modalEvent.attendees.map((a, i) => (
+                          <span key={i} className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-[#3c4043] dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface-subtle)] dark:text-[var(--crm-text-secondary)]">
+                            {a.displayName || a.email}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Description row */}
+              {modalEvent.description && (
+                <div className="grid gap-4 sm:grid-cols-[28px_1fr]">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="mt-0.5 h-6 w-6 text-[#5f6368]">
+                    <path d="M21 5v14H3V5h18Zm0-2H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2Zm-2 12H5v-2h14v2Zm0-4H5V9h14v2Z" />
+                  </svg>
+                  <div
+                    className="max-h-32 overflow-y-auto whitespace-pre-wrap text-[#5f6368] dark:text-[var(--crm-text-secondary)]"
+                    dangerouslySetInnerHTML={{ __html: modalEvent.description }}
+                  />
+                </div>
+              )}
+
+              {/* Open in Google Calendar link */}
+              {modalEvent.htmlLink && (
+                <div className="pt-1">
+                  <a
+                    href={modalEvent.htmlLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded-full border border-[#dadce0] px-4 py-2 text-sm font-medium text-[#1a73e8] transition hover:bg-[#e8f0fe] dark:border-[var(--crm-border)] dark:hover:bg-[var(--crm-surface-subtle)]"
+                  >
+                    Open in Google Calendar
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
+        </div>
       )}
 
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">

@@ -4,7 +4,12 @@ import { useEffect, useState } from "react";
 import { Card, CardTitle, FieldLabel, Input, Textarea, Select, Button } from "./ui";
 import type { Lead } from "@/lib/data";
 import { BOOKING_TYPE_OPTIONS, BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
-import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import { canShowGetQuoteButton } from "@/lib/quote-email-stage";
+import {
+  canEditLeadPhoneAndEmail,
+  shouldMaskLeadPhoneForRole,
+} from "@/lib/lead-contact-access";
+import { resolveLeadPhoneDisplayForRole } from "@/lib/lead-display";
 import { shouldShowDesignQaLink } from "@/lib/lead-design-qa-visibility";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import {
@@ -58,6 +63,7 @@ function buildDesignQaLink(lead: Lead, version: number): string | null {
 
 type Props = {
   lead: Lead;
+  viewerRole?: string;
   /** When set, fields are controlled and edits merge into parent state (API detail page). */
   onLeadChange?: (patch: Partial<Lead>) => void;
   /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — can edit email & phone. */
@@ -94,11 +100,13 @@ type Props = {
     quotePersisting?: boolean;
     quoteLinkPersistError?: string;
     onRetrySaveQuoteLink?: () => void | Promise<void>;
+    quotePanelVisible?: boolean;
   };
 };
 
 export default function LeadInfoTab({
   lead,
+  viewerRole = "",
   onLeadChange,
   onAdditionalInfoSave,
   onContactDetailsSave,
@@ -118,11 +126,18 @@ export default function LeadInfoTab({
 }: Props) {
   const c = onLeadChange;
   const { notifySuccess, notifyError } = useGlobalNotifier();
+  const canEditContact = canEditLeadPhoneAndEmail(viewerRole);
+  const maskPhone = shouldMaskLeadPhoneForRole(viewerRole);
+  const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", maskPhone);
+  const altPhoneDisplay = resolveLeadPhoneDisplayForRole(lead.altPhone ?? "", maskPhone);
   const [additionalInfoEditable, setAdditionalInfoEditable] = useState(false);
   const [contactDetailsEditable, setContactDetailsEditable] = useState(false);
   const [contactEditBaseline, setContactEditBaseline] = useState({ email: "", phone: "" });
-  const quoteEligible =
-    Boolean(c && quoteExtras && isExperienceDesignQuoteSentStage(lead));
+  const quoteEligible = Boolean(
+    c &&
+      quoteExtras &&
+      (quoteExtras.quotePanelVisible ?? canShowGetQuoteButton(lead)),
+  );
   const [designQaState, setDesignQaState] = useState<DesignQaState>({
     active: false,
     version: 0,
@@ -424,9 +439,12 @@ export default function LeadInfoTab({
                 ? {
                     value: lead.email,
                     onChange: (e) => c({ email: e.target.value }),
-                    readOnly: lockedIdentityFields.email,
+                    readOnly: !canEditContact,
                   }
-                : { defaultValue: lead.email, readOnly: lockedIdentityFields.email })}
+                : {
+                    defaultValue: lead.email,
+                    readOnly: !canEditContact,
+                  })}
             />
             {!lead.email && (
               <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-300">
@@ -450,11 +468,14 @@ export default function LeadInfoTab({
                   className={`min-w-0 ${editableContactInputClass}`.trim()}
                   {...(c
                     ? {
-                        value: lead.phone,
+                        value: canEditContact ? lead.phone : phoneDisplay,
                         onChange: (e) => c({ phone: e.target.value }),
-                        readOnly: lockedIdentityFields.phone,
+                        readOnly: !canEditContact,
                       }
-                    : { defaultValue: lead.phone, readOnly: lockedIdentityFields.phone })}
+                    : {
+                        defaultValue: canEditContact ? lead.phone : phoneDisplay,
+                        readOnly: !canEditContact,
+                      })}
                 />
               </div>
             </div>
@@ -463,10 +484,16 @@ export default function LeadInfoTab({
               <Input
                 placeholder="—"
                 className={lockedContactInputClass}
-                readOnly={canEditEmailPhone}
                 {...(c
-                  ? { value: lead.altPhone, onChange: (e) => c({ altPhone: e.target.value }) }
-                  : { defaultValue: lead.altPhone })}
+                  ? {
+                      value: canEditContact ? lead.altPhone : altPhoneDisplay,
+                      onChange: (e) => c({ altPhone: e.target.value }),
+                      readOnly: !canEditContact,
+                    }
+                  : {
+                      defaultValue: canEditContact ? lead.altPhone : altPhoneDisplay,
+                      readOnly: !canEditContact,
+                    })}
               />
             </div>
           </div>

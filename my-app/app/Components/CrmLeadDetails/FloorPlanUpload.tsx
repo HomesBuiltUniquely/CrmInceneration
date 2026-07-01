@@ -29,6 +29,11 @@ type Props = {
   onFloorPlanMissing?: () => void;
   onRemove?: () => void | Promise<void>;
   removing?: boolean;
+  /** Shorter drop zone — matches V2 Configure Scope card height. */
+  compact?: boolean;
+  /** Hide built-in title row — parent renders label + badges for alignment. */
+  hideHeader?: boolean;
+  className?: string;
 };
 
 function formatMaxSize(): string {
@@ -88,6 +93,9 @@ export default function FloorPlanUpload({
   onFloorPlanMissing,
   onRemove,
   removing = false,
+  compact = false,
+  hideHeader = false,
+  className,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -191,17 +199,19 @@ export default function FloorPlanUpload({
   };
 
   return (
-    <div className="mt-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.6px] text-[var(--crm-text-muted)]">
-          Floor plan
-        </p>
-        <div className="flex flex-wrap gap-1">
-          <FileTypeBadge label="PDF" />
-          <FileTypeBadge label="JPG" />
-          <FileTypeBadge label="PNG" />
+    <div className={cn(compact ? "mt-0" : "mt-4", className)}>
+      {!hideHeader ? (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.6px] text-[var(--crm-text-muted)]">
+            Floor plan
+          </p>
+          <div className="flex flex-wrap gap-1">
+            <FileTypeBadge label="PDF" />
+            <FileTypeBadge label="JPG" />
+            <FileTypeBadge label="PNG" />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <input
         ref={inputRef}
@@ -356,22 +366,36 @@ export default function FloorPlanUpload({
             void processFile(file ?? null);
           }}
           className={cn(
-            "group relative w-full rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-all duration-200",
+            "group relative w-full border-dashed px-4 text-center transition-all duration-200",
+            compact
+              ? "flex h-[148px] flex-col items-center justify-center gap-1 rounded-lg border py-0"
+              : "rounded-2xl border-2 py-8",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent)] focus-visible:ring-offset-2",
             canUpload && !uploading
               ? dragOver
-                ? "border-[var(--crm-accent)] bg-[var(--crm-accent-soft)] scale-[1.01]"
-                : "border-[var(--crm-border-strong)] bg-[var(--crm-surface-subtle)] hover:border-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)]/40"
+                ? compact
+                  ? "scale-[1.01] border-[#2ee06a] bg-[#f0fdf4] shadow-[0_8px_24px_rgba(46,224,106,0.15)]"
+                  : "border-[var(--crm-accent)] bg-[var(--crm-accent-soft)] scale-[1.01]"
+                : compact
+                  ? "cursor-pointer border-[#c8d0db] bg-white hover:-translate-y-0.5 hover:border-[#2ee06a] hover:bg-[#f0fdf4] hover:shadow-[0_8px_24px_rgba(46,224,106,0.15)] active:scale-[0.99]"
+                  : "border-[var(--crm-border-strong)] bg-[var(--crm-surface-subtle)] hover:border-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)]/40"
               : "cursor-default border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]/50 opacity-80",
             uploading && "pointer-events-none opacity-70",
           )}
         >
           <span
             className={cn(
-              "mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-2xl shadow-sm transition",
+              "mx-auto flex items-center justify-center shadow-sm transition-all duration-200",
+              compact
+                ? "h-10 w-10 rounded-full border border-[#e5e7eb] bg-[#f9fafb] text-lg text-[#8a96a8] group-hover:scale-110 group-hover:border-[#bbf7d0] group-hover:bg-[#ecfdf5] group-hover:text-[#059669]"
+                : "mb-3 h-14 w-14 rounded-2xl text-2xl",
               dragOver
-                ? "bg-[var(--crm-accent)] text-white"
-                : "bg-[var(--crm-surface)] text-[var(--crm-accent)] group-hover:scale-105",
+                ? compact
+                  ? "border-[#bbf7d0] bg-[#ecfdf5] text-[#059669]"
+                  : "bg-[var(--crm-accent)] text-white"
+                : !compact
+                  ? "bg-[var(--crm-surface)] text-[var(--crm-accent)] group-hover:scale-105"
+                  : null,
             )}
             aria-hidden
           >
@@ -381,22 +405,35 @@ export default function FloorPlanUpload({
               "📐"
             )}
           </span>
-          <p className="text-[14px] font-semibold text-[var(--crm-text-primary)]">
+          <p
+            className={cn(
+              "font-semibold text-[var(--crm-text-primary)] transition-colors duration-200",
+              compact
+                ? "text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] group-hover:text-[#059669]"
+                : "text-[14px]",
+            )}
+          >
             {uploading
               ? "Uploading floor plan…"
               : canUpload
                 ? "Drop your floor plan here"
                 : "No floor plan yet"}
           </p>
-          <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
-            {canUpload
-              ? `or click to browse · max ${formatMaxSize()}`
-              : "Upload is available on saved CRM leads"}
-          </p>
+          {compact ? (
+            <p className="text-[11px] font-medium text-[#9aa7bb] transition-colors duration-200 group-hover:text-[#059669]/80">
+              max is 10 MB
+            </p>
+          ) : (
+            <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
+              {canUpload
+                ? `or click to browse · max ${formatMaxSize()}`
+                : "Upload is available on saved CRM leads"}
+            </p>
+          )}
         </button>
       )}
 
-      {canUpload && !hasFile ? (
+      {canUpload && !hasFile && !compact ? (
         <p className="mt-2 text-center text-[11px] text-[var(--crm-text-muted)]">
           Drag & drop supported
         </p>

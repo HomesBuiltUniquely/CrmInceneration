@@ -6,9 +6,14 @@ import { Button } from "./ui";
 export default function FooterActions({
   onSave,
   saving,
+  onVerify,
+  verifying,
 }: {
   onSave?: () => void | Promise<void>;
   saving?: boolean;
+  /** `POST .../verify/{id}` — role-gated in parent (Super Admin / Presales Manager / Presales Executive). */
+  onVerify?: () => void | Promise<void>;
+  verifying?: boolean;
 }) {
   const router = useRouter();
   const handleCloseWindow = () => {
@@ -37,6 +42,16 @@ export default function FooterActions({
       <Button variant="ghost" icon="🖨" onClick={() => window.print()}>
         Print
       </Button>
+      {onVerify ? (
+        <Button
+          variant="outline"
+          icon="✓"
+          disabled={verifying}
+          onClick={() => void onVerify()}
+        >
+          {verifying ? "Verifying…" : "Verify lead"}
+        </Button>
+      ) : null}
       <div className="ml-auto">
         <Button
           variant="ghost"

@@ -4,10 +4,22 @@ import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS } from "@/lib/data";
 import {
-  fetchActiveDesigners,
-  fetchAvailableSlots,
-  type AvailableSlotRow,
-} from "@/lib/appointment-client";
+  isDesignRefinementSchedulingSubstage,
+  isMeetingCancelledSubstage,
+  isMeetingScheduleSubstage,
+  meetingSchedulePanelTitle,
+  pipelineSubStageLabel,
+  requiresResoneField,
+} from "@/lib/milestone-substage-map";
+import {
+  leadPropertyGateErrorMessage,
+  missingLeadPropertyGateFields,
+  requiresLeadPropertyGateForCompleteTask,
+} from "@/lib/milestone-advance-gates";
+import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
+import ScheduleHubMeetingModal, {
+  type ScheduleHubMeetingConfirmPayload,
+} from "./ScheduleHubMeetingModal";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
@@ -26,20 +38,6 @@ import PresalesVerifyPanel, {
 import { isCrmLeadVerified } from "@/lib/leads-filter";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
-import {
-  isDesignRefinementSchedulingSubstage,
-  isMeetingCancelledSubstage,
-  isMeetingScheduleSubstage,
-  meetingSchedulePanelTitle,
-  pipelineSubStageLabel,
-  requiresResoneField,
-} from "@/lib/milestone-substage-map";
-import {
-  leadPropertyGateErrorMessage,
-  missingLeadPropertyGateFields,
-  requiresLeadPropertyGateForCompleteTask,
-} from "@/lib/milestone-advance-gates";
-import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -57,11 +55,6 @@ type FeedbackOption = {
   subStageName: string;
 };
 
-const MEETING_TYPE_OPTIONS = [
-  { label: "Showroom Visit", value: "SHOWROOM_VISIT" },
-  { label: "Virtual Meeting", value: "VIRTUAL_MEETING" },
-  { label: "Site Visit", value: "SITE_VISIT" },
-] as const;
 
 function toDateTimeLocalValue(value: string) {
   if (!value) {
@@ -132,7 +125,9 @@ export type CompleteTaskApiPayload = {
   meetingAppointment?: {
     designerName: string;
     date: string;
-    slotId: string;
+    slotId?: string;
+    startTime?: string;
+    endTime?: string;
     meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   };
 };
@@ -149,6 +144,8 @@ export default function CompleteTaskModal({
   userRole = "",
   presalesHandedOff = false,
   presalesVerifyAvailable = false,
+  /** Opened from footer Verify — show handoff panel without picking Assigned first. */
+  forcePresalesVerifyPanel = false,
   salesExecutiveOptions = [],
   salesExecutivesLoading = false,
   salesExecutivesError = null,
@@ -172,6 +169,7 @@ export default function CompleteTaskModal({
   presalesHandedOff?: boolean;
   /** Show verify panel when Assigned is selected (parent gates by role / verified state). */
   presalesVerifyAvailable?: boolean;
+  forcePresalesVerifyPanel?: boolean;
   salesExecutiveOptions?: PresalesSalesExecutiveOption[];
   salesExecutivesLoading?: boolean;
   salesExecutivesError?: string | null;
@@ -198,14 +196,9 @@ export default function CompleteTaskModal({
   const [apiBusy, setApiBusy] = useState(false);
   const [apiError, setApiError] = useState("");
   const [gatePopupMessage, setGatePopupMessage] = useState("");
-  const [meetingDesigner, setMeetingDesigner] = useState("");
-  const [appointmentDate, setAppointmentDate] = useState("");
-  const [selectedSlotId, setSelectedSlotId] = useState("");
-  const [meetingType, setMeetingType] = useState("");
-  const [designerOptions, setDesignerOptions] = useState<string[]>([]);
-  const [availableSlots, setAvailableSlots] = useState<AvailableSlotRow[]>([]);
-  const [designersLoading, setDesignersLoading] = useState(false);
-  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [hubMeetingOpen, setHubMeetingOpen] = useState(false);
+  const [hubMeetingBusy, setHubMeetingBusy] = useState(false);
+  const [hubMeetingError, setHubMeetingError] = useState("");
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
@@ -252,11 +245,9 @@ export default function CompleteTaskModal({
     setNote("");
     setFeedbackMappings([]);
     setShowErrors(false);
-    setMeetingDesigner("");
-    setAppointmentDate("");
-    setSelectedSlotId("");
-    setMeetingType("");
-    setAvailableSlots([]);
+    setHubMeetingOpen(false);
+    setHubMeetingBusy(false);
+    setHubMeetingError("");
     setCancelConfirmed(false);
     setApiError("");
     setGatePopupMessage("");
@@ -511,63 +502,11 @@ export default function CompleteTaskModal({
   ]);
 
   useEffect(() => {
-    if (!open || !scheduleMode) {
-      return;
+    if (!open) {
+      setHubMeetingOpen(false);
+      setHubMeetingError("");
     }
-    let cancelled = false;
-    setDesignersLoading(true);
-    void fetchActiveDesigners()
-      .then((names) => {
-        if (!cancelled) setDesignerOptions(names);
-      })
-      .catch(() => {
-        if (!cancelled) setDesignerOptions([]);
-      })
-      .finally(() => {
-        if (!cancelled) setDesignersLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, scheduleMode]);
-
-  useEffect(() => {
-    if (
-      !open ||
-      !scheduleMode ||
-      !meetingDesigner.trim() ||
-      !appointmentDate.trim()
-    ) {
-      setAvailableSlots([]);
-      setSelectedSlotId("");
-      return;
-    }
-    let cancelled = false;
-    setSlotsLoading(true);
-    void fetchAvailableSlots(appointmentDate.trim(), meetingDesigner.trim())
-      .then((res) => {
-        if (cancelled) return;
-        const rows = res.availableSlots ?? [];
-        setAvailableSlots(rows);
-        setSelectedSlotId((prev) =>
-          rows.some((r) => r.slotId === prev && r.available !== false)
-            ? prev
-            : "",
-        );
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAvailableSlots([]);
-          setSelectedSlotId("");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setSlotsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [appointmentDate, meetingDesigner, open, scheduleMode]);
+  }, [open]);
 
   const presalesOnFreshData = useMemo(
     () =>
@@ -653,13 +592,14 @@ export default function CompleteTaskModal({
       onPresalesVerify &&
       !presalesLeadVerified &&
       !presalesHandedOff &&
-      selectedFeedbackOption &&
-      isPresalesVerifyHandoffSelection({
-        stage: selectedFeedbackOption.stage,
-        category: selectedFeedbackOption.stageCategory,
-        subStage: selectedFeedbackOption.subStageName,
-        feedbackLabel: feedback,
-      }),
+      (forcePresalesVerifyPanel ||
+        (selectedFeedbackOption &&
+          isPresalesVerifyHandoffSelection({
+            stage: selectedFeedbackOption.stage,
+            category: selectedFeedbackOption.stageCategory,
+            subStage: selectedFeedbackOption.subStageName,
+            feedbackLabel: feedback,
+          }))),
   );
   const presalesDataConversionWonVisible = useMemo(
     () =>
@@ -694,7 +634,7 @@ export default function CompleteTaskModal({
   const resoneMissing = Boolean(
     (onApiComplete || presalesMode) && reasonRequired && lostReason.trim().length === 0,
   );
-  const noteMissing = note.trim().length === 0;
+  const noteMissing = scheduleMode ? false : note.trim().length === 0;
   const feedbackMissing = feedback.trim().length === 0;
 
   const needsLeadPropertyGate = useMemo(() => {
@@ -709,15 +649,80 @@ export default function CompleteTaskModal({
     });
   }, [lead, status, path, cancelMode]);
 
-  const meetingFieldsMissing =
-    scheduleMode &&
-    (!meetingDesigner.trim() ||
-      !appointmentDate.trim() ||
-      !selectedSlotId.trim() ||
-      !meetingType.trim());
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
-  const designerEmailMissingForMeeting =
-    scheduleMode && !isValidEmail(lead.designerEmail || "");
+
+  const handleFeedbackSelect = (value: string) => {
+    setFeedback(value);
+    if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
+      setHubMeetingOpen(true);
+      setHubMeetingError("");
+    } else {
+      setHubMeetingOpen(false);
+    }
+  };
+
+  const handleHubMeetingConfirm = async (payload: ScheduleHubMeetingConfirmPayload) => {
+    if (emailMissingForMeeting) {
+      setHubMeetingError(
+        "Add a valid customer email on the lead (Lead tab) before scheduling.",
+      );
+      return;
+    }
+
+    if (!onApiComplete) return;
+
+    if (!presalesMode) {
+      const effectivelyMissingFields = missingLeadPropertyGateFields({
+        budget: modalBudget,
+        propertyNotes: modalPropertyNotes,
+        configuration: modalConfiguration,
+        bookingType: modalBookingType,
+      } as Lead);
+
+      if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
+        setHubMeetingError(
+          `Please fill ${effectivelyMissingFields.join(", ")} in Complete Task before scheduling.`,
+        );
+        return;
+      }
+    }
+
+    setHubMeetingBusy(true);
+    setHubMeetingError("");
+    const trimmedNotes = payload.notes.trim();
+    setNote(trimmedNotes);
+    try {
+      await onApiComplete({
+        feedback,
+        milestoneStage: status,
+        milestoneStageCategory: path,
+        note: trimmedNotes,
+        nextCallDateLocal: "",
+        lostReason: reasonRequired ? lostReason.trim() : undefined,
+        budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
+        propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
+        configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
+        bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+        possessionDate:
+          needsLeadPropertyGate || isHoldSubstageSelected
+            ? modalPossessionDate.trim()
+            : undefined,
+        meetingAppointment: {
+          designerName: payload.designerName,
+          date: payload.date,
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+          meetingType: payload.meetingType,
+        },
+      });
+      setHubMeetingOpen(false);
+      onClose();
+    } catch (e) {
+      setHubMeetingError(e instanceof Error ? e.message : "Could not schedule meeting");
+    } finally {
+      setHubMeetingBusy(false);
+    }
+  };
 
   if (!open) {
     return null;
@@ -767,16 +772,9 @@ export default function CompleteTaskModal({
     // used to send the Design QA email, otherwise it will be skipped and we
     // show a non-blocking warning below (see UI render).
 
-    if (scheduleMode && meetingFieldsMissing) {
-      setApiError("Select designer, date, and an available slot.");
-      return;
-    }
-
-    const selectedSlot = availableSlots.find(
-      (s) => s.slotId === selectedSlotId,
-    );
-    if (scheduleMode && selectedSlot && selectedSlot.available === false) {
-      setApiError("This slot is not available. Pick another slot.");
+    if (scheduleMode) {
+      setHubMeetingOpen(true);
+      setApiError("Use Schedule Hub Meeting to book the appointment.");
       return;
     }
 
@@ -809,7 +807,14 @@ export default function CompleteTaskModal({
       return;
     }
 
-    if (nextCallDateMissing || noteMissing || feedbackMissing) {
+    const verifyOnlyFromFooter = Boolean(
+      presalesMode && verifyHandoffMode && forcePresalesVerifyPanel,
+    );
+    if (
+      nextCallDateMissing ||
+      noteMissing ||
+      (feedbackMissing && !verifyOnlyFromFooter)
+    ) {
       return;
     }
 
@@ -898,17 +903,7 @@ export default function CompleteTaskModal({
           configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
           bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
           possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
-          meetingAppointment: scheduleMode
-            ? {
-                designerName: meetingDesigner.trim(),
-                date: appointmentDate.trim(),
-                slotId: selectedSlotId.trim(),
-                meetingType: meetingType.trim() as
-                  | "SHOWROOM_VISIT"
-                  | "VIRTUAL_MEETING"
-                  | "SITE_VISIT",
-              }
-            : undefined,
+          meetingAppointment: undefined,
         });
         onClose();
       } catch (e) {
@@ -1116,7 +1111,7 @@ export default function CompleteTaskModal({
                 <Select
                   value={feedback}
                   onChange={(e) => {
-                    setFeedback(e.target.value);
+                    handleFeedbackSelect(e.target.value);
                   }}
                   disabled={!feedbackSelectEnabled}
                   className={[
@@ -1312,117 +1307,47 @@ export default function CompleteTaskModal({
               )}
 
               {!presalesMode && scheduleMode ? (
-                <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3">
+                <div className="rounded-[14px] border border-emerald-200/80 bg-emerald-50/60 p-3.5 space-y-3">
                   <p className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
                     {meetingSchedulePanelTitle(feedback)}
                   </p>
                   <p className="text-[11px] text-[var(--crm-text-muted)]">
-                    Pick designer, date, and slot. Hub creates the booking; description uses:
-                    Meeting with [Lead type] - Lead ID: [id].
+                    Schedule the Hub meeting in the popup. Notes, designer, meeting type, and a 90-minute slot are configured there.
                   </p>
-                  {isDesignRefinementSchedulingSubstage(feedback) ? (
-                    <p className="text-[11px] text-[var(--crm-text-muted)]">
-                      Same flow as the first meeting. The server does{" "}
-                      <strong className="font-medium text-[var(--crm-text-secondary)]">not</strong>{" "}
-                      send a second Style Discovery (Design QA) invitation to the customer.
-                      Calendar sync and internal participant emails may still apply when the
-                      appointment is created or updated.
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-[var(--crm-text-muted)]">
-                      When you move into{" "}
-                      <strong className="font-medium text-[var(--crm-text-secondary)]">
-                        Meeting Scheduled
-                      </strong>
-                      , the server may email the customer the Style Discovery link if their email
-                      is set. Creating the appointment can also notify sales/designer participants and
-                      sync Google Calendar when configured.
-                    </p>
-                  )}
-                  <div>
-                    <FieldLabel required>Designer</FieldLabel>
-                    <Select
-                      value={meetingDesigner}
-                      onChange={(e) => {
-                        setMeetingDesigner(e.target.value);
-                        setSelectedSlotId("");
-                      }}
-                      disabled={designersLoading}
-                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                    >
-                      <option value="">
-                        {designersLoading
-                          ? "Loading designers…"
-                          : "Select designer"}
-                      </option>
-                      {designerOptions.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <FieldLabel required>Date</FieldLabel>
-                    <Input
-                      type="date"
-                      min={minAppointmentDate}
-                      value={appointmentDate}
-                      onChange={(e) => {
-                        setAppointmentDate(e.target.value);
-                        setSelectedSlotId("");
-                      }}
-                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel required>Meeting type</FieldLabel>
-                    <Select
-                      value={meetingType}
-                      onChange={(e) => setMeetingType(e.target.value)}
-                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                    >
-                      <option value="">Select meeting type</option>
-                      {MEETING_TYPE_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div>
-                    <FieldLabel required>Slot</FieldLabel>
-                    <Select
-                      value={selectedSlotId}
-                      onChange={(e) => setSelectedSlotId(e.target.value)}
-                      disabled={slotsLoading || !availableSlots.length}
-                      className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                    >
-                      <option value="">
-                        {slotsLoading
-                          ? "Loading slots…"
-                          : !meetingDesigner.trim() || !appointmentDate.trim()
-                            ? "Select designer and date"
-                            : availableSlots.length === 0
-                              ? "No slots"
-                              : "Select slot"}
-                      </option>
-                      {availableSlots
-                        .filter((s) => s.available !== false)
-                        .map((s) => (
-                          <option key={s.slotId} value={s.slotId}>
-                            {s.displayName ?? s.slotId}
-                            {s.startTime ? ` (${s.startTime})` : ""}
-                          </option>
-                        ))}
-                    </Select>
-                  </div>
-                  {scheduleMode && showErrors && emailMissingForMeeting ? (
-                    <p className="text-[12px] text-rose-600">
-                      Add a valid customer email on the Lead tab.
-                    </p>
-                  ) : null}
+                  <Button
+                    type="button"
+                    variant="success"
+                    onClick={() => {
+                      setHubMeetingOpen(true);
+                      setHubMeetingError("");
+                    }}
+                  >
+                    {hubMeetingOpen ? "Reopen Schedule Hub Meeting" : "Schedule Hub Meeting"}
+                  </Button>
                 </div>
+              ) : null}
+
+              {/* Note */}
+              {!scheduleMode ? (
+              <div>
+                <FieldLabel required>Note</FieldLabel>
+                <Textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Enter your note here..."
+                  className={[
+                    "mt-2 w-full min-h-[110px] rounded-[14px] bg-[var(--crm-input-bg)]",
+                    showErrors && noteMissing
+                      ? "border-red-500 bg-red-100"
+                      : "",
+                  ].join(" ")}
+                />
+                {showErrors && noteMissing && (
+                  <p className="mt-1 text-[12px] text-red-500">
+                    Note is required.
+                  </p>
+                )}
+              </div>
               ) : null}
 
               {(onApiComplete || presalesMode) && reasonRequired ? (
@@ -1474,27 +1399,6 @@ export default function CompleteTaskModal({
                   </label>
                 </div>
               ) : null}
-
-              {/* Note */}
-              <div>
-                <FieldLabel required>Note</FieldLabel>
-                <Textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Enter your note here..."
-                  className={[
-                    "mt-2 w-full min-h-[110px] rounded-[14px] bg-[var(--crm-input-bg)]",
-                    showErrors && noteMissing
-                      ? "border-red-500 bg-red-100"
-                      : "",
-                  ].join(" ")}
-                />
-                {showErrors && noteMissing && (
-                  <p className="mt-1 text-[12px] text-red-500">
-                    Note is required.
-                  </p>
-                )}
-              </div>
             </div>
           </div>
 
@@ -1592,6 +1496,44 @@ export default function CompleteTaskModal({
           </div>
         </div>
       ) : null}
+
+      <ScheduleHubMeetingModal
+        open={hubMeetingOpen && scheduleMode}
+        onClose={() => setHubMeetingOpen(false)}
+        onConfirm={handleHubMeetingConfirm}
+        busy={hubMeetingBusy}
+        error={hubMeetingError}
+        leadCustomerName={lead.name}
+        leadDisplayId={lead.customerId || lead.leadId || lead.id}
+        status={status}
+        path={path}
+        feedback={feedback}
+        hubMeetingPanelTitle={meetingSchedulePanelTitle(feedback)}
+        initialNote={note}
+        minDate={minAppointmentDate}
+        emailMissing={emailMissingForMeeting}
+        onNotesChange={setNote}
+        scheduleInstruction={
+          <>
+            <p>
+              Pick designer, date, and slot. Hub creates the booking; description uses:
+              Meeting with [Lead type] - Lead ID: [id].
+            </p>
+            {isDesignRefinementSchedulingSubstage(feedback) ? (
+              <p>
+                Same flow as the first meeting. The server does not send a second Style Discovery
+                invitation to the customer. Calendar sync and internal emails may still apply.
+              </p>
+            ) : (
+              <p>
+                When you move into Meeting Scheduled, the server may email the customer the Style
+                Discovery link if their email is set. Creating the appointment can also notify
+                participants and sync Google Calendar when configured.
+              </p>
+            )}
+          </>
+        }
+      />
     </>
   );
 }

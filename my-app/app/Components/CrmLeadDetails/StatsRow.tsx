@@ -1,7 +1,8 @@
 "use client";
 
 import type { Lead } from "@/lib/data";
-import { maskLeadPhoneForDisplay } from "@/lib/lead-display";
+import { resolveLeadPhoneDisplayForRole } from "@/lib/lead-display";
+import { shouldMaskLeadPhoneForRole } from "@/lib/lead-contact-access";
 
 interface StatCard {
   icon: string;
@@ -11,8 +12,17 @@ interface StatCard {
   iconColor: string;
 }
 
-export default function StatsRow({ lead }: { lead: Lead }) {
-  const phone = maskLeadPhoneForDisplay(lead.phone ?? "");
+export default function StatsRow({
+  lead,
+  viewerRole = "",
+}: {
+  lead: Lead;
+  viewerRole?: string;
+}) {
+  const phone = resolveLeadPhoneDisplayForRole(
+    lead.phone ?? "",
+    shouldMaskLeadPhoneForRole(viewerRole),
+  );
 
   const stats: StatCard[] = [
     {

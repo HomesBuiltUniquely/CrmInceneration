@@ -640,7 +640,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     bookingType: pickStr(detail, "bookingType", "booking_type", "BookingType") || "",
-    meetingType: pickStr(detail, "meetingType", "meeting") || "",
+    meetingType: pickStr(detail, "meetingType", "meeting_type", "meeting") || "",
     propertyNotes: pickPropertyNotesFromDetail(detail, leadType),
     requirements,
     meetingDate: pickStr(detail, "meetingDate", "siteVisitDate") || "",
@@ -1071,6 +1071,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 
 function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase().replace(/\s+/g, "_");
+  if (u.includes("BOOKING_TOKEN")) return "status";
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";

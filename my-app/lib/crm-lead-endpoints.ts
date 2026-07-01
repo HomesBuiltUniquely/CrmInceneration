@@ -21,6 +21,15 @@ export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
   return `${LEAD_TYPE_TO_BASE[leadType]}/details/${id}`;
 }
 
+/** Hub DELETE paths to try (primary first) when removing a CRM lead row. */
+export function leadDeletePaths(leadType: CrmLeadType, id: string | number): string[] {
+  const base = LEAD_TYPE_TO_BASE[leadType];
+  if (leadType === "whatsapplead") {
+    return [`${base}/${id}`, `${base}/details/${id}`];
+  }
+  return [`${base}/${id}`];
+}
+
 /** Hub PUT paths to try (primary first) when persisting dedicated-source lead details. */
 export function leadUpdatePutPaths(leadType: CrmLeadType, id: string | number): string[] {
   if (leadType === "whatsapplead") {
