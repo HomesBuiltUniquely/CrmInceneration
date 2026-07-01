@@ -23,6 +23,7 @@ import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
 import {
   appendWorkspaceMilestoneFilterQuery,
   defaultLeadsVerificationStatus,
+  persistLeadDetailWorkspace,
   sidebarSectionsForViewer,
   workspaceFromPathname,
 } from "@/lib/crm-workspace";
@@ -80,6 +81,11 @@ export default function Header() {
   const router = useRouter();
   const leadsWorkspace = workspaceFromPathname(pathname);
   const isPresalesLeadsPage = leadsWorkspace === "presales";
+
+  useEffect(() => {
+    persistLeadDetailWorkspace(leadsWorkspace);
+  }, [leadsWorkspace]);
+
   const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
     if (typeof window === "undefined") return "SUPER_ADMIN";

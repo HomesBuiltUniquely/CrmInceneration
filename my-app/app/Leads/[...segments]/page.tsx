@@ -4,6 +4,7 @@ import LeadDetailsClient from "@/app/Components/CrmLeadDetails/LeadDetailsClient
 import NewLeadDetailApiClient from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailApiClient";
 import NewConfigurationScopePage from "@/app/Components/CrmLeadDetailsV2/NewConfigurationScopePage";
 import BookingDonePage from "@/app/Components/CrmLeadDetailsV2/BookingDonePage";
+import SalesOnlyLeadV2Gate from "@/app/Components/CrmLeadDetailsV2/SalesOnlyLeadV2Gate";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { getLeadById } from "@/lib/data";
 
@@ -45,7 +46,11 @@ export default async function LeadDetailsPage({
       /^\d+$/.test(leadId) &&
       tail === "configuration-scope"
     ) {
-      return <NewConfigurationScopePage leadType={leadType} leadId={leadId} />;
+      return (
+        <SalesOnlyLeadV2Gate leadType={leadType} leadId={leadId}>
+          <NewConfigurationScopePage leadType={leadType} leadId={leadId} />
+        </SalesOnlyLeadV2Gate>
+      );
     }
     if (
       isCrmLeadType(leadType) &&
@@ -53,9 +58,11 @@ export default async function LeadDetailsPage({
       tail === "booking-done"
     ) {
       return (
-        <Suspense fallback={null}>
-          <BookingDonePage leadType={leadType} leadId={leadId} />
-        </Suspense>
+        <SalesOnlyLeadV2Gate leadType={leadType} leadId={leadId}>
+          <Suspense fallback={null}>
+            <BookingDonePage leadType={leadType} leadId={leadId} />
+          </Suspense>
+        </SalesOnlyLeadV2Gate>
       );
     }
     notFound();
