@@ -3050,6 +3050,7 @@ export default function LeadDetailsApiClient({
         if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
         setCompleteTaskOpen(true);
       },
+      onPhoneCall: handlePhoneCallLog,
       onMarkAsWon: handleMarkAsWon,
       onFloorPlanUpload: handleFloorPlanUpload,
       onFloorPlanRemove: handleFloorPlanRemove,

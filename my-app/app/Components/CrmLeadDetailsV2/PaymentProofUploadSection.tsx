@@ -26,12 +26,15 @@ type Props = {
   leadType: string;
   leadId: string;
   selectedQuote?: LeadQuoteOption | null;
+  /** Parent re-reads draft amount from storage (confirm button enable). */
+  onPaymentDraftChange?: () => void;
 };
 
 export default function PaymentProofUploadSection({
   leadType,
   leadId,
   selectedQuote = null,
+  onPaymentDraftChange,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<PaymentProofFile[]>([]);
@@ -127,7 +130,25 @@ export default function PaymentProofUploadSection({
     const formatted = formatPaymentAmountInput(tenPercentAmount);
     setAmountInput(formatted);
     writePaymentAmount(leadType, leadId, formatted);
+    onPaymentDraftChange?.();
   };
+
+  const commitAmountDraft = useCallback(
+    (raw: string) => {
+      const parsed = parsePaymentAmountInput(raw);
+      if (parsed === null) {
+        setAmountInput("");
+        writePaymentAmount(leadType, leadId, "");
+        onPaymentDraftChange?.();
+        return;
+      }
+      const formatted = formatPaymentAmountInput(parsed);
+      setAmountInput(formatted);
+      writePaymentAmount(leadType, leadId, formatted);
+      onPaymentDraftChange?.();
+    },
+    [leadId, leadType, onPaymentDraftChange],
+  );
 
   return (
     <section className="mt-6 rounded-lg border border-[#dbeafe] bg-[#f8fbff] p-4">
@@ -171,17 +192,14 @@ export default function PaymentProofUploadSection({
               const next = event.target.value;
               setAmountInput(next);
               writePaymentAmount(leadType, leadId, next);
+              onPaymentDraftChange?.();
             }}
-            onBlur={() => {
-              const parsed = parsePaymentAmountInput(amountInput);
-              if (parsed === null) {
-                setAmountInput("");
-                writePaymentAmount(leadType, leadId, "");
-                return;
+            onBlur={() => commitAmountDraft(amountInput)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commitAmountDraft(amountInput);
               }
-              const formatted = formatPaymentAmountInput(parsed);
-              setAmountInput(formatted);
-              writePaymentAmount(leadType, leadId, formatted);
             }}
             placeholder="Enter amount received"
             className="h-11 w-full px-3 text-[15px] font-semibold text-[#0f172a] outline-none placeholder:font-normal placeholder:text-[#94a3b8]"
