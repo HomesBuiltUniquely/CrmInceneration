@@ -281,7 +281,7 @@ export function normalizeFloorPlanPublicLink(raw: string): string {
   const base = (
     (typeof process !== "undefined" &&
       process.env.NEXT_PUBLIC_CRM_PUBLIC_API_BASE_URL?.trim()) ||
-    (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API?.trim()) ||
+    (typeof process !== "undefined" && process.env.DESIGN_MODULE_URL?.trim()) ||
     "https://hows.hubinterior.com"
   ).replace(/\/+$/, "");
   return `${base}${t.startsWith("/") ? t : `/${t}`}`;

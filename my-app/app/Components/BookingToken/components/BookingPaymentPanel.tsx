@@ -38,6 +38,8 @@ import {
   validatePaymentProofFile,
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { isSuperAdminRole } from "@/lib/roleUtils";
 
 export type BookingPaymentPanelMode = "view" | "pay";
 
@@ -119,6 +121,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [draftProofViewer, setDraftProofViewer] = useState<DraftProof | null>(null);
   const [leadDetails, setLeadDetails] = useState<BookingLeadDetails>(EMPTY_BOOKING_LEAD_DETAILS);
   const [loadingLead, setLoadingLead] = useState(false);
+  const [viewerRole, setViewerRole] = useState("");
+
+  useEffect(() => {
+    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
+  }, []);
 
   const isBookingView = mode === "view" && deal?.listingType === "booking";
 
@@ -128,6 +135,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     history.find((entry) => entry.id === selectedEntryId) ?? history[history.length - 1] ?? null;
   const lastHistoryEntry = history[history.length - 1] ?? null;
   const canRemoveSelectedPayment =
+    isSuperAdminRole(viewerRole) &&
     selectedEntry != null &&
     lastHistoryEntry?.id === selectedEntry.id &&
     normalizeFinanceReviewStatus(selectedEntry.financeReviewStatus) !== "APPROVED";

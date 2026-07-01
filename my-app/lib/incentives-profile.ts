@@ -87,7 +87,7 @@ function initialsFromName(name: string): string {
 }
 
 function activeSlabForAchievement(pct: number): number {
-  let active = SLAB_DEFS[0].targetPct;
+  let active: number = SLAB_DEFS[0].targetPct;
   for (const slab of SLAB_DEFS) {
     if (pct >= slab.targetPct) active = slab.targetPct;
   }
@@ -95,7 +95,7 @@ function activeSlabForAchievement(pct: number): number {
 }
 
 function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] {
-  let picked = SLAB_DEFS[0];
+  let picked: (typeof SLAB_DEFS)[number] = SLAB_DEFS[0];
   for (const slab of SLAB_DEFS) {
     if (pct >= slab.targetPct) picked = slab;
   }

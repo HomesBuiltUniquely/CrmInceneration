@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { canAccessBookingTokenDashboard } from "@/lib/roleUtils";
 import {
   DEFAULT_BOOKING_DATE_FILTER,
   type BookingDateFilterState,
@@ -36,12 +37,12 @@ export default function BookingTokenClient() {
     DEFAULT_BOOKING_DATE_FILTER,
   );
   const [kpiRefresh, setKpiRefresh] = useState(0);
-  const [role, setRole] = useState("SUPER_ADMIN");
+  const [role, setRole] = useState("");
   const [allowed, setAllowed] = useState(false);
 
   useEffect(() => {
     const stored = normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
-    if (stored !== "SUPER_ADMIN") {
+    if (!canAccessBookingTokenDashboard(stored)) {
       router.replace("/Leads");
       return;
     }

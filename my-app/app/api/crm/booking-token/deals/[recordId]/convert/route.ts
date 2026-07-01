@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { upstreamAuthHeaderRecord, upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import { bookingTokenConvertUpstreamCandidates } from "@/lib/booking-token-upstream";
 import { syncConvertBookingToDesignModule } from "@/lib/design-module-hub-sync";
@@ -12,8 +12,9 @@ export async function POST(
     const { recordId } = await ctx.params;
     const body = await req.text();
     const requestBody = body || JSON.stringify({ confirm: true });
-    const headers = {
-      ...upstreamAuthHeaders(req),
+    const authHeaders = upstreamAuthHeaderRecord(req);
+    const headers: HeadersInit = {
+      ...authHeaders,
       "Content-Type": "application/json",
     };
 
@@ -42,7 +43,7 @@ export async function POST(
           let designSync: { designLeadId?: number } | null = null;
           let designSyncError: string | null = null;
           try {
-            designSync = await syncConvertBookingToDesignModule(recordId, headers, req.nextUrl.origin);
+            designSync = await syncConvertBookingToDesignModule(recordId, authHeaders, req.nextUrl.origin);
           } catch (syncErr) {
             designSyncError =
               syncErr instanceof Error ? syncErr.message : "Design Module finance sync failed";

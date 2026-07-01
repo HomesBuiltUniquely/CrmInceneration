@@ -4125,6 +4125,7 @@ export default function LeadsDataSection({
         onSelectedRowIdsChange={setSelectedRowIds}
         onDeleteRow={canBulkDelete ? (row) => void requestDeleteLeadRow(row) : undefined}
         onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
+        leadsWorkspace={leadsWorkspace}
       />
       {rowAssignModalOpen && rowAssignLead ? (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(9,14,30,0.55)] backdrop-blur-[4px] px-3 py-4">

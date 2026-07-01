@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { upstreamAuthHeaderRecord } from "@/lib/crm-proxy-auth";
 import { syncConvertBookingToDesignModule } from "@/lib/design-module-hub-sync";
 
 export async function POST(req: NextRequest) {
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
 
     const result = await syncConvertBookingToDesignModule(
       recordId,
-      upstreamAuthHeaders(req),
+      upstreamAuthHeaderRecord(req),
       req.nextUrl.origin,
     );
     return NextResponse.json({ ok: true, ...result });

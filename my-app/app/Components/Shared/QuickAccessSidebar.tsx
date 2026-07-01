@@ -9,8 +9,8 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { canAccessBookingTokenDashboard, isAdminRole } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
-import { isAdminRole } from "@/lib/roleUtils";
 import ThemeToggle from "./ThemeToggle";
 
 /** `/` must not match every route via `startsWith` (e.g. `/presales-leads`). */
@@ -551,7 +551,6 @@ export default function QuickAccessSidebar({
         if (section.id === "presales") {
           return isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive;
         }
-        if (section.id === "booking-token") return isSuperAdmin;
         if (isDesignRole) {
           return section.id === "design";
         }
@@ -573,6 +572,9 @@ export default function QuickAccessSidebar({
           if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
           if (isSalesExecutive && item.id === "crm-presales-executives") return false;
           if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
+          if (item.id === "crm-booking-token") {
+            return canAccessBookingTokenDashboard(currentRole || profileRole);
+          }
           return true;
         }),
       }))
