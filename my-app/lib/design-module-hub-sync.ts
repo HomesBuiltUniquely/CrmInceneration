@@ -1,8 +1,8 @@
 import type { PaymentHistoryResponse } from "@/lib/booking-payment-history-api";
 import { bookingPaymentHistoryUpstreamUrl } from "@/lib/booking-payment-upstream";
 
-export const DESIGN_MODULE_BASE_URL = (
-  process.env.DESIGN_MODULE_BASE_URL?.trim() || "http://localhost:3001"
+export const DESIGN_MODULE_URL = (
+  process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
 ).replace(/\/+$/, "");
 
 export const HUB_SYNC_API_KEY =
@@ -113,7 +113,7 @@ export async function syncConvertBookingToDesignModule(
 
   let lastError = "";
   for (const path of endpoints) {
-    const url = `${DESIGN_MODULE_BASE_URL}${path}`;
+    const url = `${DESIGN_MODULE_URL}${path}`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -138,6 +138,6 @@ export async function syncConvertBookingToDesignModule(
   }
 
   throw new Error(
-    `${lastError}. Restart Design Module backend (DesignModulephase1/backend npm run dev) on ${DESIGN_MODULE_BASE_URL}.`,
+    `${lastError}. Restart Design Module backend (DesignModulephase1/backend npm run dev) on ${DESIGN_MODULE_URL}.`,
   );
 }
