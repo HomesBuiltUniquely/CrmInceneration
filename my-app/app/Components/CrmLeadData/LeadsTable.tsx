@@ -7,6 +7,7 @@ import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
 import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
+import { buildLeadDetailPath, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -124,6 +125,7 @@ type LeadRowActionProps = {
   gridClass: string;
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
+  leadsWorkspace?: CrmWorkspace;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
@@ -163,9 +165,13 @@ function AlertButton({
   );
 }
 
-function openLeadDetail(router: ReturnType<typeof useRouter>, row: LeadRowModel) {
+function openLeadDetail(
+  router: ReturnType<typeof useRouter>,
+  row: LeadRowModel,
+  leadsWorkspace: CrmWorkspace = "sales",
+) {
   persistLeadsListScrollBeforeNavigate();
-  const url = `/Leads/${row.leadType}/${row.id}`;
+  const url = buildLeadDetailPath(row.leadType, row.id, leadsWorkspace);
   if (typeof window !== "undefined") {
     const width = 1080;
     const height = 720;
@@ -193,12 +199,13 @@ function LeadRowAction({
   gridClass,
   onDelete,
   onAssign,
+  leadsWorkspace = "sales",
 }: LeadRowActionProps) {
   const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
   return (
     <div
-      onClick={() => openLeadDetail(router, row)}
+      onClick={() => openLeadDetail(router, row, leadsWorkspace)}
       className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-4 py-3 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
@@ -207,7 +214,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLeadDetail(router, row);
+          openLeadDetail(router, row, leadsWorkspace);
         }
       }}
     >
@@ -428,6 +435,7 @@ type LeadsTableProps = {
   onSelectedRowIdsChange?: (ids: string[]) => void;
   onDeleteRow?: (row: LeadRowModel) => void;
   onAssignRow?: (row: LeadRowModel) => void;
+  leadsWorkspace?: CrmWorkspace;
 };
 
 export default function LeadsTable({
@@ -442,6 +450,7 @@ export default function LeadsTable({
   onSelectedRowIdsChange,
   onDeleteRow,
   onAssignRow,
+  leadsWorkspace = "sales",
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
 
@@ -546,6 +555,7 @@ export default function LeadsTable({
               gridClass={gridClass}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
+              leadsWorkspace={leadsWorkspace}
             />
           ))
         )}
