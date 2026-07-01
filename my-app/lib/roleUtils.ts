@@ -15,6 +15,21 @@ export function isAdminRole(role: string): boolean {
   return r === "ADMIN" || r === "SUPER_ADMIN";
 }
 
+export function isSuperAdminRole(role: string): boolean {
+  return normalizeRole(role) === "SUPER_ADMIN";
+}
+
+/** Booking & Token dashboard — sales hierarchy + admin roles. */
+export function canAccessBookingTokenDashboard(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    isAdminRole(r) ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "SALES_EXECUTIVE"
+  );
+}
+
 /** Admin dashboards and dual-pipeline detail (incl. sales admin). */
 export function canViewBothMilestonePipelines(role: string): boolean {
   const r = normalizeRole(role);

@@ -22,7 +22,7 @@ import { canShowCancellation } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
-import { isAdminRole } from "@/lib/roleUtils";
+import { isSuperAdminRole } from "@/lib/roleUtils";
 import {
   fetchDashboardDealRows,
   filterDealRowsForTab,
@@ -159,6 +159,7 @@ function DealRowActions({
   onConvert,
   onDelete,
   showDelete,
+  showCancel,
 }: {
   row: DealRow;
   onView: (row: DealRow) => void;
@@ -167,6 +168,7 @@ function DealRowActions({
   onConvert: (row: DealRow) => void;
   onDelete: (row: DealRow) => void;
   showDelete: boolean;
+  showCancel: boolean;
 }) {
   return (
     <ActionButtonStack>
@@ -196,7 +198,7 @@ function DealRowActions({
         </button>
       ) : null}
 
-      {row.showCancellation ? (
+      {row.showCancellation && showCancel ? (
         <button type="button" onClick={() => onCancel(row)} className={ACTION_BTN_CANCEL}>
           Cancellation
         </button>
@@ -269,7 +271,8 @@ export default function DealsTable({
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
   }, []);
 
-  const canDeleteLead = tab === "cancel" && isAdminRole(viewerRole);
+  const canDeleteLead = tab === "cancel" && isSuperAdminRole(viewerRole);
+  const canCancelDeal = isSuperAdminRole(viewerRole);
 
   const displayRows = useMemo(
     () => applyCancellationWindow(filterDealRowsForTab(rows, tab), nowMs),
@@ -586,6 +589,7 @@ export default function DealsTable({
                         onConvert={setConvertTarget}
                         onDelete={setDeleteTarget}
                         showDelete={canDeleteLead}
+                        showCancel={canCancelDeal}
                       />
                       </div>
                     </td>
