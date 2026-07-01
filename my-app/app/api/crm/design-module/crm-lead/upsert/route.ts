@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const DESIGN_MODULE_BASE_URL = (
-  process.env.DESIGN_MODULE_BASE_URL?.trim() || "http://localhost:3001"
+const DESIGN_MODULE_URL = (
+  process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
 ).replace(/\/+$/, "");
 const HUB_SYNC_API_KEY =
   process.env.HUB_SYNC_API_KEY?.trim() ||
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     parsed = null;
   }
 
-  const url = `${DESIGN_MODULE_BASE_URL}/api/hub/crm-lead/upsert`;
+  const url = `${DESIGN_MODULE_URL}/api/hub/crm-lead/upsert`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
