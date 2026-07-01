@@ -227,6 +227,11 @@ export default function BookingDoneModal({
   const [milestoneCategory, setMilestoneCategory] = useState("");
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
   const [handoffComplete, setHandoffComplete] = useState(false);
+  const [paymentDraftRevision, setPaymentDraftRevision] = useState(0);
+
+  const bumpPaymentDraft = useCallback(() => {
+    setPaymentDraftRevision((value) => value + 1);
+  }, []);
 
   const handleClose = useCallback(() => {
     if (submitting) return;
@@ -264,6 +269,7 @@ export default function BookingDoneModal({
     if (!open) {
       setHandoffError("");
       setSubmitting(false);
+      setPaymentDraftRevision(0);
       return;
     }
 
@@ -350,7 +356,7 @@ export default function BookingDoneModal({
 
   const amountReceived = useMemo(
     () => parsePaymentAmountInput(readPaymentAmount(leadType, leadId)),
-    [leadId, leadType, open],
+    [leadId, leadType, open, paymentDraftRevision],
   );
   const tenPercentAmount = useMemo(
     () => calculateBookingTenPercent(selectedQuote?.amount),
@@ -551,6 +557,7 @@ export default function BookingDoneModal({
             leadType={leadType}
             leadId={leadId}
             selectedQuote={selectedQuote}
+            onPaymentDraftChange={bumpPaymentDraft}
           />
 
           {paymentKind ? (
@@ -634,7 +641,8 @@ function QuotationSection({
         <div>
           <p className="text-[15px] font-bold text-[#3f2b23]">Revision History</p>
           <p className="mt-1 text-[13px] text-[#7c665d]">
-            Click a version to open the quotation, then use that price for booking.
+            Click a version to select it for booking. Use{" "}
+            <span className="font-semibold">Open quotation</span> to view the quote in a new tab.
           </p>
         </div>
       </div>
@@ -660,17 +668,22 @@ function QuotationSection({
               const selected = option.id === selectedQuoteId;
               const quoteUrl = resolveQuoteVerifyUrl(option, hubLeadId);
               return (
-                <a
+                <div
                   key={option.id}
-                  href={quoteUrl || undefined}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSelectQuote(option.id)}
-                  className={`block rounded-xl border px-4 py-3 text-left transition ${
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectQuote(option.id);
+                    }
+                  }}
+                  className={`block cursor-pointer rounded-xl border px-4 py-3 text-left transition ${
                     selected
                       ? "border-[#d7b0aa] bg-[#fff1ef] shadow-[inset_4px_0_0_#9f3d33]"
                       : "border-[#e7ddd7] bg-white hover:border-[#d7c5bf] hover:bg-[#fffdfb]"
-                  } ${quoteUrl ? "cursor-pointer" : "pointer-events-none opacity-70"}`}
+                  }`}
                 >
                   <p className="text-[15px] font-bold text-[#3f2b23]">{option.label}</p>
                   <p className="mt-2 text-[12px] text-[#8b766d]">
@@ -683,11 +696,17 @@ function QuotationSection({
                     {formatQuoteAmount(option.amount)}
                   </p>
                   {quoteUrl ? (
-                    <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-[#b4534a]">
+                    <a
+                      href={quoteUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(event) => event.stopPropagation()}
+                      className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-[#b4534a] hover:underline"
+                    >
                       Open quotation →
-                    </p>
+                    </a>
                   ) : null}
-                </a>
+                </div>
               );
             })}
           </div>

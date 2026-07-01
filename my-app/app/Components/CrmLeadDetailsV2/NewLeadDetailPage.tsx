@@ -184,6 +184,7 @@ function LeadDetailHeader() {
     onOpenStageRollback,
     onCompleteTask,
     completeTaskDisabled,
+    onPhoneCall,
     onMarkAsWon,
     showMarkAsWon,
     followUpDateDisplay,
@@ -211,6 +212,18 @@ function LeadDetailHeader() {
     followUpDateDisplay && followUpDateDisplay !== "Not scheduled"
       ? followUpDateDisplay
       : formatCrmDateTime(lead.followUpDate);
+
+  const handleHeaderPhoneCall = useCallback(() => {
+    void (async () => {
+      try {
+        await onPhoneCall?.();
+      } catch {
+        /* still open dialer */
+      }
+      const n = (lead.phone ?? "").replace(/\s+/g, "");
+      if (n) window.location.href = `tel:${n}`;
+    })();
+  }, [lead.phone, onPhoneCall]);
 
   return (
     <div className="py-4 lg:py-5">
@@ -293,7 +306,9 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Call"
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
+                  disabled={!lead.phone?.trim()}
+                  onClick={handleHeaderPhoneCall}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-50 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
