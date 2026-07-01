@@ -32,7 +32,11 @@ import {
   pickPropertyNotesFromDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
-import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import {
+  hydratePropertyLocationFromRequirements,
+  preserveDiscoveryFields,
+  syncPropertyLocationToRequirements,
+} from "@/lib/lead-discovery-field-sync";
 import {
   canEditLeadPhoneAndEmail,
   shouldMaskLeadPhoneForRole,
@@ -55,6 +59,7 @@ import {
   createAppointment,
   type CreateAppointmentResponse,
 } from "@/lib/appointment-client";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
 import {
@@ -926,7 +931,8 @@ export default function LeadDetailsApiClient({
         detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
       }
       setBaseDetail(detailJson);
-      const mapped = detailJsonToLead(detailJson, lt);
+      let mapped = detailJsonToLead(detailJson, lt);
+      mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
       void tryPersistAutoFollowUpDateForLead(
         { ...detailJson, id: leadId, leadType: lt } as ApiLead,
         lt,
@@ -935,11 +941,19 @@ export default function LeadDetailsApiClient({
         try {
           const refreshed = await getLeadDetail(lt, leadId);
           setBaseDetail(refreshed);
-          setLead((prev) => ({
-            ...detailJsonToLead(refreshed, lt),
-            id: leadId,
-            activities: prev.activities,
-          }));
+          let refreshedLead = detailJsonToLead(refreshed, lt);
+          refreshedLead = await hydratePropertyLocationFromRequirements(
+            refreshedLead,
+            lt,
+            leadId,
+          );
+          setLead((prev) =>
+            preserveDiscoveryFields(prev, {
+              ...refreshedLead,
+              id: leadId,
+              activities: prev.activities,
+            }),
+          );
         } catch {
           /* list refresh on next load is enough */
         }
@@ -954,7 +968,13 @@ export default function LeadDetailsApiClient({
       } else {
         setWhatsappNameLockedFromServer(false);
       }
-      setLead((prev) => ({ ...mapped, id: leadId, activities: prev.activities }));
+      setLead((prev) =>
+        preserveDiscoveryFields(prev, {
+          ...mapped,
+          id: leadId,
+          activities: prev.activities,
+        }),
+      );
       void getLeadFloorPlanMeta(lt, leadId).then((meta) => {
         if (meta) {
           setLead((prev) => ({
@@ -2013,15 +2033,17 @@ export default function LeadDetailsApiClient({
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
         const mapped = detailJsonToLead(stickyDetail, lt);
-        setLead((prev) => ({
-          ...mapped,
-          id: leadId,
-          activities: prev.activities,
-          bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
-          salesManagerName:
-            mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
-          quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
-        }));
+        setLead((prev) =>
+          preserveDiscoveryFields(prev, {
+            ...mapped,
+            id: leadId,
+            activities: prev.activities,
+            bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+            salesManagerName:
+              mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+            quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+          }),
+        );
         notifySuccess(successMessage);
         maybeOpenSalesClosureAfterWon([
           lead.status,
@@ -2098,7 +2120,10 @@ export default function LeadDetailsApiClient({
 
   const handleConnectionPhaseSave = useCallback(async () => {
     await persistLeadDetailFields("Discovery phase saved.");
-  }, [persistLeadDetailFields]);
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    await syncPropertyLocationToRequirements(lead.propertyLocation ?? "", lt, leadId);
+  }, [lead.propertyLocation, leadId, leadTypeParam, persistLeadDetailFields, validLeadType]);
 
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;

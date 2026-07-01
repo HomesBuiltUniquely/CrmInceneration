@@ -35,6 +35,7 @@ import {
   type ConfigurationScopeRequirements,
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
+import { seedProjectUnderstandingFromLead } from "@/lib/lead-discovery-field-sync";
 import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { formatInvestmentRangeLabel, resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
@@ -254,7 +255,14 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         );
         if (cancelled) return;
 
-        const { requirements: mergedReq, needsPersist } = mergeRequirementDefaults(reqData);
+        const { requirements: mergedReq, needsPersist: defaultsNeedPersist } =
+          mergeRequirementDefaults(reqData);
+        const seeded = seedProjectUnderstandingFromLead(
+          mergedReq,
+          leadSnapshot.propertyLocation,
+        );
+        const requirementsToUse = seeded.requirements;
+        let needsPersist = defaultsNeedPersist || seeded.changed;
         requirementsDirtyRef.current = false;
 
         if (needsPersist) {
@@ -262,21 +270,21 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
             const saved = await putConfigurationScopeRequirements(
               validLeadType,
               leadId,
-              toPutRequirementsBody(mergedReq),
+              toPutRequirementsBody(requirementsToUse),
             );
             if (cancelled) return;
             setRequirements(saved);
             if (saved.bookingType) setBookingType(saved.bookingType);
           } catch {
             if (!cancelled) {
-              setRequirements(mergedReq);
-              if (mergedReq.bookingType) setBookingType(mergedReq.bookingType);
+              setRequirements(requirementsToUse);
+              if (requirementsToUse.bookingType) setBookingType(requirementsToUse.bookingType);
             }
           }
         } else {
-          setRequirements(mergedReq);
-          if (mergedReq.bookingType) {
-            setBookingType(mergedReq.bookingType);
+          setRequirements(requirementsToUse);
+          if (requirementsToUse.bookingType) {
+            setBookingType(requirementsToUse.bookingType);
           }
         }
 
