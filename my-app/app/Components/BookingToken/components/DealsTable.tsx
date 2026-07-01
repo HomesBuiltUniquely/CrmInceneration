@@ -18,6 +18,7 @@ import { cancelBookingTokenDeal, convertBookingTokenDeal } from "@/lib/booking-d
 import type { BookingTokenCancelInput } from "@/lib/booking-done-api";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { deleteBookingTokenForLead } from "@/lib/booking-token-delete";
+import { isAfterCancellationWindow } from "@/lib/booking-token-cancellation";
 import { canShowCancellation } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -176,10 +177,10 @@ function DealRowActions({
         View
       </button>
 
-      {row.listingType === "cancel" && showDelete ? (
+      {showDelete ? (
         <button type="button" onClick={() => onDelete(row)} className={ACTION_BTN_DELETE}>
           <TrashIcon />
-          <span>Remove</span>
+          <span>Delete</span>
         </button>
       ) : null}
 
@@ -271,8 +272,7 @@ export default function DealsTable({
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
   }, []);
 
-  const canDeleteLead = tab === "cancel" && isSuperAdminRole(viewerRole);
-  const canCancelDeal = isSuperAdminRole(viewerRole);
+  const isSuperAdmin = isSuperAdminRole(viewerRole);
 
   const displayRows = useMemo(
     () => applyCancellationWindow(filterDealRowsForTab(rows, tab), nowMs),
@@ -588,8 +588,10 @@ export default function DealsTable({
                         onCancel={setCancelTarget}
                         onConvert={setConvertTarget}
                         onDelete={setDeleteTarget}
-                        showDelete={canDeleteLead}
-                        showCancel={canCancelDeal}
+                        showDelete={
+                          isSuperAdmin && isAfterCancellationWindow(row.submittedAt, nowMs)
+                        }
+                        showCancel
                       />
                       </div>
                     </td>
