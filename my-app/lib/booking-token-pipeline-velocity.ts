@@ -1,4 +1,4 @@
-import type { DealRow, PipelineBar } from "@/app/Components/BookingToken/types";
+import type { DealRow, PipelineBar, BookingTokenTab } from "@/app/Components/BookingToken/types";
 import {
   resolveBookingDateRange,
   type BookingDateFilterState,
@@ -72,7 +72,7 @@ function buildRangePipeline(rows: DealRow[], from: Date, to: Date): PipelineBar[
 /** Handoffs per month — respects active date filter when set. */
 export function computePipelineVelocity(
   rows: DealRow[],
-  tab: "all" | "token" | "booking" = "all",
+  tab: BookingTokenTab = "all",
   dateFilter?: BookingDateFilterState,
 ): PipelineBar[] {
   const scoped = filterDealRowsForTab(rows, tab).filter((row) => row.listingType !== "cancel");
