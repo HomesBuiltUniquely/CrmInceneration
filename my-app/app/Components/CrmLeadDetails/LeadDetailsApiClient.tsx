@@ -2745,6 +2745,7 @@ export default function LeadDetailsApiClient({
             followUpDate = slotDate;
           }
           designerName = args.meetingAppointment.designerName;
+          const meetingDesignerName = args.meetingAppointment.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
@@ -2778,7 +2779,7 @@ export default function LeadDetailsApiClient({
                   leadId: numericLeadId,
                   leadIdentifier: externalLeadId,
                   projectName:
-                    lead.fullName?.trim() ||
+                    lead.name?.trim() ||
                     String(baseDetail.fullName ?? baseDetail.customerName ?? "").trim(),
                   contactNo: String(
                     baseDetail.phone ??
@@ -2789,7 +2790,7 @@ export default function LeadDetailsApiClient({
                   clientEmail: String(
                     baseDetail.email ?? baseDetail.emailAddress ?? "",
                   ).trim(),
-                  designerName: args.meetingAppointment.designerName,
+                  designerName: meetingDesignerName,
                   schedule,
                 }).catch((e) => {
                   console.error(

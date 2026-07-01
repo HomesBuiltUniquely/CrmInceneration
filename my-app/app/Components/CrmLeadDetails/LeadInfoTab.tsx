@@ -484,7 +484,6 @@ export default function LeadInfoTab({
               <Input
                 placeholder="—"
                 className={lockedContactInputClass}
-                readOnly={canEditEmailPhone}
                 {...(c
                   ? {
                       value: canEditContact ? lead.altPhone : altPhoneDisplay,
