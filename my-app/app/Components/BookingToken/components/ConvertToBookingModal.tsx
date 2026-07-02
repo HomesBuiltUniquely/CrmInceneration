@@ -19,6 +19,11 @@ import { getLeadDetail } from "@/lib/lead-details-client";
 import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isTokenReadyForBookingConvert } from "@/lib/booking-token-listing-type";
+import {
+  getConfigurationScopeRequirements,
+  putConfigurationScopeRequirements,
+  toPutRequirementsBody,
+} from "@/lib/configuration-scope-client";
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import BookingCelebrationOverlay from "./BookingCelebrationOverlay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
@@ -96,6 +101,7 @@ type ConvertLeadDetails = {
   designerName: string;
   email: string;
   phone: string;
+  specialRequirementNotes: string;
 };
 
 const EMPTY_LEAD_DETAILS: ConvertLeadDetails = {
@@ -105,6 +111,7 @@ const EMPTY_LEAD_DETAILS: ConvertLeadDetails = {
   designerName: "—",
   email: "—",
   phone: "—",
+  specialRequirementNotes: "—",
 };
 
 function displayOrDash(value: string | undefined): string {
@@ -133,6 +140,12 @@ export default function ConvertToBookingModal({
   const [historyData, setHistoryData] = useState<PaymentHistoryResponse | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
   const [celebrating, setCelebrating] = useState(false);
+  const [specialNotesDraft, setSpecialNotesDraft] = useState("");
+  const [specialNotesInitial, setSpecialNotesInitial] = useState("");
+  const [savingSpecialNotes, setSavingSpecialNotes] = useState(false);
+  const [specialNotesError, setSpecialNotesError] = useState("");
+  const [specialNotesSavedMsg, setSpecialNotesSavedMsg] = useState("");
+  const [editingSpecialNotes, setEditingSpecialNotes] = useState(false);
 
   const summary = historyData ?? (deal ? buildSummaryFromDeal(deal) : null);
   const history = summary?.history ?? [];
@@ -169,6 +182,11 @@ export default function ConvertToBookingModal({
       setSelectedEntryId("");
       setCelebrating(false);
       setLeadDetails(EMPTY_LEAD_DETAILS);
+      setSpecialNotesDraft("");
+      setSpecialNotesInitial("");
+      setSpecialNotesError("");
+      setSpecialNotesSavedMsg("");
+      setEditingSpecialNotes(false);
       return;
     }
     void loadHistory();
@@ -194,7 +212,27 @@ export default function ConvertToBookingModal({
           designerName: displayOrDash(lead.designerName === "—" ? "" : lead.designerName),
           email: displayOrDash(lead.email),
           phone: displayOrDash(lead.phone),
+          specialRequirementNotes: "—",
         });
+        try {
+          const scope = await getConfigurationScopeRequirements(
+            deal.leadType as CrmLeadType,
+            String(deal.leadId),
+          );
+          if (!cancelled) {
+            const noteValue = (scope.internalExecutiveNotes ?? "").trim();
+            setLeadDetails((prev) => ({
+              ...prev,
+              specialRequirementNotes: displayOrDash(noteValue),
+            }));
+            setSpecialNotesDraft(noteValue);
+            setSpecialNotesInitial(noteValue);
+            setSpecialNotesSavedMsg("");
+            setEditingSpecialNotes(false);
+          }
+        } catch {
+          /* optional field */
+        }
       } catch {
         if (!cancelled) {
           setLeadDetails({
@@ -283,13 +321,50 @@ export default function ConvertToBookingModal({
     onClose();
   }, [onClose]);
 
-  const handleConfirm = async () => {
-    if (!readyToConvert || submitting || celebrating) return;
+  const persistSpecialNotes = useCallback(async (): Promise<void> => {
+    if (!deal || !isCrmLeadType(deal.leadType)) return;
+    const nextNote = specialNotesDraft.trim();
+    const initial = specialNotesInitial.trim();
+    if (nextNote === initial) return;
+    setSavingSpecialNotes(true);
+    setSpecialNotesError("");
+    setSpecialNotesSavedMsg("");
     try {
+      const current = await getConfigurationScopeRequirements(
+        deal.leadType as CrmLeadType,
+        String(deal.leadId),
+      );
+      await putConfigurationScopeRequirements(
+        deal.leadType as CrmLeadType,
+        String(deal.leadId),
+        toPutRequirementsBody({
+          ...current,
+          internalExecutiveNotes: nextNote || null,
+        }),
+      );
+      setSpecialNotesInitial(nextNote);
+      setLeadDetails((prev) => ({
+        ...prev,
+        specialRequirementNotes: displayOrDash(nextNote),
+      }));
+      setSpecialNotesSavedMsg("Saved successfully.");
+      setEditingSpecialNotes(false);
+    } finally {
+      setSavingSpecialNotes(false);
+    }
+  }, [deal, specialNotesDraft, specialNotesInitial]);
+
+  const handleConfirm = async () => {
+    if (!readyToConvert || submitting || celebrating || savingSpecialNotes) return;
+    try {
+      await persistSpecialNotes();
       await onConfirm();
       setCelebrating(true);
-    } catch {
+    } catch (e) {
+      setSpecialNotesError(e instanceof Error ? e.message : "Unable to save special notes.");
       setCelebrating(false);
+    } finally {
+      setSavingSpecialNotes(false);
     }
   };
 
@@ -400,6 +475,91 @@ export default function ConvertToBookingModal({
                 />
               </div>
             </section>
+            <section>
+              <div className="flex items-center justify-between">
+                <SectionTitle>Special Requirement / Offer Notes</SectionTitle>
+                {!editingSpecialNotes ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingSpecialNotes(true);
+                      setSpecialNotesSavedMsg("");
+                      setSpecialNotesError("");
+                    }}
+                    disabled={submitting || savingSpecialNotes}
+                    aria-label="Edit special requirement notes"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#cbd5e1] bg-white text-[#334155] hover:border-[#94a3b8] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3.5 w-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
+              <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-white p-3">
+                <textarea
+                  value={specialNotesDraft}
+                  onChange={(e) => {
+                    setSpecialNotesDraft(e.target.value);
+                    setSpecialNotesSavedMsg("");
+                  }}
+                  disabled={!editingSpecialNotes || submitting || savingSpecialNotes}
+                  placeholder="Add special requirement / offer notes…"
+                  className="min-h-[92px] w-full resize-y rounded-md border border-[#e5e7eb] bg-white px-3 py-2.5 text-[13px] leading-relaxed text-[#374151] outline-none focus:border-emerald-300 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-[#f8fafc] disabled:opacity-80"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {editingSpecialNotes ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await persistSpecialNotes();
+                          } catch (e) {
+                            setSpecialNotesError(
+                              e instanceof Error ? e.message : "Unable to save special notes.",
+                            );
+                          }
+                        }}
+                        disabled={submitting || savingSpecialNotes}
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingSpecialNotes ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSpecialNotesDraft(specialNotesInitial);
+                          setEditingSpecialNotes(false);
+                          setSpecialNotesError("");
+                          setSpecialNotesSavedMsg("");
+                        }}
+                        disabled={submitting || savingSpecialNotes}
+                        className="rounded-md border border-[#cbd5e1] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] hover:border-[#94a3b8]"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {specialNotesError ? (
+                  <p className="mt-2 text-[12px] text-red-600">{specialNotesError}</p>
+                ) : null}
+                {specialNotesSavedMsg ? (
+                  <p className="mt-2 text-[12px] text-emerald-700">{specialNotesSavedMsg}</p>
+                ) : null}
+              </div>
+            </section>
 
             {!readyToConvert ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -495,10 +655,14 @@ export default function ConvertToBookingModal({
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={submitting || celebrating || !readyToConvert}
+              disabled={submitting || celebrating || savingSpecialNotes || !readyToConvert}
               className="bt-btn bt-btn-modal bt-btn-modal-primary disabled:opacity-60"
             >
-              {submitting ? "Converting…" : "Confirm convert to booking"}
+              {savingSpecialNotes
+                ? "Saving notes…"
+                : submitting
+                  ? "Converting…"
+                  : "Confirm convert to booking"}
             </button>
           </div>
         </div>

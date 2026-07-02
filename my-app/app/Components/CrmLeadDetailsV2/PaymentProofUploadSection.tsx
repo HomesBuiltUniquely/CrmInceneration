@@ -26,6 +26,7 @@ type Props = {
   leadType: string;
   leadId: string;
   selectedQuote?: LeadQuoteOption | null;
+  quoteAmountRefreshing?: boolean;
   /** Parent re-reads draft amount from storage (confirm button enable). */
   onPaymentDraftChange?: () => void;
 };
@@ -34,6 +35,7 @@ export default function PaymentProofUploadSection({
   leadType,
   leadId,
   selectedQuote = null,
+  quoteAmountRefreshing = false,
   onPaymentDraftChange,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -205,7 +207,9 @@ export default function PaymentProofUploadSection({
             className="h-11 w-full px-3 text-[15px] font-semibold text-[#0f172a] outline-none placeholder:font-normal placeholder:text-[#94a3b8]"
           />
         </div>
-        {selectedQuote?.amount != null ? (
+        {quoteAmountRefreshing ? (
+          <p className="mt-2 text-[12px] text-[#64748b]">Loading quotation amount…</p>
+        ) : selectedQuote?.amount != null ? (
           <div className="mt-2 space-y-1">
             <p className="text-[12px] text-[#64748b]">
               Selected quotation amount: {formatQuoteAmount(selectedQuote.amount)}

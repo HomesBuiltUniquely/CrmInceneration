@@ -3,6 +3,7 @@ import {
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
   requiresLeadPropertyGateForCompleteTask,
+  resolveLeadPropertyGateField,
 } from "@/lib/milestone-advance-gates";
 import { isMeetingCancelledSubstage } from "@/lib/milestone-substage-map";
 
@@ -42,10 +43,10 @@ export function validateDiscoveryToConnectionTransition(
   }
 
   const missing = missingLeadPropertyGateFields({
-    budget: payload.budget ?? lead.budget,
-    propertyNotes: payload.propertyNotes ?? lead.propertyNotes,
-    configuration: payload.configuration ?? lead.configuration,
-    bookingType: payload.bookingType ?? lead.bookingType,
+    budget: resolveLeadPropertyGateField(payload.budget, lead.budget),
+    propertyNotes: resolveLeadPropertyGateField(payload.propertyNotes, lead.propertyNotes),
+    configuration: resolveLeadPropertyGateField(payload.configuration, lead.configuration),
+    bookingType: resolveLeadPropertyGateField(payload.bookingType, lead.bookingType),
   });
 
   if (missing.length === 0) {

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import FloorPlanViewModal from "./FloorPlanViewModal";
+import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import {
   FLOOR_PLAN_ACCEPT,
   FLOOR_PLAN_MAX_BYTES,
   floorPlanDisplayFileName,
+  formatFloorPlanStreamError,
   leadHasFloorPlan,
   readStoredFloorPlanOriginalName,
   validateFloorPlanFile,
@@ -18,6 +19,7 @@ type Props = {
   floorPlanS3Key: string;
   floorPlanPublicLink: string;
   floorPlanViewPath: string;
+  floorPlanOpenPath: string;
   uploading: boolean;
   onUpload: (file: File) => void | Promise<void>;
   onError?: (message: string) => void;
@@ -28,19 +30,53 @@ function formatMaxSize(): string {
   return `${mb}MB`;
 }
 
+async function openFloorPlanInNewTab(openHref: string) {
+  if (!openHref) return;
+  const res = await fetch(openHref, {
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    let raw = "";
+    try {
+      const body = (await res.json()) as { userMessage?: string; error?: string };
+      raw = body.userMessage?.trim() || body.error?.trim() || "";
+    } catch {
+      raw = "";
+    }
+    throw new Error(formatFloorPlanStreamError(raw || `HTTP ${res.status}`));
+  }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const opened = window.open(blobUrl, "_blank", "noopener,noreferrer");
+  if (!opened) {
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+}
+
 export default function ConfigurationScopeFloorPlan({
   leadType,
   leadId,
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
+  floorPlanOpenPath,
   uploading,
   onUpload,
   onError,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [viewOpen, setViewOpen] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState("");
+  // Match Connection phase behavior: use authenticated proxy paths first.
+  // Public links can return 401 for some leads/environments.
+  const openHref = floorPlanOpenPath || floorPlanViewPath;
+
 
   const hasFloorPlan = leadHasFloorPlan(floorPlanS3Key, undefined, floorPlanPublicLink);
   const storedFileName = readStoredFloorPlanOriginalName(leadType, leadId);
@@ -110,8 +146,17 @@ export default function ConfigurationScopeFloorPlan({
 
         <button
           type="button"
-          onClick={() => setViewOpen(true)}
-          disabled={!hasFloorPlan || !floorPlanViewPath}
+          onClick={() => {
+            if (!openHref) return;
+            void openFloorPlanInNewTab(openHref).catch((e) => {
+              onError?.(
+                e instanceof Error
+                  ? formatFloorPlanStreamError(e.message)
+                  : "Cannot open floor plan. Please retry.",
+              );
+            });
+          }}
+          disabled={!hasFloorPlan || !openHref}
           className="group flex min-h-[120px] flex-col items-center justify-center px-4 py-6 text-center transition-all duration-200 ease-out hover:-translate-y-0.5 hover:bg-[#f8fafc] hover:shadow-sm active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
         >
           <span
@@ -135,7 +180,7 @@ export default function ConfigurationScopeFloorPlan({
             View Floor Plan
           </p>
           <p className="mt-1 text-[10px] text-[#9ca3af] transition-colors duration-200 group-hover:text-[#059669]/80">
-            {hasFloorPlan ? "Tap to preview" : "No file uploaded"}
+            {hasFloorPlan ? "Open in new tab" : "No file uploaded"}
           </p>
           {hasFloorPlan && displayFileName ? (
             <p
@@ -147,14 +192,6 @@ export default function ConfigurationScopeFloorPlan({
           ) : null}
         </button>
       </div>
-
-      <FloorPlanViewModal
-        open={viewOpen}
-        onClose={() => setViewOpen(false)}
-        floorPlanS3Key={floorPlanS3Key}
-        publicLink={floorPlanPublicLink}
-        viewHref={floorPlanViewPath}
-      />
     </>
   );
 }

@@ -7,7 +7,8 @@ import ConfigurationScopeFloorPlan from "./ConfigurationScopeFloorPlan";
 import ReferenceViewModal from "./ReferenceViewModal";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
-import { BOOKING_TYPE_OPTIONS } from "@/lib/data";
+import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
+import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
   createDefaultSelectedRoom,
   createDefaultRequirements,
@@ -35,18 +36,35 @@ import {
   type ConfigurationScopeRequirements,
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
-import { detailJsonToLead } from "@/lib/lead-detail-mapper";
+import { seedProjectUnderstandingFromLead } from "@/lib/lead-discovery-field-sync";
+import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
-import { formatInvestmentRangeLabel, resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
+import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
+import {
+  buildBudgetInvestmentDisplay,
+  buildQuotationInvestmentDisplay,
+} from "@/lib/lead-investment-display";
+import {
+  fetchQuoteOptionsForLeadDetail,
+  pickLatestQuoteOption,
+  refreshQuoteOptionDetails,
+} from "@/lib/lead-quote-options";
+import {
+  LEAD_QUOTE_SELECTION_EVENT,
+  readLeadQuoteSelection,
+} from "@/lib/lead-quote-selection";
 import {
   DEFAULT_CONFIGURATION_SCOPE_FRONTEND_PREFS,
+  type FinancialSensitivity,
+  type FinancingPreference,
   readConfigurationScopeFrontendPrefs,
   writeConfigurationScopeFrontendPrefs,
   type ClosureProbability,
   type ConfigurationScopeFrontendPrefs,
 } from "@/lib/configuration-scope-frontend-prefs";
-import { getLeadDetail, getLeadFloorPlanMeta, uploadLeadFloorPlan } from "@/lib/lead-details-client";
+import { getLeadDetail, getLeadFloorPlanMeta, putLeadDetail, uploadLeadFloorPlan } from "@/lib/lead-details-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import type { LeadQuoteOption } from "@/lib/crm-quote-links";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
 type Props = {
@@ -96,6 +114,24 @@ function latestIsoTimestamp(...values: Array<string | null | undefined>): string
     }
   }
   return best;
+}
+
+function validateRequirementScopeForFinalize(requirements: ConfigurationScopeRequirements): string | null {
+  const rooms = requirements.selectedRooms ?? [];
+  if (rooms.length === 0) {
+    return "Requirement Scope needs at least one room before moving to the next phase.";
+  }
+  for (const room of rooms) {
+    const roomName = room.roomName?.trim() || "Selected room";
+    const selectedUnits = (room.units ?? []).filter((unit) => unit.selected && unit.label.trim());
+    if (selectedUnits.length === 0) {
+      return `Units Required is mandatory for ${roomName}. Please select at least one unit.`;
+    }
+    if (!(room.notes ?? "").trim()) {
+      return `Specific Room Notes is mandatory for ${roomName}.`;
+    }
+  }
+  return null;
 }
 
 /** Shared medium hover motion for Configuration Scope interactive elements. */
@@ -163,6 +199,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown> | null>(null);
   const [bookingType, setBookingType] = useState("");
+  const [leadConfiguration, setLeadConfiguration] = useState("");
   const [bookingTypeLoading, setBookingTypeLoading] = useState(true);
   const [floorPlanS3Key, setFloorPlanS3Key] = useState("");
   const [floorPlanPublicLink, setFloorPlanPublicLink] = useState("");
@@ -181,6 +218,9 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const [aestheticNotesSaving, setAestheticNotesSaving] = useState(false);
   const [referencesUpdatedAt, setReferencesUpdatedAt] = useState<string | null>(null);
   const [finalizing, setFinalizing] = useState(false);
+  const [quoteInvestmentLoading, setQuoteInvestmentLoading] = useState(true);
+  const [activeQuote, setActiveQuote] = useState<LeadQuoteOption | null>(null);
+  const [activeQuoteSelectedInBooking, setActiveQuoteSelectedInBooking] = useState(false);
   const [frontendPrefs, setFrontendPrefs] = useState<ConfigurationScopeFrontendPrefs>(
     () => DEFAULT_CONFIGURATION_SCOPE_FRONTEND_PREFS,
   );
@@ -202,13 +242,9 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const patchFrontendPrefs = useCallback(
     (patch: Partial<ConfigurationScopeFrontendPrefs>) => {
       if (!validLeadType) return;
-      setFrontendPrefs((prev) => {
-        const next = { ...prev, ...patch };
-        writeConfigurationScopeFrontendPrefs(validLeadType, leadId, next);
-        return next;
-      });
+      setFrontendPrefs((prev) => ({ ...prev, ...patch }));
     },
-    [leadId, validLeadType],
+    [validLeadType],
   );
 
   useEffect(() => {
@@ -227,6 +263,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         setBaseDetail(detailJson);
         const leadSnapshot = detailJsonToLead(detailJson, validLeadType);
         setBookingType(leadSnapshot.bookingType ?? "");
+        setLeadConfiguration(leadSnapshot.configuration ?? "");
 
         const meta = await getLeadFloorPlanMeta(validLeadType, leadId);
         if (cancelled) return;
@@ -254,7 +291,14 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         );
         if (cancelled) return;
 
-        const { requirements: mergedReq, needsPersist } = mergeRequirementDefaults(reqData);
+        const { requirements: mergedReq, needsPersist: defaultsNeedPersist } =
+          mergeRequirementDefaults(reqData);
+        const seeded = seedProjectUnderstandingFromLead(
+          mergedReq,
+          leadSnapshot.propertyLocation,
+        );
+        const requirementsToUse = seeded.requirements;
+        let needsPersist = defaultsNeedPersist || seeded.changed;
         requirementsDirtyRef.current = false;
 
         if (needsPersist) {
@@ -262,21 +306,21 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
             const saved = await putConfigurationScopeRequirements(
               validLeadType,
               leadId,
-              toPutRequirementsBody(mergedReq),
+              toPutRequirementsBody(requirementsToUse),
             );
             if (cancelled) return;
             setRequirements(saved);
             if (saved.bookingType) setBookingType(saved.bookingType);
           } catch {
             if (!cancelled) {
-              setRequirements(mergedReq);
-              if (mergedReq.bookingType) setBookingType(mergedReq.bookingType);
+              setRequirements(requirementsToUse);
+              if (requirementsToUse.bookingType) setBookingType(requirementsToUse.bookingType);
             }
           }
         } else {
-          setRequirements(mergedReq);
-          if (mergedReq.bookingType) {
-            setBookingType(mergedReq.bookingType);
+          setRequirements(requirementsToUse);
+          if (requirementsToUse.bookingType) {
+            setBookingType(requirementsToUse.bookingType);
           }
         }
 
@@ -380,6 +424,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               kitchenLayout: toSave.kitchenLayout,
               materialFinish: toSave.materialFinish,
               familyContactName: toSave.familyContactName,
+              familyContactRelationship: toSave.familyContactRelationship,
               familyContactPhone: toSave.familyContactPhone,
               bookingType: toSave.bookingType,
               projectUnderstanding: toSave.projectUnderstanding,
@@ -406,22 +451,6 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     },
     [leadId, notifyError, requirements, validLeadType],
   );
-
-  useEffect(() => {
-    if (
-      !validLeadType ||
-      !requirements ||
-      requirementsLoading ||
-      !requirementsDirtyRef.current ||
-      requirementsSaveInFlightRef.current
-    ) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void saveRequirements();
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [requirements, requirementsLoading, saveRequirements, validLeadType]);
 
   const handleReferenceUpload = useCallback(
     async (file: File) => {
@@ -492,14 +521,6 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     [aestheticNotes, aestheticNotesSaving, leadId, notifyError, validLeadType],
   );
 
-  useEffect(() => {
-    if (!validLeadType || referencesLoading || !aestheticNotesDirtyRef.current) return;
-    const timer = window.setTimeout(() => {
-      void saveAestheticNotes();
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [aestheticNotes, referencesLoading, saveAestheticNotes, validLeadType]);
-
   const viewerName = useMemo(() => {
     if (typeof window === "undefined") return "";
     return (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim();
@@ -528,16 +549,50 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
 
   const handleFinalizeSubmit = useCallback(async () => {
     if (!validLeadType || finalizing) return;
+    if (!requirements) {
+      notifyError("Configuration scope is still loading.");
+      return;
+    }
+    const requirementError = validateRequirementScopeForFinalize(requirements);
+    if (requirementError) {
+      notifyError(requirementError);
+      return;
+    }
     setFinalizing(true);
     try {
       const ok = await flushAllSaves();
       if (!ok) return;
+      if (baseDetail && validLeadType) {
+        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+        const nextConfiguration = leadConfiguration.trim();
+        const currentConfiguration = (leadSnapshot.configuration ?? "").trim();
+        if (nextConfiguration && nextConfiguration !== currentConfiguration) {
+          const leadForSave = { ...leadSnapshot, configuration: nextConfiguration };
+          const body = mergeLeadIntoDetail(baseDetail, leadForSave);
+          const updated = await putLeadDetail(validLeadType, leadId, body);
+          setBaseDetail(updated);
+        }
+      }
+      writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
+      notifyConfigurationScopeUpdated();
       notifySuccess("Configuration scope saved.");
       router.push(`/Leads/${validLeadType}/${leadId}`);
     } finally {
       setFinalizing(false);
     }
-  }, [finalizing, flushAllSaves, leadId, notifySuccess, router, validLeadType]);
+  }, [
+    baseDetail,
+    finalizing,
+    flushAllSaves,
+    frontendPrefs,
+    leadConfiguration,
+    leadId,
+    notifyError,
+    notifySuccess,
+    requirements,
+    router,
+    validLeadType,
+  ]);
 
   const basicUnderstandingFields = useMemo(
     () => splitProjectUnderstanding(requirements?.projectUnderstanding),
@@ -563,10 +618,80 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     return detailJsonToLead(baseDetail, validLeadType).budget ?? "";
   }, [baseDetail, validLeadType]);
 
-  const leadConfiguration = useMemo(() => {
-    if (!baseDetail || !validLeadType) return "";
-    return detailJsonToLead(baseDetail, validLeadType).configuration ?? "";
-  }, [baseDetail, validLeadType]);
+  const loadQuoteInvestment = useCallback(async () => {
+    if (!validLeadType || !baseDetail) {
+      setActiveQuote(null);
+      setActiveQuoteSelectedInBooking(false);
+      setQuoteInvestmentLoading(false);
+      return;
+    }
+
+    setQuoteInvestmentLoading(true);
+    try {
+      const { options } = await fetchQuoteOptionsForLeadDetail(baseDetail, leadId);
+      const stored = readLeadQuoteSelection(validLeadType, leadId);
+      let quote: LeadQuoteOption | null = null;
+      let selectedInBooking = false;
+
+      if (stored) {
+        quote =
+          options.find(
+            (option) =>
+              option.id === stored.quoteId ||
+              option.quoteId === stored.quoteId,
+          ) ?? null;
+        selectedInBooking = stored.selectedInBookingDone;
+      }
+
+      if (!quote) {
+        quote = pickLatestQuoteOption(options);
+        selectedInBooking = false;
+      }
+
+      if (quote) {
+        quote = await refreshQuoteOptionDetails(quote);
+      }
+
+      setActiveQuote(quote);
+      setActiveQuoteSelectedInBooking(selectedInBooking);
+    } catch {
+      setActiveQuote(null);
+      setActiveQuoteSelectedInBooking(false);
+    } finally {
+      setQuoteInvestmentLoading(false);
+    }
+  }, [baseDetail, leadId, validLeadType]);
+
+  useEffect(() => {
+    void loadQuoteInvestment();
+  }, [loadQuoteInvestment]);
+
+  useEffect(() => {
+    if (!validLeadType) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ leadType: string; leadId: string }>).detail;
+      if (detail?.leadType !== validLeadType || detail?.leadId !== leadId) return;
+      void loadQuoteInvestment();
+    };
+    window.addEventListener(LEAD_QUOTE_SELECTION_EVENT, handler);
+    return () => window.removeEventListener(LEAD_QUOTE_SELECTION_EVENT, handler);
+  }, [leadId, loadQuoteInvestment, validLeadType]);
+
+  const investmentDisplay = useMemo(() => {
+    if (activeQuote) {
+      const configuration =
+        activeQuote.configuration?.trim() || leadConfiguration.trim();
+      return buildQuotationInvestmentDisplay(activeQuote, configuration, {
+        selectedInBookingDone: activeQuoteSelectedInBooking,
+      });
+    }
+    return buildBudgetInvestmentDisplay(leadBudget, leadConfiguration);
+  }, [
+    activeQuote,
+    activeQuoteSelectedInBooking,
+    leadBudget,
+    leadConfiguration,
+  ]);
 
   const leadDisplayIdentifier = useMemo(() => {
     if (baseDetail && validLeadType) {
@@ -754,6 +879,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
                 }));
               }}
               onBookingTypeChange={handleBookingTypeChange}
+              onConfigurationChange={setLeadConfiguration}
               onExpectedTimelineChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,
@@ -794,9 +920,18 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
           </div>
           <div id="budget-alignment" className="scroll-mt-24">
             <FinancialGuardrailsSection
-              budget={leadBudget}
-              configuration={leadConfiguration}
-              loading={bookingTypeLoading}
+              investmentLabel={investmentDisplay.investmentLabel}
+              investmentSubtitle={investmentDisplay.subtitle}
+              luxuryFocus={investmentDisplay.luxuryFocus}
+              loading={bookingTypeLoading || quoteInvestmentLoading}
+              sensitivity={frontendPrefs.financialSensitivity}
+              financing={frontendPrefs.financingPreference}
+              onSensitivityChange={(value) =>
+                patchFrontendPrefs({ financialSensitivity: value })
+              }
+              onFinancingChange={(value) =>
+                patchFrontendPrefs({ financingPreference: value })
+              }
             />
           </div>
           <div id="internal-notes" className="scroll-mt-24">
@@ -829,7 +964,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               onInternalNotesChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,
-                  internalExecutiveNotes: value.trim() || null,
+                  internalExecutiveNotes: value.length > 0 ? value : null,
                 }));
               }}
               closureProbability={frontendPrefs.closureProbability}
@@ -907,20 +1042,24 @@ function ScopeNavIcon({
 }
 
 function FinancialGuardrailsSection({
-  budget,
-  configuration,
+  investmentLabel,
+  investmentSubtitle,
+  luxuryFocus,
   loading,
+  sensitivity,
+  financing,
+  onSensitivityChange,
+  onFinancingChange,
 }: {
-  budget: string;
-  configuration: string;
+  investmentLabel: string;
+  investmentSubtitle: string;
+  luxuryFocus: ReturnType<typeof resolveBudgetLuxuryFocus>;
   loading: boolean;
+  sensitivity: FinancialSensitivity;
+  financing: FinancingPreference;
+  onSensitivityChange: (value: FinancialSensitivity) => void;
+  onFinancingChange: (value: FinancingPreference) => void;
 }) {
-  const investmentLabel = formatInvestmentRangeLabel(budget);
-  const luxuryFocus = resolveBudgetLuxuryFocus(budget);
-  const subtitle = configuration.trim()
-    ? `Based on ${configuration.trim()} configuration from lead profile.`
-    : "Budget from lead connection phase.";
-
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-4 flex items-center gap-2.5">
@@ -941,15 +1080,36 @@ function FinancialGuardrailsSection({
             <p className="mt-1 text-[42px] font-bold leading-none tracking-tight">
               {loading ? "…" : investmentLabel}
             </p>
-            <p className="mt-2 text-[13px] text-[#c5d4f3]">{subtitle}</p>
+            <p className="mt-2 text-[13px] text-[#c5d4f3]">{loading ? "Loading investment details…" : investmentSubtitle}</p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-[#1a2644] px-3 py-2.5">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#7b8db5]">Sensitivity</p>
-                <p className="mt-1 text-[14px] font-semibold">Low / Moderate</p>
+                <div className="relative mt-1.5">
+                  <select
+                    value={sensitivity}
+                    onChange={(e) => onSensitivityChange(e.target.value as FinancialSensitivity)}
+                    className="h-[34px] w-full appearance-none rounded-md border border-[#31466f] bg-[#233256] px-2.5 pr-7 text-[13px] font-semibold text-white outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="high">High</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#9bb2e3]">▾</span>
+                </div>
               </div>
               <div className="rounded-lg bg-[#1a2644] px-3 py-2.5">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#7b8db5]">Financing</p>
-                <p className="mt-1 text-[14px] font-semibold">Self Funded</p>
+                <div className="relative mt-1.5">
+                  <select
+                    value={financing}
+                    onChange={(e) => onFinancingChange(e.target.value as FinancingPreference)}
+                    className="h-[34px] w-full appearance-none rounded-md border border-[#31466f] bg-[#233256] px-2.5 pr-7 text-[13px] font-semibold text-white outline-none"
+                  >
+                    <option value="self_funded">Self Funded</option>
+                    <option value="looking_for_emi">Looking For EMI</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#9bb2e3]">▾</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1078,12 +1238,12 @@ function InternalExecutiveNotesSection({
       </div>
 
       <div className="mt-4">
-        <FormLabel>Additional Internal Notes</FormLabel>
+        <FormLabel>Special Requirement / Offer Notes</FormLabel>
         <textarea
           value={internalNotes}
           disabled={disabled}
           onChange={(e) => onInternalNotesChange(e.target.value)}
-          placeholder="High intent client, negotiation context, handoff cautions..."
+          placeholder="Add special requirements, offer commitments, pricing exceptions, or handoff cautions..."
           className={`mt-1.5 min-h-[80px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
         />
       </div>
@@ -1404,6 +1564,7 @@ function RequirementScopeSection({
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
+  floorPlanOpenPath,
   floorPlanUploading,
   onFloorPlanUpload,
   onFloorPlanError,
@@ -1614,6 +1775,7 @@ function RequirementScopeSection({
             floorPlanS3Key={floorPlanS3Key}
             floorPlanPublicLink={floorPlanPublicLink}
             floorPlanViewPath={floorPlanViewPath}
+            floorPlanOpenPath={floorPlanOpenPath}
             floorPlanUploading={floorPlanUploading}
             onFloorPlanUpload={onFloorPlanUpload}
             onFloorPlanError={onFloorPlanError}
@@ -1640,6 +1802,7 @@ function ScopeExtrasSection({
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
+  floorPlanOpenPath,
   floorPlanUploading,
   onFloorPlanUpload,
   onFloorPlanError,
@@ -1655,6 +1818,7 @@ function ScopeExtrasSection({
   floorPlanS3Key: string;
   floorPlanPublicLink: string;
   floorPlanViewPath: string;
+  floorPlanOpenPath: string;
   floorPlanUploading: boolean;
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
@@ -1719,6 +1883,7 @@ function ScopeExtrasSection({
           floorPlanS3Key={floorPlanS3Key}
           floorPlanPublicLink={floorPlanPublicLink}
           floorPlanViewPath={floorPlanViewPath}
+          floorPlanOpenPath={floorPlanOpenPath}
           uploading={floorPlanUploading}
           onUpload={onFloorPlanUpload}
           onError={onFloorPlanError}
@@ -1882,6 +2047,7 @@ function BasicUnderstandingSection({
   onPropertyNameSiteChange,
   onFamilySizeDetailsChange,
   onBookingTypeChange,
+  onConfigurationChange,
   onExpectedTimelineChange,
   wfhSetup,
   petFriendly,
@@ -1898,6 +2064,7 @@ function BasicUnderstandingSection({
   onPropertyNameSiteChange: (value: string) => void;
   onFamilySizeDetailsChange: (value: string) => void;
   onBookingTypeChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
   onExpectedTimelineChange: (value: string) => void;
   wfhSetup: boolean;
   petFriendly: boolean;
@@ -1940,12 +2107,23 @@ function BasicUnderstandingSection({
               <FormLabel>BHK Type</FormLabel>
               <div className="relative mt-1">
                 <select
-                  disabled
+                  disabled={disabled}
                   value={configuration || ""}
+                  onChange={(e) => onConfigurationChange(e.target.value)}
                   className="w-full appearance-none rounded-md border border-[#dfe5ec] bg-[#f9fafb] px-3 py-2 text-[14px] text-[#374151] outline-none"
                 >
-                  <option value="">{configuration ? configuration : "From lead profile"}</option>
-                  {configuration ? <option value={configuration}>{configuration}</option> : null}
+                  <option value="">Select BHK Type</option>
+                  {CONFIGURATION_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                  {configuration &&
+                  !CONFIGURATION_OPTIONS.includes(
+                    configuration as (typeof CONFIGURATION_OPTIONS)[number],
+                  ) ? (
+                    <option value={configuration}>{configuration}</option>
+                  ) : null}
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
               </div>

@@ -31,7 +31,6 @@ export type LeadDetailV2ContextValue = {
   quoteFetching: boolean;
   onOpenStageRollback: () => void;
   onCompleteTask: () => void;
-  onPhoneCall?: () => void | Promise<void>;
   onMarkAsWon: () => void;
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanRemove?: () => void | Promise<void>;
@@ -52,12 +51,14 @@ export type LeadDetailV2ContextValue = {
   milestoneCategoryLabel: string;
   milestoneSubLabel: string;
   onLeadPatch: (patch: Partial<Lead>) => void;
-  onConnectionPhaseSave: () => void | Promise<void>;
+  onConnectionPhaseSave: (draft?: import("@/lib/lead-discovery-field-sync").DiscoveryPhaseSaveDraft) => void | Promise<void>;
   connectionPhaseSaving: boolean;
   canEditLeadPhoneEmail: boolean;
   shouldMaskLeadPhone: boolean;
   onLeadContactSave: (patch: Partial<Lead>) => void | Promise<void>;
   leadContactSaving: boolean;
+  onPhoneCall?: () => void | Promise<void>;
+  onWhatsAppMessage?: () => void | Promise<void>;
 };
 
 const LeadDetailV2Context = createContext<LeadDetailV2ContextValue | null>(null);

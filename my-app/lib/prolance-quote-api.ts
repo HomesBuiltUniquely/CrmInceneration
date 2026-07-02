@@ -20,6 +20,93 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function pickStr(row: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return String(value);
+  }
+  return "";
+}
+
+function normalizeBhkLabel(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (/\bbhk\b/i.test(trimmed)) return trimmed.replace(/\s+/g, " ");
+  if (/^\d+$/.test(trimmed)) return `${trimmed} BHK`;
+  const match = trimmed.match(/(\d+)\s*(?:bhk)?/i);
+  if (match) return `${match[1]} BHK`;
+  return trimmed;
+}
+
+function extractBhkFromText(raw: string): string {
+  const match = raw.match(/\b(\d)\s*BHK\b/i);
+  return match ? `${match[1]} BHK` : "";
+}
+
+export function extractProlanceQuoteConfiguration(data: unknown): string {
+  const row = asRecord(data);
+  const direct = pickStr(
+    row,
+    "configuration",
+    "propertyConfiguration",
+    "property_configuration",
+    "bhk",
+    "noOfBhk",
+    "no_of_bhk",
+    "propertyType",
+    "property_type",
+    "unitType",
+    "unitConfiguration",
+    "interiorSetup",
+    "interior_setup",
+    "projectConfiguration",
+  );
+  if (direct) return normalizeBhkLabel(direct);
+
+  const nestedSources = [row.propertyDetails, row.leadDetails, row.projectDetails];
+  for (const source of nestedSources) {
+    const nested = asRecord(source);
+    const nestedValue = pickStr(
+      nested,
+      "configuration",
+      "propertyConfiguration",
+      "bhk",
+      "noOfBhk",
+      "propertyType",
+      "unitType",
+    );
+    if (nestedValue) return normalizeBhkLabel(nestedValue);
+  }
+
+  for (const key of ["projectName", "propertyName", "leadName", "customerName", "quoteTitle"]) {
+    const fromName = extractBhkFromText(String(row[key] ?? ""));
+    if (fromName) return fromName;
+  }
+
+  const quoteOptionsData = Array.isArray(row.quoteOptionsData)
+    ? (row.quoteOptionsData as QuoteOptionRow[])
+    : [];
+  for (const option of quoteOptionsData) {
+    const optionValue = pickStr(
+      option,
+      "configuration",
+      "bhk",
+      "propertyType",
+      "unitType",
+      "optionName",
+      "name",
+    );
+    if (optionValue) return normalizeBhkLabel(optionValue);
+    const fromOptionName = extractBhkFromText(
+      pickStr(option, "optionName", "name", "label", "title"),
+    );
+    if (fromOptionName) return fromOptionName;
+  }
+
+  return "";
+}
+
 function parseNum(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -181,6 +268,7 @@ export async function buildLeadQuoteOptionsFromProlance(
     const versionNumber = index + 1;
     const isLatest = index === chronological.length - 1;
     const amount = extractProlanceQuoteTotalAmount(share);
+    const configuration = extractProlanceQuoteConfiguration(share);
     const createdAt =
       revision.createdAt ||
       (typeof share.createdOn === "string" ? share.createdOn : undefined);
@@ -201,6 +289,7 @@ export async function buildLeadQuoteOptionsFromProlance(
       internalQuoteUrl,
       createdAt,
       amount,
+      configuration: configuration || undefined,
       isLatest,
     };
   });

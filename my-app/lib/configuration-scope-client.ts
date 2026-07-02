@@ -1,5 +1,6 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { readConfigurationScopeFrontendPrefs } from "@/lib/configuration-scope-frontend-prefs";
 
 export type ScopeRoomUnit = {
   label: string;
@@ -27,6 +28,7 @@ export type ConfigurationScopeRequirements = {
   kitchenLayout: string | null;
   materialFinish: string | null;
   familyContactName: string | null;
+  familyContactRelationship: string | null;
   familyContactPhone: string | null;
   bookingType: string | null;
   projectUnderstanding: string | null;
@@ -168,6 +170,7 @@ export function createDefaultRequirements(): ConfigurationScopeRequirements {
     kitchenLayout: null,
     materialFinish: null,
     familyContactName: null,
+    familyContactRelationship: null,
     familyContactPhone: null,
     bookingType: null,
     projectUnderstanding: null,
@@ -337,6 +340,7 @@ export function toPutRequirementsBody(
     kitchenLayout: req.kitchenLayout,
     materialFinish: req.materialFinish,
     familyContactName: req.familyContactName,
+    familyContactRelationship: req.familyContactRelationship,
     familyContactPhone: req.familyContactPhone,
     bookingType: req.bookingType,
     projectUnderstanding: req.projectUnderstanding,
@@ -356,6 +360,7 @@ export type PutConfigurationScopeRequirementsBody = {
   kitchenLayout: string | null;
   materialFinish: string | null;
   familyContactName: string | null;
+  familyContactRelationship: string | null;
   familyContactPhone: string | null;
   bookingType: string | null;
   projectUnderstanding: string | null;
@@ -490,6 +495,10 @@ function normalizeRequirements(
           ? data.material_finish
           : null,
     familyContactName: readNullableString(data, "familyContactName", "family_contact_name"),
+    familyContactRelationship:
+      readNullableString(data, "familyContactRelationship", "family_contact_relationship") ??
+      readNullableString(data, "familyContactRole", "family_contact_role") ??
+      readNullableString(data, "relationship", "relation"),
     familyContactPhone: readNullableString(data, "familyContactPhone", "family_contact_phone"),
     bookingType: readNullableString(data, "bookingType", "booking_type"),
     projectUnderstanding: readNullableString(
@@ -546,6 +555,22 @@ export function defaultRoomIcon(roomName: string): string {
   return roomName.trim().charAt(0).toUpperCase() || "R";
 }
 
+/** Hub may not return relationship until column is deployed — fall back to local prefs. */
+export function hydrateFamilyContactRelationship(
+  requirements: ConfigurationScopeRequirements,
+  leadType: string,
+  leadId: string,
+): ConfigurationScopeRequirements {
+  const fromApi = requirements.familyContactRelationship?.trim();
+  if (fromApi) return requirements;
+  const fromPrefs = readConfigurationScopeFrontendPrefs(
+    leadType,
+    leadId,
+  ).familyContactRelationship?.trim();
+  if (!fromPrefs) return requirements;
+  return { ...requirements, familyContactRelationship: fromPrefs };
+}
+
 export async function getConfigurationScopeRequirements(
   leadType: CrmLeadType,
   id: string,
@@ -578,7 +603,7 @@ export async function getConfigurationScopeRequirements(
     return mergeRequirementDefaults(createDefaultRequirements()).requirements;
   }
 
-  return normalizeRequirements(data);
+  return hydrateFamilyContactRelationship(normalizeRequirements(data), leadType, id);
 }
 
 export async function putConfigurationScopeRequirements(
@@ -615,7 +640,11 @@ export async function putConfigurationScopeRequirements(
     err.status = res.status;
     throw err;
   }
-  return mergeRequirementDefaults(normalizeRequirements(data)).requirements;
+  return hydrateFamilyContactRelationship(
+    mergeRequirementDefaults(normalizeRequirements(data)).requirements,
+    leadType,
+    id,
+  );
 }
 
 export async function getConfigurationScopeReferences(

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
@@ -34,9 +34,16 @@ import {
   toPutRequirementsBody,
   type ConfigurationScopeRequirements,
 } from "@/lib/configuration-scope-client";
+import {
+  buildDecisionMakerOptions,
+  DECISION_MAKER_SELF_VALUE,
+  labelForDecisionMakerValue,
+  patchConfigurationScopeFrontendPrefs,
+  readConfigurationScopeFrontendPrefs,
+} from "@/lib/configuration-scope-frontend-prefs";
 import { resolveMeetingTypeForLead } from "@/lib/appointment-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
+import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
 import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
 import {
   bookingTypeDisplay,
@@ -49,6 +56,14 @@ import {
 } from "@/lib/lead-detail-v2-display";
 import { resolveLeadPhoneDisplayForRole } from "@/lib/lead-display";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import {
+  fetchQuoteOptionsForLeadDetail,
+  leadToQuoteDetailPayload,
+  pickLatestQuoteOption,
+  refreshQuoteOptionAmount,
+  resolveQuoteAmount,
+} from "@/lib/lead-quote-options";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, Lead } from "@/lib/data";
 
@@ -191,7 +206,9 @@ function LeadDetailHeader() {
     milestoneStageLabel,
     milestoneCategoryLabel,
     milestoneSubLabel,
+    onWhatsAppMessage,
   } = useLeadDetailV2();
+  const { notifyError } = useGlobalNotifier();
   const [timelineOpen, setTimelineOpen] = useState(false);
   const timelineWrapRef = useRef<HTMLDivElement | null>(null);
   const selectedTimeline =
@@ -213,17 +230,31 @@ function LeadDetailHeader() {
       ? followUpDateDisplay
       : formatCrmDateTime(lead.followUpDate);
 
-  const handleHeaderPhoneCall = useCallback(() => {
+  const leadPhone = lead.phone?.trim() ?? "";
+  const hasLeadPhone = leadPhone.length > 0;
+
+  const handleHeaderCall = useCallback(() => {
+    if (!hasLeadPhone) {
+      notifyError("No phone number on this lead.");
+      return;
+    }
     void (async () => {
       try {
         await onPhoneCall?.();
       } catch {
         /* still open dialer */
       }
-      const n = (lead.phone ?? "").replace(/\s+/g, "");
-      if (n) window.location.href = `tel:${n}`;
+      window.location.href = `tel:${leadPhone.replace(/\s+/g, "")}`;
     })();
-  }, [lead.phone, onPhoneCall]);
+  }, [hasLeadPhone, leadPhone, notifyError, onPhoneCall]);
+
+  const handleHeaderWhatsApp = useCallback(() => {
+    if (!hasLeadPhone) {
+      notifyError("No phone number on this lead.");
+      return;
+    }
+    void onWhatsAppMessage?.();
+  }, [hasLeadPhone, notifyError, onWhatsAppMessage]);
 
   return (
     <div className="py-4 lg:py-5">
@@ -306,8 +337,8 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Call"
-                  disabled={!lead.phone?.trim()}
-                  onClick={handleHeaderPhoneCall}
+                  disabled={!hasLeadPhone}
+                  onClick={handleHeaderCall}
                   className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-50 ${V2_BTN_ICON}`}
                 >
                   <svg
@@ -325,8 +356,11 @@ function LeadDetailHeader() {
                 </button>
                 <button
                   type="button"
-                  aria-label="Message"
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
+                  aria-label="WhatsApp message"
+                  title="Open WhatsApp chat"
+                  disabled={!hasLeadPhone}
+                  onClick={handleHeaderWhatsApp}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -484,6 +518,21 @@ function persistFamilyContactRole(leadId: string, role: string): void {
   else sessionStorage.setItem(key, value);
 }
 
+function readFamilyContactRelationshipFallback(leadType: string, leadId: string): string {
+  const prefRole =
+    readConfigurationScopeFrontendPrefs(leadType, leadId).familyContactRelationship?.trim() ?? "";
+  if (prefRole) return prefRole;
+
+  const sessionRole = readFamilyContactRole(leadId);
+  if (sessionRole) {
+    patchConfigurationScopeFrontendPrefs(leadType, leadId, {
+      familyContactRelationship: sessionRole,
+    });
+    return sessionRole;
+  }
+  return "";
+}
+
 type FamilyContactDraft = {
   name: string;
   role: string;
@@ -493,11 +542,15 @@ type FamilyContactDraft = {
 function readFamilyContactDraft(
   requirements: ConfigurationScopeRequirements | null,
   lead: Lead,
-  role: string,
+  leadType: string,
+  leadId: string,
 ): FamilyContactDraft {
+  const relationship =
+    requirements?.familyContactRelationship?.trim() ||
+    readFamilyContactRelationshipFallback(leadType, leadId);
   return {
     name: requirements?.familyContactName?.trim() ?? "",
-    role,
+    role: relationship,
     phone:
       requirements?.familyContactPhone?.trim() ||
       lead.altPhone?.trim() ||
@@ -556,9 +609,9 @@ function FamilyContactCard() {
   }, [leadId, validLeadType]);
 
   useEffect(() => {
-    const role = readFamilyContactRole(leadId);
-    setDraft(readFamilyContactDraft(requirements, lead, role));
-  }, [lead, leadId, requirements]);
+    if (!validLeadType) return;
+    setDraft(readFamilyContactDraft(requirements, lead, validLeadType, leadId));
+  }, [lead, leadId, requirements, validLeadType]);
 
   const isDirty =
     editing && editSnapshot !== null && !familyContactDraftsEqual(draft, editSnapshot);
@@ -593,6 +646,7 @@ function FamilyContactCard() {
       const nextRequirements: ConfigurationScopeRequirements = {
         ...requirements,
         familyContactName: draft.name.trim() || null,
+        familyContactRelationship: draft.role.trim() || null,
         familyContactPhone: draft.phone.trim() || null,
       };
       const saved = await putConfigurationScopeRequirements(
@@ -601,6 +655,11 @@ function FamilyContactCard() {
         toPutRequirementsBody(nextRequirements),
       );
       setRequirements(saved);
+      if (validLeadType) {
+        patchConfigurationScopeFrontendPrefs(validLeadType, leadId, {
+          familyContactRelationship: draft.role.trim() || null,
+        });
+      }
       persistFamilyContactRole(leadId, draft.role);
       notifySuccess("Family contact saved.");
       exitEditing();
@@ -765,7 +824,12 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
   const isLocked = accessState === "locked";
   const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
   const [expectedTimeline, setExpectedTimeline] = useState("");
+  const [familyContactName, setFamilyContactName] = useState("");
+  const [familyContactRelationship, setFamilyContactRelationship] = useState("");
+  const [decisionMaker, setDecisionMaker] = useState(DECISION_MAKER_SELF_VALUE);
   const [timelineLoading, setTimelineLoading] = useState(true);
+  const [finalBudgetLoading, setFinalBudgetLoading] = useState(true);
+  const [finalBudgetDisplay, setFinalBudgetDisplay] = useState("");
 
   useEffect(() => {
     if (!validLeadType) {
@@ -781,8 +845,14 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
         const data = await getConfigurationScopeRequirements(validLeadType, leadId);
         if (cancelled) return;
         setExpectedTimeline(data.expectedTimeline?.trim() ?? "");
+        setFamilyContactName(data.familyContactName?.trim() ?? "");
+        setFamilyContactRelationship(data.familyContactRelationship?.trim() ?? "");
       } catch {
-        if (!cancelled) setExpectedTimeline("");
+        if (!cancelled) {
+          setExpectedTimeline("");
+          setFamilyContactName("");
+          setFamilyContactRelationship("");
+        }
       } finally {
         if (!cancelled) setTimelineLoading(false);
       }
@@ -793,8 +863,75 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
     };
   }, [leadId, validLeadType]);
 
-  const salesPersonName = lead.assignee?.trim() || "—";
+  useEffect(() => {
+    if (!validLeadType) {
+      setFinalBudgetLoading(false);
+      setFinalBudgetDisplay("");
+      return;
+    }
+
+    let cancelled = false;
+    setFinalBudgetLoading(true);
+
+    void (async () => {
+      try {
+        const { options } = await fetchQuoteOptionsForLeadDetail(
+          leadToQuoteDetailPayload(lead, leadId),
+          leadId,
+        );
+        if (cancelled) return;
+
+        const latest = pickLatestQuoteOption(options);
+        if (!latest) {
+          setFinalBudgetDisplay("");
+          return;
+        }
+
+        const refreshed = await refreshQuoteOptionAmount(latest);
+        if (cancelled) return;
+
+        const amount = resolveQuoteAmount(refreshed.amount);
+        setFinalBudgetDisplay(amount != null ? formatQuoteAmount(amount) : "");
+      } catch {
+        if (!cancelled) setFinalBudgetDisplay("");
+      } finally {
+        if (!cancelled) setFinalBudgetLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lead.externalReferenceId, lead.leadId, lead.quoteLink, leadId, validLeadType]);
+
+  const decisionMakerOptions = useMemo(
+    () =>
+      buildDecisionMakerOptions(
+        lead.name ?? "",
+        familyContactName,
+        familyContactRelationship,
+      ),
+    [lead.name, familyContactName, familyContactRelationship],
+  );
+
+  useEffect(() => {
+    if (!validLeadType) return;
+    const saved = readConfigurationScopeFrontendPrefs(validLeadType, leadId).decisionMaker;
+    const fallback = decisionMakerOptions.some((option) => option.value === saved)
+      ? saved!
+      : DECISION_MAKER_SELF_VALUE;
+    setDecisionMaker(fallback);
+  }, [decisionMakerOptions, leadId, validLeadType]);
+
   const timelineDisplay = timelineLoading ? "Loading…" : expectedTimeline || "Not set";
+  const decisionMakerDisplay = labelForDecisionMakerValue(decisionMaker, decisionMakerOptions);
+  const finalBudgetValue = finalBudgetLoading ? "Loading…" : finalBudgetDisplay;
+
+  const handleDecisionMakerChange = (value: string) => {
+    setDecisionMaker(value);
+    if (!validLeadType) return;
+    patchConfigurationScopeFrontendPrefs(validLeadType, leadId, { decisionMaker: value });
+  };
 
   return (
     <PhaseCardShell accessState={accessState}>
@@ -826,8 +963,29 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
 
       <PhaseAccessGate locked={isLocked}>
         <div className="grid gap-4 sm:grid-cols-3">
-          <LockedField label="Final Budget" />
-          <DecisionReadField label="Decision Maker" value={salesPersonName} />
+          <DecisionReadField label="Final Budget" value={finalBudgetValue} />
+          <div>
+            <PhaseFieldLabel>Decision Maker</PhaseFieldLabel>
+            {isLocked || timelineLoading ? (
+              <div className="flex min-h-[42px] items-center rounded-lg border border-[#e4e8ef] bg-[#fafbfc] px-3 py-2.5">
+                <span className="text-[14px] font-medium leading-snug text-[#1f2937]">
+                  {timelineLoading ? "Loading…" : decisionMakerDisplay}
+                </span>
+              </div>
+            ) : (
+              <Select
+                value={decisionMaker}
+                onChange={(e) => handleDecisionMakerChange(e.target.value)}
+                className={`mt-0 min-h-[42px] ${V2_INPUT}`}
+              >
+                {decisionMakerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
           <DecisionReadField label="Timeline" value={timelineDisplay} />
         </div>
       </PhaseAccessGate>
@@ -1069,15 +1227,7 @@ function RelatedContact({
   );
 }
 
-function ExperiencePhaseContent({
-  leadType,
-  leadId,
-  disabled = false,
-}: {
-  leadType: string;
-  leadId: string;
-  disabled?: boolean;
-}) {
+function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   const {
     lead,
     canShowGetQuote,
@@ -1093,102 +1243,75 @@ function ExperiencePhaseContent({
   const quoteLinkValue = lead.quoteLink?.trim() || "";
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-stretch">
-      <section className="rounded-xl border border-[#e8ecf1] bg-[#fafbfc] p-4">
-        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
-          Scope of Work
-        </p>
-        <div id="deal-scope-of-work" className="scroll-mt-24">
-          <Link
-            href={`/Leads/${leadType}/${leadId}/configuration-scope`}
-            className={`group flex h-[148px] w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-dashed border-[#c8d0db] bg-white text-[12px] font-bold uppercase tracking-wide text-[#8a96a8] ${V2_CARD_LINK}`}
-          >
-            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e5e7eb] bg-[#f9fafb] text-[#8a96a8] transition-all duration-200 group-hover:border-[#bbf7d0] group-hover:bg-[#ecfdf5] group-hover:text-[#059669]">
-              <svg
-                viewBox="0 0 24 24"
-                className="h-5 w-5 transition-transform duration-200 group-hover:scale-110"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-              </svg>
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              Configure Scope
-              <svg
-                viewBox="0 0 24 24"
-                className="h-3.5 w-3.5 opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
-            </span>
-          </Link>
-        </div>
-      </section>
-
+    <div className="grid gap-4">
       <section
         id="deal-experience-quote"
-        className="flex flex-col rounded-xl border border-[#e8ecf1] border-l-[3px] border-l-[#7c3aed] bg-[#f8fafc] p-4 scroll-mt-24"
+        className="mx-auto w-full max-w-[760px] overflow-hidden rounded-2xl border border-[#e5e9f0] bg-white shadow-[0_8px_30px_rgba(16,24,40,0.06)] scroll-mt-24"
       >
-        <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
-          Quote &amp; Proposal
-        </p>
-
-        {canShowGetQuote ? (
-          <button
-            type="button"
-            onClick={onGetQuote}
-            disabled={!canInteract || quoteFetching}
-            className={`mb-4 inline-flex h-[42px] w-full items-center justify-center gap-2 rounded-lg border border-[#c4b5fd] bg-[#f5f3ff] text-[12px] font-bold uppercase tracking-wide text-[#5b21b6] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
-          >
-            <span aria-hidden>🔎</span>
-            {quoteFetching ? "Getting Quote…" : "Get Quote"}
-          </button>
-        ) : null}
-
-        <div>
-          <PhaseFieldLabel>Quote Link</PhaseFieldLabel>
-          {quoteLinkValue ? (
-            <Input
-              value={quoteLinkValue}
-              readOnly
-              className="h-[42px] rounded-lg border-[#e4e8ef] bg-white px-3 text-[12px] text-[#374151]"
-            />
-          ) : (
-            <div className="flex h-[42px] items-center rounded-lg border border-[#e4e8ef] bg-white px-3">
-              <span className="text-[11px] font-normal italic text-[#9ca3af]">Not generated yet</span>
+        <div className="border-b border-[#edf1f6] bg-gradient-to-r from-[#f7f3ff] via-[#fbf9ff] to-[#ffffff] px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7c3aed]">
+                Experience Phase
+              </p>
+              <p className="mt-1 text-[18px] font-extrabold tracking-[-0.01em] text-[#1f2937]">
+                Quote &amp; Proposal Desk
+              </p>
             </div>
-          )}
+            {canShowGetQuote ? (
+              <button
+                type="button"
+                onClick={onGetQuote}
+                disabled={!canInteract || quoteFetching}
+                className={`inline-flex h-[42px] min-w-[160px] items-center justify-center gap-2 rounded-xl border border-[#c4b5fd] bg-[#f4f0ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#6d28d9] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
+              >
+                <span aria-hidden>🔎</span>
+                {quoteFetching ? "Getting…" : "Get Quote"}
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="mt-3 flex gap-2">
-          <button
-            type="button"
-            disabled={!canInteract || quoteSending || quoteLinkPersisting || !quoteLinkValue}
-            onClick={() => void onSendQuote()}
-            className={`inline-flex h-[42px] flex-1 items-center justify-center rounded-lg bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
-          >
-            {quoteSending ? "Sending…" : "Send Quote"}
-          </button>
+        <div className="p-5">
+          <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
+            <div>
+            <PhaseFieldLabel className="mb-2">Quote Link</PhaseFieldLabel>
+            {quoteLinkValue ? (
+              <Input
+                value={quoteLinkValue}
+                readOnly
+                className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
+              />
+            ) : (
+              <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
+                <span className="text-[12px] italic text-[#94a3b8]">Quote is not generated yet</span>
+              </div>
+            )}
+            </div>
+            <button
+              type="button"
+              disabled={!canInteract || quoteSending || quoteLinkPersisting || !quoteLinkValue}
+              onClick={() => void onSendQuote()}
+              className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
+            >
+              {quoteSending ? "Sending…" : "Send Quote"}
+            </button>
+          </div>
+        </div>
+
+        <div className="border-t border-[#edf1f6] bg-[#fafcff] px-5 py-4">
+          <p className="text-[12px] text-[#64748b]">
+            {canShowGetQuote
+              ? "Generate quote after a successful meeting, then send it to customer."
+              : "Quote tools unlock after meeting is marked successful."}
+          </p>
         </div>
 
         {quoteLinkPersisting ? (
-          <p className="mt-2 text-[11px] text-[#9ca3af]">Saving quote link…</p>
+          <p className="px-5 pb-2 text-[11px] text-[#9ca3af]">Saving quote link…</p>
         ) : null}
         {quoteLinkPersistError ? (
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#dc2626]">
+          <div className="px-5 pb-4 pt-1 flex flex-wrap items-center gap-2 text-[11px] text-[#dc2626]">
             <span>{quoteLinkPersistError}</span>
             {onRetrySaveQuoteLink ? (
               <button
@@ -1202,12 +1325,6 @@ function ExperiencePhaseContent({
             ) : null}
           </div>
         ) : null}
-
-        <p className="mt-auto pt-4 text-[11px] leading-relaxed text-[#9ca3af]">
-          {canShowGetQuote
-            ? "Fetch the quote after a successful meeting, then send it to the customer."
-            : "Quote tools unlock after meeting is marked successful in Complete Task."}
-        </p>
       </section>
     </div>
   );
@@ -1239,7 +1356,7 @@ function ExperiencePhaseCard({
       </div>
 
       <PhaseAccessGate locked={isLocked}>
-        <ExperiencePhaseContent disabled={isLocked} leadType={leadType} leadId={leadId} />
+        <ExperiencePhaseContent disabled={isLocked} />
       </PhaseAccessGate>
     </PhaseCardShell>
   );
@@ -1381,7 +1498,7 @@ function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) 
       return;
     }
     try {
-      await onConnectionPhaseSave();
+      await onConnectionPhaseSave(readDiscoveryPhaseDraft(lead));
       exitEditing();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Could not save discovery phase.");
@@ -1477,6 +1594,12 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
     normalizedBudget && !BUDGET_OPTIONS.includes(normalizedBudget)
       ? [normalizedBudget, ...BUDGET_OPTIONS]
       : BUDGET_OPTIONS;
+  const normalizedConfiguration = lead.configuration?.trim() ?? "";
+  const configurationOptions =
+    normalizedConfiguration &&
+    !CONFIGURATION_OPTIONS.some((option) => option === normalizedConfiguration)
+      ? [normalizedConfiguration, ...CONFIGURATION_OPTIONS]
+      : CONFIGURATION_OPTIONS;
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
 
   return (
@@ -1570,12 +1693,18 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
           <PhaseFieldLabel>Configuration</PhaseFieldLabel>
           {editing ? (
             <>
-              <Input
-                placeholder={isAdsLead ? "e.g. 2 BHK — add here if not from the ad" : "e.g. 2 BHK"}
+              <Select
                 value={lead.configuration ?? ""}
                 onChange={(e) => onLeadPatch({ configuration: e.target.value })}
                 className={V2_INPUT}
-              />
+              >
+                <option value="">Select Configuration</option>
+                {configurationOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </Select>
               {isAdsLead && !(lead.configuration ?? "").trim() ? (
                 <p className="mt-1.5 text-[11px] text-[#9ca3af]">
                   Not provided by the ad form — enter configuration and click Done to save.
@@ -1673,6 +1802,7 @@ function ConnectionPhaseCard({ accessState }: { accessState: PhaseAccessState })
 function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const {
     lead,
+    leadType,
     leadId,
     onFloorPlanUpload,
     onFloorPlanRemove,
@@ -1687,19 +1817,24 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const canInteract = !disabled;
   const designQaValue = apiDesignQaLink || designQaLink || "";
   const [appointmentMeetingType, setAppointmentMeetingType] = useState("");
+  const appointmentMeetingTypeRef = useRef("");
 
   useEffect(() => {
     let cancelled = false;
     void resolveMeetingTypeForLead(leadId, { designerName: lead.designerName }).then((meetingType) => {
-      if (cancelled) return;
-      setAppointmentMeetingType(meetingType ?? "");
+      if (cancelled || !meetingType?.trim()) return;
+      appointmentMeetingTypeRef.current = meetingType;
+      setAppointmentMeetingType(meetingType);
     });
     return () => {
       cancelled = true;
     };
-  }, [leadId, lead.designerName, lead.meetingType, lead.meetingDate, lead.followUpDate]);
+  }, [leadId, lead.designerName]);
 
-  const resolvedMeetingType = lead.meetingType?.trim() || appointmentMeetingType;
+  const resolvedMeetingType =
+    lead.meetingType?.trim() ||
+    appointmentMeetingTypeRef.current ||
+    appointmentMeetingType;
 
   const calendarIcon = (
     <svg
@@ -1739,7 +1874,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-stretch">
-      <section className="rounded-xl border border-[#e8ecf1] bg-[#fafbfc] p-4">
+      <section className="rounded-xl border border-[#e8ecf1] bg-gradient-to-b from-[#fbfcff] to-[#f7f9fc] p-4">
         <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
           Documents &amp; Design
         </p>
@@ -1767,7 +1902,40 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
           />
         </div>
 
-        <div className="mt-4 border-t border-[#e8ecf1] pt-4">
+        <div className="mt-4 rounded-lg border border-[#d6f3e2] bg-[#f6fffa] p-4">
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
+            Scope of Work
+          </p>
+          <div id="deal-scope-of-work" className="scroll-mt-24">
+            <Link
+              href={`/Leads/${leadType}/${leadId}/configuration-scope`}
+              className={`group flex h-[116px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#8ee2b4] bg-white text-[12px] font-bold uppercase tracking-wide text-[#2c7a53] ${V2_CARD_LINK} ${
+                !canInteract ? "pointer-events-none opacity-60" : ""
+              }`}
+            >
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#d3f0df] bg-[#f4fff9] text-[#2c7a53] transition-all duration-200 group-hover:scale-105">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+              </span>
+              <span>Configure Scope</span>
+              <span className="text-[10px] font-semibold normal-case tracking-normal text-[#5f8d73]">
+                Open and update requirement details
+              </span>
+            </Link>
+          </div>
+        </div>
+        <div className="mt-4 rounded-lg border border-[#e4e8ef] bg-white p-3">
           <DesignPreferencesWithModal leadId={designQaLeadId} />
         </div>
       </section>
