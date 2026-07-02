@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Lead } from "@/lib/data";
-import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS } from "@/lib/data";
+import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
@@ -15,6 +15,8 @@ import {
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
   requiresLeadPropertyGateForCompleteTask,
+  resolveLeadPropertyGateField,
+  type LeadPropertyGateFields,
 } from "@/lib/milestone-advance-gates";
 import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
 import ScheduleHubMeetingModal, {
@@ -41,6 +43,43 @@ import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function resolveModalGateFields(
+  lead: Lead,
+  modal: {
+    budget: string;
+    propertyNotes: string;
+    configuration: string;
+    bookingType: string;
+  },
+): LeadPropertyGateFields {
+  return {
+    budget: resolveLeadPropertyGateField(modal.budget, lead.budget),
+    propertyNotes: resolveLeadPropertyGateField(modal.propertyNotes, lead.propertyNotes),
+    configuration: resolveLeadPropertyGateField(modal.configuration, lead.configuration),
+    bookingType: resolveLeadPropertyGateField(modal.bookingType, lead.bookingType),
+  };
+}
+
+function gatePayloadFromModal(
+  lead: Lead,
+  modal: {
+    budget: string;
+    propertyNotes: string;
+    configuration: string;
+    bookingType: string;
+  },
+  needsGate: boolean,
+): Pick<CompleteTaskApiPayload, "budget" | "propertyNotes" | "configuration" | "bookingType"> {
+  if (!needsGate) return {};
+  const resolved = resolveModalGateFields(lead, modal);
+  return {
+    budget: resolved.budget || undefined,
+    propertyNotes: resolved.propertyNotes || undefined,
+    configuration: resolved.configuration || undefined,
+    bookingType: resolved.bookingType || undefined,
+  };
 }
 
 type SubStatusMapping = {
@@ -549,6 +588,13 @@ export default function CompleteTaskModal({
       ? [normalizedBudget, ...BUDGET_OPTIONS]
       : BUDGET_OPTIONS;
   }, [lead.budget]);
+  const configurationOptions = useMemo(() => {
+    const normalizedConfiguration = (lead.configuration ?? "").trim();
+    return normalizedConfiguration &&
+      !CONFIGURATION_OPTIONS.some((option) => option === normalizedConfiguration)
+      ? [normalizedConfiguration, ...CONFIGURATION_OPTIONS]
+      : CONFIGURATION_OPTIONS;
+  }, [lead.configuration]);
 
   const feedbackSelectEnabled = !feedbackLoading && feedbackOptions.length > 0;
   const feedbackPlaceholder = feedbackLoading
@@ -672,12 +718,14 @@ export default function CompleteTaskModal({
     if (!onApiComplete) return;
 
     if (!presalesMode) {
-      const effectivelyMissingFields = missingLeadPropertyGateFields({
-        budget: modalBudget,
-        propertyNotes: modalPropertyNotes,
-        configuration: modalConfiguration,
-        bookingType: modalBookingType,
-      } as Lead);
+      const effectivelyMissingFields = missingLeadPropertyGateFields(
+        resolveModalGateFields(lead, {
+          budget: modalBudget,
+          propertyNotes: modalPropertyNotes,
+          configuration: modalConfiguration,
+          bookingType: modalBookingType,
+        }),
+      );
 
       if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
         setHubMeetingError(
@@ -699,10 +747,16 @@ export default function CompleteTaskModal({
         note: trimmedNotes,
         nextCallDateLocal: "",
         lostReason: reasonRequired ? lostReason.trim() : undefined,
-        budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
-        propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
-        configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
-        bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+        ...gatePayloadFromModal(
+          lead,
+          {
+            budget: modalBudget,
+            propertyNotes: modalPropertyNotes,
+            configuration: modalConfiguration,
+            bookingType: modalBookingType,
+          },
+          needsLeadPropertyGate,
+        ),
         possessionDate:
           needsLeadPropertyGate || isHoldSubstageSelected
             ? modalPossessionDate.trim()
@@ -780,12 +834,14 @@ export default function CompleteTaskModal({
 
     // In presalesMode the connection-gate panel is hidden; only validate the gate in sales (non-presales) mode.
     if (!presalesMode) {
-      const effectivelyMissingFields = missingLeadPropertyGateFields({
-        budget: modalBudget,
-        propertyNotes: modalPropertyNotes,
-        configuration: modalConfiguration,
-        bookingType: modalBookingType,
-      } as any);
+      const effectivelyMissingFields = missingLeadPropertyGateFields(
+        resolveModalGateFields(lead, {
+          budget: modalBudget,
+          propertyNotes: modalPropertyNotes,
+          configuration: modalConfiguration,
+          bookingType: modalBookingType,
+        }),
+      );
 
       if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
         setApiError(
@@ -872,10 +928,16 @@ export default function CompleteTaskModal({
           note: note.trim(),
           nextCallDateLocal: nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
-          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
-          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
-          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
-          bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+          ...gatePayloadFromModal(
+            lead,
+            {
+              budget: modalBudget,
+              propertyNotes: modalPropertyNotes,
+              configuration: modalConfiguration,
+              bookingType: modalBookingType,
+            },
+            needsLeadPropertyGate,
+          ),
           possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
         });
         onClose();
@@ -898,10 +960,16 @@ export default function CompleteTaskModal({
           note,
           nextCallDateLocal: scheduleMode || noFollowUpRequired ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
-          budget: needsLeadPropertyGate ? modalBudget.trim() : undefined,
-          propertyNotes: needsLeadPropertyGate ? modalPropertyNotes.trim() : undefined,
-          configuration: needsLeadPropertyGate ? modalConfiguration.trim() : undefined,
-          bookingType: needsLeadPropertyGate ? modalBookingType.trim() : undefined,
+          ...gatePayloadFromModal(
+            lead,
+            {
+              budget: modalBudget,
+              propertyNotes: modalPropertyNotes,
+              configuration: modalConfiguration,
+              bookingType: modalBookingType,
+            },
+            needsLeadPropertyGate,
+          ),
           possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
           meetingAppointment: undefined,
         });
@@ -1265,13 +1333,19 @@ export default function CompleteTaskModal({
                     </div>
                     <div>
                       <FieldLabel required>Configuration</FieldLabel>
-                      <Input
+                      <Select
                         value={modalConfiguration}
                         onChange={(e) => setModalConfiguration(e.target.value)}
-                        placeholder="e.g. 3 BHK"
                         missing={showErrors && !modalConfiguration.trim()}
                         className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
-                      />
+                      >
+                        <option value="">Select Configuration</option>
+                        {configurationOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </Select>
                     </div>
                   </div>
                   

@@ -138,3 +138,31 @@ export function resolveBudgetLuxuryFocus(
     note: "Budget mapped between value and luxury based on selected range.",
   };
 }
+
+/** Maps a quoted INR total to the value/luxury slider tiers. */
+export function resolveLuxuryFocusFromAmount(amountInr: number): BudgetLuxuryFocus {
+  if (!Number.isFinite(amountInr) || amountInr <= 0) {
+    return resolveBudgetLuxuryFocus("");
+  }
+
+  const lakhs = amountInr / 100_000;
+  if (lakhs >= 8) {
+    return resolveBudgetLuxuryFocus("3 BHK Standard Interiors - 8 Lakhs+");
+  }
+  if (lakhs >= 6) {
+    return resolveBudgetLuxuryFocus(
+      "3 BHK Essential Interiors - 6.0 Lakhs Onwards ( Modular Kitchen, Wardrobes, TV Unit )",
+    );
+  }
+  if (lakhs >= 4) {
+    return resolveBudgetLuxuryFocus(
+      "2 BHK Essential Interiors - 4.0 Lakhs Onwards ( Modular Kitchen, Wardrobes, TV Unit )",
+    );
+  }
+
+  return {
+    percent: 22,
+    tierLabel: "Quoted total",
+    note: "Quoted amount mapped between value and luxury focus.",
+  };
+}

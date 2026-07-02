@@ -39,6 +39,28 @@ export function preserveDiscoveryFields(prev: Lead, next: Lead): Lead {
   return out;
 }
 
+const CONNECTION_STICKY_KEYS = ["meetingType", "designerName"] as const;
+type ConnectionStickyKey = (typeof CONNECTION_STICKY_KEYS)[number];
+
+function isUiPlaceholderToken(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "—" || trimmed === "-" || trimmed === "–";
+}
+
+/** Preserve connection-phase values when refresh/save round-trips drop them. */
+export function preserveLeadStickyFields(prev: Lead, next: Lead): Lead {
+  const out = preserveDiscoveryFields(prev, next);
+  for (const key of CONNECTION_STICKY_KEYS) {
+    const prevVal = String(prev[key as ConnectionStickyKey] ?? "").trim();
+    const nextVal = String(out[key as ConnectionStickyKey] ?? "").trim();
+    const nextMissing = !nextVal || isUiPlaceholderToken(nextVal);
+    if (prevVal && !isUiPlaceholderToken(prevVal) && nextMissing) {
+      (out as Record<ConnectionStickyKey, string>)[key] = prev[key as ConnectionStickyKey] ?? "";
+    }
+  }
+  return out;
+}
+
 /** Hub stores property name in configuration-scope `projectUnderstanding`, not `propertyLocation` on addlead. */
 export async function hydratePropertyLocationFromRequirements(
   lead: Lead,

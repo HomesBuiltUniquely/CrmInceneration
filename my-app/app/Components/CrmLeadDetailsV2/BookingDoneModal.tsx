@@ -10,15 +10,16 @@ import {
 } from "react";
 import {
   formatQuoteAmount,
-  leadQuoteOptionFromSavedLink,
-  normalizeLeadQuoteOptions,
-  extractQuoteIdFromUrl,
   resolveQuoteVerifyUrl,
   sortQuotesForRevisionDisplay,
   type LeadQuoteOption,
 } from "@/lib/crm-quote-links";
 import { formatCrmDateTime } from "@/lib/date-time-format";
-import { buildLeadQuoteOptionsFromProlance } from "@/lib/prolance-quote-api";
+import {
+  fetchQuoteOptionsForLeadDetail,
+  refreshQuoteOptionDetails,
+} from "@/lib/lead-quote-options";
+import { publishLeadQuoteSelection, readLeadQuoteSelection } from "@/lib/lead-quote-selection";
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
 import {
   bookingPaymentKindDescription,
@@ -42,7 +43,6 @@ import { persistClosedWonCustomerMilestoneFromPayment } from "@/lib/closed-won-c
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import {
   getLeadDetail,
-  fetchNewCrmQuotePayloads,
 } from "@/lib/lead-details-client";
 import {
   BOOKING_DONE_SUBSTAGE,
@@ -121,85 +121,6 @@ function readMilestoneFromDetail(detail: Record<string, unknown>): {
   };
 }
 
-type QuoteLoadResult = {
-  options: LeadQuoteOption[];
-  hubLeadId: string;
-};
-
-async function fetchQuoteOptionsForLead(
-  businessLeadId: string,
-  externalReferenceId: string,
-  savedQuoteLink: string,
-): Promise<QuoteLoadResult> {
-  const payloads = await fetchNewCrmQuotePayloads(businessLeadId, externalReferenceId);
-  const anchorQuoteId = resolveAnchorQuoteId(payloads, savedQuoteLink);
-  const hubLeadId = resolveHubLeadId(payloads);
-
-  if (anchorQuoteId) {
-    try {
-      const prolanceOptions = await buildLeadQuoteOptionsFromProlance(anchorQuoteId, hubLeadId);
-      if (prolanceOptions.length > 0) {
-        return { options: prolanceOptions, hubLeadId };
-      }
-    } catch {
-      /* fall through */
-    }
-  }
-
-  const savedOption = savedQuoteLink ? leadQuoteOptionFromSavedLink(savedQuoteLink) : null;
-  const fallback = mergeQuoteOptions(
-    ...payloads.map((payload) => normalizeLeadQuoteOptions(payload)),
-    ...(savedOption ? [[savedOption]] : []),
-  );
-  return { options: fallback, hubLeadId };
-}
-
-function resolveHubLeadId(payloads: unknown[]): string {
-  for (const payload of payloads) {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const row = payload as Record<string, unknown>;
-    const hubLeadId = row.leadId;
-    if (typeof hubLeadId === "number" && Number.isFinite(hubLeadId) && hubLeadId > 0) {
-      return String(Math.trunc(hubLeadId));
-    }
-    if (typeof hubLeadId === "string" && /^\d+$/.test(hubLeadId.trim())) {
-      return hubLeadId.trim();
-    }
-  }
-  return "";
-}
-
-function resolveAnchorQuoteId(payloads: unknown[], savedQuoteLink: string): string {
-  for (const payload of payloads) {
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const row = payload as Record<string, unknown>;
-    const quoteId = row.quoteId;
-    if (typeof quoteId === "number" && Number.isFinite(quoteId) && quoteId > 0) {
-      return String(Math.trunc(quoteId));
-    }
-    if (typeof quoteId === "string" && /^\d+$/.test(quoteId.trim())) {
-      return quoteId.trim();
-    }
-    const fromUrl =
-      extractQuoteIdFromUrl(String(row.customerQuoteUrl ?? "")) ||
-      extractQuoteIdFromUrl(String(row.internalQuoteUrl ?? ""));
-    if (fromUrl) return fromUrl;
-  }
-  return extractQuoteIdFromUrl(savedQuoteLink);
-}
-
-function mergeQuoteOptions(...groups: LeadQuoteOption[][]): LeadQuoteOption[] {
-  const byKey = new Map<string, LeadQuoteOption>();
-  for (const group of groups) {
-    for (const option of group) {
-      const key = option.customerQuoteUrl || option.internalQuoteUrl || option.id;
-      if (!key || byKey.has(key)) continue;
-      byKey.set(key, option);
-    }
-  }
-  return normalizeLeadQuoteOptions([...byKey.values()]);
-}
-
 export default function BookingDoneModal({
   open,
   leadType,
@@ -228,6 +149,7 @@ export default function BookingDoneModal({
   const [milestoneSubStage, setMilestoneSubStage] = useState("");
   const [handoffComplete, setHandoffComplete] = useState(false);
   const [paymentDraftRevision, setPaymentDraftRevision] = useState(0);
+  const [quoteAmountRefreshing, setQuoteAmountRefreshing] = useState(false);
 
   const bumpPaymentDraft = useCallback(() => {
     setPaymentDraftRevision((value) => value + 1);
@@ -300,21 +222,8 @@ export default function BookingDoneModal({
             leadId,
         );
 
-        const resolvedBusinessLeadId = pickDetailStr(detail, "leadId", "leadRef", "leadCode", "customerId");
-        const externalReferenceId = pickDetailStr(
-          detail,
-          "uniqueId",
-          "lead_identifier",
-          "leadIdentifier",
-          "externalReferenceId",
-        );
-        const savedQuoteLink = pickDetailStr(detail, "quoteLink", "quoteURL", "proposalLink");
-
-        const { options: merged, hubLeadId: resolvedHubLeadId } = await fetchQuoteOptionsForLead(
-          resolvedBusinessLeadId,
-          externalReferenceId,
-          savedQuoteLink,
-        );
+        const { options: merged, hubLeadId: resolvedHubLeadId } =
+          await fetchQuoteOptionsForLeadDetail(detail, leadId);
         if (cancelled) return;
 
         if (merged.length === 0) {
@@ -327,8 +236,19 @@ export default function BookingDoneModal({
 
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
+        const storedSelection = readLeadQuoteSelection(validLeadType, leadId);
+        const storedQuote = storedSelection
+          ? merged.find(
+              (option) =>
+                option.id === storedSelection.quoteId ||
+                option.quoteId === storedSelection.quoteId,
+            ) ?? null
+          : null;
         const defaultSelection =
-          merged.find((option) => option.isLatest)?.id ?? merged[0]?.id ?? "";
+          storedQuote?.id ??
+          merged.find((option) => option.isLatest)?.id ??
+          merged[0]?.id ??
+          "";
         setSelectedQuoteId(defaultSelection);
         setQuoteLoadState("ready");
       } catch (error) {
@@ -352,6 +272,25 @@ export default function BookingDoneModal({
   const selectedQuote = useMemo(
     () => quoteOptions.find((option) => option.id === selectedQuoteId) ?? quoteOptions[0] ?? null,
     [quoteOptions, selectedQuoteId],
+  );
+
+  const handleSelectQuote = useCallback(
+    async (id: string) => {
+      setSelectedQuoteId(id);
+      const option = quoteOptions.find((item) => item.id === id);
+      if (!option) return;
+      setQuoteAmountRefreshing(true);
+      try {
+        const refreshed = await refreshQuoteOptionDetails(option);
+        setQuoteOptions((prev) =>
+          prev.map((item) => (item.id === id ? refreshed : item)),
+        );
+        publishLeadQuoteSelection(leadType, leadId, refreshed, true);
+      } finally {
+        setQuoteAmountRefreshing(false);
+      }
+    },
+    [leadId, leadType, quoteOptions],
   );
 
   const amountReceived = useMemo(
@@ -549,14 +488,16 @@ export default function BookingDoneModal({
             options={quoteOptions}
             hubLeadId={hubLeadId}
             selectedQuoteId={selectedQuote?.id ?? selectedQuoteId}
-            onSelectQuote={setSelectedQuoteId}
+            onSelectQuote={(id) => void handleSelectQuote(id)}
             selectedQuote={selectedQuote}
+            amountRefreshing={quoteAmountRefreshing}
           />
 
           <PaymentProofUploadSection
             leadType={leadType}
             leadId={leadId}
             selectedQuote={selectedQuote}
+            quoteAmountRefreshing={quoteAmountRefreshing}
             onPaymentDraftChange={bumpPaymentDraft}
           />
 
@@ -621,6 +562,7 @@ function QuotationSection({
   selectedQuoteId,
   onSelectQuote,
   selectedQuote,
+  amountRefreshing = false,
 }: {
   loadState: QuoteLoadState;
   error: string;
@@ -629,6 +571,7 @@ function QuotationSection({
   selectedQuoteId: string;
   onSelectQuote: (id: string) => void;
   selectedQuote: LeadQuoteOption | null;
+  amountRefreshing?: boolean;
 }) {
   const revisionOptions = sortQuotesForRevisionDisplay(options);
 
@@ -717,7 +660,9 @@ function QuotationSection({
                 Selected for booking
               </p>
               <p className="mt-1 text-[14px] font-semibold text-[#065f46]">
-                {selectedQuote.label} · {formatQuoteAmount(selectedQuote.amount)}
+                {selectedQuote.label}
+                {" · "}
+                {amountRefreshing ? "Loading amount…" : formatQuoteAmount(selectedQuote.amount)}
               </p>
             </div>
           ) : null}
