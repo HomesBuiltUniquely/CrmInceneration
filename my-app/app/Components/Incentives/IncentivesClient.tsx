@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
@@ -11,7 +11,19 @@ import {
   normalizeRole,
 } from "@/lib/auth/api";
 import { buildIncentiveProfile } from "@/lib/incentives-profile";
+import {
+  fetchIncentiveBookingLeads,
+  filterIncentiveLeadsForExecutive,
+  filterIncentiveLeadsForMonth,
+  type IncentiveBookingLead,
+} from "@/lib/incentives-booking-data";
 import { loadIncentivesRoster, type IncentivesRoster } from "@/lib/incentives-roster";
+import { applyMonthlyTargets, salesTargetsApi } from "@/lib/sales-targets-api";
+import {
+  currentSalesTargetMonth,
+  formatSalesTargetMonthLabel,
+  monthSelectOptions,
+} from "@/lib/sales-targets";
 import IncentiveDashboard from "./IncentiveDashboard";
 import TeamIncentivesOverview from "./TeamIncentivesOverview";
 import "./incentives.css";
@@ -19,12 +31,34 @@ import "./incentives.css";
 export default function IncentivesClient() {
   const [role, setRole] = useState("SALES_EXECUTIVE");
   const [profileName, setProfileName] = useState("User");
+  const [rosterBase, setRosterBase] = useState<IncentivesRoster | null>(null);
   const [roster, setRoster] = useState<IncentivesRoster | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedManagerId, setSelectedManagerId] = useState<string>("");
   const [selectedExecutiveId, setSelectedExecutiveId] = useState<number | null>(null);
   const [showTeamOverview, setShowTeamOverview] = useState(false);
+  const [targetMonth, setTargetMonth] = useState(currentSalesTargetMonth());
+  const [bookingLeads, setBookingLeads] = useState<IncentiveBookingLead[]>([]);
+  const monthOptions = useMemo(() => monthSelectOptions(12), []);
+
+  const applyTargetsToRoster = useCallback(async (base: IncentivesRoster, month: string) => {
+    try {
+      const targets = await salesTargetsApi.listUsers(month);
+      return {
+        ...base,
+        executives: applyMonthlyTargets(base.executives, targets),
+        viewer: {
+          ...base.viewer,
+          monthlyTargetInr:
+            targets.find((t) => t.userId === base.viewer.id)?.monthlyTargetInr ??
+            base.viewer.monthlyTargetInr,
+        },
+      };
+    } catch {
+      return base;
+    }
+  }, []);
 
   useEffect(() => {
     setRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -38,14 +72,22 @@ export default function IncentivesClient() {
         const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
         if (!token) {
           setLoadError("Please sign in to view incentives.");
+          setRosterBase(null);
           setRoster(null);
           return;
         }
         const next = await loadIncentivesRoster(token);
+        const leads = await fetchIncentiveBookingLeads().catch(() => [] as IncentiveBookingLead[]);
         if (cancelled) return;
-        setRoster(next);
+        setBookingLeads(leads);
+        setRosterBase(next);
+        const withTargets = await applyTargetsToRoster(next, targetMonth);
+        if (cancelled) return;
+        setRoster(withTargets);
         const defaultExec =
-          next.executives.find((e) => e.id === next.viewer.id) ?? next.executives[0] ?? null;
+          withTargets.executives.find((e) => e.id === withTargets.viewer.id) ??
+          withTargets.executives[0] ??
+          null;
         setSelectedExecutiveId(defaultExec?.id ?? null);
       } catch {
         if (!cancelled) setLoadError("Could not load team roster.");
@@ -57,7 +99,20 @@ export default function IncentivesClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyTargetsToRoster]);
+
+  useEffect(() => {
+    if (!rosterBase) return;
+    let cancelled = false;
+    void (async () => {
+      const withTargets = await applyTargetsToRoster(rosterBase, targetMonth);
+      if (cancelled) return;
+      setRoster(withTargets);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rosterBase, targetMonth, applyTargetsToRoster]);
 
   const profileInitials = useMemo(
     () =>
@@ -97,14 +152,27 @@ export default function IncentivesClient() {
     }
   }, [visibleExecutives, selectedExecutiveId]);
 
+  const monthBookingLeads = useMemo(
+    () => filterIncentiveLeadsForMonth(bookingLeads, targetMonth),
+    [bookingLeads, targetMonth],
+  );
+
   const selectedMember = useMemo(
     () => visibleExecutives.find((e) => e.id === selectedExecutiveId) ?? null,
     [visibleExecutives, selectedExecutiveId],
   );
 
+  const selectedMemberLeads = useMemo(() => {
+    if (!selectedMember) return [];
+    return filterIncentiveLeadsForExecutive(monthBookingLeads, selectedMember);
+  }, [monthBookingLeads, selectedMember]);
+
   const selectedProfile = useMemo(
-    () => (selectedMember ? buildIncentiveProfile(selectedMember) : null),
-    [selectedMember],
+    () =>
+      selectedMember
+        ? buildIncentiveProfile(selectedMember, { bookingLeads: selectedMemberLeads })
+        : null,
+    [selectedMember, selectedMemberLeads],
   );
 
   const viewingLabel = useMemo(() => {
@@ -146,6 +214,31 @@ export default function IncentivesClient() {
           </div>
 
           <main className="p-4 md:p-6 lg:p-8">
+            <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--inc-border)] bg-[var(--inc-surface)] px-4 py-3 shadow-sm">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--inc-muted)]">
+                  Incentive period
+                </p>
+                <p className="text-sm font-semibold text-[var(--inc-text)]">
+                  {formatSalesTargetMonthLabel(targetMonth)}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-[var(--inc-muted)]">
+                Month
+                <select
+                  value={targetMonth}
+                  onChange={(e) => setTargetMonth(e.target.value)}
+                  className="rounded-lg border border-[var(--inc-border)] bg-white px-3 py-2 text-[13px] text-[var(--inc-text)]"
+                >
+                  {monthOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </section>
+
             {loading ? (
               <p className="text-sm text-[var(--inc-muted)]">Loading incentives…</p>
             ) : loadError ? (
@@ -223,6 +316,7 @@ export default function IncentivesClient() {
                     {showTeamOverview && visibleExecutives.length > 1 ? (
                       <TeamIncentivesOverview
                         members={visibleExecutives}
+                        bookingLeads={monthBookingLeads}
                         selectedId={selectedExecutiveId}
                         onSelect={(id) => {
                           setSelectedExecutiveId(id);

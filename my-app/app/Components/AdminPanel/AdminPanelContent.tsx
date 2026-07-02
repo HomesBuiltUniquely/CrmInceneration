@@ -19,6 +19,7 @@ import {
   normalizeRole,
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
+import SalesTargetSection from "./SalesTargetSection";
 import {
   isManagerStatusToggleRole,
   isPresalesExecutiveRole,
@@ -3619,6 +3620,12 @@ const SECTIONS: Section[] = [
     icon: "📊",
     desc: "Set monthly lead quotas",
   },
+  {
+    id: "salesTarget",
+    label: "Revenue Targets",
+    icon: "🎯",
+    desc: "Monthly sales executive targets",
+  },
 ];
 
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
@@ -3647,6 +3654,7 @@ export default function AdminPanelContent() {
     : SECTIONS.filter((section) => {
         if (section.id === "allUsers") return isSuperAdmin;
         if (section.id === "leadLimit") return canSeeLeadLimit;
+        if (section.id === "salesTarget") return canSeeLeadLimit;
         if (section.id === "managers" || section.id === "presalesExec") {
           return isSuperAdmin || isAdmin || isSalesAdmin;
         }
@@ -3723,6 +3731,11 @@ export default function AdminPanelContent() {
             {canSeeLeadLimit ? (
               <div id="leadLimit">
                 <LeadLimitSection />
+              </div>
+            ) : null}
+            {canSeeLeadLimit ? (
+              <div id="salesTarget">
+                <SalesTargetSection />
               </div>
             ) : null}
           </>

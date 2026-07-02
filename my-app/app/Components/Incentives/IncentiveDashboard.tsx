@@ -5,9 +5,16 @@ import type { IncentiveProfile } from "@/lib/incentives-profile";
 import { journeyMarkers } from "@/lib/incentives-profile";
 
 function closureBadgeClass(type: DealLedgerRow["closureTime"]): string {
+  if (type === "BOOKING DONE") return "bg-[#ecfdf5] text-[#047857]";
   if (type === "SAME DAY") return "bg-[#ffedd5] text-[#c2410c]";
   if (type === "48 HOURS") return "bg-[#fef9c3] text-[#a16207]";
   return "bg-[#e0f2fe] text-[#0369a1]";
+}
+
+function weightBadgeClass(tier: DealLedgerRow["weightTier"]): string {
+  if (tier === "full") return "bg-[#ecfdf5] text-[#047857]";
+  if (tier === "half") return "bg-[#fef9c3] text-[#a16207]";
+  return "bg-[#f1f5f9] text-[#64748b]";
 }
 
 type Props = {
@@ -18,7 +25,10 @@ type Props = {
 export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
   const { summary, slabs, payoutMath, speedBonuses, dealLedger } = profile;
   const progressPct = Math.min(100, Math.max(0, summary.achievementPct));
-  const activeMarker = Number.parseInt(summary.currentSlabLabel, 10) || 50;
+  const activeMarker =
+    summary.currentSlabLabel === "—"
+      ? null
+      : Number.parseInt(summary.currentSlabLabel, 10) || null;
 
   return (
     <>
@@ -40,7 +50,7 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <SummaryCard label="Total Target" value={summary.totalTarget} />
         <SummaryCard
-          label="Revenue Achieved"
+          label="Weighted Revenue"
           value={summary.revenueAchieved}
           badge={summary.revenueDelta}
         />
@@ -132,17 +142,21 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
           </div>
           <div className="rounded-lg border border-dashed border-[#334155] bg-[#111827] px-3 py-2 text-center">
             <p className="text-[9px] font-bold uppercase tracking-wide text-[#94a3b8]">
-              Revenue Achieved
+              Monthly Target
             </p>
-            <p className="mt-1 text-lg font-bold">{payoutMath.revenueAchieved}</p>
+            <p className="mt-1 text-lg font-bold">{payoutMath.monthlyTarget}</p>
           </div>
           <dl className="mt-4 space-y-2 text-[12px]">
+            <div className="flex justify-between gap-2">
+              <dt className="text-[#94a3b8]">Weighted Revenue</dt>
+              <dd className="font-bold">{payoutMath.revenueAchieved}</dd>
+            </div>
             <div className="flex justify-between gap-2">
               <dt className="text-[#94a3b8]">Eligible Slab</dt>
               <dd className="font-bold">{payoutMath.eligibleSlab}</dd>
             </div>
             <div className="flex justify-between gap-2">
-              <dt className="text-[#94a3b8]">Incentive Multiplier</dt>
+              <dt className="text-[#94a3b8]">Incentive Rate</dt>
               <dd className="font-bold">{payoutMath.multiplier}</dd>
             </div>
           </dl>
@@ -153,7 +167,7 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
             {payoutMath.totalPayout}
           </p>
           <p className="mt-3 text-[10px] italic text-[#64748b]">
-            *Calculated on collected revenue. Taxes extra.
+            *Target × slab rate when weighted revenue hits slab threshold.
           </p>
         </aside>
       </div>
@@ -215,14 +229,23 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
             <thead>
               <tr className="border-b border-[var(--inc-border)] text-[10px] font-bold uppercase tracking-wide text-[var(--inc-muted)]">
                 <th className="pb-3 pr-4">Customer</th>
-                <th className="pb-3 pr-4">Deal Value</th>
-                <th className="pb-3 pr-4">Closure Time</th>
+                <th className="pb-3 pr-4">Quote Value</th>
+                <th className="pb-3 pr-4">Received</th>
+                <th className="pb-3 pr-4">Weighted</th>
+                <th className="pb-3 pr-4">Status</th>
                 <th className="pb-3 pr-4">Contribution</th>
                 <th className="pb-3">Incentive</th>
               </tr>
             </thead>
             <tbody>
-              {dealLedger.map((row) => (
+              {dealLedger.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-[var(--inc-muted)]">
+                    No booking-done leads for this period.
+                  </td>
+                </tr>
+              ) : (
+              dealLedger.map((row) => (
                 <tr key={row.id} className="border-b border-[#f1f5f9]">
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-2">
@@ -233,6 +256,15 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
                     </div>
                   </td>
                   <td className="py-3 pr-4 font-medium">{row.dealValue}</td>
+                  <td className="py-3 pr-4 font-medium">{row.amountReceived}</td>
+                  <td className="py-3 pr-4">
+                    <div className="font-bold text-[var(--inc-green-dark)]">{row.weighted}</div>
+                    <span
+                      className={`mt-1 inline-flex rounded px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${weightBadgeClass(row.weightTier)}`}
+                    >
+                      {row.weightLabel}
+                    </span>
+                  </td>
                   <td className="py-3 pr-4">
                     <span
                       className={`inline-flex rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${closureBadgeClass(row.closureTime)}`}
@@ -255,7 +287,8 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
                   </td>
                   <td className="py-3 font-bold text-[var(--inc-green-dark)]">{row.incentive}</td>
                 </tr>
-              ))}
+              ))
+              )}
             </tbody>
           </table>
         </div>

@@ -1,5 +1,8 @@
 import type { DealLedgerRow } from "@/app/Components/Incentives/data/mock-data";
 import { journeyMarkers } from "@/app/Components/Incentives/data/mock-data";
+import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
+import { DEFAULT_MONTHLY_SALES_TARGET_INR } from "@/lib/sales-targets";
+import { calculateIncentiveWeightedValue } from "@/lib/incentives-weighted";
 
 export type IncentiveMemberRef = {
   id: number;
@@ -7,6 +10,8 @@ export type IncentiveMemberRef = {
   role: string;
   managerId?: number | null;
   managerName?: string;
+  /** Monthly revenue target in INR — default ₹60L from admin settings. */
+  monthlyTargetInr?: number;
 };
 
 export type IncentiveSlabRow = {
@@ -29,10 +34,12 @@ export type IncentiveProfile = {
     onSpotBonus: string;
     nextSlabGap: string;
     currentSlabLabel: string;
+    totalWeighted: string;
   };
   slabs: IncentiveSlabRow[];
   payoutMath: {
     revenueAchieved: string;
+    monthlyTarget: string;
     eligibleSlab: string;
     multiplier: string;
     totalPayout: string;
@@ -49,29 +56,16 @@ export type IncentiveProfile = {
 };
 
 const SLAB_DEFS = [
-  { tier: "BASE THRESHOLD", targetPct: 40, revenue: 20_00_000, rate: 0.2 },
-  { tier: "HIGH PERFORMANCE", targetPct: 50, revenue: 25_00_000, rate: 0.3 },
-  { tier: "ELITE TIER", targetPct: 60, revenue: 30_00_000, rate: 0.45 },
-  { tier: "SUPER PERFORMER", targetPct: 80, revenue: 40_00_000, rate: 0.6 },
-  { tier: "MASTER CLOSER", targetPct: 100, revenue: 50_00_000, rate: 0.8 },
+  { tier: "BASE THRESHOLD", targetPct: 40, rate: 0.2 },
+  { tier: "HIGH PERFORMANCE", targetPct: 50, rate: 0.3 },
+  { tier: "ELITE TIER", targetPct: 60, rate: 0.45 },
+  { tier: "SUPER PERFORMER", targetPct: 80, rate: 0.6 },
+  { tier: "MASTER CLOSER", targetPct: 100, rate: 0.8 },
 ] as const;
 
-const SAMPLE_CUSTOMERS = [
-  "Juned Shaikh",
-  "Viren Shah",
-  "Ajay Gupta",
-  "Rahul Kulkarni",
-  "Priya Menon",
-  "Neha Desai",
-  "Karan Mehta",
-  "Sana Iyer",
-];
-
-function pseudo(id: number, salt: number, min: number, max: number): number {
-  const t = Math.sin(id * 997 + salt * 131) * 10_000;
-  const frac = t - Math.floor(t);
-  return min + frac * (max - min);
-}
+export type BuildIncentiveProfileOptions = {
+  bookingLeads?: IncentiveBookingLead[];
+};
 
 export function formatInr(amount: number): string {
   return `₹${Math.round(amount).toLocaleString("en-IN")}`;
@@ -86,20 +80,23 @@ function initialsFromName(name: string): string {
     .join("");
 }
 
-function activeSlabForAchievement(pct: number): number {
-  let active = SLAB_DEFS[0].targetPct;
-  for (const slab of SLAB_DEFS) {
-    if (pct >= slab.targetPct) active = slab.targetPct;
-  }
-  return active;
-}
-
-function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] {
-  let picked = SLAB_DEFS[0];
+function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] | null {
+  let picked: (typeof SLAB_DEFS)[number] | null = null;
   for (const slab of SLAB_DEFS) {
     if (pct >= slab.targetPct) picked = slab;
   }
   return picked;
+}
+
+/** Incentive = monthly target × slab rate (e.g. 40% achievement → 0.20% of ₹60L). */
+export function calculateSlabIncentive(monthlyTargetInr: number, achievementPct: number): number {
+  const eligible = eligibleSlabForAchievement(achievementPct);
+  if (!eligible || monthlyTargetInr <= 0) return 0;
+  return Math.round((monthlyTargetInr * eligible.rate) / 100);
+}
+
+function slabPotentialEarned(monthlyTargetInr: number, rate: number): number {
+  return Math.round((monthlyTargetInr * rate) / 100);
 }
 
 function nextSlabGapAmount(target: number, achieved: number, pct: number): string {
@@ -113,47 +110,65 @@ function nextSlabGapAmount(target: number, achieved: number, pct: number): strin
   return "MAX SLAB REACHED";
 }
 
-export function buildIncentiveProfile(member: IncentiveMemberRef): IncentiveProfile {
-  const id = member.id || 1;
-  const target = 50_00_000 + (id % 6) * 5_00_000;
-  const achievementPct = Math.round(pseudo(id, 1, 38, 88) * 10) / 10;
-  const revenueAchieved = Math.round((target * achievementPct) / 100);
-  const revenueDelta = `+${Math.round(pseudo(id, 2, 4, 18))}%`;
-  const activeSlabPct = activeSlabForAchievement(achievementPct);
-  const eligible = eligibleSlabForAchievement(achievementPct);
-  const incentiveEarned = Math.round((revenueAchieved * eligible.rate) / 100);
-  const sameDayCount = Math.max(1, Math.round(pseudo(id, 3, 2, 7)));
-  const fortyEightHourCount = Math.max(1, Math.round(pseudo(id, 4, 2, 6)));
-  const totalClosures = sameDayCount + fortyEightHourCount;
-  const sameDayAmount = sameDayCount * 750;
-  const fortyEightHourAmount = fortyEightHourCount * 375;
-  const totalSpeedBonus = sameDayAmount + fortyEightHourAmount;
+function closureTimeForLead(lead: IncentiveBookingLead): DealLedgerRow["closureTime"] {
+  const kind = String(lead.paymentKind ?? "").toUpperCase();
+  if (kind === "FULL_10%") return "BOOKING DONE";
+  return "BOOKING DONE";
+}
 
-  const slabs: IncentiveSlabRow[] = SLAB_DEFS.map((slab) => ({
-    tier: slab.tier,
-    targetPct: slab.targetPct,
-    revenue: formatInr(slab.revenue),
-    incentivePct: `${slab.rate.toFixed(2)}%`,
-    potential: formatInr(Math.round((slab.revenue * slab.rate) / 100)),
-    active: slab.targetPct === activeSlabPct,
-  }));
+export function buildIncentiveProfile(
+  member: IncentiveMemberRef,
+  options?: BuildIncentiveProfileOptions,
+): IncentiveProfile {
+  const target = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const leads = options?.bookingLeads ?? [];
 
-  const dealCount = Math.min(5, 3 + (id % 3));
-  const dealLedger: DealLedgerRow[] = Array.from({ length: dealCount }, (_, idx) => {
-    const customer = SAMPLE_CUSTOMERS[(id + idx) % SAMPLE_CUSTOMERS.length];
-    const dealValue = Math.round(pseudo(id, 10 + idx, 3_00_000, 9_00_000));
-    const contributionPct = Math.round((dealValue / Math.max(revenueAchieved, 1)) * 1000) / 10;
-    const closureOptions: DealLedgerRow["closureTime"][] = ["SAME DAY", "48 HOURS", "72 HOURS+"];
-    const closureTime = closureOptions[(id + idx) % closureOptions.length];
-    const incentive = Math.round((dealValue * eligible.rate) / 100);
+  let totalWeighted = 0;
+  const dealLedger: DealLedgerRow[] = leads.map((lead) => {
+    const weight = calculateIncentiveWeightedValue(lead.quoteAmount, lead.amountReceived);
+    totalWeighted += weight.weightedInr;
     return {
-      id: `${id}-${idx}`,
-      initials: initialsFromName(customer),
-      customer,
-      dealValue: formatInr(dealValue),
-      closureTime,
-      contributionPct,
-      incentive: formatInr(incentive),
+      id: lead.id,
+      initials: initialsFromName(lead.customerName),
+      customer: lead.customerName,
+      dealValue: formatInr(lead.quoteAmount),
+      amountReceived: formatInr(lead.amountReceived),
+      weighted: formatInr(weight.weightedInr),
+      weightLabel: weight.label,
+      weightTier: weight.tier,
+      closureTime: closureTimeForLead(lead),
+      contributionPct: 0,
+      incentive: formatInr(0),
+    };
+  });
+
+  const revenueAchieved = totalWeighted;
+  const achievementPct =
+    target > 0 ? Math.round((revenueAchieved / target) * 1000) / 10 : 0;
+  const eligible = eligibleSlabForAchievement(achievementPct);
+  const activeSlabPct = eligible?.targetPct ?? 0;
+  const incentiveEarned = calculateSlabIncentive(target, achievementPct);
+
+  if (revenueAchieved > 0 && incentiveEarned > 0) {
+    for (const row of dealLedger) {
+      const weightedNum = Number(row.weighted.replace(/[₹,]/g, ""));
+      row.contributionPct =
+        Math.round((weightedNum / revenueAchieved) * 1000) / 10;
+      row.incentive = formatInr(
+        Math.round((incentiveEarned * weightedNum) / revenueAchieved),
+      );
+    }
+  }
+
+  const slabs: IncentiveSlabRow[] = SLAB_DEFS.map((slab) => {
+    const slabRevenue = Math.round((target * slab.targetPct) / 100);
+    return {
+      tier: slab.tier,
+      targetPct: slab.targetPct,
+      revenue: formatInr(slabRevenue),
+      incentivePct: `${slab.rate.toFixed(2)}%`,
+      potential: formatInr(slabPotentialEarned(target, slab.rate)),
+      active: slab.targetPct === activeSlabPct,
     };
   });
 
@@ -162,27 +177,29 @@ export function buildIncentiveProfile(member: IncentiveMemberRef): IncentiveProf
     summary: {
       totalTarget: formatInr(target),
       revenueAchieved: formatInr(revenueAchieved),
-      revenueDelta,
+      revenueDelta: leads.length > 0 ? `${leads.length} booking${leads.length === 1 ? "" : "s"}` : "—",
       achievementPct,
       incentiveEarned: formatInr(incentiveEarned),
-      onSpotBonus: formatInr(totalSpeedBonus),
+      onSpotBonus: formatInr(0),
       nextSlabGap: nextSlabGapAmount(target, revenueAchieved, achievementPct),
-      currentSlabLabel: `${activeSlabPct}%`,
+      currentSlabLabel: eligible ? `${activeSlabPct}%` : "—",
+      totalWeighted: formatInr(totalWeighted),
     },
     slabs,
     payoutMath: {
       revenueAchieved: formatInr(revenueAchieved),
-      eligibleSlab: `${eligible.targetPct}%`,
-      multiplier: `${eligible.rate.toFixed(2)}%`,
+      monthlyTarget: formatInr(target),
+      eligibleSlab: eligible ? `${eligible.targetPct}%` : "Below 40%",
+      multiplier: eligible ? `${eligible.rate.toFixed(2)}%` : "—",
       totalPayout: formatInr(incentiveEarned),
     },
     speedBonuses: {
-      totalClosures,
-      sameDayCount,
-      sameDayAmount: formatInr(sameDayAmount),
-      fortyEightHourCount,
-      fortyEightHourAmount: formatInr(fortyEightHourAmount),
-      totalSpeedBonus: formatInr(totalSpeedBonus),
+      totalClosures: leads.length,
+      sameDayCount: 0,
+      sameDayAmount: formatInr(0),
+      fortyEightHourCount: 0,
+      fortyEightHourAmount: formatInr(0),
+      totalSpeedBonus: formatInr(0),
     },
     dealLedger,
   };

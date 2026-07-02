@@ -61,6 +61,8 @@ export type BookingTokenDeal = {
   quoteId?: string;
   hubLeadId?: string;
   submittedAt: string;
+  submittedByName?: string;
+  submittedByUserId?: number;
   paymentProofCount?: number;
 };
 
