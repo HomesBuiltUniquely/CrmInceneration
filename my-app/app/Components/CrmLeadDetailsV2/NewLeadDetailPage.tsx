@@ -191,7 +191,6 @@ function LeadDetailHeader() {
     milestoneStageLabel,
     milestoneCategoryLabel,
     milestoneSubLabel,
-    onPhoneCall,
     onWhatsAppMessage,
   } = useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
@@ -215,18 +214,6 @@ function LeadDetailHeader() {
     followUpDateDisplay && followUpDateDisplay !== "Not scheduled"
       ? followUpDateDisplay
       : formatCrmDateTime(lead.followUpDate);
-
-  const handleHeaderPhoneCall = useCallback(() => {
-    void (async () => {
-      try {
-        await onPhoneCall?.();
-      } catch {
-        /* still open dialer */
-      }
-      const n = (lead.phone ?? "").replace(/\s+/g, "");
-      if (n) window.location.href = `tel:${n}`;
-    })();
-  }, [lead.phone, onPhoneCall]);
 
   const leadPhone = lead.phone?.trim() ?? "";
   const hasLeadPhone = leadPhone.length > 0;
@@ -335,11 +322,9 @@ function LeadDetailHeader() {
                 <button
                   type="button"
                   aria-label="Call"
-                  disabled={!lead.phone?.trim()}
-                  onClick={handleHeaderPhoneCall}
                   disabled={!hasLeadPhone}
                   onClick={handleHeaderCall}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-50 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
@@ -1415,7 +1400,7 @@ function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) 
       return;
     }
     try {
-      await onConnectionPhaseSave();
+      await onConnectionPhaseSave(readDiscoveryPhaseDraft(lead));
       exitEditing();
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Could not save discovery phase.");

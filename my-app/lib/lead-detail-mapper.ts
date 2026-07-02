@@ -418,6 +418,67 @@ function isConfigurationLikePropertyDetails(
   return cfgCandidates.includes(candidate);
 }
 
+/** Property name / site from lead detail or nested `propertyDetails` JSON. */
+export function pickPropertyLocationFromDetail(detail: Record<string, unknown>): string {
+  const direct = pickStr(
+    detail,
+    "propertyLocation",
+    "location",
+    "address",
+    "propertyAddress",
+    "propertyName",
+    "property_name",
+  );
+  if (direct) return direct;
+
+  const pd = detail.propertyDetails;
+  if (typeof pd === "string" && pd.trim()) {
+    const raw = pd.trim();
+    if (raw.startsWith("{") && raw.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        return pickStr(
+          parsed,
+          "propertyNameSite",
+          "propertyName",
+          "propertyLocation",
+          "property_name",
+          "site",
+          "siteName",
+        );
+      } catch {
+        return "";
+      }
+    }
+  }
+  if (pd && typeof pd === "object" && !Array.isArray(pd)) {
+    return pickStr(
+      pd as Record<string, unknown>,
+      "propertyNameSite",
+      "propertyName",
+      "propertyLocation",
+      "property_name",
+      "site",
+      "siteName",
+    );
+  }
+  return "";
+}
+
+/** Add Lead stores property name + notes in `propertyDetails` text (JSON when name is set). */
+function serializeAddLeadPropertyDetails(lead: Lead): string {
+  const notes = lead.propertyNotes.trim();
+  const propertyName = lead.propertyLocation.trim();
+  if (!notes && !propertyName) return "";
+  if (!propertyName) return notes;
+  const bag: Record<string, string> = { propertyNameSite: propertyName };
+  if (notes) {
+    bag.propertyNotes = notes;
+    bag.property_detail = notes;
+  }
+  return JSON.stringify(bag);
+}
+
 /** Property notes: never treat config/interior values as notes. */
 export function pickPropertyNotesFromDetail(
   detail: Record<string, unknown>,
@@ -628,7 +689,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     }),
     possessionDate:
       pickStr(detail, "possession", "possessionDate", "possession_date", "possessionTime") || "",
-    propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
+    propertyLocation: pickPropertyLocationFromDetail(detail) || pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
     language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
     salesManagerName: pickSalesManagerDisplay(detail) || undefined,
@@ -918,7 +979,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   if (mergedLt === "addlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
+    next.propertyDetails = serializeAddLeadPropertyDetails(lead);
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
   }
@@ -1012,7 +1073,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.propertyNotes = lead.propertyNotes;
   next.property_detail = lead.propertyNotes;
   if (boxLt === "addlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
+    next.propertyDetails = serializeAddLeadPropertyDetails(lead);
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, lead);
   }

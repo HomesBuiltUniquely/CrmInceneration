@@ -21,6 +21,11 @@ const DISCOVERY_STICKY_KEYS = [
 
 type DiscoveryStickyKey = (typeof DISCOVERY_STICKY_KEYS)[number];
 
+export type DiscoveryPhaseSaveDraft = Pick<
+  Lead,
+  "propertyLocation" | "budget" | "language" | "configuration" | "propertyNotes" | "bookingType"
+>;
+
 /** Keep discovery-phase edits when a background refresh omits them from Hub. */
 export function preserveDiscoveryFields(prev: Lead, next: Lead): Lead {
   const out: Lead = { ...next };
@@ -61,11 +66,12 @@ export async function syncPropertyLocationToRequirements(
   const propertyName = propertyLocation.trim();
   if (!propertyName) return;
 
-  try {
+  const write = async (isRetry: boolean): Promise<void> => {
     let data;
     try {
       data = await getConfigurationScopeRequirements(leadType, leadId);
-    } catch {
+    } catch (loadErr) {
+      if (isRetry) throw loadErr;
       data = createDefaultRequirements();
     }
     const { requirements } = mergeRequirementDefaults(data);
@@ -75,17 +81,26 @@ export async function syncPropertyLocationToRequirements(
     const next = (nextUnderstanding ?? "").trim();
     if (current === next) return;
 
-    await putConfigurationScopeRequirements(
-      leadType,
-      leadId,
-      toPutRequirementsBody({
-        ...requirements,
-        projectUnderstanding: nextUnderstanding,
-      }),
-    );
-  } catch {
-    /* non-blocking — lead PUT already saved notes/budget */
-  }
+    try {
+      await putConfigurationScopeRequirements(
+        leadType,
+        leadId,
+        toPutRequirementsBody({
+          ...requirements,
+          projectUnderstanding: nextUnderstanding,
+        }),
+      );
+    } catch (saveErr) {
+      const err = saveErr as Error & { status?: number };
+      if (err.status === 409 && !isRetry) {
+        await write(true);
+        return;
+      }
+      throw saveErr;
+    }
+  };
+
+  await write(false);
 }
 
 /** Seed configuration scope §1 when lead detail already has property name. */

@@ -36,6 +36,7 @@ import {
   hydratePropertyLocationFromRequirements,
   preserveDiscoveryFields,
   syncPropertyLocationToRequirements,
+  type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
 import {
   canEditLeadPhoneAndEmail,
@@ -2118,12 +2119,30 @@ export default function LeadDetailsApiClient({
     [baseDetail, lead, leadId, leadTypeParam, notifySuccess, validLeadType],
   );
 
-  const handleConnectionPhaseSave = useCallback(async () => {
-    await persistLeadDetailFields("Discovery phase saved.");
-    if (!validLeadType) return;
-    const lt = leadTypeParam as CrmLeadType;
-    await syncPropertyLocationToRequirements(lead.propertyLocation ?? "", lt, leadId);
-  }, [lead.propertyLocation, leadId, leadTypeParam, persistLeadDetailFields, validLeadType]);
+  const handleConnectionPhaseSave = useCallback(
+    async (draft?: DiscoveryPhaseSaveDraft) => {
+      const propertyLocation = draft?.propertyLocation ?? lead.propertyLocation ?? "";
+      await persistLeadDetailFields("Discovery phase saved.");
+      if (!validLeadType) return;
+      const lt = leadTypeParam as CrmLeadType;
+      try {
+        await syncPropertyLocationToRequirements(propertyLocation, lt, leadId);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Property name could not sync to Configuration Scope.";
+        notifyError(message);
+        throw new Error(message);
+      }
+    },
+    [
+      lead.propertyLocation,
+      leadId,
+      leadTypeParam,
+      notifyError,
+      persistLeadDetailFields,
+      validLeadType,
+    ],
+  );
 
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;
@@ -3102,7 +3121,6 @@ export default function LeadDetailsApiClient({
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
-      onPhoneCall: handlePhoneCallLog,
       onWhatsAppMessage: handleWhatsAppMessage,
     };
 
