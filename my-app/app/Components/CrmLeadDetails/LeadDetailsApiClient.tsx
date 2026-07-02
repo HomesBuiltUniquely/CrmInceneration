@@ -3051,6 +3051,7 @@ export default function LeadDetailsApiClient({
         setCompleteTaskOpen(true);
       },
       onPhoneCall: handlePhoneCallLog,
+      onWhatsAppMessage: handleWhatsAppMessage,
       onMarkAsWon: handleMarkAsWon,
       onFloorPlanUpload: handleFloorPlanUpload,
       onFloorPlanRemove: handleFloorPlanRemove,
@@ -3077,8 +3078,6 @@ export default function LeadDetailsApiClient({
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
-      onPhoneCall: handlePhoneCallLog,
-      onWhatsAppMessage: handleWhatsAppMessage,
     };
 
     return (

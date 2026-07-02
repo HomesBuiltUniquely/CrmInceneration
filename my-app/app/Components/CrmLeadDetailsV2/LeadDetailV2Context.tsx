@@ -31,7 +31,6 @@ export type LeadDetailV2ContextValue = {
   quoteFetching: boolean;
   onOpenStageRollback: () => void;
   onCompleteTask: () => void;
-  onPhoneCall?: () => void | Promise<void>;
   onMarkAsWon: () => void;
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanRemove?: () => void | Promise<void>;
