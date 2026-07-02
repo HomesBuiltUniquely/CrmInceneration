@@ -538,6 +538,45 @@ function serializeAddLeadPropertyDetails(lead: Lead): string {
   return JSON.stringify(bag);
 }
 
+/** G Lead / M Lead — `property_details` column is TEXT (plain notes or compact JSON). */
+function serializeAdsLeadPropertyDetails(
+  base: Record<string, unknown>,
+  lead: Lead,
+  leadType: CrmLeadType,
+): string {
+  const notes =
+    lead.propertyNotes.trim() || pickPropertyNotesFromDetail(base, leadType);
+  const propertyName =
+    lead.propertyLocation.trim() || pickPropertyLocationFromDetail(base);
+  const configuration =
+    lead.configuration.trim() || pickConfigurationFromDetail(base, leadType);
+
+  if (!notes && !propertyName && !configuration) {
+    const prev = base.propertyDetails;
+    if (typeof prev === "string" && prev.trim()) return prev.trim();
+    return "";
+  }
+
+  if (!propertyName && !configuration) return notes;
+
+  const bag: Record<string, string> = {};
+  if (propertyName) bag.propertyNameSite = propertyName;
+  if (notes) {
+    bag.propertyNotes = notes;
+    bag.property_detail = notes;
+  }
+  if (configuration) {
+    bag.configuration = configuration;
+    bag.interiorSetup = configuration;
+    bag.interior_setup = configuration;
+  }
+  return JSON.stringify(bag);
+}
+
+function isAdsLeadType(leadType: CrmLeadType): boolean {
+  return leadType === "glead" || leadType === "mlead";
+}
+
 /** Property notes: never treat config/interior values as notes. */
 export function pickPropertyNotesFromDetail(
   detail: Record<string, unknown>,
@@ -1069,6 +1108,8 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.property_detail = resolvedPropertyNotes;
   if (mergedLt === "addlead") {
     next.propertyDetails = serializeAddLeadPropertyDetails(leadForMerge);
+  } else if (isAdsLeadType(mergedLt)) {
+    next.propertyDetails = serializeAdsLeadPropertyDetails(base, leadForMerge, mergedLt);
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, leadForMerge);
   }
@@ -1175,6 +1216,8 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.property_detail = resolvedPropertyNotes;
   if (boxLt === "addlead") {
     next.propertyDetails = serializeAddLeadPropertyDetails(leadForMerge);
+  } else if (isAdsLeadType(boxLt)) {
+    next.propertyDetails = serializeAdsLeadPropertyDetails(base, leadForMerge, boxLt);
   } else {
     next.propertyDetails = mergePropertyDetailsBlock(base, leadForMerge);
   }
