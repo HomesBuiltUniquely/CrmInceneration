@@ -199,13 +199,13 @@ function LeadDetailHeader() {
     onOpenStageRollback,
     onCompleteTask,
     completeTaskDisabled,
-    onPhoneCall,
     onMarkAsWon,
     showMarkAsWon,
     followUpDateDisplay,
     milestoneStageLabel,
     milestoneCategoryLabel,
     milestoneSubLabel,
+    onPhoneCall,
     onWhatsAppMessage,
   } = useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
@@ -339,7 +339,7 @@ function LeadDetailHeader() {
                   aria-label="Call"
                   disabled={!hasLeadPhone}
                   onClick={handleHeaderCall}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-50 ${V2_BTN_ICON}`}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
                 >
                   <svg
                     viewBox="0 0 24 24"
