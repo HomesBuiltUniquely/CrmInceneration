@@ -205,6 +205,7 @@ function LeadDetailHeader() {
     milestoneStageLabel,
     milestoneCategoryLabel,
     milestoneSubLabel,
+    onPhoneCall,
     onWhatsAppMessage,
   } = useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
