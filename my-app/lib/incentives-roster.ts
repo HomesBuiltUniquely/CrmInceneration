@@ -8,6 +8,7 @@ import {
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import {
   hierarchyUserDisplayName,
+  collectHierarchyUserAssigneeAliases,
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import type { IncentiveMemberRef } from "@/lib/incentives-profile";
@@ -87,6 +88,7 @@ function toMemberRef(
     role: normalizeRole(String(u.role ?? "SALES_EXECUTIVE")),
     managerId,
     managerName: managerId ? managerNameById.get(managerId) : undefined,
+    assigneeAliases: collectHierarchyUserAssigneeAliases(u),
   };
 }
 
@@ -112,6 +114,7 @@ export async function loadIncentivesRoster(token: string): Promise<IncentivesRos
     name: getNameFromUser(meJson) || "User",
     role: viewerRole,
     managerId: meJson.managerId != null ? Number(meJson.managerId) : null,
+    assigneeAliases: collectHierarchyUserAssigneeAliases(meJson as IncentivesHierarchyUser),
   };
 
   const canPickManager =

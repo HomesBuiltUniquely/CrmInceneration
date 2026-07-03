@@ -4,7 +4,7 @@ import { isClosedWonCustomerSubstage } from "@/lib/milestone-substage-map";
 
 export const SALES_CLOSURE_ORIGIN = (
   process.env.NEXT_PUBLIC_SALES_CLOSURE_ORIGIN?.trim() ||
-  "https://design.hubinterior.com"
+  "http://localhost:3002"
 ).replace(/\/+$/, "");
 
 /** Avoid oversized URLs when property notes are long. */

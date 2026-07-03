@@ -7,7 +7,8 @@ import ConfigurationScopeFloorPlan from "./ConfigurationScopeFloorPlan";
 import ReferenceViewModal from "./ReferenceViewModal";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
-import { BOOKING_TYPE_OPTIONS } from "@/lib/data";
+import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
+import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
   createDefaultSelectedRoom,
   createDefaultRequirements,
@@ -17,10 +18,13 @@ import {
   fetchReferenceContentBlob,
   getConfigurationScopeReferences,
   getConfigurationScopeRequirements,
+  joinProjectUnderstanding,
   mergeRequirementDefaults,
   miscAddOnOptions,
   putConfigurationScopeAestheticNotes,
   putConfigurationScopeRequirements,
+  splitProjectUnderstanding,
+  TIMELINE_EXPECTATION_OPTIONS,
   toPutRequirementsBody,
   REFERENCE_ACCEPT,
   REFERENCE_MAX_FILES,
@@ -32,11 +36,35 @@ import {
   type ConfigurationScopeRequirements,
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
-import { detailJsonToLead, mergeSecondBoxIntoDetail } from "@/lib/lead-detail-mapper";
+import { seedProjectUnderstandingFromLead } from "@/lib/lead-discovery-field-sync";
+import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
-import { formatInvestmentRangeLabel, resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
+import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
+import {
+  buildBudgetInvestmentDisplay,
+  buildQuotationInvestmentDisplay,
+} from "@/lib/lead-investment-display";
+import {
+  fetchQuoteOptionsForLeadDetail,
+  pickLatestQuoteOption,
+  refreshQuoteOptionDetails,
+} from "@/lib/lead-quote-options";
+import {
+  LEAD_QUOTE_SELECTION_EVENT,
+  readLeadQuoteSelection,
+} from "@/lib/lead-quote-selection";
+import {
+  DEFAULT_CONFIGURATION_SCOPE_FRONTEND_PREFS,
+  type FinancialSensitivity,
+  type FinancingPreference,
+  readConfigurationScopeFrontendPrefs,
+  writeConfigurationScopeFrontendPrefs,
+  type ClosureProbability,
+  type ConfigurationScopeFrontendPrefs,
+} from "@/lib/configuration-scope-frontend-prefs";
 import { getLeadDetail, getLeadFloorPlanMeta, putLeadDetail, uploadLeadFloorPlan } from "@/lib/lead-details-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import type { LeadQuoteOption } from "@/lib/crm-quote-links";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
 type Props = {
@@ -86,6 +114,24 @@ function latestIsoTimestamp(...values: Array<string | null | undefined>): string
     }
   }
   return best;
+}
+
+function validateRequirementScopeForFinalize(requirements: ConfigurationScopeRequirements): string | null {
+  const rooms = requirements.selectedRooms ?? [];
+  if (rooms.length === 0) {
+    return "Requirement Scope needs at least one room before moving to the next phase.";
+  }
+  for (const room of rooms) {
+    const roomName = room.roomName?.trim() || "Selected room";
+    const selectedUnits = (room.units ?? []).filter((unit) => unit.selected && unit.label.trim());
+    if (selectedUnits.length === 0) {
+      return `Units Required is mandatory for ${roomName}. Please select at least one unit.`;
+    }
+    if (!(room.notes ?? "").trim()) {
+      return `Specific Room Notes is mandatory for ${roomName}.`;
+    }
+  }
+  return null;
 }
 
 /** Shared medium hover motion for Configuration Scope interactive elements. */
@@ -153,8 +199,8 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown> | null>(null);
   const [bookingType, setBookingType] = useState("");
+  const [leadConfiguration, setLeadConfiguration] = useState("");
   const [bookingTypeLoading, setBookingTypeLoading] = useState(true);
-  const [bookingTypeSaving, setBookingTypeSaving] = useState(false);
   const [floorPlanS3Key, setFloorPlanS3Key] = useState("");
   const [floorPlanPublicLink, setFloorPlanPublicLink] = useState("");
   const [floorPlanViewPath, setFloorPlanViewPath] = useState("");
@@ -172,6 +218,12 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const [aestheticNotesSaving, setAestheticNotesSaving] = useState(false);
   const [referencesUpdatedAt, setReferencesUpdatedAt] = useState<string | null>(null);
   const [finalizing, setFinalizing] = useState(false);
+  const [quoteInvestmentLoading, setQuoteInvestmentLoading] = useState(true);
+  const [activeQuote, setActiveQuote] = useState<LeadQuoteOption | null>(null);
+  const [activeQuoteSelectedInBooking, setActiveQuoteSelectedInBooking] = useState(false);
+  const [frontendPrefs, setFrontendPrefs] = useState<ConfigurationScopeFrontendPrefs>(
+    () => DEFAULT_CONFIGURATION_SCOPE_FRONTEND_PREFS,
+  );
   const requirementsDirtyRef = useRef(false);
   const aestheticNotesDirtyRef = useRef(false);
   const requirementsSaveInFlightRef = useRef(false);
@@ -180,6 +232,19 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const validLeadType = useMemo<CrmLeadType | null>(
     () => (isCrmLeadType(leadType) ? leadType : null),
     [leadType],
+  );
+
+  useEffect(() => {
+    if (!validLeadType) return;
+    setFrontendPrefs(readConfigurationScopeFrontendPrefs(validLeadType, leadId));
+  }, [leadId, validLeadType]);
+
+  const patchFrontendPrefs = useCallback(
+    (patch: Partial<ConfigurationScopeFrontendPrefs>) => {
+      if (!validLeadType) return;
+      setFrontendPrefs((prev) => ({ ...prev, ...patch }));
+    },
+    [validLeadType],
   );
 
   useEffect(() => {
@@ -196,7 +261,9 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         const detailJson = await getLeadDetail(validLeadType, leadId);
         if (cancelled) return;
         setBaseDetail(detailJson);
-        setBookingType(detailJsonToLead(detailJson, validLeadType).bookingType ?? "");
+        const leadSnapshot = detailJsonToLead(detailJson, validLeadType);
+        setBookingType(leadSnapshot.bookingType ?? "");
+        setLeadConfiguration(leadSnapshot.configuration ?? "");
 
         const meta = await getLeadFloorPlanMeta(validLeadType, leadId);
         if (cancelled) return;
@@ -224,7 +291,14 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         );
         if (cancelled) return;
 
-        const { requirements: mergedReq, needsPersist } = mergeRequirementDefaults(reqData);
+        const { requirements: mergedReq, needsPersist: defaultsNeedPersist } =
+          mergeRequirementDefaults(reqData);
+        const seeded = seedProjectUnderstandingFromLead(
+          mergedReq,
+          leadSnapshot.propertyLocation,
+        );
+        const requirementsToUse = seeded.requirements;
+        let needsPersist = defaultsNeedPersist || seeded.changed;
         requirementsDirtyRef.current = false;
 
         if (needsPersist) {
@@ -232,15 +306,22 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
             const saved = await putConfigurationScopeRequirements(
               validLeadType,
               leadId,
-              toPutRequirementsBody(mergedReq),
+              toPutRequirementsBody(requirementsToUse),
             );
             if (cancelled) return;
             setRequirements(saved);
+            if (saved.bookingType) setBookingType(saved.bookingType);
           } catch {
-            if (!cancelled) setRequirements(mergedReq);
+            if (!cancelled) {
+              setRequirements(requirementsToUse);
+              if (requirementsToUse.bookingType) setBookingType(requirementsToUse.bookingType);
+            }
           }
         } else {
-          setRequirements(mergedReq);
+          setRequirements(requirementsToUse);
+          if (requirementsToUse.bookingType) {
+            setBookingType(requirementsToUse.bookingType);
+          }
         }
 
         setReferences(refData.references);
@@ -272,32 +353,6 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     };
   }, [leadId, validLeadType]);
 
-  const handleBookingTypeChange = useCallback(
-    async (nextBookingType: string) => {
-      if (!validLeadType || !baseDetail || bookingTypeSaving) return;
-
-      const previous = bookingType;
-      setBookingType(nextBookingType);
-      setBookingTypeSaving(true);
-
-      try {
-        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
-        const body = mergeSecondBoxIntoDetail(baseDetail, {
-          ...leadSnapshot,
-          bookingType: nextBookingType,
-        });
-        const updated = await putLeadDetail(validLeadType, leadId, body);
-        setBaseDetail(updated);
-        setBookingType(detailJsonToLead(updated, validLeadType).bookingType ?? nextBookingType);
-      } catch {
-        setBookingType(previous);
-      } finally {
-        setBookingTypeSaving(false);
-      }
-    },
-    [baseDetail, bookingType, bookingTypeSaving, leadId, validLeadType],
-  );
-
   const handleFloorPlanUpload = useCallback(
     async (file: File) => {
       if (!validLeadType) return;
@@ -326,6 +381,18 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     );
   }, []);
 
+  const handleBookingTypeChange = useCallback(
+    (nextBookingType: string) => {
+      if (requirementsLoading) return;
+      setBookingType(nextBookingType);
+      patchRequirements((prev) => ({
+        ...prev,
+        bookingType: nextBookingType.trim() || null,
+      }));
+    },
+    [patchRequirements, requirementsLoading],
+  );
+
   const saveRequirements = useCallback(
     async (payload?: ConfigurationScopeRequirements, isRetry = false): Promise<boolean> => {
       const toSave = payload ?? requirements;
@@ -341,6 +408,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         );
         requirementsDirtyRef.current = false;
         setRequirements(saved);
+        if (saved.bookingType) setBookingType(saved.bookingType);
         return true;
       } catch (e) {
         const err = e as Error & { status?: number };
@@ -355,6 +423,16 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               miscAddOns: toSave.miscAddOns,
               kitchenLayout: toSave.kitchenLayout,
               materialFinish: toSave.materialFinish,
+              familyContactName: toSave.familyContactName,
+              familyContactRelationship: toSave.familyContactRelationship,
+              familyContactPhone: toSave.familyContactPhone,
+              bookingType: toSave.bookingType,
+              projectUnderstanding: toSave.projectUnderstanding,
+              designStylePreference: toSave.designStylePreference,
+              expectedTimeline: toSave.expectedTimeline,
+              internalExecutiveNotes: toSave.internalExecutiveNotes,
+              salesRiskNotes: toSave.salesRiskNotes,
+              designHandoffNotes: toSave.designHandoffNotes,
             };
             requirementsSaveInFlightRef.current = false;
             setRequirementsSaving(false);
@@ -373,22 +451,6 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     },
     [leadId, notifyError, requirements, validLeadType],
   );
-
-  useEffect(() => {
-    if (
-      !validLeadType ||
-      !requirements ||
-      requirementsLoading ||
-      !requirementsDirtyRef.current ||
-      requirementsSaveInFlightRef.current
-    ) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void saveRequirements();
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [requirements, requirementsLoading, saveRequirements, validLeadType]);
 
   const handleReferenceUpload = useCallback(
     async (file: File) => {
@@ -459,14 +521,6 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     [aestheticNotes, aestheticNotesSaving, leadId, notifyError, validLeadType],
   );
 
-  useEffect(() => {
-    if (!validLeadType || referencesLoading || !aestheticNotesDirtyRef.current) return;
-    const timer = window.setTimeout(() => {
-      void saveAestheticNotes();
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, [aestheticNotes, referencesLoading, saveAestheticNotes, validLeadType]);
-
   const viewerName = useMemo(() => {
     if (typeof window === "undefined") return "";
     return (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim();
@@ -495,16 +549,57 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
 
   const handleFinalizeSubmit = useCallback(async () => {
     if (!validLeadType || finalizing) return;
+    if (!requirements) {
+      notifyError("Configuration scope is still loading.");
+      return;
+    }
+    const requirementError = validateRequirementScopeForFinalize(requirements);
+    if (requirementError) {
+      notifyError(requirementError);
+      return;
+    }
     setFinalizing(true);
     try {
       const ok = await flushAllSaves();
       if (!ok) return;
+      if (baseDetail && validLeadType) {
+        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+        const nextConfiguration = leadConfiguration.trim();
+        const currentConfiguration = (leadSnapshot.configuration ?? "").trim();
+        if (nextConfiguration && nextConfiguration !== currentConfiguration) {
+          const leadForSave = { ...leadSnapshot, configuration: nextConfiguration };
+          const body = mergeLeadIntoDetail(baseDetail, leadForSave);
+          const updated = await putLeadDetail(validLeadType, leadId, body);
+          setBaseDetail(updated);
+        }
+      }
+      writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
+      notifyConfigurationScopeUpdated();
       notifySuccess("Configuration scope saved.");
       router.push(`/Leads/${validLeadType}/${leadId}`);
     } finally {
       setFinalizing(false);
     }
-  }, [finalizing, flushAllSaves, leadId, notifySuccess, router, validLeadType]);
+  }, [
+    baseDetail,
+    finalizing,
+    flushAllSaves,
+    frontendPrefs,
+    leadConfiguration,
+    leadId,
+    notifyError,
+    notifySuccess,
+    requirements,
+    router,
+    validLeadType,
+  ]);
+
+  const basicUnderstandingFields = useMemo(
+    () => splitProjectUnderstanding(requirements?.projectUnderstanding),
+    [requirements?.projectUnderstanding],
+  );
+
+  const scopeFieldsDisabled = requirementsLoading || requirementsSaving;
 
   const floorPlanProps = {
     leadType,
@@ -523,10 +618,80 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     return detailJsonToLead(baseDetail, validLeadType).budget ?? "";
   }, [baseDetail, validLeadType]);
 
-  const leadConfiguration = useMemo(() => {
-    if (!baseDetail || !validLeadType) return "";
-    return detailJsonToLead(baseDetail, validLeadType).configuration ?? "";
-  }, [baseDetail, validLeadType]);
+  const loadQuoteInvestment = useCallback(async () => {
+    if (!validLeadType || !baseDetail) {
+      setActiveQuote(null);
+      setActiveQuoteSelectedInBooking(false);
+      setQuoteInvestmentLoading(false);
+      return;
+    }
+
+    setQuoteInvestmentLoading(true);
+    try {
+      const { options } = await fetchQuoteOptionsForLeadDetail(baseDetail, leadId);
+      const stored = readLeadQuoteSelection(validLeadType, leadId);
+      let quote: LeadQuoteOption | null = null;
+      let selectedInBooking = false;
+
+      if (stored) {
+        quote =
+          options.find(
+            (option) =>
+              option.id === stored.quoteId ||
+              option.quoteId === stored.quoteId,
+          ) ?? null;
+        selectedInBooking = stored.selectedInBookingDone;
+      }
+
+      if (!quote) {
+        quote = pickLatestQuoteOption(options);
+        selectedInBooking = false;
+      }
+
+      if (quote) {
+        quote = await refreshQuoteOptionDetails(quote);
+      }
+
+      setActiveQuote(quote);
+      setActiveQuoteSelectedInBooking(selectedInBooking);
+    } catch {
+      setActiveQuote(null);
+      setActiveQuoteSelectedInBooking(false);
+    } finally {
+      setQuoteInvestmentLoading(false);
+    }
+  }, [baseDetail, leadId, validLeadType]);
+
+  useEffect(() => {
+    void loadQuoteInvestment();
+  }, [loadQuoteInvestment]);
+
+  useEffect(() => {
+    if (!validLeadType) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ leadType: string; leadId: string }>).detail;
+      if (detail?.leadType !== validLeadType || detail?.leadId !== leadId) return;
+      void loadQuoteInvestment();
+    };
+    window.addEventListener(LEAD_QUOTE_SELECTION_EVENT, handler);
+    return () => window.removeEventListener(LEAD_QUOTE_SELECTION_EVENT, handler);
+  }, [leadId, loadQuoteInvestment, validLeadType]);
+
+  const investmentDisplay = useMemo(() => {
+    if (activeQuote) {
+      const configuration =
+        activeQuote.configuration?.trim() || leadConfiguration.trim();
+      return buildQuotationInvestmentDisplay(activeQuote, configuration, {
+        selectedInBookingDone: activeQuoteSelectedInBooking,
+      });
+    }
+    return buildBudgetInvestmentDisplay(leadBudget, leadConfiguration);
+  }, [
+    activeQuote,
+    activeQuoteSelectedInBooking,
+    leadBudget,
+    leadConfiguration,
+  ]);
 
   const leadDisplayIdentifier = useMemo(() => {
     if (baseDetail && validLeadType) {
@@ -688,10 +853,43 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
           </div>
           <div id="basic-understanding" className="scroll-mt-24">
             <BasicUnderstandingSection
+              propertyNameSite={basicUnderstandingFields.propertyNameSite}
+              familySizeDetails={basicUnderstandingFields.familySizeDetails}
+              configuration={leadConfiguration}
               bookingType={bookingType}
+              expectedTimeline={requirements?.expectedTimeline ?? ""}
               bookingTypeLoading={bookingTypeLoading}
-              bookingTypeSaving={bookingTypeSaving}
+              disabled={scopeFieldsDisabled}
+              onPropertyNameSiteChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  projectUnderstanding: joinProjectUnderstanding(
+                    value,
+                    splitProjectUnderstanding(prev.projectUnderstanding).familySizeDetails,
+                  ),
+                }));
+              }}
+              onFamilySizeDetailsChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  projectUnderstanding: joinProjectUnderstanding(
+                    splitProjectUnderstanding(prev.projectUnderstanding).propertyNameSite,
+                    value,
+                  ),
+                }));
+              }}
               onBookingTypeChange={handleBookingTypeChange}
+              onConfigurationChange={setLeadConfiguration}
+              onExpectedTimelineChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  expectedTimeline: value.trim() || null,
+                }));
+              }}
+              wfhSetup={frontendPrefs.wfhSetup}
+              petFriendly={frontendPrefs.petFriendly}
+              onWfhSetupChange={(checked) => patchFrontendPrefs({ wfhSetup: checked })}
+              onPetFriendlyChange={(checked) => patchFrontendPrefs({ petFriendly: checked })}
             />
           </div>
           <div id="requirements" className="scroll-mt-24">
@@ -722,15 +920,57 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
           </div>
           <div id="budget-alignment" className="scroll-mt-24">
             <FinancialGuardrailsSection
-              budget={leadBudget}
-              configuration={leadConfiguration}
-              loading={bookingTypeLoading}
+              investmentLabel={investmentDisplay.investmentLabel}
+              investmentSubtitle={investmentDisplay.subtitle}
+              luxuryFocus={investmentDisplay.luxuryFocus}
+              loading={bookingTypeLoading || quoteInvestmentLoading}
+              sensitivity={frontendPrefs.financialSensitivity}
+              financing={frontendPrefs.financingPreference}
+              onSensitivityChange={(value) =>
+                patchFrontendPrefs({ financialSensitivity: value })
+              }
+              onFinancingChange={(value) =>
+                patchFrontendPrefs({ financingPreference: value })
+              }
             />
           </div>
           <div id="internal-notes" className="scroll-mt-24">
             <InternalExecutiveNotesSection
+              personalityType={requirements?.designStylePreference ?? ""}
+              competition={requirements?.salesRiskNotes ?? ""}
+              executiveSummary={requirements?.designHandoffNotes ?? ""}
+              internalNotes={requirements?.internalExecutiveNotes ?? ""}
+              disabled={scopeFieldsDisabled}
               lastSavedLabel={formatScopeLastSaved(lastSavedAt)}
               generatedByName={lastSavedBy}
+              onPersonalityChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  designStylePreference: value.trim() || null,
+                }));
+              }}
+              onCompetitionChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  salesRiskNotes: value.trim() || null,
+                }));
+              }}
+              onExecutiveSummaryChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  designHandoffNotes: value.trim() || null,
+                }));
+              }}
+              onInternalNotesChange={(value) => {
+                patchRequirements((prev) => ({
+                  ...prev,
+                  internalExecutiveNotes: value.length > 0 ? value : null,
+                }));
+              }}
+              closureProbability={frontendPrefs.closureProbability}
+              onClosureProbabilityChange={(value) =>
+                patchFrontendPrefs({ closureProbability: value })
+              }
               onPrintPdf={handlePrintPdf}
               onFinalizeSubmit={() => void handleFinalizeSubmit()}
               finalizing={finalizing}
@@ -802,20 +1042,24 @@ function ScopeNavIcon({
 }
 
 function FinancialGuardrailsSection({
-  budget,
-  configuration,
+  investmentLabel,
+  investmentSubtitle,
+  luxuryFocus,
   loading,
+  sensitivity,
+  financing,
+  onSensitivityChange,
+  onFinancingChange,
 }: {
-  budget: string;
-  configuration: string;
+  investmentLabel: string;
+  investmentSubtitle: string;
+  luxuryFocus: ReturnType<typeof resolveBudgetLuxuryFocus>;
   loading: boolean;
+  sensitivity: FinancialSensitivity;
+  financing: FinancingPreference;
+  onSensitivityChange: (value: FinancialSensitivity) => void;
+  onFinancingChange: (value: FinancingPreference) => void;
 }) {
-  const investmentLabel = formatInvestmentRangeLabel(budget);
-  const luxuryFocus = resolveBudgetLuxuryFocus(budget);
-  const subtitle = configuration.trim()
-    ? `Based on ${configuration.trim()} configuration from lead profile.`
-    : "Budget from lead connection phase.";
-
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
       <div className="mb-4 flex items-center gap-2.5">
@@ -836,15 +1080,36 @@ function FinancialGuardrailsSection({
             <p className="mt-1 text-[42px] font-bold leading-none tracking-tight">
               {loading ? "…" : investmentLabel}
             </p>
-            <p className="mt-2 text-[13px] text-[#c5d4f3]">{subtitle}</p>
+            <p className="mt-2 text-[13px] text-[#c5d4f3]">{loading ? "Loading investment details…" : investmentSubtitle}</p>
             <div className="mt-4 grid grid-cols-2 gap-3">
               <div className="rounded-lg bg-[#1a2644] px-3 py-2.5">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#7b8db5]">Sensitivity</p>
-                <p className="mt-1 text-[14px] font-semibold">Low / Moderate</p>
+                <div className="relative mt-1.5">
+                  <select
+                    value={sensitivity}
+                    onChange={(e) => onSensitivityChange(e.target.value as FinancialSensitivity)}
+                    className="h-[34px] w-full appearance-none rounded-md border border-[#31466f] bg-[#233256] px-2.5 pr-7 text-[13px] font-semibold text-white outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="moderate">Moderate</option>
+                    <option value="high">High</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#9bb2e3]">▾</span>
+                </div>
               </div>
               <div className="rounded-lg bg-[#1a2644] px-3 py-2.5">
                 <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-[#7b8db5]">Financing</p>
-                <p className="mt-1 text-[14px] font-semibold">Self Funded</p>
+                <div className="relative mt-1.5">
+                  <select
+                    value={financing}
+                    onChange={(e) => onFinancingChange(e.target.value as FinancingPreference)}
+                    className="h-[34px] w-full appearance-none rounded-md border border-[#31466f] bg-[#233256] px-2.5 pr-7 text-[13px] font-semibold text-white outline-none"
+                  >
+                    <option value="self_funded">Self Funded</option>
+                    <option value="looking_for_emi">Looking For EMI</option>
+                  </select>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-[#9bb2e3]">▾</span>
+                </div>
               </div>
             </div>
           </div>
@@ -872,15 +1137,37 @@ function FinancialGuardrailsSection({
 }
 
 function InternalExecutiveNotesSection({
+  personalityType,
+  competition,
+  executiveSummary,
+  internalNotes,
+  disabled,
   lastSavedLabel,
   generatedByName,
+  onPersonalityChange,
+  onCompetitionChange,
+  onExecutiveSummaryChange,
+  onInternalNotesChange,
+  closureProbability,
+  onClosureProbabilityChange,
   onPrintPdf,
   onFinalizeSubmit,
   finalizing,
   saving,
 }: {
+  personalityType: string;
+  competition: string;
+  executiveSummary: string;
+  internalNotes: string;
+  disabled: boolean;
   lastSavedLabel: string;
   generatedByName: string;
+  onPersonalityChange: (value: string) => void;
+  onCompetitionChange: (value: string) => void;
+  onExecutiveSummaryChange: (value: string) => void;
+  onInternalNotesChange: (value: string) => void;
+  closureProbability: ClosureProbability | null;
+  onClosureProbabilityChange: (value: ClosureProbability) => void;
   onPrintPdf: () => void;
   onFinalizeSubmit: () => void;
   finalizing: boolean;
@@ -905,35 +1192,36 @@ function InternalExecutiveNotesSection({
           <FormLabel>Personality Type</FormLabel>
           <div className="relative mt-1.5">
             <select
-              disabled
-              className="h-[42px] w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 text-[13px] font-medium text-[#374151] outline-none"
-              defaultValue="analytical"
+              value={personalityType}
+              disabled={disabled}
+              onChange={(e) => onPersonalityChange(e.target.value)}
+              className={`h-[42px] w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 text-[13px] font-medium text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
             >
-              <option value="analytical">Analytical (Data Driven)</option>
+              <option value="">Select personality</option>
+              <option value="Analytical (Data Driven)">Analytical (Data Driven)</option>
+              <option value="Visual (Mood Board Driven)">Visual (Mood Board Driven)</option>
+              <option value="Pragmatic (Value Focused)">Pragmatic (Value Focused)</option>
+              <option value="Luxury (Premium Focused)">Luxury (Premium Focused)</option>
             </select>
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
           </div>
         </div>
         <div>
           <FormLabel>Closure Probability</FormLabel>
-          <div className="mt-1.5 flex gap-2">
-            <span className="rounded-md bg-[#1ed760] px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-[#05220f]">
-              Hot
-            </span>
-            <span className="rounded-md border border-[#e4e8ef] bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-[#9ca3af]">
-              Warm
-            </span>
-            <span className="rounded-md border border-[#e4e8ef] bg-white px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-[#9ca3af]">
-              Cold
-            </span>
-          </div>
+          <ClosureProbabilityToggle
+            value={closureProbability}
+            disabled={disabled}
+            onChange={onClosureProbabilityChange}
+          />
         </div>
         <div>
           <FormLabel>Competition</FormLabel>
           <input
-            readOnly
-            value="Livspace, HomeLane etc."
-            className="mt-1.5 h-[42px] w-full rounded-md border border-[#dfe5ec] bg-white px-3 text-[13px] text-[#374151] outline-none"
+            value={competition}
+            disabled={disabled}
+            onChange={(e) => onCompetitionChange(e.target.value)}
+            placeholder="Livspace, HomeLane etc."
+            className={`mt-1.5 h-[42px] w-full rounded-md border border-[#dfe5ec] bg-white px-3 text-[13px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
           />
         </div>
       </div>
@@ -941,9 +1229,22 @@ function InternalExecutiveNotesSection({
       <div className="mt-4">
         <FormLabel>Executive Summary for Designer</FormLabel>
         <textarea
-          readOnly
+          value={executiveSummary}
+          disabled={disabled}
+          onChange={(e) => onExecutiveSummaryChange(e.target.value)}
           placeholder="Add specific notes about quirky requirements, negotiation hooks, or technical constraints..."
-          className="mt-1.5 min-h-[120px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#9ca3af] outline-none"
+          className={`mt-1.5 min-h-[120px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
+        />
+      </div>
+
+      <div className="mt-4">
+        <FormLabel>Special Requirement / Offer Notes</FormLabel>
+        <textarea
+          value={internalNotes}
+          disabled={disabled}
+          onChange={(e) => onInternalNotesChange(e.target.value)}
+          placeholder="Add special requirements, offer commitments, pricing exceptions, or handoff cautions..."
+          className={`mt-1.5 min-h-[80px] w-full resize-y rounded-md border border-[#e4e8ef] bg-white px-3 py-2.5 text-[13px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
         />
       </div>
 
@@ -1263,6 +1564,7 @@ function RequirementScopeSection({
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
+  floorPlanOpenPath,
   floorPlanUploading,
   onFloorPlanUpload,
   onFloorPlanError,
@@ -1473,6 +1775,7 @@ function RequirementScopeSection({
             floorPlanS3Key={floorPlanS3Key}
             floorPlanPublicLink={floorPlanPublicLink}
             floorPlanViewPath={floorPlanViewPath}
+            floorPlanOpenPath={floorPlanOpenPath}
             floorPlanUploading={floorPlanUploading}
             onFloorPlanUpload={onFloorPlanUpload}
             onFloorPlanError={onFloorPlanError}
@@ -1499,6 +1802,7 @@ function ScopeExtrasSection({
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
+  floorPlanOpenPath,
   floorPlanUploading,
   onFloorPlanUpload,
   onFloorPlanError,
@@ -1514,6 +1818,7 @@ function ScopeExtrasSection({
   floorPlanS3Key: string;
   floorPlanPublicLink: string;
   floorPlanViewPath: string;
+  floorPlanOpenPath: string;
   floorPlanUploading: boolean;
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
@@ -1578,6 +1883,7 @@ function ScopeExtrasSection({
           floorPlanS3Key={floorPlanS3Key}
           floorPlanPublicLink={floorPlanPublicLink}
           floorPlanViewPath={floorPlanViewPath}
+          floorPlanOpenPath={floorPlanOpenPath}
           uploading={floorPlanUploading}
           onUpload={onFloorPlanUpload}
           onError={onFloorPlanError}
@@ -1731,15 +2037,39 @@ function RoomConfigCard({
 }
 
 function BasicUnderstandingSection({
+  propertyNameSite,
+  familySizeDetails,
+  configuration,
   bookingType,
+  expectedTimeline,
   bookingTypeLoading,
-  bookingTypeSaving,
+  disabled,
+  onPropertyNameSiteChange,
+  onFamilySizeDetailsChange,
   onBookingTypeChange,
+  onConfigurationChange,
+  onExpectedTimelineChange,
+  wfhSetup,
+  petFriendly,
+  onWfhSetupChange,
+  onPetFriendlyChange,
 }: {
+  propertyNameSite: string;
+  familySizeDetails: string;
+  configuration: string;
   bookingType: string;
+  expectedTimeline: string;
   bookingTypeLoading: boolean;
-  bookingTypeSaving: boolean;
+  disabled: boolean;
+  onPropertyNameSiteChange: (value: string) => void;
+  onFamilySizeDetailsChange: (value: string) => void;
   onBookingTypeChange: (value: string) => void;
+  onConfigurationChange: (value: string) => void;
+  onExpectedTimelineChange: (value: string) => void;
+  wfhSetup: boolean;
+  petFriendly: boolean;
+  onWfhSetupChange: (checked: boolean) => void;
+  onPetFriendlyChange: (checked: boolean) => void;
 }) {
   return (
     <article className="rounded-xl border border-[#dfe5ec] bg-white p-4">
@@ -1756,28 +2086,44 @@ function BasicUnderstandingSection({
             <div className="md:col-span-1">
               <FormLabel>Property Name / Site</FormLabel>
               <input
-                readOnly
-                value="Sharma Heights, Block C"
-                className="mt-1 w-full rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none"
+                value={propertyNameSite}
+                disabled={disabled}
+                onChange={(e) => onPropertyNameSiteChange(e.target.value)}
+                placeholder="Sharma Heights, Block C"
+                className={`mt-1 w-full rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
               />
             </div>
             <div className="md:col-span-1">
               <FormLabel>Family Size &amp; Details</FormLabel>
               <input
-                readOnly
+                value={familySizeDetails}
+                disabled={disabled}
+                onChange={(e) => onFamilySizeDetailsChange(e.target.value)}
                 placeholder="e.g. 2 Adults, 1 Child, 1 Pet"
-                className="mt-1 w-full rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#9ca3af] outline-none"
+                className={`mt-1 w-full rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
               />
             </div>
             <div>
               <FormLabel>BHK Type</FormLabel>
               <div className="relative mt-1">
                 <select
-                  disabled
-                  className="w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none"
-                  defaultValue="3 BHK"
+                  disabled={disabled}
+                  value={configuration || ""}
+                  onChange={(e) => onConfigurationChange(e.target.value)}
+                  className="w-full appearance-none rounded-md border border-[#dfe5ec] bg-[#f9fafb] px-3 py-2 text-[14px] text-[#374151] outline-none"
                 >
-                  <option>3 BHK</option>
+                  <option value="">Select BHK Type</option>
+                  {CONFIGURATION_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                  {configuration &&
+                  !CONFIGURATION_OPTIONS.includes(
+                    configuration as (typeof CONFIGURATION_OPTIONS)[number],
+                  ) ? (
+                    <option value={configuration}>{configuration}</option>
+                  ) : null}
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
               </div>
@@ -1787,8 +2133,8 @@ function BasicUnderstandingSection({
               <div className="relative mt-1">
                 <select
                   value={bookingType}
-                  disabled={bookingTypeLoading || bookingTypeSaving}
-                  onChange={(e) => void onBookingTypeChange(e.target.value)}
+                  disabled={bookingTypeLoading || disabled}
+                  onChange={(e) => onBookingTypeChange(e.target.value)}
                   className={`w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
                 >
                   <option value="">{bookingTypeLoading ? "Loading…" : "Select Type"}</option>
@@ -1802,16 +2148,33 @@ function BasicUnderstandingSection({
               </div>
             </div>
             <div className="flex flex-wrap gap-3 md:col-span-2">
-              <CheckboxField label="WFH Setup" checked={false} />
-              <CheckboxField label="Pet Friendly" checked />
+              <CheckboxField
+                label="WFH Setup"
+                checked={wfhSetup}
+                disabled={disabled}
+                onChange={onWfhSetupChange}
+              />
+              <CheckboxField
+                label="Pet Friendly"
+                checked={petFriendly}
+                disabled={disabled}
+                onChange={onPetFriendlyChange}
+              />
             </div>
           </div>
 
           <div className="border-l-2 border-[#1ed760] bg-[#f5f7fa] p-4">
             <FormLabel>Timeline Expectation</FormLabel>
             <div className="mt-3 space-y-3">
-              <RadioOption label="45 Days (Express)" selected={false} />
-              <RadioOption label="90 Days (Standard)" selected />
+              {TIMELINE_EXPECTATION_OPTIONS.map((option) => (
+                <RadioOption
+                  key={option.value}
+                  label={option.label}
+                  selected={expectedTimeline === option.value}
+                  disabled={disabled}
+                  onSelect={() => onExpectedTimelineChange(option.value)}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -1826,10 +2189,31 @@ function FormLabel({ children }: { children: ReactNode }) {
   );
 }
 
-function CheckboxField({ label, checked }: { label: string; checked: boolean }) {
+function CheckboxField({
+  label,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange?: (checked: boolean) => void;
+}) {
   return (
-    <label className={`inline-flex cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${SCOPE_CHIP}`}>
+    <label
+      className={`inline-flex items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${
+        disabled ? "cursor-not-allowed opacity-60" : `cursor-pointer ${SCOPE_CHIP}`
+      }`}
+    >
       <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange?.(e.target.checked)}
+        className="sr-only"
+      />
       <span
         className={`inline-flex h-4 w-4 items-center justify-center rounded-[3px] border ${
           checked ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white" : "border-[#d1d5db] bg-white"
@@ -1841,9 +2225,67 @@ function CheckboxField({ label, checked }: { label: string; checked: boolean }) 
   );
 }
 
-function RadioOption({ label, selected }: { label: string; selected: boolean }) {
+const CLOSURE_PROBABILITY_OPTIONS: { value: ClosureProbability; label: string }[] = [
+  { value: "hot", label: "Hot" },
+  { value: "warm", label: "Warm" },
+  { value: "cold", label: "Cold" },
+];
+
+function ClosureProbabilityToggle({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: ClosureProbability | null;
+  disabled?: boolean;
+  onChange: (value: ClosureProbability) => void;
+}) {
   return (
-    <label className={`flex cursor-pointer items-center gap-2 rounded-md px-1 py-0.5 ${SCOPE_TRANSITION} hover:bg-[#f0fdf4]`}>
+    <div className="mt-1.5 flex flex-wrap gap-2">
+      {CLOSURE_PROBABILITY_OPTIONS.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(option.value)}
+            className={`rounded-md px-4 py-2 text-[11px] font-bold uppercase tracking-wide transition ${
+              selected
+                ? "bg-[#1ed760] text-[#05220f]"
+                : "border border-[#e4e8ef] bg-white text-[#9ca3af] hover:border-[#bbf7d0] hover:bg-[#f9fdfb]"
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function RadioOption({
+  label,
+  selected,
+  disabled = false,
+  onSelect,
+}: {
+  label: string;
+  selected: boolean;
+  disabled?: boolean;
+  onSelect?: () => void;
+}) {
+  return (
+    <label
+      className={`flex items-center gap-2 rounded-md px-1 py-0.5 ${disabled ? "cursor-not-allowed opacity-60" : `cursor-pointer ${SCOPE_TRANSITION} hover:bg-[#f0fdf4]`}`}
+    >
+      <input
+        type="radio"
+        checked={selected}
+        disabled={disabled}
+        onChange={() => onSelect?.()}
+        className="sr-only"
+      />
       <span
         className={`inline-flex h-4 w-4 items-center justify-center rounded-full border-2 ${
           selected ? "border-[#1ed760]" : "border-[#d1d5db]"

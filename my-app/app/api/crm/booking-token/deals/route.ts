@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
+import { applyResolvedListingType } from "@/lib/booking-token-listing-type";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
@@ -15,6 +16,24 @@ export async function GET(req: NextRequest) {
     if (!res.ok) {
       return proxyJsonError(res.status, payload, "Unable to load booking deals.");
     }
+
+    try {
+      const body = JSON.parse(payload.text) as {
+        deals?: Array<{
+          bookingStatus: string;
+          paymentKind?: string | null;
+          remainingAmount?: number | null;
+          listingType?: string | null;
+        }>;
+      };
+      if (Array.isArray(body.deals)) {
+        body.deals = body.deals.map((deal) => applyResolvedListingType(deal));
+        return NextResponse.json(body, { status: res.status });
+      }
+    } catch {
+      /* return raw upstream body */
+    }
+
     return new NextResponse(payload.text, {
       status: res.status,
       headers: { "Content-Type": payload.contentType },

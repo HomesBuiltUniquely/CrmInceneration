@@ -8,10 +8,11 @@ import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
   createAppointment,
   deleteAppointment,
-  fetchActiveDesigners,
+  fetchDesignersFromDesignModule,
   fetchAvailableSlots,
   fetchMyAppointments,
   type AvailableSlotRow,
+  type DesignModuleDesigner,
 } from "@/lib/appointment-client";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -52,6 +53,7 @@ type RowVM = {
   description: string;
   assignedTo: string;
   googleSync: string;
+  source: string;
   raw: Record<string, unknown>;
 };
 
@@ -67,6 +69,7 @@ function toRowVM(raw: unknown, index: number): RowVM {
     pickStr(o, "googleSyncStatus", "googleSync", "syncStatus") ||
     (typeof o.googleSyncStatus === "string" ? o.googleSyncStatus : "");
   const googleSync = g || "—";
+  const source = pickStr(o, "source") || "CRM";
 
   return {
     id: String(id),
@@ -76,6 +79,7 @@ function toRowVM(raw: unknown, index: number): RowVM {
     description,
     assignedTo,
     googleSync,
+    source,
     raw: o,
   };
 }
@@ -112,10 +116,11 @@ export default function AppointmentManagementClient() {
 
   const [leadId, setLeadId] = useState("");
   const [leadType, setLeadType] = useState<CrmLeadType>("formlead");
-  const [designerName, setDesignerName] = useState("");
+  const [selectedDesigner, setSelectedDesigner] = useState<DesignModuleDesigner | null>(null);
   const [apptDate, setApptDate] = useState("");
   const [slotId, setSlotId] = useState("");
-  const [designers, setDesigners] = useState<string[]>([]);
+  const [designers, setDesigners] = useState<DesignModuleDesigner[]>([]);
+  const [designersError, setDesignersError] = useState(false);
   const [slots, setSlots] = useState<AvailableSlotRow[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
 
@@ -144,20 +149,24 @@ export default function AppointmentManagementClient() {
 
   useEffect(() => {
     if (!createOpen) return;
-    void fetchActiveDesigners()
+    setDesignersError(false);
+    void fetchDesignersFromDesignModule()
       .then(setDesigners)
-      .catch(() => setDesigners([]));
+      .catch(() => {
+        setDesigners([]);
+        setDesignersError(true);
+      });
   }, [createOpen]);
 
   useEffect(() => {
-    if (!createOpen || !designerName.trim() || !apptDate.trim()) {
+    if (!createOpen || !selectedDesigner || !apptDate.trim()) {
       setSlots([]);
       setSlotId("");
       return;
     }
     let cancelled = false;
     setSlotsLoading(true);
-    void fetchAvailableSlots(apptDate.trim(), designerName.trim())
+    void fetchAvailableSlots(apptDate.trim(), selectedDesigner.name)
       .then((res) => {
         if (!cancelled) {
           setSlots((res.availableSlots ?? []).filter((s) => s.available !== false));
@@ -173,7 +182,7 @@ export default function AppointmentManagementClient() {
     return () => {
       cancelled = true;
     };
-  }, [apptDate, createOpen, designerName]);
+  }, [apptDate, createOpen, selectedDesigner]);
 
   const handleCreate = async () => {
     const idNum = Number(leadId);
@@ -181,14 +190,14 @@ export default function AppointmentManagementClient() {
       notifyInfo("Enter a valid Lead ID");
       return;
     }
-    if (!designerName.trim() || !apptDate.trim() || !slotId.trim()) {
+    if (!selectedDesigner || !apptDate.trim() || !slotId.trim()) {
       notifyInfo("Designer, date, and slot are required");
       return;
     }
     setBusy(true);
     try {
       await createAppointment({
-        designerName: designerName.trim(),
+        designerName: selectedDesigner.name,
         date: apptDate.trim(),
         slotId: slotId.trim(),
         description: `Meeting with ${crmLeadTypeToApiLabel(leadType)} - Lead ID: ${idNum}`,
@@ -198,6 +207,7 @@ export default function AppointmentManagementClient() {
       setCreateOpen(false);
       setLeadId("");
       setSlotId("");
+      setSelectedDesigner(null);
       notifySuccess("Appointment created");
       await load();
     } catch (e) {
@@ -296,6 +306,7 @@ export default function AppointmentManagementClient() {
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">End Time</th>
                       <th className="min-w-[140px] px-3 py-3 font-semibold">Description</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Assigned To</th>
+                      <th className="whitespace-nowrap px-3 py-3 font-semibold">Source</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Google Sync</th>
                       <th className="whitespace-nowrap px-3 py-3 font-semibold">Actions</th>
                     </tr>
@@ -303,13 +314,13 @@ export default function AppointmentManagementClient() {
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-10 text-center text-slate-500">
+                        <td colSpan={8} className="px-3 py-10 text-center text-slate-500">
                           Loading appointments…
                         </td>
                       </tr>
                     ) : rows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-3 py-12 text-center text-slate-400 dark:text-[var(--crm-text-muted)]">
+                        <td colSpan={8} className="px-3 py-12 text-center text-slate-400 dark:text-[var(--crm-text-muted)]">
                           No appointments found
                         </td>
                       </tr>
@@ -337,12 +348,30 @@ export default function AppointmentManagementClient() {
                           <td className="whitespace-nowrap px-3 py-3">
                             <span
                               className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                r.source === "DESIGN_MODULE"
+                                  ? "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200"
+                                  : "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200"
+                              }`}
+                            >
+                              {r.source === "DESIGN_MODULE" ? "Design Module" : "CRM"}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                String(r.googleSync).toUpperCase().includes("SYNCED") ||
                                 String(r.googleSync).toUpperCase().includes("SUCCESS")
                                   ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"
+                                  : String(r.googleSync).toUpperCase().includes("FAILED")
+                                  ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+                                  : String(r.googleSync).toUpperCase().includes("SKIPPED_DM")
+                                  ? "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                                   : "bg-slate-100 text-slate-600 dark:bg-[var(--crm-surface-subtle)] dark:text-[var(--crm-text-muted)]"
                               }`}
                             >
-                              {r.googleSync}
+                              {String(r.googleSync).toUpperCase() === "SKIPPED_DM_HANDLED"
+                                ? "DM SYNCED"
+                                : r.googleSync}
                             </span>
                           </td>
                           <td className="whitespace-nowrap px-3 py-3">
@@ -401,18 +430,37 @@ export default function AppointmentManagementClient() {
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">Designer</label>
-                <select
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3 py-2 text-sm"
-                  value={designerName}
-                  onChange={(e) => setDesignerName(e.target.value)}
-                >
-                  <option value="">Select designer</option>
-                  {designers.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
+                {designersError ? (
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-[12px] text-rose-600">Could not load designers.</p>
+                    <button
+                      type="button"
+                      className="text-[12px] text-[var(--crm-accent)] underline"
+                      onClick={() => {
+                        setDesignersError(false);
+                        void fetchDesignersFromDesignModule().then(setDesigners).catch(() => setDesignersError(true));
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-3 py-2 text-sm"
+                    value={selectedDesigner?.id ?? ""}
+                    onChange={(e) => {
+                      const found = designers.find((d) => d.id === Number(e.target.value));
+                      setSelectedDesigner(found ?? null);
+                    }}
+                  >
+                    <option value="">Select designer</option>
+                    {designers.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">Date</label>
@@ -444,7 +492,7 @@ export default function AppointmentManagementClient() {
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCreateOpen(false)}
+                onClick={() => { setCreateOpen(false); setSelectedDesigner(null); }}
                 className="rounded-lg border border-[var(--crm-border)] px-4 py-2 text-sm font-medium text-[var(--crm-text-primary)]"
                 disabled={busy}
               >

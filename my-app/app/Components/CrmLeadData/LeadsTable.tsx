@@ -7,6 +7,7 @@ import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
 import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
+import { buildLeadDetailPath, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -48,7 +49,7 @@ function TinyTag({ chip }: { chip: Chip }) {
 function ProgressBar({ pct, tone }: { pct: number; tone: "normal" | "critical" }) {
   const bar = tone === "critical" ? "bg-[var(--crm-danger)]" : "bg-[var(--crm-accent)]";
   return (
-    <div className="h-1.5 w-28 rounded-full bg-[var(--crm-border)]">
+    <div className="h-1.5 w-full max-w-[5.5rem] rounded-full bg-[var(--crm-border)]">
       <div className={`h-1.5 rounded-full ${bar}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
     </div>
   );
@@ -66,6 +67,54 @@ function StatusInline({ status }: { status: NonNullable<LeadRowModel["journey"][
   );
 }
 
+function dueDateToneClass(tone: LeadRowModel["dueDate"]["tone"]): string {
+  if (tone === "today") return "text-[var(--crm-accent)]";
+  if (tone === "tomorrow") return "text-[var(--crm-warning-text)]";
+  if (tone === "yesterday" || tone === "overdue") return "text-[var(--crm-danger-text)]";
+  return "text-[var(--crm-text-secondary)]";
+}
+
+function formatDueDateSingleLine(dueDate: LeadRowModel["dueDate"]): string {
+  if (dueDate.label === "—") return "—";
+  const isRelative =
+    dueDate.label === "Today" ||
+    dueDate.label === "Tomorrow" ||
+    dueDate.label === "Yesterday";
+  if (isRelative && dueDate.detail) {
+    return `${dueDate.label}, ${dueDate.detail}`;
+  }
+  if (dueDate.detail) return dueDate.detail;
+  return dueDate.label;
+}
+
+function extractDueDateTime(detail: string): string | undefined {
+  const match = detail.match(/,\s*(\d{1,2}:\d{2}\s*[AP]M)$/i);
+  return match?.[1];
+}
+
+/** Compact table cell — full string stays in `title` tooltip. */
+function formatDueDateCompact(dueDate: LeadRowModel["dueDate"]): {
+  headline: string;
+  subline?: string;
+} {
+  if (dueDate.label === "—") return { headline: "—" };
+
+  const isRelative =
+    dueDate.label === "Today" ||
+    dueDate.label === "Tomorrow" ||
+    dueDate.label === "Yesterday";
+
+  if (isRelative) {
+    return {
+      headline: dueDate.label,
+      subline: dueDate.detail ? extractDueDateTime(dueDate.detail) : undefined,
+    };
+  }
+
+  const subline = dueDate.detail ? extractDueDateTime(dueDate.detail) : undefined;
+  return { headline: dueDate.label, subline };
+}
+
 
 type LeadRowActionProps = {
   row: LeadRowModel;
@@ -76,12 +125,13 @@ type LeadRowActionProps = {
   gridClass: string;
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
+  leadsWorkspace?: CrmWorkspace;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
   return showActions
-    ? "grid grid-cols-[minmax(36px,0.45fr)_minmax(110px,1.15fr)_minmax(170px,2fr)_minmax(130px,1.2fr)_minmax(150px,1.5fr)_minmax(110px,1fr)_minmax(120px,1.1fr)_minmax(132px,1.15fr)] items-start gap-3"
-    : "grid grid-cols-[minmax(36px,0.45fr)_minmax(110px,1.15fr)_minmax(180px,2.15fr)_minmax(130px,1.25fr)_minmax(160px,1.55fr)_minmax(120px,1.05fr)_minmax(150px,1.4fr)] items-start gap-3";
+    ? "grid w-full grid-cols-[28px_minmax(0,0.72fr)_minmax(0,1.44fr)_minmax(0,0.78fr)_minmax(0,0.95fr)_minmax(0,0.62fr)_minmax(0,0.67fr)_minmax(0,0.77fr)_118px] items-start gap-x-2"
+    : "grid w-full grid-cols-[28px_minmax(0,0.72fr)_minmax(0,1.55fr)_minmax(0,0.82fr)_minmax(0,1fr)_minmax(0,0.68fr)_minmax(0,0.72fr)_minmax(0,0.82fr)] items-start gap-x-2";
 }
 
 function BoltIcon() {
@@ -115,9 +165,13 @@ function AlertButton({
   );
 }
 
-function openLeadDetail(router: ReturnType<typeof useRouter>, row: LeadRowModel) {
+function openLeadDetail(
+  router: ReturnType<typeof useRouter>,
+  row: LeadRowModel,
+  leadsWorkspace: CrmWorkspace = "sales",
+) {
   persistLeadsListScrollBeforeNavigate();
-  const url = `/Leads/${row.leadType}/${row.id}`;
+  const url = buildLeadDetailPath(row.leadType, row.id, leadsWorkspace);
   if (typeof window !== "undefined") {
     const width = 1080;
     const height = 720;
@@ -145,13 +199,14 @@ function LeadRowAction({
   gridClass,
   onDelete,
   onAssign,
+  leadsWorkspace = "sales",
 }: LeadRowActionProps) {
   const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
   return (
     <div
-      onClick={() => openLeadDetail(router, row)}
-      className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-6 py-4 transition-all hover:bg-[var(--crm-surface-subtle)] ${
+      onClick={() => openLeadDetail(router, row, leadsWorkspace)}
+      className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-4 py-3 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
       role="button"
@@ -159,7 +214,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLeadDetail(router, row);
+          openLeadDetail(router, row, leadsWorkspace);
         }
       }}
     >
@@ -174,12 +229,12 @@ function LeadRowAction({
           />
         ) : null}
       </div>
-      <div className="flex min-h-[64px] items-center">
-        <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">
+      <div className="flex min-h-[56px] items-center self-center">
+        <div className="truncate text-[11px] font-semibold text-[var(--crm-text-secondary)]">
           {row.enquiryDate}
         </div>
       </div>
-      <div className="flex min-h-[64px] min-w-0 items-start gap-3">
+      <div className="flex min-h-[56px] min-w-0 items-start gap-2 self-start">
         <div className="leading-tight">
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
@@ -213,13 +268,13 @@ function LeadRowAction({
         </div>
       </div>
 
-      <div className="flex min-h-[64px] items-center pt-0.5">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex min-h-[56px] min-w-0 items-center self-center">
+        <div className="min-w-0 truncate">
           {row.statusLabel ? <ChipPill chip={{ label: row.statusLabel, tone: "slate" }} /> : null}
         </div>
       </div>
 
-      <div className="min-h-[64px] min-w-0">
+      <div className="min-h-[56px] min-w-0 self-start">
         <div className="text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]">{row.journey.stage}</div>
         <div className="mt-2 flex items-center gap-3">
           <ProgressBar pct={row.journey.progressPct} tone={critical ? "critical" : "normal"} />
@@ -228,28 +283,47 @@ function LeadRowAction({
         {row.journey.status ? <StatusInline status={row.journey.status} /> : null}
       </div>
 
-      <div className="flex min-h-[64px] min-w-0 items-center gap-2">
-        <div className="text-[12px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
+      <div className="flex min-h-[56px] min-w-0 items-center self-center">
+        <div className="truncate text-[11px] font-semibold text-[var(--crm-text-secondary)]">{row.owner.name}</div>
       </div>
 
-      <div className="min-h-[64px] min-w-0 pt-0.5">
-        <div className={`text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
+      <div className="min-h-[56px] min-w-0 self-center pt-0.5">
+        <div className={`truncate text-[11px] font-semibold ${row.engagement.tone === "late" ? "text-[var(--crm-danger-text)]" : "text-[var(--crm-text-muted)]"}`}>
           {row.engagement.time}
         </div>
-        <div className="mt-1 break-words text-[11px] font-semibold text-[var(--crm-text-secondary)] [overflow-wrap:anywhere]">
+        <div className="mt-0.5 truncate text-[10px] font-semibold text-[var(--crm-text-muted)]">
           {row.engagement.action}
         </div>
       </div>
 
+      {(() => {
+        const due = formatDueDateCompact(row.dueDate);
+        return (
+          <div
+            className="min-h-[56px] min-w-0 self-center py-0.5"
+            title={formatDueDateSingleLine(row.dueDate)}
+          >
+            <div className={`truncate text-[11px] font-semibold leading-none ${dueDateToneClass(row.dueDate.tone)}`}>
+              {due.headline}
+            </div>
+            {due.subline ? (
+              <div className="mt-0.5 truncate text-[10px] font-medium text-[var(--crm-text-muted)]">
+                {due.subline}
+              </div>
+            ) : null}
+          </div>
+        );
+      })()}
+
       {showActions ? (
-        <div className="flex min-h-[64px] min-w-0 flex-wrap items-center justify-end gap-1.5">
+        <div className="flex min-h-[56px] w-full shrink-0 flex-col justify-center gap-1 self-center">
           {onAssign ? (
             <button
               onClick={(event) => {
                 event.stopPropagation();
                 onAssign(row);
               }}
-              className="shrink-0 rounded-xl border border-blue-200 px-2 py-1 text-[10px] font-semibold text-blue-700 transition hover:-translate-y-0.5 hover:bg-blue-100"
+              className="min-h-[28px] w-full rounded-lg border border-blue-200 bg-[var(--crm-surface)] px-2 py-1 text-[10px] font-semibold text-blue-700 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-blue-300 hover:bg-blue-50 hover:shadow-md active:translate-y-0"
             >
               Assign
             </button>
@@ -260,7 +334,7 @@ function LeadRowAction({
                 event.stopPropagation();
                 onDelete(row);
               }}
-              className="shrink-0 rounded-xl border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:-translate-y-0.5 hover:bg-rose-100"
+              className="min-h-[28px] w-full rounded-lg border border-rose-200 bg-[var(--crm-surface)] px-2 py-1 text-[10px] font-semibold text-rose-700 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-50 hover:shadow-md active:translate-y-0"
             >
               Delete
             </button>
@@ -293,7 +367,7 @@ export function LeadsPagination({
   const pages = Array.from({ length: end - start }, (_, i) => start + i);
 
   return (
-    <div className="flex items-center justify-between border-t border-[var(--crm-border)] px-6 py-4">
+    <div className="flex items-center justify-between border-t border-[var(--crm-border)] px-4 py-4">
       <div className="flex items-center gap-1 text-[12px]">
         <button
           type="button"
@@ -361,6 +435,7 @@ type LeadsTableProps = {
   onSelectedRowIdsChange?: (ids: string[]) => void;
   onDeleteRow?: (row: LeadRowModel) => void;
   onAssignRow?: (row: LeadRowModel) => void;
+  leadsWorkspace?: CrmWorkspace;
 };
 
 export default function LeadsTable({
@@ -375,6 +450,7 @@ export default function LeadsTable({
   onSelectedRowIdsChange,
   onDeleteRow,
   onAssignRow,
+  leadsWorkspace = "sales",
 }: LeadsTableProps) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
 
@@ -425,9 +501,9 @@ export default function LeadsTable({
   }, [someSelected]);
 
   return (
-    <section className="mx-auto mt-5 max-w-[1200px] px-6">
+    <section className="mx-auto mt-5 w-full max-w-[1400px] px-4">
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
-        <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-6 py-4 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
+        <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-4 py-3 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
           <div>
             {showSelection ? (
               <input
@@ -449,7 +525,8 @@ export default function LeadsTable({
           <div>JOURNEY TRACK</div>
           <div>OWNER</div>
           <div>ENGAGEMENT</div>
-          {showActions ? <div className="text-right">ACTIONS</div> : null}
+          <div>DUE DATE</div>
+          {showActions ? <div className="text-center leading-tight">ACTIONS</div> : null}
         </div>
         {loading ? (
           <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
@@ -478,6 +555,7 @@ export default function LeadsTable({
               gridClass={gridClass}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
+              leadsWorkspace={leadsWorkspace}
             />
           ))
         )}

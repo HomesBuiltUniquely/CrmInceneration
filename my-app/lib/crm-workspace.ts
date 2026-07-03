@@ -179,6 +179,41 @@ export function appendLeadPoolQuery(qs: URLSearchParams, workspace: CrmWorkspace
   else qs.delete("leadPool");
 }
 
+/** Lead detail UI: `?workspace=presales` + session backup from list routes. */
+export const LEAD_DETAIL_WORKSPACE_QUERY = "workspace";
+export const LEAD_DETAIL_WORKSPACE_SESSION_KEY = "crm_lead_detail_workspace";
+
+export function persistLeadDetailWorkspace(workspace: CrmWorkspace): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(LEAD_DETAIL_WORKSPACE_SESSION_KEY, workspace);
+}
+
+export function readLeadDetailWorkspaceFromBrowser(): CrmWorkspace {
+  if (typeof window === "undefined") return "sales";
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery = params.get(LEAD_DETAIL_WORKSPACE_QUERY)?.trim().toLowerCase();
+  if (fromQuery === "presales") return "presales";
+  if (fromQuery === "sales") return "sales";
+  const fromSession = window.sessionStorage
+    .getItem(LEAD_DETAIL_WORKSPACE_SESSION_KEY)
+    ?.trim()
+    .toLowerCase();
+  if (fromSession === "presales") return "presales";
+  return "sales";
+}
+
+export function buildLeadDetailPath(
+  leadType: string,
+  leadId: string,
+  workspace: CrmWorkspace = "sales",
+): string {
+  const base = `/Leads/${encodeURIComponent(leadType)}/${encodeURIComponent(leadId)}`;
+  if (workspace === "presales") {
+    return `${base}?${LEAD_DETAIL_WORKSPACE_QUERY}=presales`;
+  }
+  return base;
+}
+
 /** SUPER_ADMIN / ADMIN see every module; others see workspace-scoped sidebar. */
 export function sidebarSectionsForViewer(
   workspace: CrmWorkspace,

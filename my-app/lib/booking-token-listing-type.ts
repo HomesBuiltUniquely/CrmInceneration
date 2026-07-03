@@ -7,6 +7,14 @@ import type { BookingTokenTab } from "@/app/Components/BookingToken/types";
 /** Hub column + dashboard tab bucket: token | booking | cancel */
 export type BookingListingType = "token" | "booking" | "cancel";
 
+function hubBookingStatus(deal: { bookingStatus: string }): string {
+  return deal.bookingStatus?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * Booking tab only when `bookingStatus === confirmed` (after Convert or full-10% handoff).
+ * Pay completing 10% stays on Token tab until Convert.
+ */
 export function resolveListingType(deal: {
   bookingStatus: string;
   paymentKind?: string | null;
@@ -14,23 +22,32 @@ export function resolveListingType(deal: {
   listingType?: string | null;
 }): BookingListingType {
   const fromHub = deal.listingType?.trim().toLowerCase();
-  if (fromHub === "token" || fromHub === "booking" || fromHub === "cancel") {
-    return fromHub;
-  }
+  const status = hubBookingStatus(deal);
 
-  if (isCancelledBookingStatus(deal.bookingStatus)) {
+  if (fromHub === "cancel" || isCancelledBookingStatus(deal.bookingStatus)) {
     return "cancel";
   }
 
-  const kind = String(deal.paymentKind ?? "").toUpperCase();
-  if (kind === "FULL_10%") {
-    return "booking";
-  }
-  if (deal.remainingAmount != null && deal.remainingAmount <= 0) {
+  if (status === "confirmed") {
     return "booking";
   }
 
   return "token";
+}
+
+/** BFF: align Hub listingType with dashboard rules before returning to the client. */
+export function applyResolvedListingType<
+  T extends {
+    bookingStatus: string;
+    paymentKind?: string | null;
+    remainingAmount?: number | null;
+    listingType?: string | null;
+  },
+>(deal: T): T {
+  return {
+    ...deal,
+    listingType: resolveListingType(deal),
+  };
 }
 
 /** Query param for GET /booking-token/deals — omit for All tab. */
@@ -45,21 +62,41 @@ export function listingTypeLabel(type: BookingListingType): string {
   return "Token";
 }
 
-/** Hub rule: cancel only for token bucket + within 24h of submittedAt. */
+/** Cancel within 24h of handoff — token (partial) or booking (after convert). */
 export function canShowCancellation(
   listingType: BookingListingType,
   submittedAt: string,
   nowMs = Date.now(),
 ): boolean {
-  return listingType === "token" && isWithinCancellationWindow(submittedAt, nowMs);
+  if (listingType === "cancel") return false;
+  if (!isWithinCancellationWindow(submittedAt, nowMs)) return false;
+  return listingType === "token" || listingType === "booking";
 }
 
-export function canShowPay(listingType: BookingListingType): boolean {
-  return listingType === "token";
+export function canShowPay(
+  listingType: BookingListingType,
+  remainingAmount = 0,
+): boolean {
+  return listingType === "token" && remainingAmount > 0;
 }
 
-export function canShowConvert(listingType: BookingListingType): boolean {
-  return listingType === "booking";
+/** Full 10% paid in token bucket — manual promote to booking tab. */
+export function canShowConvert(
+  listingType: BookingListingType,
+  remainingAmount = 0,
+): boolean {
+  return listingType === "token" && remainingAmount <= 0;
+}
+
+export function isTokenReadyForBookingConvert(
+  listingType: BookingListingType,
+  remainingAmount: number,
+  tenPercentAmount: number,
+  paidAmount: number,
+): boolean {
+  if (listingType !== "token" || remainingAmount > 0) return false;
+  if (tenPercentAmount <= 0) return paidAmount > 0;
+  return paidAmount >= tenPercentAmount;
 }
 
 export function isCancelListingType(listingType: BookingListingType): boolean {

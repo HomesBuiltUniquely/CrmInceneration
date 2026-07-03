@@ -4,10 +4,15 @@ import { bookingPaymentProofContentUpstreamUrl } from "@/lib/booking-payment-ups
 
 export async function GET(
   req: NextRequest,
-  ctx: { params: Promise<{ recordId: string; proofId: string }> },
+  ctx: { params: Promise<{ recordId: string }> },
 ) {
   try {
-    const { recordId, proofId } = await ctx.params;
+    const { recordId } = await ctx.params;
+    const proofId = req.nextUrl.searchParams.get("proofId")?.trim();
+    if (!proofId) {
+      return NextResponse.json({ success: false, error: "proofId is required." }, { status: 400 });
+    }
+
     const url = bookingPaymentProofContentUpstreamUrl(recordId, proofId);
     const res = await fetch(url, {
       headers: upstreamAuthHeaders(req),

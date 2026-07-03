@@ -17,8 +17,13 @@ import {
   resolveListingType,
 } from "@/lib/booking-token-listing-type";
 import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
+import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status";
 import type { BookingTokenDeal } from "@/lib/booking-done-api";
+import type { PaymentHistoryEntry } from "@/lib/booking-payment-history-api";
 import type { BookingStatus, DealRow, LedgerItem, TokenStatus } from "@/app/Components/BookingToken/types";
+
+export const RECENT_LEDGER_ITEM_LIMIT = 5;
+export const RECENT_LEDGER_DEALS_FETCH = 20;
 
 export type BuildBookingDoneSubmitInput = {
   leadType: string;
@@ -166,32 +171,130 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     isCancelled,
     listingType,
     showCancellation: canShowCancellation(listingType, deal.submittedAt),
-    showPay: canShowPay(listingType),
-    showConvert: canShowConvert(listingType),
+    showPay: canShowPay(listingType, remaining),
+    showConvert: canShowConvert(listingType, remaining),
     cancellationReason: deal.cancellationReason ?? null,
     cancelledAt: deal.cancelledAt ?? null,
     fromBookingDone: true,
+    financeReviewStatus: normalizeFinanceReviewStatus(deal.financeReviewStatus),
+    financeReviewAt: deal.financeReviewAt ?? null,
+    financeReviewBy: deal.financeReviewBy ?? null,
+    financeRejectReason: deal.financeRejectReason ?? null,
   };
 }
 
 export function bookingTokenDealToLedgerItem(deal: BookingTokenDeal): LedgerItem {
   const paymentKind = String(deal.paymentKind ?? "").toUpperCase();
   const received = formatQuoteAmount(deal.preBookingAmount);
-  const remaining = formatQuoteAmount(resolveRemainingAmount(deal));
+  const remainingRaw = resolveRemainingAmount(deal);
   const kindLabel =
     paymentKind === "FULL_10%"
       ? "Full 10% booking advance"
       : paymentKind === "TOKEN"
         ? "Token amount"
         : "Pre-booking deposit";
+  const remainingSuffix =
+    remainingRaw > 0 ? ` · Remaining ${formatQuoteAmount(remainingRaw)}` : "";
 
   return {
     id: `ledger-${deal.id}-${deal.submittedAt}`,
     title: "Booking Done handoff",
-    detail: `${deal.customerName} — ${received} (${kindLabel}) · Remaining ${remaining}`,
+    detail: `${deal.customerName} — ${received} (${kindLabel})${remainingSuffix}`,
     time: formatRelativeTime(deal.submittedAt),
     tone: paymentKind === "FULL_10%" ? "success" : "warning",
   };
+}
+
+type LedgerItemDraft = LedgerItem & { occurredAt: string };
+
+function paymentKindLabel(kind?: string): string {
+  const paymentKind = String(kind ?? "").toUpperCase();
+  if (paymentKind === "FULL_10%") return "Full 10% booking advance";
+  if (paymentKind === "TOKEN") return "Token amount";
+  return "Pre-booking deposit";
+}
+
+function ledgerTitleForEntry(entry: PaymentHistoryEntry): string {
+  const source = (entry.source ?? "").toLowerCase();
+  if (source === "booking_done") return "Booking Done handoff";
+  if (source === "pay_action") return "Payment recorded";
+  if (source === "admin_adjustment") return "Payment adjusted";
+  return entry.sequence <= 1 ? "Booking Done handoff" : "Payment recorded";
+}
+
+function ledgerToneForEntry(entry: PaymentHistoryEntry): LedgerItem["tone"] {
+  const kind = String(entry.paymentKind ?? "").toUpperCase();
+  if (kind === "FULL_10%" || entry.remainingAfter <= 0) return "success";
+  if (entry.remainingAfter > 0) return "warning";
+  return "info";
+}
+
+function paymentHistoryEntryToLedgerItem(
+  deal: BookingTokenDeal,
+  entry: PaymentHistoryEntry,
+): LedgerItemDraft {
+  const amount = formatQuoteAmount(entry.amount);
+  const kindLabel = paymentKindLabel(entry.paymentKind);
+  const remainingSuffix =
+    entry.remainingAfter > 0
+      ? ` · Remaining ${formatQuoteAmount(entry.remainingAfter)}`
+      : "";
+
+  return {
+    id: `ledger-${deal.id}-${entry.id}-${entry.createdAt}`,
+    title: ledgerTitleForEntry(entry),
+    detail: `${deal.customerName} — ${amount} (${kindLabel})${remainingSuffix}`,
+    time: formatRelativeTime(entry.createdAt),
+    tone: ledgerToneForEntry(entry),
+    occurredAt: entry.createdAt,
+  };
+}
+
+function cancellationToLedgerItem(deal: BookingTokenDeal): LedgerItemDraft | null {
+  const at = deal.cancelledAt?.trim();
+  if (!at || !isCancelledBookingStatus(deal.bookingStatus)) return null;
+  const reason = deal.cancellationReason?.trim();
+  return {
+    id: `ledger-cancel-${deal.id}-${at}`,
+    title: "Deal cancelled",
+    detail: reason
+      ? `${deal.customerName} — ${reason}`
+      : `${deal.customerName} — Booking deal cancelled`,
+    time: formatRelativeTime(at),
+    tone: "warning",
+    occurredAt: at,
+  };
+}
+
+/** Flatten payment-history events across deals; newest first, capped at `limit`. */
+export function buildRecentLedgerItems(
+  deals: BookingTokenDeal[],
+  histories: Map<string, PaymentHistoryEntry[]>,
+  limit = RECENT_LEDGER_ITEM_LIMIT,
+): LedgerItem[] {
+  const drafts: LedgerItemDraft[] = [];
+
+  for (const deal of deals) {
+    const entries = histories.get(deal.id);
+    if (entries?.length) {
+      for (const entry of entries) {
+        drafts.push(paymentHistoryEntryToLedgerItem(deal, entry));
+      }
+    } else if (deal.preBookingAmount > 0 || deal.submittedAt) {
+      drafts.push({
+        ...bookingTokenDealToLedgerItem(deal),
+        occurredAt: deal.submittedAt,
+      });
+    }
+
+    const cancelItem = cancellationToLedgerItem(deal);
+    if (cancelItem) drafts.push(cancelItem);
+  }
+
+  return drafts
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    .slice(0, limit)
+    .map(({ occurredAt: _occurredAt, ...item }) => item);
 }
 
 function formatRelativeTime(iso: string): string {

@@ -172,8 +172,8 @@ async function countLeadType(
         value: (reqUrl.searchParams.get("presalesMilestoneStage") ?? "").trim(),
       },
       {
-        key: "presalesMilestoneStageCategory",
-        value: (reqUrl.searchParams.get("presalesMilestoneStageCategory") ?? "").trim(),
+        key: "presalesMilestoneCategory",
+        value: (reqUrl.searchParams.get("presalesMilestoneCategory") ?? "").trim(),
       },
       {
         key: "presalesMilestoneSubStage",

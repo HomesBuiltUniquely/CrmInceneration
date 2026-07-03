@@ -36,21 +36,22 @@ export const speedBonuses = {
 export type DealLedgerRow = {
   id: string;
   initials: string;
+  leadLabel: string;
   customer: string;
   dealValue: string;
   amountReceived: string;
   weighted: string;
   weightLabel: string;
   weightTier: "full" | "half" | "none";
-  closureTime: "SAME DAY" | "48 HOURS" | "72 HOURS+" | "BOOKING DONE";
+  closureTime: "SAME DAY" | "48 HOURS" | "72 HOURS+" | "BOOKING DONE" | "TOKEN";
   contributionPct: number;
-  incentive: string;
 };
 
 export const dealLedger: DealLedgerRow[] = [
   {
     id: "1",
     initials: "JS",
+    leadLabel: "Lead #1 · form",
     customer: "Juned Shaikh",
     dealValue: "₹8,50,000",
     amountReceived: "₹85,000",
@@ -59,7 +60,6 @@ export const dealLedger: DealLedgerRow[] = [
     weightTier: "full",
     closureTime: "BOOKING DONE",
     contributionPct: 31,
-    incentive: "₹3,825",
   },
 ];
 

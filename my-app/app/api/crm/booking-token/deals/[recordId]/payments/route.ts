@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applyResolvedListingType } from "@/lib/booking-token-listing-type";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import { bookingPaymentSubmitUpstreamUrl } from "@/lib/booking-payment-upstream";
@@ -36,6 +37,28 @@ export async function POST(
     if (!res.ok) {
       return proxyJsonError(res.status, payload, "Unable to record payment.");
     }
+
+    try {
+      const body = JSON.parse(payload.text) as {
+        bookingStatus?: string;
+        paymentKind?: string | null;
+        remainingAmount?: number | null;
+        listingType?: string | null;
+      };
+      const normalized = applyResolvedListingType({
+        bookingStatus: body.bookingStatus ?? "in_progress",
+        paymentKind: body.paymentKind,
+        remainingAmount: body.remainingAmount,
+        listingType: body.listingType ?? "token",
+      });
+      return NextResponse.json(
+        { ...body, listingType: normalized.listingType },
+        { status: res.status },
+      );
+    } catch {
+      /* return raw upstream body */
+    }
+
     return new NextResponse(payload.text, {
       status: res.status,
       headers: { "Content-Type": payload.contentType },

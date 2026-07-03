@@ -13,6 +13,13 @@ export function isWithinCancellationWindow(submittedAt: string, nowMs = Date.now
   return nowMs - submittedMs < BOOKING_CANCELLATION_WINDOW_MS;
 }
 
+/** True when the 24h cancellation window has ended (super admin delete). */
+export function isAfterCancellationWindow(submittedAt: string, nowMs = Date.now()): boolean {
+  const submittedMs = parseSubmittedAtMs(submittedAt);
+  if (submittedMs == null) return false;
+  return nowMs - submittedMs >= BOOKING_CANCELLATION_WINDOW_MS;
+}
+
 export function cancellationWindowClosesAt(submittedAt: string): Date | null {
   const submittedMs = parseSubmittedAtMs(submittedAt);
   if (submittedMs == null) return null;

@@ -129,6 +129,12 @@ export function maskLeadPhoneForDisplay(phone: string): string {
   return `${digits.slice(0, 4)}${"X".repeat(digits.length - 4)}`;
 }
 
+export function resolveLeadPhoneDisplayForRole(phone: string, shouldMask: boolean): string {
+  const trimmed = phone.trim();
+  if (!trimmed) return "—";
+  return shouldMask ? maskLeadPhoneForDisplay(trimmed) : trimmed;
+}
+
 export function getLeadDisplayPincode(lead: AnyLead): string {
   const dynamic = obj(lead.dynamicFields);
   return pick(

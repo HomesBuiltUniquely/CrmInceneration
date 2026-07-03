@@ -47,9 +47,9 @@ Leads are scoped to the selected **month** (`submittedAt`) and assigned to the s
 | ≥ 80% | 0.60% | ₹36,000 |
 | ≥ 100% | 0.80% | ₹48,000 |
 
-Below **40%** achievement → **₹0** incentive.
+Below **40%** weighted achievement → **₹0** incentive (not eligible).
 
-Per-lead ledger incentive = total incentive × (lead weighted ÷ total weighted).
+Per-lead ledger shows weighted breakdown only — **no per-lead incentive**. Monthly payout is one amount at the top.
 
 ---
 

@@ -1,38 +1,53 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchBookingTokenDeals } from "@/lib/booking-done-api";
-import { bookingTokenDealToDealRow } from "@/lib/booking-token-leads";
 import { computeBookingTokenKpis } from "@/lib/booking-token-kpis";
+import { fetchDashboardDealRows } from "@/lib/booking-token-deals-fetch";
+import {
+  isBookingDateFilterActive,
+  bookingDateFilterSummary,
+  type BookingDateFilterState,
+} from "@/lib/booking-token-date-filter";
+import type { BookingTokenTab } from "../types";
 
 type Props = {
   /** Bump to refetch after pay / cancel / new deal. */
   refreshSignal?: number;
+  dateFilter: BookingDateFilterState;
+  tab: BookingTokenTab;
 };
 
-export default function KpiCards({ refreshSignal = 0 }: Props) {
+export default function KpiCards({ refreshSignal = 0, dateFilter, tab }: Props) {
   const [loading, setLoading] = useState(true);
-  const [kpiCards, setKpiCards] = useState(() => computeBookingTokenKpis([]));
+  const [kpiCards, setKpiCards] = useState(() => computeBookingTokenKpis([], tab));
 
   const loadKpis = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetchBookingTokenDeals({ page: 0, size: 200 });
-      const rows = response.deals.map(bookingTokenDealToDealRow);
-      setKpiCards(computeBookingTokenKpis(rows));
+      const rows = await fetchDashboardDealRows({ tab, dateFilter });
+      setKpiCards(computeBookingTokenKpis(rows, tab));
     } catch {
-      setKpiCards(computeBookingTokenKpis([]));
+      setKpiCards(computeBookingTokenKpis([], tab));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [dateFilter, tab]);
 
   useEffect(() => {
     void loadKpis();
   }, [loadKpis, refreshSignal]);
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div>
+      {isBookingDateFilterActive(dateFilter) ? (
+        <p className="mb-3 text-[11px] font-medium text-[var(--bt-muted)]">
+          KPIs for{" "}
+          <span className="font-semibold text-[var(--bt-text)]">
+            {bookingDateFilterSummary(dateFilter)}
+          </span>
+        </p>
+      ) : null}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {kpiCards.map((card) => (
         <article
           key={card.id}
@@ -69,6 +84,7 @@ export default function KpiCards({ refreshSignal = 0 }: Props) {
           </div>
         </article>
       ))}
+      </div>
     </div>
   );
 }

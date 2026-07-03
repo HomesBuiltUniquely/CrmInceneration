@@ -13,8 +13,8 @@ import {
 import { buildIncentiveProfile } from "@/lib/incentives-profile";
 import {
   fetchIncentiveBookingLeads,
-  filterIncentiveLeadsForExecutive,
-  filterIncentiveLeadsForMonth,
+  fetchIncentiveBookingLeadsForExecutive,
+  resolveIncentiveLeadsForMonth,
   type IncentiveBookingLead,
 } from "@/lib/incentives-booking-data";
 import { loadIncentivesRoster, type IncentivesRoster } from "@/lib/incentives-roster";
@@ -40,6 +40,8 @@ export default function IncentivesClient() {
   const [showTeamOverview, setShowTeamOverview] = useState(false);
   const [targetMonth, setTargetMonth] = useState(currentSalesTargetMonth());
   const [bookingLeads, setBookingLeads] = useState<IncentiveBookingLead[]>([]);
+  const [executiveBookingLeads, setExecutiveBookingLeads] = useState<IncentiveBookingLead[]>([]);
+  const [executiveLeadsLoading, setExecutiveLeadsLoading] = useState(false);
   const monthOptions = useMemo(() => monthSelectOptions(12), []);
 
   const applyTargetsToRoster = useCallback(async (base: IncentivesRoster, month: string) => {
@@ -77,9 +79,7 @@ export default function IncentivesClient() {
           return;
         }
         const next = await loadIncentivesRoster(token);
-        const leads = await fetchIncentiveBookingLeads().catch(() => [] as IncentiveBookingLead[]);
         if (cancelled) return;
-        setBookingLeads(leads);
         setRosterBase(next);
         const withTargets = await applyTargetsToRoster(next, targetMonth);
         if (cancelled) return;
@@ -100,6 +100,21 @@ export default function IncentivesClient() {
       cancelled = true;
     };
   }, [applyTargetsToRoster]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const leads = await fetchIncentiveBookingLeads();
+        if (!cancelled) setBookingLeads(leads);
+      } catch {
+        if (!cancelled) setBookingLeads([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!rosterBase) return;
@@ -152,25 +167,54 @@ export default function IncentivesClient() {
     }
   }, [visibleExecutives, selectedExecutiveId]);
 
-  const monthBookingLeads = useMemo(
-    () => filterIncentiveLeadsForMonth(bookingLeads, targetMonth),
-    [bookingLeads, targetMonth],
-  );
-
   const selectedMember = useMemo(
     () => visibleExecutives.find((e) => e.id === selectedExecutiveId) ?? null,
     [visibleExecutives, selectedExecutiveId],
   );
 
-  const selectedMemberLeads = useMemo(() => {
+  useEffect(() => {
+    if (!roster?.canPickTeam || !selectedMember) {
+      setExecutiveBookingLeads([]);
+      setExecutiveLeadsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setExecutiveLeadsLoading(true);
+    void (async () => {
+      try {
+        const leads = await fetchIncentiveBookingLeadsForExecutive(selectedMember);
+        if (!cancelled) setExecutiveBookingLeads(leads);
+      } catch {
+        if (!cancelled) setExecutiveBookingLeads([]);
+      } finally {
+        if (!cancelled) setExecutiveLeadsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [roster?.canPickTeam, selectedMember]);
+
+  const executiveScopedLeads = useMemo(() => {
     if (!selectedMember) return [];
-    return filterIncentiveLeadsForExecutive(monthBookingLeads, selectedMember);
-  }, [monthBookingLeads, selectedMember]);
+    if (roster?.canPickTeam) return executiveBookingLeads;
+    return bookingLeads;
+  }, [bookingLeads, executiveBookingLeads, roster?.canPickTeam, selectedMember]);
+
+  const selectedMemberLeads = useMemo(
+    () => resolveIncentiveLeadsForMonth(executiveScopedLeads, targetMonth),
+    [executiveScopedLeads, targetMonth],
+  );
+
+  const monthBookingLeads = selectedMemberLeads;
 
   const selectedProfile = useMemo(
     () =>
       selectedMember
-        ? buildIncentiveProfile(selectedMember, { bookingLeads: selectedMemberLeads })
+        ? buildIncentiveProfile(selectedMember, {
+            bookingLeads: selectedMemberLeads,
+            allBookingLeads: executiveScopedLeads,
+          })
         : null,
     [selectedMember, selectedMemberLeads],
   );
@@ -245,6 +289,8 @@ export default function IncentivesClient() {
               <p className="text-sm text-[#dc2626]">{loadError}</p>
             ) : !roster || !selectedProfile || !selectedMember ? (
               <p className="text-sm text-[var(--inc-muted)]">No incentive data available for this view.</p>
+            ) : executiveLeadsLoading && roster.canPickTeam ? (
+              <p className="text-sm text-[var(--inc-muted)]">Loading executive booking data…</p>
             ) : (
               <>
                 {roster.canPickTeam ? (
@@ -316,7 +362,9 @@ export default function IncentivesClient() {
                     {showTeamOverview && visibleExecutives.length > 1 ? (
                       <TeamIncentivesOverview
                         members={visibleExecutives}
-                        bookingLeads={monthBookingLeads}
+                        monthKey={targetMonth}
+                        viewerId={roster.viewer.id}
+                        canPickTeam={roster.canPickTeam}
                         selectedId={selectedExecutiveId}
                         onSelect={(id) => {
                           setSelectedExecutiveId(id);
@@ -333,7 +381,11 @@ export default function IncentivesClient() {
                   </section>
                 )}
 
-                <IncentiveDashboard profile={selectedProfile} viewingLabel={viewingLabel} />
+                <IncentiveDashboard
+                  profile={selectedProfile}
+                  viewingLabel={viewingLabel}
+                  bookingCount={monthBookingLeads.length}
+                />
 
                 <button
                   type="button"

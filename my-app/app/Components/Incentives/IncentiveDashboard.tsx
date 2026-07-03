@@ -4,8 +4,11 @@ import type { DealLedgerRow } from "./data/mock-data";
 import type { IncentiveProfile } from "@/lib/incentives-profile";
 import { journeyMarkers } from "@/lib/incentives-profile";
 
+const MIN_INCENTIVE_ACHIEVEMENT_PCT = 40;
+
 function closureBadgeClass(type: DealLedgerRow["closureTime"]): string {
   if (type === "BOOKING DONE") return "bg-[#ecfdf5] text-[#047857]";
+  if (type === "TOKEN") return "bg-[#fef9c3] text-[#a16207]";
   if (type === "SAME DAY") return "bg-[#ffedd5] text-[#c2410c]";
   if (type === "48 HOURS") return "bg-[#fef9c3] text-[#a16207]";
   return "bg-[#e0f2fe] text-[#0369a1]";
@@ -20,9 +23,10 @@ function weightBadgeClass(tier: DealLedgerRow["weightTier"]): string {
 type Props = {
   profile: IncentiveProfile;
   viewingLabel: string;
+  bookingCount?: number;
 };
 
-export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
+export default function IncentiveDashboard({ profile, viewingLabel, bookingCount }: Props) {
   const { summary, slabs, payoutMath, speedBonuses, dealLedger } = profile;
   const progressPct = Math.min(100, Math.max(0, summary.achievementPct));
   const activeMarker =
@@ -55,7 +59,17 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
           badge={summary.revenueDelta}
         />
         <SummaryCard label="Achievement %" value={`${summary.achievementPct}%`} />
-        <SummaryCard label="Incentive Earned" value={summary.incentiveEarned} highlight />
+        <SummaryCard
+          label="Incentive Earned"
+          value={summary.incentiveEarned}
+          badge={
+            summary.incentiveEligible
+              ? "Monthly payout"
+              : `Need ${MIN_INCENTIVE_ACHIEVEMENT_PCT}% weighted`
+          }
+          highlight={summary.incentiveEligible}
+          muted={!summary.incentiveEligible}
+        />
         <SummaryCard label="On-Spot Bonus" value={summary.onSpotBonus} />
       </div>
 
@@ -167,7 +181,7 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
             {payoutMath.totalPayout}
           </p>
           <p className="mt-3 text-[10px] italic text-[#64748b]">
-            *Target × slab rate when weighted revenue hits slab threshold.
+            *Monthly payout = target × slab rate when total weighted reaches slab % (min 40%).
           </p>
         </aside>
       </div>
@@ -213,9 +227,15 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
 
       <section className="rounded-xl border border-[var(--inc-border)] bg-[var(--inc-surface)] p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-bold uppercase tracking-wide text-[var(--inc-text)]">
-            Deal Contribution Ledger
-          </h3>
+          <div>
+            <h3 className="text-sm font-bold uppercase tracking-wide text-[var(--inc-text)]">
+              Booking Done — Weighted Breakdown
+            </h3>
+            <p className="mt-1 text-[12px] text-[var(--inc-muted)]">
+              Per-lead weighted values. Monthly incentive applies only when total weighted reaches
+              {` ${MIN_INCENTIVE_ACHIEVEMENT_PCT}%`} of target.
+            </p>
+          </div>
           <button
             type="button"
             className="inline-flex items-center gap-2 rounded-lg border border-[var(--inc-border)] px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-[var(--inc-text)] hover:bg-[#f8fafc]"
@@ -228,25 +248,39 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
           <table className="w-full min-w-[720px] text-left text-[13px]">
             <thead>
               <tr className="border-b border-[var(--inc-border)] text-[10px] font-bold uppercase tracking-wide text-[var(--inc-muted)]">
+                <th className="pb-3 pr-4">Lead</th>
                 <th className="pb-3 pr-4">Customer</th>
                 <th className="pb-3 pr-4">Quote Value</th>
                 <th className="pb-3 pr-4">Received</th>
                 <th className="pb-3 pr-4">Weighted</th>
                 <th className="pb-3 pr-4">Status</th>
-                <th className="pb-3 pr-4">Contribution</th>
-                <th className="pb-3">Incentive</th>
+                <th className="pb-3">Share of weighted</th>
               </tr>
             </thead>
             <tbody>
               {dealLedger.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-[var(--inc-muted)]">
-                    No booking-done leads for this period.
+                    <p>No booking-done leads for this period.</p>
+                    {bookingCount != null && bookingCount > 0 ? (
+                      <p className="mt-2 text-[12px]">
+                        {bookingCount} booking{bookingCount === 1 ? "" : "s"} found — none assigned to
+                        this executive for the selected month.
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-[12px]">
+                        Complete Booking Done on a lead to see quote, payment, and weighted value
+                        here. Incentive is paid monthly when total weighted hits the target slab.
+                      </p>
+                    )}
                   </td>
                 </tr>
               ) : (
               dealLedger.map((row) => (
                 <tr key={row.id} className="border-b border-[#f1f5f9]">
+                  <td className="py-3 pr-4 text-[11px] font-semibold text-[var(--inc-muted)]">
+                    {row.leadLabel}
+                  </td>
                   <td className="py-3 pr-4">
                     <div className="flex items-center gap-2">
                       <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#e5e7eb] text-[11px] font-bold text-[#475569]">
@@ -285,7 +319,6 @@ export default function IncentiveDashboard({ profile, viewingLabel }: Props) {
                       </span>
                     </div>
                   </td>
-                  <td className="py-3 font-bold text-[var(--inc-green-dark)]">{row.incentive}</td>
                 </tr>
               ))
               )}
@@ -302,31 +335,45 @@ function SummaryCard({
   value,
   badge,
   highlight = false,
+  muted = false,
 }: {
   label: string;
   value: string;
   badge?: string;
   highlight?: boolean;
+  muted?: boolean;
 }) {
   return (
     <div
       className={`rounded-xl border p-4 shadow-sm ${
         highlight
           ? "border-[var(--inc-green-border)] bg-[var(--inc-green-soft)]"
-          : "border-[var(--inc-border)] bg-[var(--inc-surface)]"
+          : muted
+            ? "border-[var(--inc-border)] bg-slate-50"
+            : "border-[var(--inc-border)] bg-[var(--inc-surface)]"
       }`}
     >
       <p className="text-[10px] font-bold uppercase tracking-wide text-[var(--inc-muted)]">{label}</p>
       <div className="mt-2 flex flex-wrap items-end gap-2">
         <p
           className={`text-xl font-bold md:text-2xl ${
-            highlight ? "text-[var(--inc-green-dark)]" : "text-[var(--inc-text)]"
+            highlight
+              ? "text-[var(--inc-green-dark)]"
+              : muted
+                ? "text-[var(--inc-muted)]"
+                : "text-[var(--inc-text)]"
           }`}
         >
           {value}
         </p>
         {badge ? (
-          <span className="rounded bg-[var(--inc-green-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--inc-green-dark)]">
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+              highlight
+                ? "bg-[var(--inc-green-soft)] text-[var(--inc-green-dark)]"
+                : "bg-slate-200 text-slate-600"
+            }`}
+          >
             {badge}
           </span>
         ) : null}

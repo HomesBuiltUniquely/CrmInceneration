@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchDesignQaForLead } from "@/lib/design-qa-client";
+import { V2_BTN_GHOST_ICON, V2_BTN_SECONDARY } from "./lead-detail-v2-motion";
 
 type DesignQaAnswer = {
   question?: string;
@@ -201,10 +202,10 @@ export default function DesignPreferencesWithModal({ leadId }: { leadId: string 
         onClick={openPanel}
         aria-expanded={open}
         aria-label="Design Preferences"
-        className={`inline-flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-[13px] font-bold tracking-tight text-[#101828] shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(15,23,42,0.08)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
+        className={`inline-flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-[13px] font-bold tracking-tight text-[#101828] shadow-[0_1px_2px_rgba(15,23,42,0.05)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
           open
             ? "border-[#101828] bg-[#f9fafb]"
-            : "border-[#d5dbe5] hover:border-[#c5ced9]"
+            : `border-[#d5dbe5] ${V2_BTN_SECONDARY}`
         }`}
       >
         <svg
@@ -271,7 +272,7 @@ export default function DesignPreferencesWithModal({ leadId }: { leadId: string 
             <button
               type="button"
               onClick={closePanel}
-              className="rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] hover:bg-[#f3f4f6]"
+              className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
               aria-label="Close design preferences"
             >
               ×

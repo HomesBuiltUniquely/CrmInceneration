@@ -2,7 +2,7 @@ import type { DealLedgerRow } from "@/app/Components/Incentives/data/mock-data";
 import { journeyMarkers } from "@/app/Components/Incentives/data/mock-data";
 import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
 import { DEFAULT_MONTHLY_SALES_TARGET_INR } from "@/lib/sales-targets";
-import { calculateIncentiveWeightedValue } from "@/lib/incentives-weighted";
+import { computeIncrementalWeightsByRecordId } from "@/lib/incentives-weighted";
 
 export type IncentiveMemberRef = {
   id: number;
@@ -10,6 +10,8 @@ export type IncentiveMemberRef = {
   role: string;
   managerId?: number | null;
   managerName?: string;
+  /** CRM assignee aliases (fullName, username, email local-part) for admin matching. */
+  assigneeAliases?: string[];
   /** Monthly revenue target in INR — default ₹60L from admin settings. */
   monthlyTargetInr?: number;
 };
@@ -31,6 +33,8 @@ export type IncentiveProfile = {
     revenueDelta: string;
     achievementPct: number;
     incentiveEarned: string;
+    /** True when total weighted ≥ 40% of monthly target. */
+    incentiveEligible: boolean;
     onSpotBonus: string;
     nextSlabGap: string;
     currentSlabLabel: string;
@@ -64,7 +68,10 @@ const SLAB_DEFS = [
 ] as const;
 
 export type BuildIncentiveProfileOptions = {
+  /** Payment records submitted in the selected month (ledger rows). */
   bookingLeads?: IncentiveBookingLead[];
+  /** Full payment history for delta weighting across months. */
+  allBookingLeads?: IncentiveBookingLead[];
 };
 
 export function formatInr(amount: number): string {
@@ -80,7 +87,10 @@ function initialsFromName(name: string): string {
     .join("");
 }
 
+const MIN_ACHIEVEMENT_PCT = SLAB_DEFS[0].targetPct;
+
 function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] | null {
+  if (pct < MIN_ACHIEVEMENT_PCT) return null;
   let picked: (typeof SLAB_DEFS)[number] | null = null;
   for (const slab of SLAB_DEFS) {
     if (pct >= slab.targetPct) picked = slab;
@@ -88,7 +98,7 @@ function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] | n
   return picked;
 }
 
-/** Incentive = monthly target × slab rate (e.g. 40% achievement → 0.20% of ₹60L). */
+/** Incentive = monthly target × slab rate — only when total weighted ≥ 40% of target. */
 export function calculateSlabIncentive(monthlyTargetInr: number, achievementPct: number): number {
   const eligible = eligibleSlabForAchievement(achievementPct);
   if (!eligible || monthlyTargetInr <= 0) return 0;
@@ -112,7 +122,7 @@ function nextSlabGapAmount(target: number, achieved: number, pct: number): strin
 
 function closureTimeForLead(lead: IncentiveBookingLead): DealLedgerRow["closureTime"] {
   const kind = String(lead.paymentKind ?? "").toUpperCase();
-  if (kind === "FULL_10%") return "BOOKING DONE";
+  if (kind === "TOKEN") return "TOKEN";
   return "BOOKING DONE";
 }
 
@@ -121,26 +131,39 @@ export function buildIncentiveProfile(
   options?: BuildIncentiveProfileOptions,
 ): IncentiveProfile {
   const target = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
-  const leads = options?.bookingLeads ?? [];
+  const monthLeads = options?.bookingLeads ?? [];
+  const historyLeads = options?.allBookingLeads ?? monthLeads;
+  const incrementalByRecord = computeIncrementalWeightsByRecordId(historyLeads);
+
+  const sortedLeads = [...monthLeads].sort(
+    (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+  );
 
   let totalWeighted = 0;
-  const dealLedger: DealLedgerRow[] = leads.map((lead) => {
-    const weight = calculateIncentiveWeightedValue(lead.quoteAmount, lead.amountReceived);
-    totalWeighted += weight.weightedInr;
-    return {
+  const dealLedger: DealLedgerRow[] = [];
+  for (const lead of sortedLeads) {
+    const weight = incrementalByRecord.get(lead.id) ?? {
+      incrementalInr: 0,
+      cumulativeInr: 0,
+      tier: "none" as const,
+      label: "Not eligible",
+    };
+    if (weight.incrementalInr <= 0) continue;
+    totalWeighted += weight.incrementalInr;
+    dealLedger.push({
       id: lead.id,
       initials: initialsFromName(lead.customerName),
+      leadLabel: lead.leadLabel,
       customer: lead.customerName,
       dealValue: formatInr(lead.quoteAmount),
       amountReceived: formatInr(lead.amountReceived),
-      weighted: formatInr(weight.weightedInr),
+      weighted: formatInr(weight.incrementalInr),
       weightLabel: weight.label,
       weightTier: weight.tier,
       closureTime: closureTimeForLead(lead),
       contributionPct: 0,
-      incentive: formatInr(0),
-    };
-  });
+    });
+  }
 
   const revenueAchieved = totalWeighted;
   const achievementPct =
@@ -149,14 +172,11 @@ export function buildIncentiveProfile(
   const activeSlabPct = eligible?.targetPct ?? 0;
   const incentiveEarned = calculateSlabIncentive(target, achievementPct);
 
-  if (revenueAchieved > 0 && incentiveEarned > 0) {
+  if (revenueAchieved > 0) {
     for (const row of dealLedger) {
       const weightedNum = Number(row.weighted.replace(/[₹,]/g, ""));
       row.contributionPct =
         Math.round((weightedNum / revenueAchieved) * 1000) / 10;
-      row.incentive = formatInr(
-        Math.round((incentiveEarned * weightedNum) / revenueAchieved),
-      );
     }
   }
 
@@ -177,9 +197,12 @@ export function buildIncentiveProfile(
     summary: {
       totalTarget: formatInr(target),
       revenueAchieved: formatInr(revenueAchieved),
-      revenueDelta: leads.length > 0 ? `${leads.length} booking${leads.length === 1 ? "" : "s"}` : "—",
+      revenueDelta: dealLedger.length > 0
+        ? `${dealLedger.length} booking${dealLedger.length === 1 ? "" : "s"}`
+        : "—",
       achievementPct,
       incentiveEarned: formatInr(incentiveEarned),
+      incentiveEligible: achievementPct >= MIN_ACHIEVEMENT_PCT,
       onSpotBonus: formatInr(0),
       nextSlabGap: nextSlabGapAmount(target, revenueAchieved, achievementPct),
       currentSlabLabel: eligible ? `${activeSlabPct}%` : "—",
@@ -194,7 +217,7 @@ export function buildIncentiveProfile(
       totalPayout: formatInr(incentiveEarned),
     },
     speedBonuses: {
-      totalClosures: leads.length,
+      totalClosures: dealLedger.length,
       sameDayCount: 0,
       sameDayAmount: formatInr(0),
       fortyEightHourCount: 0,

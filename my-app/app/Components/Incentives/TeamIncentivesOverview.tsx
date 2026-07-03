@@ -1,29 +1,80 @@
 "use client";
 
-import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
-import { filterIncentiveLeadsForExecutive } from "@/lib/incentives-booking-data";
+import { useEffect, useMemo, useState } from "react";
+import {
+  fetchIncentiveBookingLeads,
+  fetchIncentiveBookingLeadsForExecutive,
+  resolveIncentiveLeadsForMonth,
+  type IncentiveBookingLead,
+} from "@/lib/incentives-booking-data";
 import type { IncentiveMemberRef } from "@/lib/incentives-profile";
 import { buildIncentiveProfile } from "@/lib/incentives-profile";
 
 type Props = {
   members: IncentiveMemberRef[];
-  bookingLeads: IncentiveBookingLead[];
+  monthKey: string;
+  viewerId: number;
+  canPickTeam: boolean;
   selectedId: number | null;
   onSelect: (id: number) => void;
 };
 
 export default function TeamIncentivesOverview({
   members,
-  bookingLeads,
+  monthKey,
+  viewerId,
+  canPickTeam,
   selectedId,
   onSelect,
 }: Props) {
-  const rows = members.map((member) => ({
-    member,
-    profile: buildIncentiveProfile(member, {
-      bookingLeads: filterIncentiveLeadsForExecutive(bookingLeads, member),
-    }),
-  }));
+  const memberIds = useMemo(() => members.map((m) => m.id).join(","), [members]);
+  const [leadsByMemberId, setLeadsByMemberId] = useState<Map<number, IncentiveBookingLead[]>>(
+    new Map(),
+  );
+  const [selfLeads, setSelfLeads] = useState<IncentiveBookingLead[]>([]);
+
+  useEffect(() => {
+    if (!canPickTeam) {
+      let cancelled = false;
+      void (async () => {
+        const leads = await fetchIncentiveBookingLeads();
+        if (!cancelled) setSelfLeads(leads);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        members.map(async (member) => {
+          const leads = await fetchIncentiveBookingLeadsForExecutive(member);
+          return [member.id, leads] as const;
+        }),
+      );
+      if (!cancelled) setLeadsByMemberId(new Map(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canPickTeam, memberIds, members]);
+
+  const rows = members.map((member) => {
+    const scoped = canPickTeam
+      ? (leadsByMemberId.get(member.id) ?? [])
+      : member.id === viewerId
+        ? selfLeads
+        : [];
+    const forMonth = resolveIncentiveLeadsForMonth(scoped, monthKey);
+    return {
+      member,
+      profile: buildIncentiveProfile(member, {
+        bookingLeads: forMonth,
+        allBookingLeads: scoped,
+      }),
+    };
+  });
 
   return (
     <section className="mb-6 rounded-xl border border-[var(--inc-border)] bg-[var(--inc-surface)] p-5 shadow-sm">
@@ -46,6 +97,7 @@ export default function TeamIncentivesOverview({
             <tr className="border-b border-[var(--inc-border)] text-[10px] font-bold uppercase tracking-wide text-[var(--inc-muted)]">
               <th className="pb-3 pr-4">Executive</th>
               <th className="pb-3 pr-4">Manager</th>
+              <th className="pb-3 pr-4">Bookings</th>
               <th className="pb-3 pr-4">Weighted Revenue</th>
               <th className="pb-3 pr-4">Achievement</th>
               <th className="pb-3 pr-4">Incentive Earned</th>
@@ -62,6 +114,7 @@ export default function TeamIncentivesOverview({
                 >
                   <td className="py-3 pr-4 font-semibold text-[var(--inc-text)]">{member.name}</td>
                   <td className="py-3 pr-4 text-[var(--inc-muted)]">{member.managerName ?? "—"}</td>
+                  <td className="py-3 pr-4 text-[var(--inc-muted)]">{profile.dealLedger.length}</td>
                   <td className="py-3 pr-4 font-semibold text-[var(--inc-text)]">
                     {profile.summary.revenueAchieved}
                   </td>

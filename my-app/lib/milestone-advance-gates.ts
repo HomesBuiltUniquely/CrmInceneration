@@ -63,6 +63,16 @@ export function missingLeadPropertyGateFields(
   return missing;
 }
 
+/** Prefer explicit gate payload, but ignore empty strings so lead values are not wiped. */
+export function resolveLeadPropertyGateField(
+  fromPayload: string | null | undefined,
+  fromLead: string | null | undefined,
+): string {
+  const payload = String(fromPayload ?? "").trim();
+  if (payload) return payload;
+  return String(fromLead ?? "").trim();
+}
+
 export function leadPropertyGateErrorMessage(
   missing: Array<"Budget" | "Property notes" | "Configuration" | "Booking type">,
 ): string {

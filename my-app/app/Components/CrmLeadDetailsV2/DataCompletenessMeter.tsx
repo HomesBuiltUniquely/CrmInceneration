@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
 import { getConfigurationScopeRequirements } from "@/lib/configuration-scope-client";
+import { CONFIGURATION_SCOPE_UPDATED_EVENT } from "@/lib/configuration-scope-events";
 import { computeLeadDataCompleteness } from "@/lib/lead-data-completeness";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { V2_LINK_TEXT } from "./lead-detail-v2-motion";
 
 function scrollToTarget(targetId: string) {
   document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -14,63 +16,70 @@ function scrollToTarget(targetId: string) {
 export default function DataCompletenessMeter() {
   const { lead, leadType, leadId } = useLeadDetailV2();
   const [scopeOfWorkComplete, setScopeOfWorkComplete] = useState(false);
-  const [scopeLoading, setScopeLoading] = useState(true);
+  const [scopeReady, setScopeReady] = useState(false);
+  const requestRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
 
   const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
 
-  useEffect(() => {
-    if (!validLeadType) {
-      setScopeOfWorkComplete(false);
-      setScopeLoading(false);
-      return;
-    }
+  const loadScopeStatus = useCallback(
+    async (background = false) => {
+      if (!validLeadType) {
+        setScopeOfWorkComplete(false);
+        setScopeReady(true);
+        return;
+      }
 
-    let cancelled = false;
+      const requestId = ++requestRef.current;
+      if (!background && !hasLoadedOnceRef.current) {
+        setScopeReady(false);
+      }
 
-    const loadScopeStatus = async () => {
-      setScopeLoading(true);
       try {
         const requirements = await getConfigurationScopeRequirements(validLeadType, leadId);
-        if (cancelled) return;
+        if (requestId !== requestRef.current) return;
         const hasRooms = requirements.selectedRooms.length > 0;
         const persisted = (requirements.version ?? 0) > 0 || Boolean(requirements.updatedAt);
         setScopeOfWorkComplete(hasRooms && persisted);
       } catch {
-        if (!cancelled) setScopeOfWorkComplete(false);
+        if (requestId === requestRef.current) setScopeOfWorkComplete(false);
       } finally {
-        if (!cancelled) setScopeLoading(false);
+        if (requestId === requestRef.current) {
+          hasLoadedOnceRef.current = true;
+          setScopeReady(true);
+        }
       }
-    };
+    },
+    [leadId, validLeadType],
+  );
 
+  useEffect(() => {
+    hasLoadedOnceRef.current = false;
     void loadScopeStatus();
 
     const onFocus = () => {
-      void loadScopeStatus();
+      void loadScopeStatus(true);
     };
+    const onScopeUpdated = () => {
+      void loadScopeStatus(true);
+    };
+
     window.addEventListener("focus", onFocus);
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
 
     return () => {
-      cancelled = true;
+      requestRef.current += 1;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
     };
-  }, [
-    validLeadType,
-    leadId,
-    lead.floorPlan,
-    lead.floorPlanPublicLink,
-    lead.floorPlanViewPath,
-    lead.budget,
-    lead.configuration,
-    lead.bookingType,
-    lead.propertyLocation,
-    lead.pincode,
-    lead.phone,
-    lead.email,
-  ]);
+  }, [loadScopeStatus]);
 
   const { percent, items, missingLabels } = useMemo(
-    () => computeLeadDataCompleteness(lead, { scopeOfWorkComplete }),
-    [lead, scopeOfWorkComplete],
+    () =>
+      computeLeadDataCompleteness(lead, {
+        scopeOfWorkComplete: scopeReady ? scopeOfWorkComplete : false,
+      }),
+    [lead, scopeOfWorkComplete, scopeReady],
   );
 
   const percentColor =
@@ -84,16 +93,16 @@ export default function DataCompletenessMeter() {
           Data Completeness
         </p>
         <p className={`text-[30px] font-bold leading-none ${percentColor}`}>
-          {scopeLoading ? "…" : `${percent}%`}
+          {!scopeReady ? "…" : `${percent}%`}
         </p>
       </div>
       <div className="mt-1 h-[5px] overflow-hidden rounded-full bg-[#d6dbe3]">
         <div
           className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-          style={{ width: scopeLoading ? "0%" : `${percent}%` }}
+          style={{ width: `${percent}%` }}
         />
       </div>
-      {!scopeLoading && missingLabels.length > 0 ? (
+      {scopeReady && missingLabels.length > 0 ? (
         <p className="mt-2 text-[13px] font-semibold text-[#ee5454]">
           <span aria-hidden="true">△ </span>
           Missing:{" "}
@@ -105,7 +114,7 @@ export default function DataCompletenessMeter() {
                   <button
                     type="button"
                     onClick={() => scrollToTarget(item.scrollTargetId!)}
-                    className="underline decoration-[#fca5a5] underline-offset-2 transition hover:text-[#dc2626]"
+                    className={`underline decoration-[#fca5a5] underline-offset-2 ${V2_LINK_TEXT}`}
                   >
                     {item.label}
                   </button>
@@ -116,7 +125,7 @@ export default function DataCompletenessMeter() {
               </span>
             ))}
         </p>
-      ) : !scopeLoading && percent >= 100 ? (
+      ) : scopeReady && percent >= 100 ? (
         <p className="mt-2 text-[13px] font-semibold text-[#16a34a]">All key fields complete</p>
       ) : null}
     </div>

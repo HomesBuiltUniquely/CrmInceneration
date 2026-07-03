@@ -12,6 +12,7 @@ import {
   postStageRollback,
   postVerifyLead,
   putLeadDetail,
+  putPresalesMilestoneDetail,
   putHubScheduleDates,
   getLeadFloorPlanMeta,
   removeLeadFloorPlan,
@@ -21,13 +22,26 @@ import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
+  applyCustomerNameToDetail,
+  pickCustomerNameFromDetail,
   mergePresalesMilestoneIntoDetail,
   mergeSecondBoxIntoDetail,
+  buildPresalesCompleteTaskPutBody,
+  buildMinimalPresalesMilestonePutBody,
   pickConfigurationFromDetail,
   pickPropertyNotesFromDetail,
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
-import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import {
+  hydratePropertyLocationFromRequirements,
+  preserveLeadStickyFields,
+  syncPropertyLocationToRequirements,
+  type DiscoveryPhaseSaveDraft,
+} from "@/lib/lead-discovery-field-sync";
+import {
+  canEditLeadPhoneAndEmail,
+  shouldMaskLeadPhoneForRole,
+} from "@/lib/lead-contact-access";
 import TopBar from "./TopBar";
 import LeadHeader from "./LeadHeader";
 import DesignQaPanel from "./DesignQaPanel";
@@ -45,9 +59,12 @@ import CompleteTaskModal, {
 import {
   createAppointment,
   type CreateAppointmentResponse,
+  resolveMeetingTypeForLead,
 } from "@/lib/appointment-client";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
+import { resolveLeadPropertyGateField } from "@/lib/milestone-advance-gates";
 import {
   isMeetingScheduleSubstage,
   normalizeMilestoneSubStageForApi,
@@ -61,8 +78,16 @@ import {
   validateClosedLeadQuickAction,
 } from "@/lib/sales-closure";
 import { clearFollowUpDateAliases, FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
+import {
+  applyStoredPresalesMilestoneToDetail,
+  clearStoredPresalesMilestone,
+  presalesMilestonePersistedInDetail,
+  setStoredPresalesMilestone,
+  usesPresalesMilestoneClientOverlay,
+} from "@/lib/lead-presales-milestone-store";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
+import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import {
   CRM_USER_NAME_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -71,6 +96,7 @@ import {
   getMe,
   getNameFromUser,
   getRoleFromUser,
+  fetchSalesExecutivesForManager,
   getSalesExecEndpointForVerify,
   normalizeRole,
   unwrapAuthUserPayload,
@@ -82,15 +108,27 @@ import {
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
 import { fetchCrmPipeline, isLostCategory } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
-import { isExperienceDesignQuoteSentStage } from "@/lib/quote-email-stage";
+import {
+  canShowGetQuoteButton,
+  isExperienceDesignQuoteSentStage,
+  persistGetQuoteUnlock,
+  readPersistedGetQuoteUnlock,
+} from "@/lib/quote-email-stage";
 import {
   isClosedWonBookingDoneSubstage,
   isClosedWonCustomerSubstage,
   isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
+import { resolveLeadDetailUiPhase } from "@/lib/lead-detail-v2-display";
 import { assigneeAliasNorms } from "@/lib/lead-follow-up-insights";
 import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
+import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
+import { openWhatsAppChat } from "@/lib/whatsapp-chat";
+import {
+  canEditLeadEmailAndPhone,
+  stripUnauthorizedLeadEmailPhoneFromPutBody,
+} from "@/lib/lead-identity-edit-access";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   collectHierarchyUserAssigneeAliases,
@@ -105,8 +143,9 @@ import {
   isPresalesVerifyHandoffSelection,
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
-import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
+import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
+import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
 import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
@@ -116,6 +155,13 @@ import {
   resolveMilestoneLabels,
   resolveScheduleDisplays,
 } from "@/lib/lead-detail-v2-display";
+import {
+  markWhatsappPresalesNameUpdateBeenUsed,
+  resolveWhatsappPresalesNameLocked,
+  isDefaultWhatsappPlaceholderName,
+  shouldShowWhatsappPresalesNameHint,
+  validateWhatsappCustomerNameForSave,
+} from "@/lib/whatsapp-presales-name-lock";
 
 type SalesExecutiveOption = {
   id: number;
@@ -598,6 +644,56 @@ async function postExternalIntakeLead(args: {
       `External intake failed (${res.status})${msg ? `: ${msg}` : ""}`,
     );
   }
+}
+
+async function postDesignModuleCrmLeadUpsert(args: {
+  leadType: CrmLeadType;
+  leadId: number;
+  leadIdentifier: string;
+  projectName?: string;
+  contactNo?: string;
+  clientEmail?: string;
+  designerName?: string;
+  schedule?: {
+    appointmentDate?: string;
+    appointmentSlot?: string;
+    scheduleTimezone?: string;
+  };
+}): Promise<void> {
+  if (!args.leadIdentifier.trim() || !Number.isFinite(args.leadId)) {
+    return;
+  }
+  const body: Record<string, unknown> = {
+    leadType: args.leadType,
+    leadId: args.leadId,
+    leadIdentifier: args.leadIdentifier.trim(),
+    externalLeadId: args.leadIdentifier.trim(),
+  };
+  if (args.projectName?.trim()) body.projectName = args.projectName.trim();
+  if (args.contactNo?.trim()) body.contactNo = args.contactNo.trim();
+  if (args.clientEmail?.trim()) body.clientEmail = args.clientEmail.trim();
+  if (args.designerName?.trim()) body.designerName = args.designerName.trim();
+  if (args.schedule?.appointmentDate?.trim()) {
+    body.appointmentDate = args.schedule.appointmentDate.trim();
+  }
+  if (args.schedule?.appointmentSlot?.trim()) {
+    body.appointmentSlot = args.schedule.appointmentSlot.trim();
+  }
+  if (args.schedule?.scheduleTimezone?.trim()) {
+    body.scheduleTimezone = args.schedule.scheduleTimezone.trim();
+  }
+
+  const res = await fetch("/api/crm/design-module/crm-lead/upsert", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(
+      `Design Module CRM lead upsert failed (${res.status})${msg ? `: ${msg}` : ""}`,
+    );
+  }
 } 
 
 const SOURCE_LABELS: Record<CrmLeadType, string> = {
@@ -749,6 +845,7 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
@@ -760,6 +857,10 @@ export default function LeadDetailsApiClient({
     message: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  const [whatsappNameLockTick, setWhatsappNameLockTick] = useState(0);
+  const [whatsappNameLockedFromServer, setWhatsappNameLockedFromServer] =
+    useState(false);
+  const [whatsappNameSaving, setWhatsappNameSaving] = useState(false);
   const [savingSecondBox, setSavingSecondBox] = useState(false);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [floorPlanRemoving, setFloorPlanRemoving] = useState(false);
@@ -772,6 +873,7 @@ export default function LeadDetailsApiClient({
   >(null);
   const [canVerifyRole, setCanVerifyRole] = useState(false);
   const [verifyPresalesTeamNames, setVerifyPresalesTeamNames] = useState<string[]>([]);
+  const [salesManagerTeamNames, setSalesManagerTeamNames] = useState<string[]>([]);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [rollbackOpen, setRollbackOpen] = useState(false);
   const [rollbackBusy, setRollbackBusy] = useState(false);
@@ -783,6 +885,7 @@ export default function LeadDetailsApiClient({
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
   const [quoteFetching, setQuoteFetching] = useState(false);
+  const [getQuoteUnlockedSticky, setGetQuoteUnlockedSticky] = useState(false);
   const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
   const [quoteLinkPersistError, setQuoteLinkPersistError] = useState("");
   const [quoteSubject, setQuoteSubject] = useState(
@@ -825,10 +928,66 @@ export default function LeadDetailsApiClient({
     setError(null);
     try {
       const lt = leadTypeParam as CrmLeadType;
-      const detailJson = await getLeadDetail(lt, leadId);
+      let detailJson = await getLeadDetail(lt, leadId);
+      if (lt === "whatsapplead") {
+        clearStoredPresalesMilestone(lt, leadId);
+      } else if (usesPresalesMilestoneClientOverlay(lt)) {
+        detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
+      }
       setBaseDetail(detailJson);
-      const mapped = detailJsonToLead(detailJson, lt);
-      setLead((prev) => ({ ...mapped, id: leadId, activities: prev.activities }));
+      let mapped = detailJsonToLead(detailJson, lt);
+      mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
+      void tryPersistAutoFollowUpDateForLead(
+        { ...detailJson, id: leadId, leadType: lt } as ApiLead,
+        lt,
+      ).then(async (saved) => {
+        if (!saved) return;
+        try {
+          const refreshed = await getLeadDetail(lt, leadId);
+          setBaseDetail(refreshed);
+          let refreshedLead = detailJsonToLead(refreshed, lt);
+          refreshedLead = await hydratePropertyLocationFromRequirements(
+            refreshedLead,
+            lt,
+            leadId,
+          );
+          setLead((prev) =>
+            preserveLeadStickyFields(prev, {
+              ...refreshedLead,
+              id: leadId,
+              activities: prev.activities,
+            }),
+          );
+        } catch {
+          /* list refresh on next load is enough */
+        }
+      });
+      if (lt === "whatsapplead") {
+        const serverName = (mapped.name ?? "").trim();
+        const serverPhone = mapped.phone ?? "";
+        setWhatsappNameLockedFromServer(
+          Boolean(serverName) &&
+            !isDefaultWhatsappPlaceholderName(serverName, serverPhone),
+        );
+      } else {
+        setWhatsappNameLockedFromServer(false);
+      }
+      setLead((prev) =>
+        preserveLeadStickyFields(prev, {
+          ...mapped,
+          id: leadId,
+          activities: prev.activities,
+        }),
+      );
+      void resolveMeetingTypeForLead(leadId, { designerName: mapped.designerName }).then(
+        (meetingType) => {
+          if (!meetingType?.trim()) return;
+          setLead((prev) => {
+            if (prev.meetingType?.trim()) return prev;
+            return preserveLeadStickyFields(prev, { ...prev, meetingType });
+          });
+        },
+      );
       void getLeadFloorPlanMeta(lt, leadId).then((meta) => {
         if (meta) {
           setLead((prev) => ({
@@ -869,6 +1028,17 @@ export default function LeadDetailsApiClient({
     }
     void load();
   }, [load, validLeadType]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || uiVariant !== "v2") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bookingDone") !== "1") return;
+    setBookingDoneOpen(true);
+    params.delete("bookingDone");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, [leadId, leadType, uiVariant]);
 
   const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
     Record<string, unknown> | null
@@ -1225,6 +1395,42 @@ export default function LeadDetailsApiClient({
     };
   }, [salesClosureAuthUser, viewerRoleKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (viewerRoleKey !== "SALES_MANAGER" && viewerRoleKey !== "MANAGER") {
+      setSalesManagerTeamNames([]);
+      return;
+    }
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY) ?? "";
+    const token = raw.trim();
+    if (!token) {
+      setSalesManagerTeamNames([]);
+      return;
+    }
+    void fetchSalesExecutivesForManager(
+      token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+    )
+      .then((users) => {
+        if (cancelled) return;
+        setSalesManagerTeamNames(
+          users
+            .map((user) =>
+              hierarchyUserDisplayName(
+                user as { fullName?: string; name?: string; username?: string },
+              ),
+            )
+            .filter(Boolean),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSalesManagerTeamNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewerRoleKey]);
+
   const verifyLeadRecord = useMemo<ApiLead>(
     () =>
       ({
@@ -1233,6 +1439,17 @@ export default function LeadDetailsApiClient({
         salesOwner: (baseDetail as ApiLead).salesOwner,
       }) as ApiLead,
     [baseDetail, lead.assignee],
+  );
+
+  const canEditLeadEmailPhone = useMemo(
+    () =>
+      canEditLeadEmailAndPhone({
+        viewerRole: viewerRoleKey,
+        lead: verifyLeadRecord,
+        managerTeamNames: salesManagerTeamNames,
+        viewerAliases: [...verifyViewerAliasSet],
+      }),
+    [viewerRoleKey, verifyLeadRecord, salesManagerTeamNames, verifyViewerAliasSet],
   );
 
   const canVerifyCurrentLead = useMemo(() => {
@@ -1274,9 +1491,32 @@ export default function LeadDetailsApiClient({
     () => canClosedLeadHeader && canShowClosedLeadQuickAction(lead),
     [canClosedLeadHeader, lead],
   );
+
+  useEffect(() => {
+    if (readPersistedGetQuoteUnlock(leadId)) {
+      setGetQuoteUnlockedSticky(true);
+    }
+  }, [leadId]);
+
+  useEffect(() => {
+    if (!isExperienceDesignQuoteSentStage(lead)) return;
+    setGetQuoteUnlockedSticky(true);
+    persistGetQuoteUnlock(leadId);
+  }, [lead, leadId]);
+
+  useEffect(() => {
+    if (lead.quoteLink?.trim()) {
+      setGetQuoteUnlockedSticky(true);
+      persistGetQuoteUnlock(leadId);
+    }
+  }, [lead.quoteLink, leadId]);
+
   const canShowGetQuote = useMemo(
-    () => isExperienceDesignQuoteSentStage(lead),
-    [lead],
+    () =>
+      canShowGetQuoteButton(lead, {
+        quoteUnlockedInSession: getQuoteUnlockedSticky,
+      }),
+    [getQuoteUnlockedSticky, lead],
   );
 
   const loadSalesClosureAuthUser = useCallback(async () => {
@@ -1649,7 +1889,28 @@ export default function LeadDetailsApiClient({
     setSaving(true);
     setSaveError(null);
     try {
-      const body = mergeLeadIntoDetail(baseDetail, lead);
+      let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (!canEditLeadEmailPhone) {
+        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+      }
+      if (
+        shouldShowWhatsappPresalesNameHint({
+          leadType: lt,
+          leadId,
+          phone: previousLead.phone,
+          handedOffToSales:
+            isLeadHandedOffToSales(previousLead) ||
+            isLeadHandedOffToSales(verifyLeadRecord),
+          viewerRoleKey,
+          nameLockedFromServer: whatsappNameLockedFromServer,
+          nameHasValue: Boolean((previousLead.name ?? "").trim()),
+        })
+      ) {
+        body = applyCustomerNameToDetail(
+          body,
+          pickCustomerNameFromDetail(baseDetail),
+        );
+      }
       const updated = await putLeadDetail(lt, leadId, body);
       const stickyQuote = pickPersistedQuoteLink(updated, lead);
       const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -1691,35 +1952,118 @@ export default function LeadDetailsApiClient({
     notifyError,
     redirectToStrictSalesClosure,
     validLeadType,
+    verifyLeadRecord,
+    viewerRoleKey,
+    canEditLeadEmailPhone,
+    whatsappNameLockedFromServer,
+  ]);
+
+  const handleSaveContactDetails = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    const previousLead = lead;
+    setSavingSecondBox(true);
+    setSecondBoxError(null);
+    try {
+      let body = mergeLeadIntoDetail(baseDetail, lead);
+      if (!canEditLeadEmailPhone) {
+        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+      }
+      if (
+        shouldShowWhatsappPresalesNameHint({
+          leadType: lt,
+          leadId,
+          phone: previousLead.phone,
+          handedOffToSales:
+            isLeadHandedOffToSales(previousLead) ||
+            isLeadHandedOffToSales(verifyLeadRecord),
+          viewerRoleKey,
+          nameLockedFromServer: whatsappNameLockedFromServer,
+          nameHasValue: Boolean((previousLead.name ?? "").trim()),
+        })
+      ) {
+        body = applyCustomerNameToDetail(
+          body,
+          pickCustomerNameFromDetail(baseDetail),
+        );
+      }
+      const updated = await putLeadDetail(lt, leadId, body);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
+      setLead((prev) => ({
+        ...mapped,
+        id: leadId,
+        activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+      }));
+      notifySuccess("Contact details saved.");
+      maybeOpenSalesClosureAfterWon([
+        lead.status,
+        lead.stageBlock?.milestoneStage,
+        lead.stageBlock?.milestoneSubStage,
+        body.status,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
+        (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
+        updated.status,
+        updated.milestoneStage,
+        updated.milestoneSubStage,
+      ]);
+    } catch (e) {
+      setSecondBoxError(e instanceof Error ? e.message : "Save failed");
+      throw e;
+    } finally {
+      setSavingSecondBox(false);
+    }
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    maybeOpenSalesClosureAfterWon,
+    validLeadType,
+    notifySuccess,
+    verifyLeadRecord,
+    viewerRoleKey,
+    canEditLeadEmailPhone,
+    whatsappNameLockedFromServer,
   ]);
 
   const persistLeadDetailFields = useCallback(
-    async (successMessage: string) => {
+    async (successMessage: string, leadOverride?: Lead) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
+      const leadToSave = leadOverride ?? lead;
       setSavingSecondBox(true);
       setSecondBoxError(null);
       try {
-        const body = mergeLeadIntoDetail(baseDetail, lead);
+        const body = mergeLeadIntoDetail(baseDetail, leadToSave);
         const updated = await putLeadDetail(lt, leadId, body);
-        const stickyQuote = pickPersistedQuoteLink(updated, lead);
+        const stickyQuote = pickPersistedQuoteLink(updated, leadToSave);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
-        const mapped = detailJsonToLead(stickyDetail, lt);
-        setLead((prev) => ({
-          ...mapped,
-          id: leadId,
-          activities: prev.activities,
-          bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
-          salesManagerName:
-            mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
-          quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
-        }));
+        let mapped = detailJsonToLead(stickyDetail, lt);
+        mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
+        setLead((prev) =>
+          preserveLeadStickyFields(prev, {
+            ...mapped,
+            id: leadId,
+            activities: prev.activities,
+            bookingType: mapped.bookingType || leadToSave.bookingType || prev.bookingType,
+            salesManagerName:
+              mapped.salesManagerName || leadToSave.salesManagerName || prev.salesManagerName,
+            quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+          }),
+        );
         notifySuccess(successMessage);
         maybeOpenSalesClosureAfterWon([
-          lead.status,
-          lead.stageBlock?.milestoneStage,
-          lead.stageBlock?.milestoneSubStage,
+          leadToSave.status,
+          leadToSave.stageBlock?.milestoneStage,
+          leadToSave.stageBlock?.milestoneSubStage,
           body.status,
           (body.stageBlock as Record<string, unknown> | undefined)?.milestoneStage,
           (body.stageBlock as Record<string, unknown> | undefined)?.milestoneSubStage,
@@ -1754,9 +2098,64 @@ export default function LeadDetailsApiClient({
     }
   }, [persistLeadDetailFields]);
 
-  const handleConnectionPhaseSave = useCallback(async () => {
-    await persistLeadDetailFields("Connection phase saved.");
-  }, [persistLeadDetailFields]);
+  const handleLeadContactSave = useCallback(
+    async (patch: Partial<Lead>) => {
+      if (!validLeadType) return;
+      const lt = leadTypeParam as CrmLeadType;
+      const mergedLead = { ...lead, ...patch };
+      setLead((prev) => ({ ...prev, ...patch }));
+      setSavingSecondBox(true);
+      setSecondBoxError(null);
+      try {
+        const body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        const updated = await putLeadDetail(lt, leadId, body);
+        const stickyQuote = pickPersistedQuoteLink(updated, mergedLead);
+        const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+        setBaseDetail(stickyDetail);
+        const mapped = detailJsonToLead(stickyDetail, lt);
+        setLead((prev) =>
+          preserveLeadStickyFields(prev, {
+            ...mapped,
+            id: leadId,
+            activities: prev.activities,
+            bookingType: mapped.bookingType || prev.bookingType,
+            salesManagerName: mapped.salesManagerName || prev.salesManagerName,
+            quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+          }),
+        );
+        notifySuccess("Contact details saved.");
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Save failed";
+        setSecondBoxError(message);
+        throw new Error(message);
+      } finally {
+        setSavingSecondBox(false);
+      }
+    },
+    [baseDetail, lead, leadId, leadTypeParam, notifySuccess, validLeadType],
+  );
+
+  const handleConnectionPhaseSave = useCallback(
+    async (draft?: DiscoveryPhaseSaveDraft) => {
+      const saveLead = draft ? { ...lead, ...draft } : lead;
+      if (draft) {
+        setLead((prev) => ({ ...prev, ...draft }));
+      }
+      await persistLeadDetailFields("Discovery phase saved.", saveLead);
+      if (!validLeadType) return;
+      const lt = leadTypeParam as CrmLeadType;
+      const propertyLocation = saveLead.propertyLocation ?? "";
+      try {
+        await syncPropertyLocationToRequirements(propertyLocation, lt, leadId);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Property name could not sync to Configuration Scope.";
+        notifyError(message);
+        throw new Error(message);
+      }
+    },
+    [lead, leadId, leadTypeParam, notifyError, persistLeadDetailFields, validLeadType],
+  );
 
   const handleSendQuote = useCallback(async () => {
     if (!validLeadType) return;
@@ -1801,32 +2200,18 @@ export default function LeadDetailsApiClient({
     }
     setQuoteSending(true);
     try {
-      const fd = new FormData();
-      fd.append("quoteLink", link);
-      fd.append("toEmail", lead.email.trim());
-      fd.append("subject", quoteSubject.trim() || "Quote");
-      fd.append(
-        "body",
-        quoteBody.trim() ||
-          "Dear Customer,\n\nThank you for your time. Please find your quote in the link below.\n\nIf you have any questions or would like any revisions, feel free to reply to this email.\n\nBest regards,\nHub Interior Team",
-      );
-      fd.append("leadId", String(leadId));
-      fd.append("leadType", crmLeadTypeToApiLabel(lt));
-      const res = (await postQuoteSend(fd)) as {
-        success?: boolean;
-        message?: string;
-      };
-      const ok = res && typeof res === "object" && res.success !== false;
-      const message =
-        typeof res === "object" &&
-        res !== null &&
-        typeof res.message === "string"
-          ? res.message
-          : ok
-            ? "Quote sent."
-            : "Quote send failed";
-      if (ok) notifySuccess(message);
-      else notifyError(message);
+      const payload = buildEmailRequest(lead, "Quote Sent", true);
+      if (payload) {
+        payload.quoteLink = link;
+        const res = await sendEmailNotification(payload);
+        if (res.success) {
+          notifySuccess(res.message || "Quote sent.");
+        } else {
+          notifyError(res.message || "Quote send failed");
+        }
+      } else {
+        notifyError("Failed to build email payload.");
+      }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Quote send failed");
     } finally {
@@ -2040,6 +2425,17 @@ export default function LeadDetailsApiClient({
     await refreshActivities();
   }, [lead.phone, leadId, leadTypeParam, refreshActivities, validLeadType]);
 
+  const handleWhatsAppMessage = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    const phone = lead.phone?.trim();
+    if (!phone || !openWhatsAppChat(phone)) return;
+    await postManualActivity(lt, leadId, "WHATSAPP", `Opened WhatsApp chat with ${phone}`).catch(
+      () => undefined,
+    );
+    await refreshActivities().catch(() => undefined);
+  }, [lead.phone, leadId, leadTypeParam, refreshActivities, validLeadType]);
+
   const handleDesignQaLinkCopied = useCallback(
     async (link: string) => {
       if (!validLeadType) return;
@@ -2058,6 +2454,82 @@ export default function LeadDetailsApiClient({
     () => isLeadHandedOffToSales(lead) || isLeadHandedOffToSales(verifyLeadRecord),
     [lead, verifyLeadRecord],
   );
+  const whatsappNameLockInput = useMemo(
+    () => ({
+      leadType: leadTypeParam,
+      leadId,
+      phone: lead.phone,
+      handedOffToSales: inSalesPhase,
+      viewerRoleKey,
+      nameLockedFromServer: whatsappNameLockedFromServer,
+      nameHasValue: Boolean((lead.name ?? "").trim()),
+    }),
+    [
+      inSalesPhase,
+      lead.name,
+      lead.phone,
+      leadId,
+      leadTypeParam,
+      viewerRoleKey,
+      whatsappNameLockTick,
+      whatsappNameLockedFromServer,
+    ],
+  );
+  const nameFieldLocked = useMemo(
+    () => resolveWhatsappPresalesNameLocked(whatsappNameLockInput),
+    [whatsappNameLockInput],
+  );
+  const showWhatsappPresalesNameHint = useMemo(
+    () => shouldShowWhatsappPresalesNameHint(whatsappNameLockInput),
+    [whatsappNameLockInput],
+  );
+
+  const handleWhatsappNameSave = useCallback(async () => {
+    if (!validLeadType || !showWhatsappPresalesNameHint) return;
+    const trimmed = (lead.name ?? "").trim();
+    const validation = validateWhatsappCustomerNameForSave(trimmed, lead.phone);
+    if (!validation.ok) {
+      notifyError(validation.message);
+      return;
+    }
+    const lt = leadTypeParam as CrmLeadType;
+    setWhatsappNameSaving(true);
+    try {
+      const body = applyCustomerNameToDetail(baseDetail, trimmed);
+      const updated = await putLeadDetail(lt, leadId, body);
+      const stickyQuote = pickPersistedQuoteLink(updated, lead);
+      const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
+      setBaseDetail(stickyDetail);
+      const mapped = detailJsonToLead(stickyDetail, lt);
+      markWhatsappPresalesNameUpdateBeenUsed(leadId);
+      setWhatsappNameLockedFromServer(true);
+      setWhatsappNameLockTick((t) => t + 1);
+      setLead((prev) => ({
+        ...mapped,
+        id: leadId,
+        activities: prev.activities,
+        bookingType: mapped.bookingType || lead.bookingType || prev.bookingType,
+        salesManagerName:
+          mapped.salesManagerName || lead.salesManagerName || prev.salesManagerName,
+        quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
+      }));
+      notifySuccess("Customer name saved.");
+    } catch (e) {
+      notifyError(e instanceof Error ? e.message : "Could not save name.");
+    } finally {
+      setWhatsappNameSaving(false);
+    }
+  }, [
+    baseDetail,
+    lead,
+    leadId,
+    leadTypeParam,
+    notifyError,
+    notifySuccess,
+    showWhatsappPresalesNameHint,
+    validLeadType,
+  ]);
+
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
     () =>
@@ -2196,47 +2668,70 @@ export default function LeadDetailsApiClient({
       presalesMilestoneSubStage: persistedSubStage,
     };
 
-    const leadForSave: Lead = {
-      ...lead,
+    const putFields = {
       followUpDate,
-      status: persistedSubStage || lead.status,
-      lostReason: args.lostReason?.trim()
-        ? args.lostReason.trim()
-        : lead.lostReason,
-      budget: args.budget !== undefined ? args.budget : lead.budget,
-      propertyNotes: args.propertyNotes !== undefined ? args.propertyNotes : lead.propertyNotes,
-      configuration: args.configuration !== undefined ? args.configuration : lead.configuration,
-      bookingType: args.bookingType !== undefined ? args.bookingType : lead.bookingType,
-      possessionDate: args.possessionDate !== undefined ? args.possessionDate : lead.possessionDate,
-      stageBlock: {
-        ...lead.stageBlock,
-        ...nextPresalesStage,
-      },
+      lostReason: args.lostReason,
+      budget:
+        args.budget !== undefined
+          ? resolveLeadPropertyGateField(args.budget, lead.budget)
+          : undefined,
+      propertyNotes:
+        args.propertyNotes !== undefined
+          ? resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes)
+          : undefined,
+      configuration:
+        args.configuration !== undefined
+          ? resolveLeadPropertyGateField(args.configuration, lead.configuration)
+          : undefined,
+      bookingType:
+        args.bookingType !== undefined
+          ? resolveLeadPropertyGateField(args.bookingType, lead.bookingType)
+          : undefined,
+      possessionDate: args.possessionDate,
+      clearFollowUp: noFollowUpNeeded,
     };
+    const body =
+      lt === "whatsapplead" || lt === "walkinlead"
+        ? buildMinimalPresalesMilestonePutBody(nextPresalesStage, putFields)
+        : buildPresalesCompleteTaskPutBody(baseDetail, nextPresalesStage, putFields);
 
-    const body = mergeLeadIntoDetail(
-      mergePresalesMilestoneIntoDetail(baseDetail, nextPresalesStage),
-      leadForSave,
-    );
-    if (noFollowUpNeeded) {
-      clearFollowUpDateAliases(body);
+    const putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
+
+    let detailJson = presalesMilestonePersistedInDetail(putResponse, nextPresalesStage)
+      ? putResponse
+      : await getLeadDetail(lt, leadId);
+    const hubPersisted = presalesMilestonePersistedInDetail(detailJson, nextPresalesStage);
+
+    if (!hubPersisted && usesPresalesMilestoneClientOverlay(lt)) {
+      setStoredPresalesMilestone(lt, leadId, nextPresalesStage);
+      detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
+      notifySuccess("Milestone saved");
+    } else if (!hubPersisted) {
+      throw new Error(
+        lt === "whatsapplead"
+          ? isAdminRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey)
+            ? "Milestone did not persist on Hub after save. Backend must apply presales milestone on WhatsappLead PUT for Admin/Super Admin (same as Add Lead) — confirm Hub deploy, then retry."
+            : "Milestone did not persist on Hub after save. Confirm backend deploy and retry as the presales assignee."
+          : "Milestone did not persist after save. Please retry or contact support.",
+      );
+    } else {
+      clearStoredPresalesMilestone(lt, leadId);
+      notifySuccess("Saved");
+      dispatchCrmLeadsInvalidate({
+        leadTypes: [lt],
+        reason: "presales-milestone",
+      });
     }
-    const updated = await putLeadDetail(lt, leadId, body);
-    setBaseDetail(updated);
+
+    setBaseDetail(detailJson);
+    const mapped = detailJsonToLead(detailJson, lt);
     setLead((prev) => ({
-      ...detailJsonToLead(updated, lt),
+      ...mapped,
       id: leadId,
       activities: prev.activities,
-      bookingType: leadForSave.bookingType || prev.bookingType,
-      salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
-      followUpDate: leadForSave.followUpDate,
-      lostReason: leadForSave.lostReason,
-      stageBlock: {
-        ...prev.stageBlock,
-        ...nextPresalesStage,
-      },
+      followUpDate: mapped.followUpDate || followUpDate || prev.followUpDate,
+      lostReason: mapped.lostReason || args.lostReason?.trim() || prev.lostReason,
     }));
-    notifySuccess("Saved");
     void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
     void refreshActivities();
   };
@@ -2255,6 +2750,31 @@ export default function LeadDetailsApiClient({
       if (!args.feedback.trim()) {
         throw new Error("Please select a milestone sub-stage.");
       }
+
+      const currentPhase = resolveLeadDetailUiPhase(lead);
+      const nextPhase = resolveLeadDetailUiPhase({
+        ...lead,
+        stageBlock: {
+          ...lead.stageBlock,
+          milestoneStage: args.milestoneStage.trim(),
+        },
+      });
+      const phaseRank = { discovery: 0, connection: 1, experience: 2, decision: 3 } as const;
+      const isAdvancingPhase = phaseRank[nextPhase] > phaseRank[currentPhase];
+      const effectiveMeetingDate =
+        args.meetingAppointment?.date?.trim() ||
+        lead.meetingDate?.trim() ||
+        "";
+      if (isAdvancingPhase && currentPhase === "connection" && !effectiveMeetingDate) {
+        throw new Error("Meeting date is required before moving from Connection to the next phase.");
+      }
+      const effectiveQuoteLink =
+        lead.quoteLink?.trim() ||
+        String(baseDetail.quoteLink ?? baseDetail.quoteURL ?? baseDetail.proposalLink ?? "").trim();
+      if (isAdvancingPhase && currentPhase === "experience" && !effectiveQuoteLink) {
+        throw new Error("Quote Link is required before moving from Experience to the next phase.");
+      }
+
       const discoveryGate = validateDiscoveryToConnectionTransition(lead, {
         milestoneStage: args.milestoneStage.trim(),
         milestoneStageCategory: args.milestoneStageCategory.trim(),
@@ -2296,18 +2816,29 @@ export default function LeadDetailsApiClient({
           : (args.nextCallDateLocal.trim() || lead.followUpDate);
         let meetingDate = lead.meetingDate;
         let designerName = lead.designerName;
+        let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
 
         if (args.meetingAppointment) {
           const leadIdNum = Number(leadId);
-          const appt = await createAppointment({
+          const apptBody: import("@/lib/appointment-client").CreateAppointmentBody = {
             designerName: args.meetingAppointment.designerName,
-            date: args.meetingAppointment.date,
-            slotId: args.meetingAppointment.slotId,
             meetingType: args.meetingAppointment.meetingType,
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
-          });
+          };
+          if (args.meetingAppointment.startTime && args.meetingAppointment.endTime) {
+            apptBody.startTime = args.meetingAppointment.startTime;
+            apptBody.endTime = args.meetingAppointment.endTime;
+            apptBody.date = args.meetingAppointment.date;
+          } else if (args.meetingAppointment.slotId) {
+            apptBody.date = args.meetingAppointment.date;
+            apptBody.slotId = args.meetingAppointment.slotId;
+          }
+          const appt = await createAppointment(apptBody);
+          if (typeof appt.meetingType === "string" && appt.meetingType.trim()) {
+            meetingType = appt.meetingType.trim();
+          }
           if (typeof appt.startTime === "string" && appt.startTime.trim()) {
             followUpDate = appt.startTime;
             meetingDate = appt.startTime;
@@ -2320,6 +2851,7 @@ export default function LeadDetailsApiClient({
             followUpDate = slotDate;
           }
           designerName = args.meetingAppointment.designerName;
+          const meetingDesignerName = args.meetingAppointment.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
@@ -2330,20 +2862,56 @@ export default function LeadDetailsApiClient({
             baseDetail,
             authUser: salesClosureAuthUser,
             leadType: lt,
-            propertyNotes: args.propertyNotes ?? lead.propertyNotes,
-            configuration: args.configuration ?? lead.configuration,
+            propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
+            configuration: resolveLeadPropertyGateField(args.configuration, lead.configuration),
             schedule:
               schedule.appointmentDate ||
               schedule.appointmentSlot ||
               schedule.designerName
                 ? schedule
                 : undefined,
-          }).catch((e) => {
-            console.error(
-              "External intake API call failed after meeting schedule:",
-              e,
-            );
-          });
+          })
+            .then(() => {
+              const numericLeadId = Number(
+                baseDetail.id ?? baseDetail.leadId ?? lead.id,
+              );
+              const externalLeadId =
+                typeof lead.leadId === "string" && lead.leadId.trim()
+                  ? lead.leadId.trim()
+                  : String(baseDetail.leadId ?? baseDetail.externalLeadId ?? "").trim();
+              if (Number.isFinite(numericLeadId) && externalLeadId) {
+                void postDesignModuleCrmLeadUpsert({
+                  leadType: lt,
+                  leadId: numericLeadId,
+                  leadIdentifier: externalLeadId,
+                  projectName:
+                    lead.name?.trim() ||
+                    String(baseDetail.fullName ?? baseDetail.customerName ?? "").trim(),
+                  contactNo: String(
+                    baseDetail.phone ??
+                      baseDetail.phoneNumber ??
+                      baseDetail.mobile ??
+                      "",
+                  ).trim(),
+                  clientEmail: String(
+                    baseDetail.email ?? baseDetail.emailAddress ?? "",
+                  ).trim(),
+                  designerName: meetingDesignerName,
+                  schedule,
+                }).catch((e) => {
+                  console.error(
+                    "Design Module CRM lead upsert failed after meeting schedule:",
+                    e,
+                  );
+                });
+              }
+            })
+            .catch((e) => {
+              console.error(
+                "External intake API call failed after meeting schedule:",
+                e,
+              );
+            });
         }
 
         if (
@@ -2381,14 +2949,14 @@ export default function LeadDetailsApiClient({
           meetingDate,
           followUpDate,
           designerName,
-          meetingType: args.meetingAppointment?.meetingType ?? lead.meetingType,
+          meetingType: meetingType ?? lead.meetingType,
           status: persistedSubstage,
           stageBlock: nextStage,
-          budget: args.budget ?? lead.budget,
-          propertyNotes: args.propertyNotes ?? lead.propertyNotes,
-          configuration: args.configuration ?? lead.configuration,
-          bookingType: args.bookingType ?? lead.bookingType,
-          possessionDate: args.possessionDate ?? lead.possessionDate,
+          budget: resolveLeadPropertyGateField(args.budget, lead.budget),
+          propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
+          configuration: resolveLeadPropertyGateField(args.configuration, lead.configuration),
+          bookingType: resolveLeadPropertyGateField(args.bookingType, lead.bookingType),
+          possessionDate: args.possessionDate?.trim() || lead.possessionDate,
           lostReason: args.lostReason?.trim()
             ? args.lostReason.trim()
             : lead.lostReason,
@@ -2415,15 +2983,41 @@ export default function LeadDetailsApiClient({
         const stickyQuote = pickPersistedQuoteLink(updated, leadForSave);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
-        setLead((prev) => ({
-          ...detailJsonToLead(stickyDetail, lt),
-          id: leadId,
-          activities: prev.activities,
-          bookingType: leadForSave.bookingType || prev.bookingType,
-          salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
-          stageBlock: nextStage,
-          quoteLink: stickyQuote || prev.quoteLink || "",
-        }));
+        let mapped = detailJsonToLead(stickyDetail, lt);
+        setLead((prev) =>
+          preserveLeadStickyFields(prev, {
+            ...mapped,
+            id: leadId,
+            activities: prev.activities,
+            budget: leadForSave.budget || mapped.budget || prev.budget,
+            propertyNotes: leadForSave.propertyNotes || mapped.propertyNotes || prev.propertyNotes,
+            configuration: leadForSave.configuration || mapped.configuration || prev.configuration,
+            propertyLocation:
+              leadForSave.propertyLocation || mapped.propertyLocation || prev.propertyLocation,
+            language: leadForSave.language || mapped.language || prev.language,
+            bookingType: leadForSave.bookingType || mapped.bookingType || prev.bookingType,
+            salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
+            meetingType: leadForSave.meetingType || prev.meetingType,
+            stageBlock: nextStage,
+            quoteLink: stickyQuote || prev.quoteLink || "",
+          }),
+        );
+        void hydratePropertyLocationFromRequirements(mapped, lt, leadId)
+          .then((hydrated) => {
+            if (!hydrated.propertyLocation?.trim()) return;
+            setLead((prev) =>
+              prev.propertyLocation?.trim()
+                ? prev
+                : preserveLeadStickyFields(prev, { ...prev, propertyLocation: hydrated.propertyLocation }),
+            );
+          })
+          .catch(() => undefined);
+        const propertyLocation = leadForSave.propertyLocation?.trim();
+        if (propertyLocation) {
+          void syncPropertyLocationToRequirements(propertyLocation, lt, leadId).catch((syncErr) => {
+            console.warn("[lead:property-location] scope sync failed after complete task", syncErr);
+          });
+        }
         notifySuccess("Saved");
         maybeOpenSalesClosureAfterWon([
           args.feedback,
@@ -2439,9 +3033,15 @@ export default function LeadDetailsApiClient({
           updated.milestoneStage,
           updated.milestoneSubStage,
         ]);
-        void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => {
-          /* keep save fast even if note activity fails */
-        });
+        const trimmedNote = args.note.trim();
+        if (trimmedNote) {
+          try {
+            await postManualActivity(lt, leadId, "NOTE", trimmedNote);
+          } catch {
+            /* keep save success even if note activity fails */
+          }
+        }
+        await refreshActivities();
 
         const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
         if (emailPayload) {
@@ -2451,7 +3051,6 @@ export default function LeadDetailsApiClient({
             }
           });
         }
-        void refreshActivities();
       } catch (e) {
         throw new Error(mapMilestoneValidationError(e));
       }
@@ -2479,7 +3078,7 @@ export default function LeadDetailsApiClient({
     });
   };
 
-  const handleMarkAsWon = useCallback(async () => {
+  const handleMarkAsWon = useCallback(() => {
     const validationError = validateClosedLeadQuickAction({
       role: viewerRoleKey,
       lead,
@@ -2490,31 +3089,9 @@ export default function LeadDetailsApiClient({
     }
     if (!validLeadType) return;
 
-    try {
-      const prevStage =
-        baseDetail.stage && typeof baseDetail.stage === "object" && !Array.isArray(baseDetail.stage)
-          ? (baseDetail.stage as Record<string, unknown>)
-          : {};
-      await putLeadDetail(leadType, leadId, {
-        ...baseDetail,
-        stage: {
-          ...prevStage,
-          milestoneStage: "Closed",
-          milestoneStageCategory: "Closed Won",
-          milestoneSubStage: "Booking Done (Booking)",
-        },
-      });
-    } catch (error) {
-      notifyError(
-        error instanceof Error
-          ? error.message
-          : "Unable to update milestone before Booking Done.",
-      );
-      return;
-    }
-
-    window.location.href = `/Leads/${leadType}/${leadId}/booking-done?arrived=1`;
-  }, [baseDetail, lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
+    // Milestone updates after payment handoff — open popup on lead details (no full-page navigation).
+    setBookingDoneOpen(true);
+  }, [lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
 
   if (!validLeadType) {
     return (
@@ -2556,7 +3133,7 @@ export default function LeadDetailsApiClient({
   }
 
   if (uiVariant === "v2") {
-    const { stage, subStage } = resolveMilestoneLabels(lead, viewerRoleKey);
+    const { stage, subStage, category } = resolveMilestoneLabels(lead, viewerRoleKey);
     const { designQaLink, apiDesignQaLink } = resolveDesignQaLink(lead);
     const scheduleDisplays = resolveScheduleDisplays(lead);
     const v2Context: LeadDetailV2ContextValue = {
@@ -2592,6 +3169,7 @@ export default function LeadDetailsApiClient({
         if (presalesHandedOff && isPresalesRole(viewerRoleKey)) return;
         setCompleteTaskOpen(true);
       },
+      onPhoneCall: handlePhoneCallLog,
       onMarkAsWon: handleMarkAsWon,
       onFloorPlanUpload: handleFloorPlanUpload,
       onFloorPlanRemove: handleFloorPlanRemove,
@@ -2609,10 +3187,16 @@ export default function LeadDetailsApiClient({
       meetingDateDisplay: scheduleDisplays.meetingDateDisplay,
       followUpDateDisplay: scheduleDisplays.followUpDateDisplay,
       milestoneStageLabel: stage,
+      milestoneCategoryLabel: category,
       milestoneSubLabel: subStage,
       onLeadPatch: patchLead,
       onConnectionPhaseSave: handleConnectionPhaseSave,
       connectionPhaseSaving: savingSecondBox,
+      canEditLeadPhoneEmail: canEditLeadPhoneAndEmail(viewerRoleKey),
+      shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
+      onLeadContactSave: handleLeadContactSave,
+      leadContactSaving: savingSecondBox,
+      onWhatsAppMessage: handleWhatsAppMessage,
     };
 
     return (
@@ -2645,6 +3229,16 @@ export default function LeadDetailsApiClient({
           userRole={viewerRoleKey}
           presalesHandedOff={presalesHandedOff || inSalesPhase}
           onPhoneCall={handlePhoneCallLog}
+        />
+        <BookingDoneModal
+          open={bookingDoneOpen}
+          leadType={leadType}
+          leadId={leadId}
+          onClose={() => setBookingDoneOpen(false)}
+          onHandoffComplete={() => {
+            void load();
+            dispatchCrmLeadsInvalidate();
+          }}
         />
         {rollbackOpen ? (
           <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
@@ -2797,19 +3391,26 @@ export default function LeadDetailsApiClient({
           }}
         />
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
-        <StatsRow lead={lead} />
+        <StatsRow lead={lead} viewerRole={viewerRoleKey} />
         <Tabs active={activeTab} onChange={setActiveTab} />
 
         {activeTab === "lead" && (
           <LeadInfoTab
             lead={lead}
+            viewerRole={viewerRoleKey}
             onLeadChange={patchLead}
+            canEditEmailPhone={canEditLeadEmailPhone}
+            nameFieldLocked={nameFieldLocked}
+            showWhatsappPresalesNameHint={showWhatsappPresalesNameHint}
+            onWhatsappNameSave={handleWhatsappNameSave}
+            whatsappNameSaving={whatsappNameSaving}
             onFloorPlanUpload={handleFloorPlanUpload}
             onFloorPlanMissing={handleFloorPlanMissing}
             onFloorPlanRemove={handleFloorPlanRemove}
             floorPlanUploading={floorPlanUploading}
             floorPlanRemoving={floorPlanRemoving}
             onAdditionalInfoSave={handleSaveSecondBox}
+            onContactDetailsSave={handleSaveContactDetails}
             onLogCall={handlePhoneCallLog}
             onDesignQaLinkCopied={handleDesignQaLinkCopied}
             quoteExtras={{
@@ -2822,6 +3423,7 @@ export default function LeadDetailsApiClient({
               quotePersisting: quoteLinkPersisting,
               quoteLinkPersistError,
               onRetrySaveQuoteLink: handleRetryQuoteLinkSave,
+              quotePanelVisible: canShowGetQuote,
             }}
           />
         )}

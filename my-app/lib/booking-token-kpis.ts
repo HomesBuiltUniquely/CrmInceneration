@@ -1,5 +1,6 @@
-import type { DealRow, KpiCard } from "@/app/Components/BookingToken/types";
+import type { BookingTokenTab, DealRow, KpiCard } from "@/app/Components/BookingToken/types";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import { filterDealRowsForTab } from "@/lib/booking-token-deals-fetch";
 
 export function formatCompactInr(amount: number): string {
   if (!Number.isFinite(amount) || amount <= 0) return formatQuoteAmount(0);
@@ -16,13 +17,70 @@ export function formatCompactInr(amount: number): string {
   return formatQuoteAmount(amount);
 }
 
-/** Lead completed booking = full 10% paid (Booking tab bucket). */
+/** Lead completed booking = promoted to Booking bucket after Convert. */
 export function isBookingTenPercentComplete(row: DealRow): boolean {
-  return row.listingType === "booking" || row.remainingAmount <= 0;
+  return row.listingType === "booking";
 }
 
-export function computeBookingTokenKpis(rows: DealRow[]): KpiCard[] {
-  const active = rows.filter((row) => row.listingType !== "cancel");
+function computeCancelTabKpis(rows: DealRow[]): KpiCard[] {
+  const cancelled = rows.filter((row) => row.listingType === "cancel");
+  const cancelledValue = cancelled.reduce((sum, row) => sum + row.dealValueAmount, 0);
+  const refundedDeposits = cancelled.reduce((sum, row) => sum + row.paidAmount, 0);
+  const count = cancelled.length;
+  const countBar = count > 0 ? Math.min(100, count * 12) : 0;
+
+  return [
+    {
+      id: "total",
+      label: "Cancelled Deals",
+      value: String(count),
+      trend: count === 1 ? "in range" : "in range",
+      trendUp: false,
+      trendUrgent: count > 0,
+      barTone: "orange",
+      barWidth: countBar,
+    },
+    {
+      id: "rate",
+      label: "Cancelled Value",
+      value: formatCompactInr(cancelledValue),
+      trend: "deal value",
+      trendUp: false,
+      barTone: "orange",
+      barWidth: cancelledValue > 0 ? 40 : 0,
+    },
+    {
+      id: "pending",
+      label: "Token Stage",
+      value: String(cancelled.filter((row) => row.bookingStatus !== "confirmed").length),
+      trend: "before booking",
+      trendUp: false,
+      barTone: "orange",
+      barWidth: count > 0 ? 30 : 0,
+    },
+    {
+      id: "deposits",
+      label: "Deposits Held",
+      value: formatCompactInr(refundedDeposits),
+      trend: `${count} cancel${count === 1 ? "" : "s"}`,
+      trendUp: false,
+      barTone: "orange",
+      barWidth: refundedDeposits > 0 ? 35 : 0,
+    },
+  ];
+}
+
+export function computeBookingTokenKpis(
+  rows: DealRow[],
+  tab: BookingTokenTab = "all",
+): KpiCard[] {
+  const scoped = filterDealRowsForTab(rows, tab);
+
+  if (tab === "cancel") {
+    return computeCancelTabKpis(scoped);
+  }
+
+  const active = scoped.filter((row) => row.listingType !== "cancel");
   const bookingDone = active.filter(isBookingTenPercentComplete);
   const tokenDeals = active.filter((row) => row.listingType === "token");
 

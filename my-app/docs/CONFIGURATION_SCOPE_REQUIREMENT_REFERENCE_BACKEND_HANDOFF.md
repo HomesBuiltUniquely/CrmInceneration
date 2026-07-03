@@ -17,13 +17,13 @@ Five sections are shown in the UI sidebar:
 
 | # | Section | Backend (`view`) | Frontend |
 |---|---------|------------------|----------|
-| 1 | Basic Understanding | **Partial** — `bookingType` on lead detail PUT | Wired (`bookingType` only; rest mock) |
+| 1 | Basic Understanding | **GET/PUT** `requirements` (`projectUnderstanding`, `expectedTimeline`, `bookingType`) | **Wired** — property/family, timeline, type; WFH/Pet frontend-only |
 | 2 | **Requirement Scope** | **GET/PUT** `/configuration-scope/requirements` | **Wired** — rooms, units, add-ons, kitchen, autosave |
 | 3 | **Reference & Inspiration** | **GET/POST/PUT/DELETE** `/configuration-scope/references` | **Wired** — upload, gallery, preview modal, notes |
 | 4 | Financial Guardrails | None (uses lead `budget`) | Wired display + luxury slider from budget |
-| 5 | Internal Executive Notes | None | Mock UI + Finalize & Submit / Print PDF |
+| 5 | Internal Executive Notes | **GET/PUT** `requirements` (`designStylePreference`, `salesRiskNotes`, `designHandoffNotes`, `internalExecutiveNotes`) | **Wired** — autosave; Closure Probability frontend-only |
 
-**Pending backend fields (8 total):** see **[CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md](./CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md)** — family contact (2), basic understanding (3), internal notes (3). WFH, Pet Friendly, and Closure Probability are **frontend-only**.
+**Hub field mapping:** see **[CONFIGURATION_SCOPE_FRONTEND_INTEGRATION_GUIDE.md](./CONFIGURATION_SCOPE_FRONTEND_INTEGRATION_GUIDE.md)** and **[CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md](./CONFIGURATION_SCOPE_PENDING_FIELDS_BACKEND_HANDOFF.md)**.
 
 **Hub storage (2026):** single `configuration_scope` row per lead; catalog/rooms/add-ons/references stored as **JSON columns** (not separate child tables). API JSON shape unchanged for the frontend.
 

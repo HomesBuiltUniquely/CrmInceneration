@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
+import { V2_BTN_NAV } from "./lead-detail-v2-motion";
 
 export type DealControlSectionId =
   | "deal-overview"
-  | "deal-follow-ups"
   | "deal-blockers"
   | "deal-property"
   | "deal-activity";
@@ -13,12 +13,11 @@ export type DealControlSectionId =
 type NavItem = {
   id: DealControlSectionId;
   label: string;
-  icon: "overview" | "follow-ups" | "blockers" | "property" | "activity";
+  icon: "overview" | "blockers" | "property" | "activity";
 };
 
 const navItems: NavItem[] = [
   { id: "deal-overview", label: "Overview", icon: "overview" },
-  { id: "deal-follow-ups", label: "Follow-ups", icon: "follow-ups" },
   { id: "deal-blockers", label: "Blockers", icon: "blockers" },
   { id: "deal-property", label: "Property Details", icon: "property" },
   { id: "deal-activity", label: "Activity", icon: "activity" },
@@ -34,14 +33,6 @@ function NavIcon({ type, active }: { type: NavItem["icon"]; active: boolean }) {
           <rect x="14" y="3" width="7" height="7" rx="1" />
           <rect x="3" y="14" width="7" height="7" rx="1" />
           <rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-      );
-    case "follow-ups":
-      return (
-        <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <path d="M16 2v4M8 2v4M3 10h18" />
-          <path d="m9 16 2 2 4-4" />
         </svg>
       );
     case "blockers":
@@ -179,10 +170,10 @@ export default function DealControlSidebar({
                 type="button"
                 onClick={() => scrollToSection(item.id)}
                 aria-current={isActive ? "true" : undefined}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ${
                   isActive
                     ? "bg-white text-[#111827] shadow-sm"
-                    : "text-[#6b7280] hover:bg-white/70 hover:text-[#374151]"
+                    : `text-[#6b7280] ${V2_BTN_NAV}`
                 }`}
               >
                 <NavIcon type={item.icon} active={isActive} />

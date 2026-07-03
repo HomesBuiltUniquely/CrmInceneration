@@ -15,7 +15,8 @@ export type EmailSubstage =
   | "Budget Mismatch (Major)"
   | "Project Postponed Indefinitely"
   | "Customer Cancelled Plan"
-  | "Booking Done (Booking)";
+  | "Booking Done (Booking)"
+  | "Token Done";
 
 export interface EmailMetadata {
   substage: EmailSubstage;
@@ -57,8 +58,8 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
   "Quote Sent": {
     substage: "Quote Sent",
     subject: "Meeting Done – Your Quote is Coming Soon!",
-    requiresEmail: true,
-    optionalFields: ["quotedAmount"],
+    requiresEmail: false,
+    optionalFields: ["quotedAmount", "quoteLink"],
   },
   "Customer Dropped After Proposal": {
     substage: "Customer Dropped After Proposal",
@@ -90,6 +91,12 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
     requiresEmail: true,
     optionalFields: [],
   },
+  "Token Done": {
+    substage: "Token Done",
+    subject: "Congratulations! Your Booking is Confirmed",
+    requiresEmail: true,
+    optionalFields: [],
+  },
 };
 
 /** Pipeline / UI labels → canonical email substage keys. */
@@ -97,6 +104,9 @@ const EMAIL_SUBSTAGE_ALIASES: Record<string, EmailSubstage> = {
   "meeting successful": "Quote Sent",
   "meeting cancelled": "Meeting Cancelled/Paused",
   "meeting cancelled/paused": "Meeting Cancelled/Paused",
+  "budget mismatch": "Budget Mismatch (Major)",
+  "booking done": "Booking Done (Booking)",
+  "token done": "Token Done",
 };
 
 /**
@@ -136,7 +146,8 @@ export function getEmailMetadata(substage: string): EmailMetadata | null {
  * Trims the substage string for safety
  */
 export function shouldSendEmail(substage: string): boolean {
-  return resolveEmailSubstage(substage) !== null;
+  const metadata = getEmailMetadata(substage);
+  return metadata !== null && metadata.requiresEmail === true;
 }
 
 /**

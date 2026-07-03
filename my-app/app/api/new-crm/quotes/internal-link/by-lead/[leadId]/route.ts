@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 const EXTERNAL_API_BASE = (
-  process.env.NEXT_PUBLIC_API?.trim() || "https://api.hubinterior.com"
+  process.env.DESIGN_MODULE_URL?.trim() || "https://api.hubinterior.com"
 ).replace(/\/+$/, "");
 
 function buildProxyHeaders(req: NextRequest): HeadersInit {
