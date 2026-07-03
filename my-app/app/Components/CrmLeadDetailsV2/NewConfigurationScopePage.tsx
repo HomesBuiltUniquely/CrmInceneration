@@ -18,7 +18,6 @@ import {
   fetchReferenceContentBlob,
   getConfigurationScopeReferences,
   getConfigurationScopeRequirements,
-  joinProjectUnderstanding,
   mergeRequirementDefaults,
   miscAddOnOptions,
   putConfigurationScopeAestheticNotes,
@@ -36,7 +35,7 @@ import {
   type ConfigurationScopeRequirements,
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
-import { seedProjectUnderstandingFromLead } from "@/lib/lead-discovery-field-sync";
+import { seedPropertyNameFromLead } from "@/lib/lead-discovery-field-sync";
 import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
@@ -293,7 +292,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
 
         const { requirements: mergedReq, needsPersist: defaultsNeedPersist } =
           mergeRequirementDefaults(reqData);
-        const seeded = seedProjectUnderstandingFromLead(
+        const seeded = seedPropertyNameFromLead(
           mergedReq,
           leadSnapshot.propertyLocation,
         );
@@ -595,8 +594,12 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   ]);
 
   const basicUnderstandingFields = useMemo(
-    () => splitProjectUnderstanding(requirements?.projectUnderstanding),
-    [requirements?.projectUnderstanding],
+    () => ({
+      propertyNameSite: requirements?.propertyName?.trim() ?? "",
+      familySizeDetails: splitProjectUnderstanding(requirements?.projectUnderstanding)
+        .familySizeDetails,
+    }),
+    [requirements?.propertyName, requirements?.projectUnderstanding],
   );
 
   const scopeFieldsDisabled = requirementsLoading || requirementsSaving;
@@ -863,19 +866,13 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               onPropertyNameSiteChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,
-                  projectUnderstanding: joinProjectUnderstanding(
-                    value,
-                    splitProjectUnderstanding(prev.projectUnderstanding).familySizeDetails,
-                  ),
+                  propertyName: value.trim() || null,
                 }));
               }}
               onFamilySizeDetailsChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,
-                  projectUnderstanding: joinProjectUnderstanding(
-                    splitProjectUnderstanding(prev.projectUnderstanding).propertyNameSite,
-                    value,
-                  ),
+                  projectUnderstanding: value.trim() || null,
                 }));
               }}
               onBookingTypeChange={handleBookingTypeChange}

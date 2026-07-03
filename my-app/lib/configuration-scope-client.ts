@@ -30,6 +30,7 @@ export type ConfigurationScopeRequirements = {
   familyContactName: string | null;
   familyContactRelationship: string | null;
   familyContactPhone: string | null;
+  propertyName: string | null;
   bookingType: string | null;
   projectUnderstanding: string | null;
   designStylePreference: string | null;
@@ -172,6 +173,7 @@ export function createDefaultRequirements(): ConfigurationScopeRequirements {
     familyContactName: null,
     familyContactRelationship: null,
     familyContactPhone: null,
+    propertyName: null,
     bookingType: null,
     projectUnderstanding: null,
     designStylePreference: null,
@@ -342,6 +344,7 @@ export function toPutRequirementsBody(
     familyContactName: req.familyContactName,
     familyContactRelationship: req.familyContactRelationship,
     familyContactPhone: req.familyContactPhone,
+    propertyName: req.propertyName,
     bookingType: req.bookingType,
     projectUnderstanding: req.projectUnderstanding,
     designStylePreference: req.designStylePreference,
@@ -362,6 +365,7 @@ export type PutConfigurationScopeRequirementsBody = {
   familyContactName: string | null;
   familyContactRelationship: string | null;
   familyContactPhone: string | null;
+  propertyName: string | null;
   bookingType: string | null;
   projectUnderstanding: string | null;
   designStylePreference: string | null;
@@ -500,6 +504,7 @@ function normalizeRequirements(
       readNullableString(data, "familyContactRole", "family_contact_role") ??
       readNullableString(data, "relationship", "relation"),
     familyContactPhone: readNullableString(data, "familyContactPhone", "family_contact_phone"),
+    propertyName: readNullableString(data, "propertyName", "property_name"),
     bookingType: readNullableString(data, "bookingType", "booking_type"),
     projectUnderstanding: readNullableString(
       data,
