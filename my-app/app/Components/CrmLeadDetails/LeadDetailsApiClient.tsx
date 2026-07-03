@@ -33,15 +33,11 @@ import {
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import {
-  hydratePropertyLocationFromRequirements,
+  hydratePropertyNameFromConfigurationScope,
   preserveLeadStickyFields,
-  syncPropertyLocationToRequirements,
+  syncPropertyNameToConfigurationScope,
   type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
-import {
-  mergeLeadWithDiscoveryPrefs,
-  persistDiscoveryPrefsFromLead,
-} from "@/lib/lead-discovery-frontend-prefs";
 import {
   canEditLeadPhoneAndEmail,
   shouldMaskLeadPhoneForRole,
@@ -940,8 +936,7 @@ export default function LeadDetailsApiClient({
       }
       setBaseDetail(detailJson);
       let mapped = detailJsonToLead(detailJson, lt);
-      mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
-      mapped = mergeLeadWithDiscoveryPrefs(mapped, lt, leadId);
+      mapped = await hydratePropertyNameFromConfigurationScope(mapped, lt, leadId, detailJson);
       void tryPersistAutoFollowUpDateForLead(
         { ...detailJson, id: leadId, leadType: lt } as ApiLead,
         lt,
@@ -951,12 +946,12 @@ export default function LeadDetailsApiClient({
           const refreshed = await getLeadDetail(lt, leadId);
           setBaseDetail(refreshed);
           let refreshedLead = detailJsonToLead(refreshed, lt);
-          refreshedLead = await hydratePropertyLocationFromRequirements(
+          refreshedLead = await hydratePropertyNameFromConfigurationScope(
             refreshedLead,
             lt,
             leadId,
+            refreshed,
           );
-          refreshedLead = mergeLeadWithDiscoveryPrefs(refreshedLead, lt, leadId);
           setLead((prev) =>
             preserveLeadStickyFields(prev, {
               ...refreshedLead,
@@ -2066,8 +2061,7 @@ export default function LeadDetailsApiClient({
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
         let mapped = detailJsonToLead(stickyDetail, lt);
-        mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
-        mapped = mergeLeadWithDiscoveryPrefs(mapped, lt, leadId);
+        mapped = await hydratePropertyNameFromConfigurationScope(mapped, lt, leadId, stickyDetail);
         setLead((prev) => {
           const mergedLead = preserveLeadStickyFields(prev, {
             ...mapped,
@@ -2086,20 +2080,13 @@ export default function LeadDetailsApiClient({
             meetingType: mapped.meetingType || leadToSave.meetingType || prev.meetingType,
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
           });
-          persistDiscoveryPrefsFromLead(
-            {
-              ...mergedLead,
-              budget: leadToSave.budget || mergedLead.budget,
-              propertyNotes: leadToSave.propertyNotes || mergedLead.propertyNotes,
-              configuration: leadToSave.configuration || mergedLead.configuration,
-              bookingType: leadToSave.bookingType || mergedLead.bookingType,
-              designerName: leadToSave.designerName || mergedLead.designerName,
-            },
-            lt,
-            leadId,
-          );
           return mergedLead;
         });
+        void syncPropertyNameToConfigurationScope(
+          leadToSave.propertyLocation ?? mapped.propertyLocation ?? "",
+          lt,
+          leadId,
+        ).catch(() => undefined);
         notifySuccess(successMessage);
         maybeOpenSalesClosureAfterWon([
           leadToSave.status,
@@ -2187,7 +2174,7 @@ export default function LeadDetailsApiClient({
       const lt = leadTypeParam as CrmLeadType;
       const propertyLocation = saveLead.propertyLocation ?? "";
       try {
-        await syncPropertyLocationToRequirements(propertyLocation, lt, leadId);
+        await syncPropertyNameToConfigurationScope(propertyLocation, lt, leadId);
       } catch (e) {
         const message =
           e instanceof Error ? e.message : "Property name could not sync to Configuration Scope.";
@@ -2733,8 +2720,8 @@ export default function LeadDetailsApiClient({
     };
     const body =
       lt === "whatsapplead" || lt === "walkinlead"
-        ? buildMinimalPresalesMilestonePutBody(nextPresalesStage, putFields)
-        : buildPresalesCompleteTaskPutBody(baseDetail, nextPresalesStage, putFields);
+        ? buildMinimalPresalesMilestonePutBody(lt, nextPresalesStage, putFields)
+        : buildPresalesCompleteTaskPutBody(baseDetail, lt, nextPresalesStage, putFields);
 
     const putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
 
@@ -3025,7 +3012,12 @@ export default function LeadDetailsApiClient({
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
         let mapped = detailJsonToLead(stickyDetail, lt);
-        mapped = mergeLeadWithDiscoveryPrefs(mapped, lt, leadId);
+        mapped = await hydratePropertyNameFromConfigurationScope(
+          mapped,
+          lt,
+          leadId,
+          stickyDetail,
+        );
         setLead((prev) => {
           const mergedLead = preserveLeadStickyFields(prev, {
             ...mapped,
@@ -3044,7 +3036,6 @@ export default function LeadDetailsApiClient({
             stageBlock: nextStage,
             quoteLink: stickyQuote || prev.quoteLink || "",
           });
-          persistDiscoveryPrefsFromLead(mergedLead, lt, leadId);
           return mergedLead;
         });
         void resolveAppointmentContextForLead(leadId, {
@@ -3062,20 +3053,10 @@ export default function LeadDetailsApiClient({
             });
           });
         });
-        void hydratePropertyLocationFromRequirements(mapped, lt, leadId)
-          .then((hydrated) => {
-            if (!hydrated.propertyLocation?.trim()) return;
-            setLead((prev) =>
-              prev.propertyLocation?.trim()
-                ? prev
-                : preserveLeadStickyFields(prev, { ...prev, propertyLocation: hydrated.propertyLocation }),
-            );
-          })
-          .catch(() => undefined);
         const propertyLocation = leadForSave.propertyLocation?.trim();
         if (propertyLocation) {
-          void syncPropertyLocationToRequirements(propertyLocation, lt, leadId).catch((syncErr) => {
-            console.warn("[lead:property-location] scope sync failed after complete task", syncErr);
+          void syncPropertyNameToConfigurationScope(propertyLocation, lt, leadId).catch((syncErr) => {
+            console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
         notifySuccess("Saved");
