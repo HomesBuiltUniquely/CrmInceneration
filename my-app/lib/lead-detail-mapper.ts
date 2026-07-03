@@ -15,6 +15,13 @@ import { normalizeFloorPlanS3Key, pickFloorPlanPublicLink } from "@/lib/floor-pl
 import {
   clearFollowUpDateAliases,
 } from "@/lib/lead-schedule-payload";
+import {
+  applyConfigurationToDetailPayload,
+  applyPropertyNotesToDetailPayload,
+  applyWalkinLeadFieldsToDetailPayload,
+  configurationDbColumnForLeadType,
+  readPropertyNotesFromRawPropertyDetails,
+} from "@/lib/lead-field-persistence";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -266,102 +273,116 @@ function asPropertyDetailsObject(
   return null;
 }
 
+/** Root `propertyDetails` and ads `dynamicFields.propertyDetails` (object or JSON string). */
+function collectPropertyDetailsBags(detail: Record<string, unknown>): Record<string, unknown>[] {
+  const bags: Record<string, unknown>[] = [];
+  const add = (pd: unknown) => {
+    if (pd && typeof pd === "object" && !Array.isArray(pd)) {
+      bags.push(pd as Record<string, unknown>);
+      return;
+    }
+    if (typeof pd === "string" && pd.trim()) {
+      const parsed = asJsonObjectString(pd.trim());
+      if (parsed) bags.push(parsed);
+    }
+  };
+
+  add(detail.propertyDetails ?? detail.PropertyDetails);
+  const df = detail.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const dfo = df as Record<string, unknown>;
+    add(dfo.propertyDetails ?? dfo.PropertyDetails);
+  }
+  return bags;
+}
+
+export function isUiPlaceholderToken(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "—" || trimmed === "-" || trimmed === "–";
+}
+
+function pickMeetingTypeFromDetail(detail: Record<string, unknown>): string {
+  return pickStr(detail, "meetingType", "meeting_type", "meeting") || "";
+}
+
+function resolveDesignerNameForSave(
+  leadDesignerName: string,
+  base: Record<string, unknown>,
+): string {
+  const fromLead = leadDesignerName.trim();
+  if (fromLead && !isUiPlaceholderToken(fromLead)) return fromLead;
+  const fromBase = pickDesignerDisplay(base);
+  if (fromBase) return fromBase;
+  return fromLead;
+}
+
 export function pickConfigurationFromDetail(
   detail: Record<string, unknown>,
   leadType: CrmLeadType,
 ): string {
-  /** Add Lead API stores configuration in `propertyType` (not `interior_setup`). */
-  if (leadType === "addlead") {
-    const fromRoot = pickStr(detail, "propertyType", "property_type");
-    if (fromRoot) return fromRoot;
-    const fromBag = asPropertyDetailsObject(detail);
-    if (fromBag) {
-      const fromNested = pickStr(fromBag, "propertyType", "property_type");
-      if (fromNested) return fromNested;
-    }
-  }
-
-  const flat = pickStr(
-    detail,
-    "interior_setup",
-    "interiorSetup",
-    "configuration",
-    "propertyConfiguration",
-    "property_configuration",
-    "bhk",
-    "propertyType",
-    "unitType",
-  );
-  if (flat) return flat;
-
-  const fromBag = asPropertyDetailsObject(detail);
-  if (fromBag) {
-    const nested = pickStr(
-      fromBag,
-      "interior_setup",
-      "interiorSetup",
-      "configuration",
-      "propertyConfiguration",
-      "property_configuration",
-      "bhk",
-      "propertyType",
-      "unitType",
+  const isBudgetLikeConfiguration = (value: string): boolean => {
+    const v = value.trim().toLowerCase();
+    if (!v) return false;
+    return (
+      v.includes("lakh") ||
+      v.includes("lakhs") ||
+      v.includes("crore") ||
+      v.includes("cr") ||
+      v.includes("onwards") ||
+      v.includes("essential interiors") ||
+      v.includes("standard interiors") ||
+      /₹/.test(v) ||
+      /\d+\s*-\s*\d+/.test(v)
     );
-    if (nested) return nested;
-  }
+  };
 
-  const df = detail.dynamicFields;
-  if (df && typeof df === "object" && !Array.isArray(df)) {
-    const dfo = df as Record<string, unknown>;
-    const pdInDf = dfo.propertyDetails ?? dfo.PropertyDetails;
-    const pdInDfObject =
-      pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)
-        ? (pdInDf as Record<string, unknown>)
-        : typeof pdInDf === "string"
-          ? asJsonObjectString(pdInDf)
-          : null;
-    if (pdInDfObject) {
-      const inner = pickStr(
-        pdInDfObject,
-        "interior_setup",
-        "interiorSetup",
-        "configuration",
-        "propertyConfiguration",
-        "property_configuration",
-        "propertyType",
-      );
-      if (inner) return inner;
+  const firstValidConfiguration = (...values: string[]): string => {
+    for (const value of values) {
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      if (isBudgetLikeConfiguration(trimmed)) continue;
+      return trimmed;
     }
-    const directDf = pickStr(
-      dfo,
-      "interior_setup",
-      "interiorSetup",
-      "configuration",
-      "propertyConfiguration",
-      "property_configuration",
-    );
-    if (directDf) return directDf;
-  }
+    return "";
+  };
 
-  /** `propertyDetails` stored as JSON string (common for Mlead after merged saves). */
+  /** Lead-type primary column for configuration (BHK). */
+  const configCol = configurationDbColumnForLeadType(leadType);
+  let fromColumn = "";
+  switch (configCol) {
+    case "interior_setup":
+      fromColumn = pickStr(detail, "interiorSetup", "interior_setup");
+      break;
+    case "booking_type":
+      fromColumn = pickStr(detail, "bookingType", "booking_type");
+      break;
+    case "property_type":
+      fromColumn = pickStr(detail, "propertyType", "property_type");
+      break;
+  }
+  const columnValue = firstValidConfiguration(fromColumn);
+  if (columnValue) return columnValue;
+
+  const flatAlias = firstValidConfiguration(pickStr(detail, "configuration"));
+  if (flatAlias) return flatAlias;
+
+  /** Legacy JSON in property_details (one-time migration read). */
   const pdStr = detail.propertyDetails;
   if (typeof pdStr === "string" && pdStr.trim().startsWith("{")) {
     try {
       const parsed = JSON.parse(pdStr) as Record<string, unknown>;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const fromJson = pickStr(
-          parsed,
-          "interior_setup",
-          "interiorSetup",
-          "configuration",
-          "propertyConfiguration",
-          "property_configuration",
-          "bhk",
-          "propertyType",
-          "unitType",
-          "property_type",
+        const fromLegacy = firstValidConfiguration(
+          pickStr(
+            parsed,
+            "configuration",
+            "interiorSetup",
+            "interior_setup",
+            "propertyType",
+            "property_type",
+          ),
         );
-        if (fromJson) return fromJson;
+        if (fromLegacy) return fromLegacy;
       }
     } catch {
       /* ignore */
@@ -418,122 +439,56 @@ function isConfigurationLikePropertyDetails(
   return cfgCandidates.includes(candidate);
 }
 
-/** Property notes: never treat config/interior values as notes. */
-export function pickPropertyNotesFromDetail(
-  detail: Record<string, unknown>,
-  leadType: CrmLeadType,
-): string {
+/** Property name / site from lead detail or nested `propertyDetails` JSON. */
+export function pickPropertyLocationFromDetail(detail: Record<string, unknown>): string {
   const direct = pickStr(
     detail,
-    "propertyNotes",
-    "property_detail",
-    "notes",
+    "propertyLocation",
+    "location",
+    "address",
+    "propertyAddress",
+    "propertyName",
+    "property_name",
   );
   if (direct) return direct;
 
-  const pd = detail.propertyDetails;
-  if (typeof pd === "string" && pd.trim()) {
-    const raw = pd.trim();
-    // Some APIs send `propertyDetails` as a JSON string object
-    // like {"propertyNotes":"...","interiorSetup":"..."}.
-    // In that case, read only note-like keys instead of showing the full JSON blob.
-    if (raw.startsWith("{") && raw.endsWith("}")) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        const extracted = pickStr(
-          parsed,
-          "propertyNotes",
-          "property_detail",
-          "notes",
-          "description",
-          "details",
-        );
-        if (!extracted) return "";
-        return isConfigurationLikePropertyDetails(extracted, detail)
-          ? ""
-          : extracted;
-      } catch {
-        return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
-      }
-    }
-    // For non-JSON strings, accept the raw string as notes
-    // (excluding cases where it exactly matches the configuration field).
-    return isConfigurationLikePropertyDetails(raw, detail) ? "" : raw;
-  }
-  if (pd && typeof pd === "object" && !Array.isArray(pd)) {
-    const o = pd as Record<string, unknown>;
-    const picked =
-      pickStr(
-        o,
-        "propertyNotes",
-        "property_detail",
-        "notes",
-        "description",
-        "details",
-      ) || "";
-    return isConfigurationLikePropertyDetails(picked, detail) ? "" : picked;
+  for (const bag of collectPropertyDetailsBags(detail)) {
+    const fromBag = pickStr(
+      bag,
+      "propertyNameSite",
+      "propertyName",
+      "propertyLocation",
+      "property_name",
+      "site",
+      "siteName",
+    );
+    if (fromBag) return fromBag;
   }
   return "";
 }
 
-/**
- * Merge Lead configuration + notes into backend `propertyDetails` (object) for non–Add Lead entities.
- * Add Lead (`addlead`) uses `propertyDetails` as a **string** in Java; that path does not call this.
- */
-function mergePropertyDetailsBlock(
-  base: Record<string, unknown>,
-  lead: Lead,
-): Record<string, unknown> {
-  const prev = base.propertyDetails;
-  let bag: Record<string, unknown> = {};
+/** Property notes: plain `property_details` text (legacy JSON migration read). */
+export function pickPropertyNotesFromDetail(
+  detail: Record<string, unknown>,
+  _leadType: CrmLeadType,
+): string {
+  const direct = pickStr(detail, "propertyNotes", "property_detail", "notes");
+  if (direct) return direct;
 
-  if (prev && typeof prev === "object" && !Array.isArray(prev)) {
-    bag = { ...(prev as Record<string, unknown>) };
-  } else if (typeof prev === "string" && prev.trim()) {
-    const raw = prev.trim();
-    if (raw.startsWith("{") && raw.endsWith("}")) {
-      try {
-        const parsed = JSON.parse(raw) as Record<string, unknown>;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          bag = { ...parsed };
-        }
-      } catch {
-        bag = { propertyNotes: raw, property_detail: raw };
-      }
-    } else {
-      bag = { propertyNotes: raw, property_detail: raw };
+  const pd = detail.propertyDetails ?? detail.PropertyDetails;
+  if (typeof pd === "string" && pd.trim()) {
+    return readPropertyNotesFromRawPropertyDetails(pd);
+  }
+
+  const df = detail.dynamicFields;
+  if (df && typeof df === "object" && !Array.isArray(df)) {
+    const dfo = df as Record<string, unknown>;
+    const dfPd = dfo.propertyDetails ?? dfo.PropertyDetails;
+    if (typeof dfPd === "string" && dfPd.trim()) {
+      return readPropertyNotesFromRawPropertyDetails(dfPd);
     }
   }
-
-  const cfg = lead.configuration.trim();
-  bag.interiorSetup = cfg;
-
-  const notes = lead.propertyNotes.trim();
-  bag.propertyNotes = notes;
-  bag.property_detail = notes;
-
-  return bag;
-}
-
-/** Ads / dynamic payloads sometimes keep a parallel copy under `dynamicFields`. */
-function mergeDynamicFieldsInterior(
-  next: Record<string, unknown>,
-  configuration: string,
-): void {
-  const cfg = configuration.trim();
-  const df = next.dynamicFields;
-  if (!df || typeof df !== "object" || Array.isArray(df)) return;
-  const dfo = { ...(df as Record<string, unknown>) };
-  const pdInDf = dfo.propertyDetails;
-  if (pdInDf && typeof pdInDf === "object" && !Array.isArray(pdInDf)) {
-    dfo.propertyDetails = {
-      ...(pdInDf as Record<string, unknown>),
-      interiorSetup: cfg,
-    };
-  } else {
-    dfo.interiorSetup = cfg;
-  }
-  next.dynamicFields = dfo;
+  return "";
 }
 
 export function extractStage(detail: Record<string, unknown>) {
@@ -628,7 +583,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     }),
     possessionDate:
       pickStr(detail, "possession", "possessionDate", "possession_date", "possessionTime") || "",
-    propertyLocation: pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
+    propertyLocation: pickPropertyLocationFromDetail(detail) || pickStr(detail, "propertyLocation", "location", "address", "propertyAddress") || "",
     budget: pickScalar(detail, "budget", "budgetRange", "estimatedBudget", "leadBudget") || "",
     language: pickStr(detail, "languagePrefered", "language", "preferredLanguage") || "English",
     salesManagerName: pickSalesManagerDisplay(detail) || undefined,
@@ -751,25 +706,21 @@ export type PresalesCompleteTaskPutFields = {
 };
 
 function applyPresalesCompleteTaskPutFields(
+  leadType: CrmLeadType,
   body: Record<string, unknown>,
   fields: PresalesCompleteTaskPutFields,
 ): void {
   if (fields.budget !== undefined) body.budget = fields.budget.trim();
-  if (fields.bookingType !== undefined) {
+  if (fields.bookingType !== undefined && configurationDbColumnForLeadType(leadType) !== "booking_type") {
     const bookingType = fields.bookingType.trim();
     body.bookingType = bookingType;
     body.booking_type = bookingType;
   }
   if (fields.configuration !== undefined) {
-    const cfg = fields.configuration.trim();
-    body.propertyType = cfg;
-    body.configuration = cfg;
-    body.interiorSetup = cfg;
+    applyConfigurationToDetailPayload(leadType, body, fields.configuration);
   }
   if (fields.propertyNotes !== undefined) {
-    const notes = fields.propertyNotes.trim();
-    body.propertyNotes = notes;
-    body.property_detail = notes;
+    applyPropertyNotesToDetailPayload(body, fields.propertyNotes);
   }
   if (fields.possessionDate !== undefined) {
     const possession = fields.possessionDate.trim();
@@ -792,6 +743,7 @@ function applyPresalesCompleteTaskPutFields(
  * See docs/WHATSAPP_PRESALES_MILESTONE_FRONTEND.md §4.
  */
 export function buildMinimalPresalesMilestonePutBody(
+  leadType: CrmLeadType,
   update: PresalesMilestoneUpdate,
   fields: PresalesCompleteTaskPutFields = {},
 ): Record<string, unknown> {
@@ -802,7 +754,7 @@ export function buildMinimalPresalesMilestonePutBody(
     presalesMilestoneCategory: update.presalesMilestoneCategory.trim(),
     presalesMilestoneSubStage: update.presalesMilestoneSubStage.trim(),
   };
-  applyPresalesCompleteTaskPutFields(body, fields);
+  applyPresalesCompleteTaskPutFields(leadType, body, fields);
   return body;
 }
 
@@ -811,11 +763,12 @@ export function buildMinimalPresalesMilestonePutBody(
  */
 export function buildPresalesCompleteTaskPutBody(
   base: Record<string, unknown>,
+  leadType: CrmLeadType,
   update: PresalesMilestoneUpdate,
   fields: PresalesCompleteTaskPutFields = {},
 ): Record<string, unknown> {
   const body = mergePresalesMilestoneIntoDetail(base, update, { omitSalesMilestones: true });
-  applyPresalesCompleteTaskPutFields(body, fields);
+  applyPresalesCompleteTaskPutFields(leadType, body, fields);
   return body;
 }
 
@@ -862,6 +815,20 @@ export function applyCustomerNameToDetail(
 export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): Record<string, unknown> {
   const mergedLt = asCrmLeadType(lead.leadType, "formlead");
   const next = { ...base };
+  const resolvedConfiguration = lead.configuration.trim() || pickConfigurationFromDetail(base, mergedLt);
+  const resolvedPropertyNotes = lead.propertyNotes.trim() || pickPropertyNotesFromDetail(base, mergedLt);
+  const resolvedPropertyLocation =
+    lead.propertyLocation.trim() || pickPropertyLocationFromDetail(base);
+  const resolvedMeetingType = lead.meetingType.trim() || pickMeetingTypeFromDetail(base);
+  const resolvedDesignerName = resolveDesignerNameForSave(lead.designerName, base);
+  const leadForMerge: Lead = {
+    ...lead,
+    configuration: resolvedConfiguration,
+    propertyNotes: resolvedPropertyNotes,
+    propertyLocation: resolvedPropertyLocation,
+    meetingType: resolvedMeetingType,
+    designerName: resolvedDesignerName,
+  };
   next.name = lead.name;
   next.customerName = lead.name;
   next.fullName = lead.name;
@@ -879,7 +846,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyPin = lead.pincode;
   next.zip = lead.pincode;
   next.budget = lead.budget;
-  next.designerName = lead.designerName;
+  next.designerName = resolvedDesignerName;
   if (lead.designerEmail !== undefined) {
     const de = lead.designerEmail.trim();
     next.designerEmail = de;
@@ -890,8 +857,8 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   if (typeof prevDesigner === "object" && prevDesigner !== null) {
     next.designer = {
       ...(prevDesigner as Record<string, unknown>),
-      name: lead.designerName,
-      fullName: lead.designerName,
+      name: resolvedDesignerName,
+      fullName: resolvedDesignerName,
       ...(lead.designerEmail?.trim()
         ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
         : {}),
@@ -910,32 +877,30 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.ownerName = lead.assignee;
   next.leadSource = lead.leadSource;
   next.LeadSource = lead.leadSource;
-  next.bookingType = lead.bookingType;
-  next.booking_type = lead.bookingType;
+  if (configurationDbColumnForLeadType(mergedLt) !== "booking_type") {
+    next.bookingType = lead.bookingType;
+    next.booking_type = lead.bookingType;
+  }
   if (lead.additionalLeadSources !== undefined) {
     next.additionalLeadSources = lead.additionalLeadSources;
   }
-  next.propertyNotes = lead.propertyNotes;
-  next.property_detail = lead.propertyNotes;
-  if (mergedLt === "addlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
+  next.propertyNotes = resolvedPropertyNotes;
+  next.property_detail = resolvedPropertyNotes;
+  if (mergedLt === "walkinlead") {
+    applyWalkinLeadFieldsToDetailPayload(next, {
+      configuration: resolvedConfiguration,
+      propertyNotes: resolvedPropertyNotes,
+      propertyName: resolvedPropertyLocation,
+    });
   } else {
-    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+    applyPropertyNotesToDetailPayload(next, resolvedPropertyNotes);
+    applyConfigurationToDetailPayload(mergedLt, next, resolvedConfiguration);
   }
-  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
-  next.meetingType = lead.meetingType;
+  next.meetingType = resolvedMeetingType;
   next.agentName = lead.agentName;
-  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
-  next.propertyType = lead.configuration;
-  next.configuration = lead.configuration;
-  next.propertyConfiguration = lead.configuration;
-  next.property_configuration = lead.configuration;
-  next.interiorSetup = lead.configuration;
-  next.interior_setup = lead.configuration;
-  if (mergedLt === "addlead") next.property_type = lead.configuration;
   const floorPlanValue = lead.floorPlan.trim();
   const floorPlanPublic = lead.floorPlanPublicLink?.trim() ?? "";
   if (!floorPlanValue && !floorPlanPublic) {
@@ -955,7 +920,7 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.possession = lead.possessionDate;
   next.possessionDate = lead.possessionDate;
   next.possession_date = lead.possessionDate;
-  next.propertyLocation = lead.propertyLocation;
+  next.propertyLocation = resolvedPropertyLocation;
   next.language = lead.language;
   next.languagePrefered = lead.language;
   next.languagePreferred = lead.language;
@@ -1001,34 +966,45 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
 export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Lead): Record<string, unknown> {
   const boxLt = asCrmLeadType(lead.leadType, "formlead");
   const next = { ...base };
+  const resolvedConfiguration = lead.configuration.trim() || pickConfigurationFromDetail(base, boxLt);
+  const resolvedPropertyNotes = lead.propertyNotes.trim() || pickPropertyNotesFromDetail(base, boxLt);
+  const resolvedPropertyLocation =
+    lead.propertyLocation.trim() || pickPropertyLocationFromDetail(base);
+  const resolvedMeetingType = lead.meetingType.trim() || pickMeetingTypeFromDetail(base);
+  const leadForMerge: Lead = {
+    ...lead,
+    configuration: resolvedConfiguration,
+    propertyNotes: resolvedPropertyNotes,
+    propertyLocation: resolvedPropertyLocation,
+    meetingType: resolvedMeetingType,
+  };
   next.budget = lead.budget;
   next.leadSource = lead.leadSource;
   next.LeadSource = lead.leadSource;
-  next.bookingType = lead.bookingType;
-  next.booking_type = lead.bookingType;
+  if (configurationDbColumnForLeadType(boxLt) !== "booking_type") {
+    next.bookingType = lead.bookingType;
+    next.booking_type = lead.bookingType;
+  }
   if (lead.additionalLeadSources !== undefined) {
     next.additionalLeadSources = lead.additionalLeadSources;
   }
-  next.propertyNotes = lead.propertyNotes;
-  next.property_detail = lead.propertyNotes;
-  if (boxLt === "addlead") {
-    next.propertyDetails = lead.propertyNotes.trim();
+  next.propertyNotes = resolvedPropertyNotes;
+  next.property_detail = resolvedPropertyNotes;
+  if (boxLt === "walkinlead") {
+    applyWalkinLeadFieldsToDetailPayload(next, {
+      configuration: resolvedConfiguration,
+      propertyNotes: resolvedPropertyNotes,
+      propertyName: resolvedPropertyLocation,
+    });
   } else {
-    next.propertyDetails = mergePropertyDetailsBlock(base, lead);
+    applyPropertyNotesToDetailPayload(next, resolvedPropertyNotes);
+    applyConfigurationToDetailPayload(boxLt, next, resolvedConfiguration);
   }
-  mergeDynamicFieldsInterior(next, lead.configuration);
   next.followUpDate = lead.followUpDate;
   next.meetingDate = lead.meetingDate;
   next.meetingVenue = lead.meetingVenue;
-  next.meetingType = lead.meetingType;
+  next.meetingType = resolvedMeetingType;
   next.agentName = lead.agentName;
-  // UI `configuration` → root `propertyType` + Jackson `interiorSetup` (DB `interior_setup`).
-  next.propertyType = lead.configuration;
-  next.configuration = lead.configuration;
-  next.propertyConfiguration = lead.configuration;
-  next.property_configuration = lead.configuration;
-  next.interiorSetup = lead.configuration;
-  next.interior_setup = lead.configuration;
   next.language = lead.language;
   next.languagePrefered = lead.language;
   next.languagePreferred = lead.language;
@@ -1039,7 +1015,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
     next.requirements = lead.requirements;
   }
   if (boxLt === "addlead") {
-    next.property_type = lead.configuration;
+    next.property_type = resolvedConfiguration;
   }
   const floorPlanValue = lead.floorPlan.trim();
   const floorPlanPublic = lead.floorPlanPublicLink?.trim() ?? "";
@@ -1060,7 +1036,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   next.possession = lead.possessionDate;
   next.possessionDate = lead.possessionDate;
   next.possession_date = lead.possessionDate;
-  next.propertyLocation = lead.propertyLocation;
+  next.propertyLocation = resolvedPropertyLocation;
   next.propertyPincode = lead.pincode;
   next.pincode = lead.pincode;
   next.pinCode = lead.pincode;

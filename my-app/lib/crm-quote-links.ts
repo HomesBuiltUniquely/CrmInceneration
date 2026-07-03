@@ -7,6 +7,7 @@ export type LeadQuoteOption = {
   internalQuoteUrl: string;
   createdAt?: string;
   amount?: number | null;
+  configuration?: string;
   isLatest?: boolean;
 };
 

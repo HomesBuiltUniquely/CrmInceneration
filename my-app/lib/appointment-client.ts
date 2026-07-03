@@ -250,9 +250,100 @@ export type AppointmentRow = {
   designerName?: string;
 };
 
+function readAppointmentField(row: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return undefined;
+}
+
+function extractLeadIdFromDescription(description: string): number | undefined {
+  const match = description.match(/Lead ID:\s*([^\s,;]+)/i);
+  if (!match?.[1]) return undefined;
+  const parsed = Number(match[1].trim());
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeAppointmentRow(row: unknown): AppointmentRow | null {
+  if (!row || typeof row !== "object") return null;
+  const o = row as Record<string, unknown>;
+
+  let leadIdRaw = readAppointmentField(o, "leadId", "LeadId", "lead_id");
+  if (leadIdRaw == null) {
+    const description = readAppointmentField(o, "description", "Description");
+    if (typeof description === "string") {
+      leadIdRaw = extractLeadIdFromDescription(description);
+    }
+  }
+  const leadId =
+    leadIdRaw == null
+      ? undefined
+      : typeof leadIdRaw === "number"
+        ? leadIdRaw
+        : Number(String(leadIdRaw).trim());
+
+  const meetingTypeRaw = readAppointmentField(
+    o,
+    "meetingType",
+    "MeetingType",
+    "meeting_type",
+  );
+  const createdAtRaw = readAppointmentField(o, "createdAt", "CreatedAt", "created_at");
+  const startTimeRaw = readAppointmentField(o, "startTime", "StartTime", "start_time");
+  const designerNameRaw = readAppointmentField(o, "designerName", "DesignerName", "designer_name");
+
+  return {
+    id:
+      typeof o.id === "number"
+        ? o.id
+        : typeof readAppointmentField(o, "Id", "ID") === "number"
+          ? (readAppointmentField(o, "Id", "ID") as number)
+          : undefined,
+    leadId: Number.isFinite(leadId) ? leadId : undefined,
+    meetingType:
+      typeof meetingTypeRaw === "string" && meetingTypeRaw.trim()
+        ? meetingTypeRaw.trim()
+        : undefined,
+    startTime: typeof startTimeRaw === "string" ? startTimeRaw : undefined,
+    endTime:
+      typeof readAppointmentField(o, "endTime", "EndTime", "end_time") === "string"
+        ? (readAppointmentField(o, "endTime", "EndTime", "end_time") as string)
+        : undefined,
+    createdAt: typeof createdAtRaw === "string" ? createdAtRaw : undefined,
+    designerName:
+      typeof designerNameRaw === "string" && designerNameRaw.trim()
+        ? designerNameRaw.trim()
+        : undefined,
+  };
+}
+
 function parseAppointmentRows(data: unknown): AppointmentRow[] {
   if (!Array.isArray(data)) return [];
-  return data.filter((row): row is AppointmentRow => Boolean(row) && typeof row === "object");
+  return data
+    .map((row) => normalizeAppointmentRow(row))
+    .filter((row): row is AppointmentRow => row !== null);
+}
+
+function appointmentMatchesLead(row: AppointmentRow, leadId: number | string): boolean {
+  const target = String(leadId).trim();
+  if (!target || row.leadId == null) return false;
+  return String(row.leadId) === target;
+}
+
+function pickLatestAppointmentForLead(
+  rows: AppointmentRow[],
+  leadId: number | string,
+): AppointmentRow | null {
+  const matches = rows.filter((row) => appointmentMatchesLead(row, leadId));
+  if (matches.length === 0) return null;
+
+  matches.sort((a, b) => {
+    const aKey = String(a.createdAt ?? a.startTime ?? "");
+    const bKey = String(b.createdAt ?? b.startTime ?? "");
+    return bKey.localeCompare(aKey);
+  });
+
+  return matches[0] ?? null;
 }
 
 /** Existing API: GET /v1/Appointment/designer/{designerName} */
@@ -275,23 +366,24 @@ export async function fetchAppointmentsByDesigner(designerName: string): Promise
   }
 }
 
-function pickLatestAppointmentForLead(
-  rows: AppointmentRow[],
-  leadId: number | string,
-): AppointmentRow | null {
-  const numericLeadId = Number(leadId);
-  if (!Number.isFinite(numericLeadId)) return null;
-
-  const matches = rows.filter((row) => Number(row.leadId) === numericLeadId);
-  if (matches.length === 0) return null;
-
-  matches.sort((a, b) => {
-    const aKey = String(a.createdAt ?? a.startTime ?? "");
-    const bKey = String(b.createdAt ?? b.startTime ?? "");
-    return bKey.localeCompare(aKey);
-  });
-
-  return matches[0] ?? null;
+/** UI placeholders like "—" are not real designer names for appointment lookup. */
+export function normalizeDesignerNameForAppointmentLookup(name?: string): string {
+  const trimmed = name?.trim() ?? "";
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (
+    trimmed === "—" ||
+    trimmed === "-" ||
+    trimmed === "–" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none" ||
+    lower === "not assigned" ||
+    lower === "unassigned"
+  ) {
+    return "";
+  }
+  return trimmed;
 }
 
 /**
@@ -302,12 +394,35 @@ export async function resolveMeetingTypeForLead(
   leadId: number | string,
   options: { designerName?: string } = {},
 ): Promise<string | null> {
-  const designerName = options.designerName?.trim() ?? "";
-  const rows = designerName
-    ? await fetchAppointmentsByDesigner(designerName)
-    : parseAppointmentRows(await fetchMyAppointments());
+  const ctx = await resolveAppointmentContextForLead(leadId, options);
+  return ctx.meetingType;
+}
 
-  const latest = pickLatestAppointmentForLead(rows, leadId);
-  const meetingType = latest?.meetingType?.trim();
-  return meetingType || null;
+export type AppointmentContextForLead = {
+  meetingType: string | null;
+  designerName: string | null;
+};
+
+/**
+ * Resolve meeting type + designer from appointment GET APIs (no dedicated lead endpoint).
+ * Prefers designer-scoped list when designerName is known; otherwise GET /v1/Appointment.
+ */
+export async function resolveAppointmentContextForLead(
+  leadId: number | string,
+  options: { designerName?: string } = {},
+): Promise<AppointmentContextForLead> {
+  const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
+  let rows: AppointmentRow[] = [];
+  if (designerName) {
+    rows = await fetchAppointmentsByDesigner(designerName);
+  }
+  let latest = pickLatestAppointmentForLead(rows, leadId);
+  if (!latest) {
+    rows = parseAppointmentRows(await fetchMyAppointments());
+    latest = pickLatestAppointmentForLead(rows, leadId);
+  }
+  return {
+    meetingType: latest?.meetingType?.trim() || null,
+    designerName: latest?.designerName?.trim() || null,
+  };
 }

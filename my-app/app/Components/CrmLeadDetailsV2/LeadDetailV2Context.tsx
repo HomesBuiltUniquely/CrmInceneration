@@ -51,7 +51,7 @@ export type LeadDetailV2ContextValue = {
   milestoneCategoryLabel: string;
   milestoneSubLabel: string;
   onLeadPatch: (patch: Partial<Lead>) => void;
-  onConnectionPhaseSave: () => void | Promise<void>;
+  onConnectionPhaseSave: (draft?: import("@/lib/lead-discovery-field-sync").DiscoveryPhaseSaveDraft) => void | Promise<void>;
   connectionPhaseSaving: boolean;
   canEditLeadPhoneEmail: boolean;
   shouldMaskLeadPhone: boolean;

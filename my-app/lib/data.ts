@@ -156,6 +156,7 @@ export const BUDGET_OPTIONS = [
   "3 BHK Standard Interiors - 8 Lakhs+",
 ];
 export const BOOKING_TYPE_OPTIONS = ["APARTMENT", "RENOVATION", "KITCHEN"];
+export const CONFIGURATION_OPTIONS = ["2 BHK", "3 BHK", "4 BHK", "5 BHK /Villa"] as const;
 export const MEETING_TYPES = ["Site Visit", "Video Call", "Office Meeting", "Phone Call"];
 
 export const leads: Lead[] = [
