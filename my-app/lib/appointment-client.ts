@@ -394,6 +394,23 @@ export async function resolveMeetingTypeForLead(
   leadId: number | string,
   options: { designerName?: string } = {},
 ): Promise<string | null> {
+  const ctx = await resolveAppointmentContextForLead(leadId, options);
+  return ctx.meetingType;
+}
+
+export type AppointmentContextForLead = {
+  meetingType: string | null;
+  designerName: string | null;
+};
+
+/**
+ * Resolve meeting type + designer from appointment GET APIs (no dedicated lead endpoint).
+ * Prefers designer-scoped list when designerName is known; otherwise GET /v1/Appointment.
+ */
+export async function resolveAppointmentContextForLead(
+  leadId: number | string,
+  options: { designerName?: string } = {},
+): Promise<AppointmentContextForLead> {
   const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
   let rows: AppointmentRow[] = [];
   if (designerName) {
@@ -404,6 +421,8 @@ export async function resolveMeetingTypeForLead(
     rows = parseAppointmentRows(await fetchMyAppointments());
     latest = pickLatestAppointmentForLead(rows, leadId);
   }
-  const meetingType = latest?.meetingType?.trim();
-  return meetingType || null;
+  return {
+    meetingType: latest?.meetingType?.trim() || null,
+    designerName: latest?.designerName?.trim() || null,
+  };
 }

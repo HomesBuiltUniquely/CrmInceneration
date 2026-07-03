@@ -1,14 +1,13 @@
 import {
   createDefaultRequirements,
   getConfigurationScopeRequirements,
-  joinProjectUnderstanding,
   mergeRequirementDefaults,
   putConfigurationScopeRequirements,
-  splitProjectUnderstanding,
   toPutRequirementsBody,
 } from "@/lib/configuration-scope-client";
 import type { Lead } from "@/lib/data";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { pickPropertyLocationFromDetail } from "@/lib/lead-detail-mapper";
 
 const DISCOVERY_STICKY_KEYS = [
   "propertyLocation",
@@ -61,32 +60,38 @@ export function preserveLeadStickyFields(prev: Lead, next: Lead): Lead {
   return out;
 }
 
-/** Hub stores property name in configuration-scope `projectUnderstanding`, not `propertyLocation` on addlead. */
-export async function hydratePropertyLocationFromRequirements(
+/** Property name lives in configuration_scope.property_name (walk-in also has walkinlead.property_name). */
+export async function hydratePropertyNameFromConfigurationScope(
   lead: Lead,
   leadType: CrmLeadType,
   leadId: string,
+  detail?: Record<string, unknown>,
 ): Promise<Lead> {
   if (lead.propertyLocation?.trim()) return lead;
+
+  const fromDetail = detail ? pickPropertyLocationFromDetail(detail) : "";
+  if (fromDetail.trim()) {
+    return { ...lead, propertyLocation: fromDetail.trim() };
+  }
+
   try {
     const data = await getConfigurationScopeRequirements(leadType, leadId);
     const { requirements } = mergeRequirementDefaults(data);
-    const { propertyNameSite } = splitProjectUnderstanding(requirements.projectUnderstanding);
-    if (!propertyNameSite.trim()) return lead;
-    return { ...lead, propertyLocation: propertyNameSite };
+    const propertyName = requirements.propertyName?.trim() ?? "";
+    if (!propertyName) return lead;
+    return { ...lead, propertyLocation: propertyName };
   } catch {
     return lead;
   }
 }
 
-/** Discovery save → Basic Understanding property name (same value in both UIs). */
-export async function syncPropertyLocationToRequirements(
+/** Discovery / lead save → configuration_scope.property_name (walk-in dual-write on Hub). */
+export async function syncPropertyNameToConfigurationScope(
   propertyLocation: string,
   leadType: CrmLeadType,
   leadId: string,
 ): Promise<void> {
   const propertyName = propertyLocation.trim();
-  if (!propertyName) return;
 
   const write = async (isRetry: boolean): Promise<void> => {
     let data;
@@ -97,10 +102,8 @@ export async function syncPropertyLocationToRequirements(
       data = createDefaultRequirements();
     }
     const { requirements } = mergeRequirementDefaults(data);
-    const { familySizeDetails } = splitProjectUnderstanding(requirements.projectUnderstanding);
-    const nextUnderstanding = joinProjectUnderstanding(propertyName, familySizeDetails);
-    const current = (requirements.projectUnderstanding ?? "").trim();
-    const next = (nextUnderstanding ?? "").trim();
+    const current = (requirements.propertyName ?? "").trim();
+    const next = propertyName;
     if (current === next) return;
 
     try {
@@ -109,7 +112,7 @@ export async function syncPropertyLocationToRequirements(
         leadId,
         toPutRequirementsBody({
           ...requirements,
-          projectUnderstanding: nextUnderstanding,
+          propertyName: next || null,
         }),
       );
     } catch (saveErr) {
@@ -125,8 +128,8 @@ export async function syncPropertyLocationToRequirements(
   await write(false);
 }
 
-/** Seed configuration scope §1 when lead detail already has property name. */
-export function seedProjectUnderstandingFromLead(
+/** Seed configuration scope property name when lead detail already has it. */
+export function seedPropertyNameFromLead(
   requirements: import("@/lib/configuration-scope-client").ConfigurationScopeRequirements,
   propertyLocation: string | undefined,
 ): {
@@ -135,17 +138,29 @@ export function seedProjectUnderstandingFromLead(
 } {
   const propertyFromLead = propertyLocation?.trim() ?? "";
   if (!propertyFromLead) return { requirements, changed: false };
-
-  const { propertyNameSite, familySizeDetails } = splitProjectUnderstanding(
-    requirements.projectUnderstanding,
-  );
-  if (propertyNameSite.trim()) return { requirements, changed: false };
-
+  if ((requirements.propertyName ?? "").trim()) return { requirements, changed: false };
   return {
     requirements: {
       ...requirements,
-      projectUnderstanding: joinProjectUnderstanding(propertyFromLead, familySizeDetails),
+      propertyName: propertyFromLead,
     },
     changed: true,
   };
+}
+
+/** @deprecated Use hydratePropertyNameFromConfigurationScope */
+export const hydratePropertyLocationFromRequirements = hydratePropertyNameFromConfigurationScope;
+
+/** @deprecated Use syncPropertyNameToConfigurationScope */
+export const syncPropertyLocationToRequirements = syncPropertyNameToConfigurationScope;
+
+/** @deprecated Use seedPropertyNameFromLead */
+export function seedProjectUnderstandingFromLead(
+  requirements: import("@/lib/configuration-scope-client").ConfigurationScopeRequirements,
+  propertyLocation: string | undefined,
+): {
+  requirements: import("@/lib/configuration-scope-client").ConfigurationScopeRequirements;
+  changed: boolean;
+} {
+  return seedPropertyNameFromLead(requirements, propertyLocation);
 }

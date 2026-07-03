@@ -33,9 +33,9 @@ import {
 } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import {
-  hydratePropertyLocationFromRequirements,
+  hydratePropertyNameFromConfigurationScope,
   preserveLeadStickyFields,
-  syncPropertyLocationToRequirements,
+  syncPropertyNameToConfigurationScope,
   type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
 import {
@@ -59,7 +59,7 @@ import CompleteTaskModal, {
 import {
   createAppointment,
   type CreateAppointmentResponse,
-  resolveMeetingTypeForLead,
+  resolveAppointmentContextForLead,
 } from "@/lib/appointment-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
@@ -936,7 +936,7 @@ export default function LeadDetailsApiClient({
       }
       setBaseDetail(detailJson);
       let mapped = detailJsonToLead(detailJson, lt);
-      mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
+      mapped = await hydratePropertyNameFromConfigurationScope(mapped, lt, leadId, detailJson);
       void tryPersistAutoFollowUpDateForLead(
         { ...detailJson, id: leadId, leadType: lt } as ApiLead,
         lt,
@@ -946,10 +946,11 @@ export default function LeadDetailsApiClient({
           const refreshed = await getLeadDetail(lt, leadId);
           setBaseDetail(refreshed);
           let refreshedLead = detailJsonToLead(refreshed, lt);
-          refreshedLead = await hydratePropertyLocationFromRequirements(
+          refreshedLead = await hydratePropertyNameFromConfigurationScope(
             refreshedLead,
             lt,
             leadId,
+            refreshed,
           );
           setLead((prev) =>
             preserveLeadStickyFields(prev, {
@@ -979,12 +980,25 @@ export default function LeadDetailsApiClient({
           activities: prev.activities,
         }),
       );
-      void resolveMeetingTypeForLead(leadId, { designerName: mapped.designerName }).then(
-        (meetingType) => {
-          if (!meetingType?.trim()) return;
+      void resolveAppointmentContextForLead(leadId, { designerName: mapped.designerName }).then(
+        (apptCtx) => {
+          if (!apptCtx.meetingType?.trim() && !apptCtx.designerName?.trim()) return;
           setLead((prev) => {
-            if (prev.meetingType?.trim()) return prev;
-            return preserveLeadStickyFields(prev, { ...prev, meetingType });
+            const next = { ...prev };
+            let changed = false;
+            if (!prev.meetingType?.trim() && apptCtx.meetingType?.trim()) {
+              next.meetingType = apptCtx.meetingType;
+              changed = true;
+            }
+            const prevDesigner = String(prev.designerName ?? "").trim();
+            const designerMissing =
+              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
+            if (designerMissing && apptCtx.designerName?.trim()) {
+              next.designerName = apptCtx.designerName;
+              changed = true;
+            }
+            if (!changed) return prev;
+            return preserveLeadStickyFields(prev, next);
           });
         },
       );
@@ -2047,18 +2061,32 @@ export default function LeadDetailsApiClient({
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
         let mapped = detailJsonToLead(stickyDetail, lt);
-        mapped = await hydratePropertyLocationFromRequirements(mapped, lt, leadId);
-        setLead((prev) =>
-          preserveLeadStickyFields(prev, {
+        mapped = await hydratePropertyNameFromConfigurationScope(mapped, lt, leadId, stickyDetail);
+        setLead((prev) => {
+          const mergedLead = preserveLeadStickyFields(prev, {
             ...mapped,
             id: leadId,
             activities: prev.activities,
+            budget: mapped.budget || leadToSave.budget || prev.budget,
+            propertyNotes: mapped.propertyNotes || leadToSave.propertyNotes || prev.propertyNotes,
+            configuration: mapped.configuration || leadToSave.configuration || prev.configuration,
+            propertyLocation:
+              mapped.propertyLocation || leadToSave.propertyLocation || prev.propertyLocation,
+            language: mapped.language || leadToSave.language || prev.language,
             bookingType: mapped.bookingType || leadToSave.bookingType || prev.bookingType,
             salesManagerName:
               mapped.salesManagerName || leadToSave.salesManagerName || prev.salesManagerName,
+            designerName: mapped.designerName || leadToSave.designerName || prev.designerName,
+            meetingType: mapped.meetingType || leadToSave.meetingType || prev.meetingType,
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
-          }),
-        );
+          });
+          return mergedLead;
+        });
+        void syncPropertyNameToConfigurationScope(
+          leadToSave.propertyLocation ?? mapped.propertyLocation ?? "",
+          lt,
+          leadId,
+        ).catch(() => undefined);
         notifySuccess(successMessage);
         maybeOpenSalesClosureAfterWon([
           leadToSave.status,
@@ -2146,7 +2174,7 @@ export default function LeadDetailsApiClient({
       const lt = leadTypeParam as CrmLeadType;
       const propertyLocation = saveLead.propertyLocation ?? "";
       try {
-        await syncPropertyLocationToRequirements(propertyLocation, lt, leadId);
+        await syncPropertyNameToConfigurationScope(propertyLocation, lt, leadId);
       } catch (e) {
         const message =
           e instanceof Error ? e.message : "Property name could not sync to Configuration Scope.";
@@ -2692,8 +2720,8 @@ export default function LeadDetailsApiClient({
     };
     const body =
       lt === "whatsapplead" || lt === "walkinlead"
-        ? buildMinimalPresalesMilestonePutBody(nextPresalesStage, putFields)
-        : buildPresalesCompleteTaskPutBody(baseDetail, nextPresalesStage, putFields);
+        ? buildMinimalPresalesMilestonePutBody(lt, nextPresalesStage, putFields)
+        : buildPresalesCompleteTaskPutBody(baseDetail, lt, nextPresalesStage, putFields);
 
     const putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
 
@@ -2984,8 +3012,14 @@ export default function LeadDetailsApiClient({
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
         setBaseDetail(stickyDetail);
         let mapped = detailJsonToLead(stickyDetail, lt);
-        setLead((prev) =>
-          preserveLeadStickyFields(prev, {
+        mapped = await hydratePropertyNameFromConfigurationScope(
+          mapped,
+          lt,
+          leadId,
+          stickyDetail,
+        );
+        setLead((prev) => {
+          const mergedLead = preserveLeadStickyFields(prev, {
             ...mapped,
             id: leadId,
             activities: prev.activities,
@@ -2997,25 +3031,32 @@ export default function LeadDetailsApiClient({
             language: leadForSave.language || mapped.language || prev.language,
             bookingType: leadForSave.bookingType || mapped.bookingType || prev.bookingType,
             salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
-            meetingType: leadForSave.meetingType || prev.meetingType,
+            meetingType: leadForSave.meetingType || mapped.meetingType || prev.meetingType,
+            designerName: leadForSave.designerName || mapped.designerName || prev.designerName,
             stageBlock: nextStage,
             quoteLink: stickyQuote || prev.quoteLink || "",
-          }),
-        );
-        void hydratePropertyLocationFromRequirements(mapped, lt, leadId)
-          .then((hydrated) => {
-            if (!hydrated.propertyLocation?.trim()) return;
-            setLead((prev) =>
-              prev.propertyLocation?.trim()
-                ? prev
-                : preserveLeadStickyFields(prev, { ...prev, propertyLocation: hydrated.propertyLocation }),
-            );
-          })
-          .catch(() => undefined);
+          });
+          return mergedLead;
+        });
+        void resolveAppointmentContextForLead(leadId, {
+          designerName: leadForSave.designerName,
+        }).then((apptCtx) => {
+          if (!apptCtx.designerName?.trim()) return;
+          setLead((prev) => {
+            const prevDesigner = String(prev.designerName ?? "").trim();
+            const designerMissing =
+              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
+            if (!designerMissing) return prev;
+            return preserveLeadStickyFields(prev, {
+              ...prev,
+              designerName: apptCtx.designerName ?? prev.designerName,
+            });
+          });
+        });
         const propertyLocation = leadForSave.propertyLocation?.trim();
         if (propertyLocation) {
-          void syncPropertyLocationToRequirements(propertyLocation, lt, leadId).catch((syncErr) => {
-            console.warn("[lead:property-location] scope sync failed after complete task", syncErr);
+          void syncPropertyNameToConfigurationScope(propertyLocation, lt, leadId).catch((syncErr) => {
+            console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
         notifySuccess("Saved");
@@ -3170,6 +3211,7 @@ export default function LeadDetailsApiClient({
         setCompleteTaskOpen(true);
       },
       onPhoneCall: handlePhoneCallLog,
+      onWhatsAppMessage: handleWhatsAppMessage,
       onMarkAsWon: handleMarkAsWon,
       onFloorPlanUpload: handleFloorPlanUpload,
       onFloorPlanRemove: handleFloorPlanRemove,
@@ -3196,7 +3238,6 @@ export default function LeadDetailsApiClient({
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
-      onWhatsAppMessage: handleWhatsAppMessage,
     };
 
     return (
