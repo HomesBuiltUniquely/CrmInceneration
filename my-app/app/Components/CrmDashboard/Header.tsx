@@ -8,14 +8,12 @@ import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
 import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
 import CrmPipeline from "./CrmPipeline";
 import InsightsStrip from "./InsightsStrip";
-
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { sidebarSectionsForViewer, type CrmWorkspace } from "@/lib/crm-workspace";
 
 type Props = {
   role?: "sales_admin" | "sales_manager" | "super_admin";
-  /** Sales dashboard (CRM menu) vs presales dashboard (Presales menu). */
   workspace?: CrmWorkspace;
 };
 
@@ -46,9 +44,13 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
     dateTo: "",
   });
 
-  const handleSidebarSelection = useCallback(({ subItem }: { subItem: { id: string } }) => {
-    const next: "overview" | "design-module" = subItem.id === "design-module" ? "design-module" : "overview";
-    setActiveDashboardView((prev) => (prev === next ? prev : next));
+  const handleAppsItemSelect = useCallback(({ id }: { id: string }) => {
+    if (id === "design-module") {
+      setActiveDashboardView("design-module");
+      return true;
+    }
+    setActiveDashboardView("overview");
+    return false;
   }, []);
 
   const handleFiltersChange = useCallback((next: DashboardFilterState) => {
@@ -69,83 +71,65 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
   }, []);
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={sidebarSections}
-            profileName={currentRole.replace(/_/g, " ")}
-            profileRole={currentRole}
-            profileInitials="AD"
-            onSelectionChange={handleSidebarSelection}
-          />
-        </div>
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] xl:flex xl:h-16 xl:w-full xl:justify-between xl:px-4 xl:shadow-[var(--crm-shadow-sm)]">
-            <div className="xl:flex xl:items-center xl:pt-2">
-              <div>
-                <Image
-                  src="/HowsCrmLogo.png"
-                  alt="Description"
-                  width={50}
-                  height={50}
-                />
-              </div>
-              <h1 className="xl:pl-3 xl:font-bold text-[var(--crm-text-primary)]">
-                {dashboardTitle}
-                <button
-                  type="button"
-                  onClick={() => router.push(leadsHref)}
-                  className="ml-4 rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
-                >
-                  Lead Management
-                </button>
-              </h1>
+    <CrmAppShell
+      sections={sidebarSections}
+      profileName={currentRole.replace(/_/g, " ")}
+      profileRole={currentRole}
+      profileInitials="AD"
+      onAppsItemSelect={handleAppsItemSelect}
+    >
+      <div className="bg-[var(--crm-surface)]">
+        <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] xl:flex xl:h-16 xl:w-full xl:justify-between xl:px-4 xl:shadow-[var(--crm-shadow-sm)]">
+          <div className="xl:flex xl:items-center xl:pt-2">
+            <div>
+              <Image src="/HowsCrmLogo.png" alt="Description" width={50} height={50} />
             </div>
-            <div className="xl:flex xl:items-center">
-              <div className="xl:mr-4 xl:h-7.5 xl:w-25 xl:rounded-lg xl:bg-[var(--crm-surface-subtle)] xl:pl-4.5 xl:pt-1 xl:font-bold xl:text-[var(--crm-text-muted)]">
-                Q3 FY24
+            <h1 className="text-[var(--crm-text-primary)] xl:pl-3 xl:font-bold">
+              {dashboardTitle}
+              <button
+                type="button"
+                onClick={() => router.push(leadsHref)}
+                className="ml-4 rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
+              >
+                Lead Management
+              </button>
+            </h1>
+          </div>
+          <div className="xl:flex xl:items-center">
+            <div className="xl:mr-4 xl:h-7.5 xl:w-25 xl:rounded-lg xl:bg-[var(--crm-surface-subtle)] xl:pl-4.5 xl:pt-1 xl:font-bold xl:text-[var(--crm-text-muted)]">
+              Q3 FY24
+            </div>
+          </div>
+        </div>
+        {activeDashboardView === "design-module" ? (
+          <div className="bg-[var(--crm-app-bg)] p-4 md:p-6">
+            <div className="mx-auto space-y-4">
+              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
+                <h2 className="text-[1.6rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
+                  Design Module
+                </h2>
+                <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
+                  Embedded design workspace inside the dashboard, same like the old CRM tab flow.
+                </p>
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-md)]">
+                <iframe
+                  src="https://design.hubinterior.com"
+                  title="Design Module"
+                  className="h-[calc(100vh-150px)] w-full border-0 bg-[var(--crm-surface-subtle)]"
+                />
               </div>
             </div>
           </div>
-          {activeDashboardView === "design-module" ? (
-            <div className="bg-[var(--crm-app-bg)] p-4 md:p-6">
-              <div className="mx-auto space-y-4">
-                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
-                  <h2 className="text-[1.6rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                    Design Module
-                  </h2>
-                  <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
-                    Embedded design workspace inside the dashboard, same like
-                    the old CRM tab flow.
-                  </p>
-                </div>
-                <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-md)]">
-                  <iframe
-                    src="https://design.hubinterior.com"
-                    title="Design Module"
-                    className="h-[calc(100vh-150px)] w-full border-0 bg-[var(--crm-surface-subtle)]"
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <LeadFilters
-                role={role}
-                workspace={workspace}
-                onFiltersChange={handleFiltersChange}
-              />
-              <AnalyticsBar filters={dashboardFilters} workspace={workspace} />
-              <CrmPipeline filters={dashboardFilters} workspace={workspace} />
-              <InsightsStrip />
-            </div>
-          )}
-        </div>
+        ) : (
+          <div>
+            <LeadFilters role={role} workspace={workspace} onFiltersChange={handleFiltersChange} />
+            <AnalyticsBar filters={dashboardFilters} workspace={workspace} />
+            <CrmPipeline filters={dashboardFilters} workspace={workspace} />
+            <InsightsStrip />
+          </div>
+        )}
       </div>
-    </div>
+    </CrmAppShell>
   );
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import {
@@ -125,21 +125,13 @@ export default function DesignDashboardClient() {
     !needsSuperAdminPick;
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName={roleLabel}
-            profileRole={role}
-            profileInitials={roleLabel.slice(0, 2).toUpperCase()}
-          />
-        </div>
-
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+    <CrmAppShell
+      sections={dashboardSidebarSections}
+      profileName={roleLabel}
+      profileRole={role}
+      profileInitials={roleLabel.slice(0, 2).toUpperCase()}
+    >
+        <div className="bg-[var(--crm-surface)]">
           <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
             <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 px-4 md:px-6">
               <h1 className="text-[1.75rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
@@ -354,7 +346,6 @@ export default function DesignDashboardClient() {
             </div>
           </main>
         </div>
-      </div>
-    </div>
+    </CrmAppShell>
   );
 }

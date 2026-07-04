@@ -32,6 +32,7 @@ import {
   usesAdminLeadsApi,
 } from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
 type Phase = {
   phaseLabel: string;
@@ -355,19 +356,19 @@ function PhaseCard({
 
 function SummaryCard({ label, total }: { label: string; total: number }) {
   return (
-    <div className="relative flex h-[136px] w-full flex-col justify-between rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-4 py-4 sm:px-5">
+    <div className="relative flex min-h-[152px] w-full flex-col justify-between rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-5 md:min-h-[160px] md:px-6">
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
         SUMMARY
       </div>
-      <div className="flex items-end justify-between gap-3">
-        <div className="min-w-0 flex-1 text-[17px] font-bold leading-snug text-[var(--crm-text-primary)] sm:text-[18px]">
+      <div className="flex items-end justify-between gap-4">
+        <div className="min-w-0 flex-1 text-[22px] font-bold leading-tight text-[var(--crm-text-primary)] md:text-[24px]">
           {label}
         </div>
         <div className="shrink-0 text-right">
-          <div className="text-[20px] font-semibold leading-none text-[var(--crm-text-primary)]">
+          <div className="text-[28px] font-semibold leading-none text-[var(--crm-text-primary)] md:text-[30px]">
             {total.toLocaleString()}
           </div>
-          <div className="mt-1 whitespace-nowrap text-[10px] font-semibold text-[var(--crm-warning-text)]">
+          <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-[var(--crm-warning-text)]">
             total leads
           </div>
         </div>
@@ -1093,7 +1094,7 @@ export default function JourneyPhaseHeatmap({
   ]);
 
   return (
-    <section className="mx-auto mt-6 max-w-[1200px] px-6">
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-6`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -1105,14 +1106,14 @@ export default function JourneyPhaseHeatmap({
         <StatusLegend />
       </div>
 
-      <div className="mt-4 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-4 shadow-[var(--crm-shadow-sm)]">
+      <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         {loading || error ? (
-          <div className="mb-3 text-[11px] font-medium text-[var(--crm-text-muted)]">
+          <div className="border-b border-[var(--crm-border)] px-4 py-3 text-[11px] font-medium text-[var(--crm-text-muted)] md:px-5">
             {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
           </div>
         ) : null}
         {usePresalesSummaryUi ? (
-          <div>
+          <div className="p-4 md:p-5">
             <div
               className={`grid grid-cols-1 gap-4 ${showPresalesManagerTeamVerifiedCard ? "md:grid-cols-3" : "md:grid-cols-2"}`}
             >
@@ -1178,7 +1179,7 @@ export default function JourneyPhaseHeatmap({
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 items-stretch gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 items-stretch gap-4 p-4 md:grid-cols-2 md:p-5">
             <div
               className={`flex h-full flex-col rounded-2xl transition-all ${
                 leadOpen

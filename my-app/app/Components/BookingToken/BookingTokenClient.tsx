@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessBookingTokenDashboard } from "@/lib/roleUtils";
@@ -81,19 +81,14 @@ export default function BookingTokenClient() {
   }
 
   return (
-    <div className="bt-root min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <QuickAccessSidebar
-          appBadge="HO WS"
-          appName="Hows"
-          appTagline="by HUB"
-          sections={dashboardSidebarSections}
-          profileName={roleLabel}
-          profileRole={role}
-          profileInitials="SA"
-        />
-
-        <div className="min-w-0 bg-[var(--bt-bg)] xl:h-screen xl:overflow-y-auto">
+    <div className="bt-root min-h-screen bg-[var(--crm-app-bg)]">
+      <CrmAppShell
+        sections={dashboardSidebarSections}
+        profileName={roleLabel}
+        profileRole={role}
+        profileInitials="SA"
+      >
+        <div className="min-w-0 bg-[var(--bt-bg)]">
           <div className="border-b border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
             <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
               <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
@@ -173,7 +168,7 @@ export default function BookingTokenClient() {
             </div>
           </main>
         </div>
-      </div>
+      </CrmAppShell>
     </div>
   );
 }

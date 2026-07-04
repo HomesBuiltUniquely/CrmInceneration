@@ -13,6 +13,7 @@ import { PRESALES_PIPELINE_STAGE_ORDER } from "@/lib/presales-milestone";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import { LOST_SEGMENT_TILES } from "@/lib/lead-lost-segment";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 import type { LeadSourceCounts } from "@/lib/leads-filter";
 import {
   ADMIN_SOURCE_LEAD_TYPE_TILES,
@@ -707,7 +708,7 @@ export default function LeadsToolbar({
   };
 
   return (
-    <section className="mx-auto mt-4 max-w-[1200px] px-6">
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-4`}>
       <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-3 shadow-[var(--crm-shadow-sm)]">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">

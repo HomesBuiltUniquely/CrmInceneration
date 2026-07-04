@@ -8,6 +8,7 @@ import type { LeadRowModel } from "@/lib/leads-filter";
 
 import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
 import { buildLeadDetailPath, type CrmWorkspace } from "@/lib/crm-workspace";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -501,7 +502,7 @@ export default function LeadsTable({
   }, [someSelected]);
 
   return (
-    <section className="mx-auto mt-5 w-full max-w-[1400px] px-4">
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-5`}>
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-4 py-3 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
           <div>

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -120,19 +120,14 @@ export default function IncentivesClient() {
   }, [roster, selectedMember]);
 
   return (
-    <div className="inc-root xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <QuickAccessSidebar
-          appBadge="HO WS"
-          appName="Hows"
-          appTagline="by HUB"
-          sections={salesWorkspaceSidebarSections}
-          profileName={profileName}
-          profileRole={roleLabel}
-          profileInitials={profileInitials}
-        />
-
-        <div className="min-w-0 xl:h-screen xl:overflow-y-auto">
+    <div className="inc-root">
+      <CrmAppShell
+        sections={salesWorkspaceSidebarSections}
+        profileName={profileName}
+        profileRole={roleLabel}
+        profileInitials={profileInitials}
+      >
+        <div className="min-w-0">
           <div className="border-b border-[var(--inc-border)] bg-[var(--inc-surface)] shadow-sm">
             <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
               <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
@@ -252,7 +247,7 @@ export default function IncentivesClient() {
             )}
           </main>
         </div>
-      </div>
+      </CrmAppShell>
     </div>
   );
 }

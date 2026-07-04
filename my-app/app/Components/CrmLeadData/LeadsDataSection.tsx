@@ -78,6 +78,7 @@ import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-vis
 import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import {
   assigneeAliasNorms,
@@ -3875,7 +3876,7 @@ export default function LeadsDataSection({
   return (
     <>
       {insightBannerText ? (
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-2 px-6 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+        <div className={`${LEADS_PAGE_CONTAINER_CLASS} flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3`}>
           <p className="min-w-0 text-[13px] font-semibold text-[var(--crm-text-primary)]">
             {insightBannerText}
             {insightBannerFollowUpNote ? (
@@ -4045,7 +4046,7 @@ export default function LeadsDataSection({
         onDeleteAllClick={() => setDeleteModalType("all")}
       />
       {isBulkBarVisible ? (
-      <section className="mx-auto sticky top-2 z-20 mt-3 max-w-[1200px] px-6">
+      <section className={`${LEADS_PAGE_CONTAINER_CLASS} sticky top-2 z-20 mt-3`}>
         <div className="rounded-2xl border border-emerald-200 bg-[#dcefe8] px-4 py-2.5 shadow-[0_6px_18px_rgba(16,24,40,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -4100,7 +4101,7 @@ export default function LeadsDataSection({
       </section>
       ) : null}
       {error ? (
-        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-danger-text)]">
+        <div className={`${LEADS_PAGE_CONTAINER_CLASS} mt-2 text-[12px] text-[var(--crm-danger-text)]`}>
           {error}
           {process.env.NODE_ENV === "development" ? (
             <span className="mt-1 block text-[var(--crm-text-muted)]">

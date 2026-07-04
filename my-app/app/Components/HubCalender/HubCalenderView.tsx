@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -487,20 +487,13 @@ export default function HubCalendarPage(): React.ReactElement | null {
         </div>
       )}
 
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName={role.replace(/_/g, " ")}
-            profileRole={role}
-            profileInitials="AD"
-          />
-        </div>
-
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+      <CrmAppShell
+        sections={dashboardSidebarSections}
+        profileName={role.replace(/_/g, " ")}
+        profileRole={role}
+        profileInitials="AD"
+      >
+        <div className="bg-[var(--crm-app-bg)]">
           <div className="flex items-center gap-3 border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-6 py-3">
             <div className="w-9 h-9 rounded-md overflow-hidden flex flex-col items-center justify-center bg-[var(--crm-danger)] text-white flex-shrink-0">
               <span className="text-[7px] font-bold uppercase tracking-wide bg-[var(--crm-danger-text)] w-full text-center leading-tight py-px">
@@ -748,7 +741,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
             )}
           </main>
         </div>
-      </div>
+      </CrmAppShell>
     </div>
   );
 }

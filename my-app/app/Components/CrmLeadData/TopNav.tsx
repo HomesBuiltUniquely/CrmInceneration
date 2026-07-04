@@ -1,19 +1,18 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import {
-  CRM_ROLE_STORAGE_KEY,
-  dashboardPathByRole,
-  hasDashboardByRole,
-} from "@/lib/auth/api";
+import AppsLauncherMenu from "../Shared/AppsLauncherMenu";
+import CrmUserMenu from "../Shared/CrmUserMenu";
+import type { QuickAccessParentItem } from "../Shared/QuickAccessSidebar";
+import { LEADS_PAGE_HEADER_CLASS } from "./leads-page-layout";
+
+const SEARCH_BAR_WIDTH_CLASS = "w-[280px] sm:w-[340px] md:w-[400px] lg:w-[460px]";
 
 function SearchIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
-      className="h-4 w-4 text-[var(--crm-text-muted)]"
+      className="h-4 w-4 shrink-0 text-[var(--crm-text-muted)]"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
@@ -32,76 +31,68 @@ function SearchIcon() {
   );
 }
 
+type TopNavProps = {
+  search: string;
+  onSearchChange: (value: string) => void;
+  sections: QuickAccessParentItem[];
+  profileName?: string;
+  profileRole?: string;
+  profileInitials?: string;
+};
+
 export default function TopNav({
   search,
   onSearchChange,
-}: {
-  search: string;
-  onSearchChange: (value: string) => void;
-}) {
-  const router = useRouter();
-  const [role] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-  });
-
-  const handleDashboardClick = () => {
-    if (!hasDashboardByRole(role)) return;
-    router.push(dashboardPathByRole(role));
-  };
-
+  sections,
+  profileName = "User",
+  profileRole = "USER",
+  profileInitials = "U",
+}: TopNavProps) {
   return (
-    <div className="w-full border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] backdrop-blur">
-      <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-3">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--crm-sidebar-active)] shadow-[var(--crm-shadow-sm)]">
-              <Image
-                src="/HowsCrmLogo.png"
-                alt="Nexus CRM"
-                width={24}
-                height={24}
-              />
-            </div>
-            <div className="text-[15px] font-semibold text-[var(--crm-text-primary)]">
+    <header className="sticky top-0 z-30 border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)]/95 backdrop-blur-md">
+      <div className={`${LEADS_PAGE_HEADER_CLASS} py-2 md:py-2.5`}>
+        <div className="flex min-h-[44px] items-center justify-between gap-2 md:min-h-[48px] md:gap-3">
+          <div className="flex min-w-0 shrink-0 items-center gap-2 sm:gap-2.5">
+            <Image
+              src="/logo-final-02.png"
+              alt="Hows by HUB"
+              width={220}
+              height={72}
+              className="h-10 w-auto shrink-0 object-contain sm:h-11 md:h-12"
+              priority
+            />
+            <span
+              className="shrink-0 text-[18px] font-light leading-none text-[var(--crm-text-muted)]/35 md:text-[20px]"
+              aria-hidden="true"
+            >
+              |
+            </span>
+            <span className="whitespace-nowrap text-[16px] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[18px]">
               Hows CRM
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--crm-text-muted)]">
-            {hasDashboardByRole(role) ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleDashboardClick}
-                  className="rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
-                >
-                  Dashboard
-                </button>
-                <span className="px-2 text-[var(--crm-text-muted)]/50">/</span>
-              </>
-            ) : null}
-            <span className="rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]">
-              Lead Management
             </span>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex w-[340px] items-center gap-2 rounded-xl bg-[var(--crm-surface-subtle)] px-3 py-2 ring-1 ring-[var(--crm-border)]">
-            <SearchIcon />
-            <input
-              value={search}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full bg-transparent text-[12px] font-medium text-[var(--crm-text-secondary)] placeholder:text-[var(--crm-text-muted)] focus:outline-none"
-              placeholder="Search leads, tasks, owners..."
+          <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5 md:gap-2">
+            <div
+              className={`flex h-9 shrink-0 items-center gap-2 rounded-lg bg-[var(--crm-surface-subtle)] px-3 ring-1 ring-[var(--crm-border)] transition-shadow focus-within:ring-[var(--crm-accent-ring)] ${SEARCH_BAR_WIDTH_CLASS}`}
+            >
+              <SearchIcon />
+              <input
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-[var(--crm-text-secondary)] placeholder:text-[var(--crm-text-muted)] focus:outline-none md:text-[13px]"
+                placeholder="Search leads, tasks, owners..."
+              />
+            </div>
+            <AppsLauncherMenu sections={sections} profileRole={profileRole} />
+            <CrmUserMenu
+              profileName={profileName}
+              profileRole={profileRole}
+              profileInitials={profileInitials}
             />
           </div>
-          <button className="rounded-xl  bg-[var(--crm-accent)] px-4 py-2 text-[12px] font-semibold  text-white shadow-[var(--crm-shadow-sm)]  transition-colorshover:brightness-110">
-            + Add New Lead
-          </button>
         </div>
       </div>
-    </div>
+    </header>
   );
 }

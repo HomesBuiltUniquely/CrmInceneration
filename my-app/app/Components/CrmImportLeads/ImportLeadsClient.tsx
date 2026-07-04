@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import Image from "next/image";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
 import { BASE_URL } from "@/lib/base-url";
@@ -492,26 +492,18 @@ export default function ImportLeadsClient() {
 
   return (
     <div
-      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
       style={{
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName={role.replace(/_/g, " ")}
-            profileRole={role}
-            profileInitials="AD"
-          />
-        </div>
-
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+      <CrmAppShell
+        sections={dashboardSidebarSections}
+        profileName={role.replace(/_/g, " ")}
+        profileRole={role}
+        profileInitials="AD"
+      >
+        <div className="bg-[var(--crm-app-bg)]">
           <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
             <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
               <div className="flex items-center gap-3">
@@ -850,7 +842,7 @@ export default function ImportLeadsClient() {
             </div>
           </main>
         </div>
-      </div>
+      </CrmAppShell>
     </div>
   );
 }

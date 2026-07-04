@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -233,21 +233,13 @@ export default function AppointmentManagementClient() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName={roleLabel}
-            profileRole={role}
-            profileInitials={roleLabel.slice(0, 2).toUpperCase()}
-          />
-        </div>
-
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+    <CrmAppShell
+      sections={dashboardSidebarSections}
+      profileName={roleLabel}
+      profileRole={role}
+      profileInitials={roleLabel.slice(0, 2).toUpperCase()}
+    >
+        <div className="bg-[var(--crm-surface)]">
           <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
             <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
               <h1 className="text-[1.35rem] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[2rem]">
@@ -393,7 +385,6 @@ export default function AppointmentManagementClient() {
             </section>
           </main>
         </div>
-      </div>
 
       {createOpen ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm">
@@ -537,6 +528,6 @@ export default function AppointmentManagementClient() {
           </div>
         </div>
       ) : null}
-    </div>
+    </CrmAppShell>
   );
 }
