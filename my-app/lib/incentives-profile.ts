@@ -1,6 +1,11 @@
 import type { DealLedgerRow } from "@/app/Components/Incentives/data/mock-data";
 import { journeyMarkers } from "@/app/Components/Incentives/data/mock-data";
 import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
+import {
+  DEFAULT_INCENTIVE_PERIOD_TARGET_INR,
+  periodTargetFromMonthly,
+  type IncentivePeriodHalf,
+} from "@/lib/incentive-period";
 import { DEFAULT_MONTHLY_SALES_TARGET_INR } from "@/lib/sales-targets";
 import { computeIncrementalWeightsByRecordId } from "@/lib/incentives-weighted";
 
@@ -12,7 +17,7 @@ export type IncentiveMemberRef = {
   managerName?: string;
   /** CRM assignee aliases (fullName, username, email local-part) for admin matching. */
   assigneeAliases?: string[];
-  /** Monthly revenue target in INR — default ₹60L from admin settings. */
+  /** Monthly revenue target in INR — default ₹60L from admin settings (₹30L per 15-day period). */
   monthlyTargetInr?: number;
 };
 
@@ -33,7 +38,7 @@ export type IncentiveProfile = {
     revenueDelta: string;
     achievementPct: number;
     incentiveEarned: string;
-    /** True when total weighted ≥ 40% of monthly target. */
+    /** True when total weighted ≥ 40% of 15-day period target. */
     incentiveEligible: boolean;
     onSpotBonus: string;
     nextSlabGap: string;
@@ -43,7 +48,7 @@ export type IncentiveProfile = {
   slabs: IncentiveSlabRow[];
   payoutMath: {
     revenueAchieved: string;
-    monthlyTarget: string;
+    periodTarget: string;
     eligibleSlab: string;
     multiplier: string;
     totalPayout: string;
@@ -68,10 +73,12 @@ const SLAB_DEFS = [
 ] as const;
 
 export type BuildIncentiveProfileOptions = {
-  /** Payment records submitted in the selected month (ledger rows). */
+  /** Payment records submitted in the selected 15-day period (ledger rows). */
   bookingLeads?: IncentiveBookingLead[];
-  /** Full payment history for delta weighting across months. */
+  /** Full payment history for delta weighting across periods. */
   allBookingLeads?: IncentiveBookingLead[];
+  /** 15-day half within the month — defaults to H1 when unset. */
+  periodHalf?: IncentivePeriodHalf;
 };
 
 export function formatInr(amount: number): string {
@@ -98,15 +105,15 @@ function eligibleSlabForAchievement(pct: number): (typeof SLAB_DEFS)[number] | n
   return picked;
 }
 
-/** Incentive = monthly target × slab rate — only when total weighted ≥ 40% of target. */
-export function calculateSlabIncentive(monthlyTargetInr: number, achievementPct: number): number {
+/** Incentive = 15-day period target × slab rate — only when total weighted ≥ 40% of period target. */
+export function calculateSlabIncentive(periodTargetInr: number, achievementPct: number): number {
   const eligible = eligibleSlabForAchievement(achievementPct);
-  if (!eligible || monthlyTargetInr <= 0) return 0;
-  return Math.round((monthlyTargetInr * eligible.rate) / 100);
+  if (!eligible || periodTargetInr <= 0) return 0;
+  return Math.round((periodTargetInr * eligible.rate) / 100);
 }
 
-function slabPotentialEarned(monthlyTargetInr: number, rate: number): number {
-  return Math.round((monthlyTargetInr * rate) / 100);
+function slabPotentialEarned(periodTargetInr: number, rate: number): number {
+  return Math.round((periodTargetInr * rate) / 100);
 }
 
 function nextSlabGapAmount(target: number, achieved: number, pct: number): string {
@@ -130,7 +137,8 @@ export function buildIncentiveProfile(
   member: IncentiveMemberRef,
   options?: BuildIncentiveProfileOptions,
 ): IncentiveProfile {
-  const target = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const monthlyTarget = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const target = periodTargetFromMonthly(monthlyTarget) || DEFAULT_INCENTIVE_PERIOD_TARGET_INR;
   const monthLeads = options?.bookingLeads ?? [];
   const historyLeads = options?.allBookingLeads ?? monthLeads;
   const incrementalByRecord = computeIncrementalWeightsByRecordId(historyLeads);
@@ -211,7 +219,7 @@ export function buildIncentiveProfile(
     slabs,
     payoutMath: {
       revenueAchieved: formatInr(revenueAchieved),
-      monthlyTarget: formatInr(target),
+      periodTarget: formatInr(target),
       eligibleSlab: eligible ? `${eligible.targetPct}%` : "Below 40%",
       multiplier: eligible ? `${eligible.rate.toFixed(2)}%` : "—",
       totalPayout: formatInr(incentiveEarned),
