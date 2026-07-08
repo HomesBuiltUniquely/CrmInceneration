@@ -3,4 +3,4 @@ export const LEADS_PAGE_CONTAINER_CLASS = "mx-auto w-full max-w-[1400px] px-4 md
 
 /** Tighter left inset so header branding sits near the left border. */
 export const LEADS_PAGE_HEADER_CLASS =
-  "mx-auto w-full max-w-[1400px] pl-0 pr-2 md:pl-1 md:pr-6";
+  "w-full px-3 pr-3 md:px-4 md:pr-6";

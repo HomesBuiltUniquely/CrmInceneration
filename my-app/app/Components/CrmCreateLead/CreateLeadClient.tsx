@@ -301,8 +301,13 @@ export default function CreateLeadClient() {
     setError(null);
     setSuccess(null);
 
-    if (!form.name.trim() || !form.phoneNumber.trim()) {
-      setError("Name and phone are required.");
+    if (
+      !form.name.trim() ||
+      !form.email.trim() ||
+      !form.propertyPincode.trim() ||
+      !form.phoneNumber.trim()
+    ) {
+      setError("Name, email, property pincode, and phone are required.");
       return;
     }
 
@@ -441,30 +446,22 @@ export default function CreateLeadClient() {
         profileName={role.replace(/_/g, " ")}
         profileRole={role}
         profileInitials="AD"
-      >
-        <div className="bg-[var(--crm-app-bg)]">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <div className="flex items-center gap-3">
-                <Image
-                  src="/HowsCrmLogo.png"
-                  alt="Hows CRM"
-                  width={46}
-                  height={46}
-                />
-                <div>
-                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                    Create Lead
-                  </div>
-                  <div className="text-sm text-[var(--crm-text-muted)]">
-                    New frontend form integrated with the original CRM create
-                    API
-                  </div>
-                </div>
-              </div>
+        enlargeLogo
+        headerMiddleContent={
+          <div className="flex min-w-0 items-center gap-3">
+            <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] xl:text-lg">
+                Create Lead
+              </h1>
+              <p className="hidden truncate text-xs text-[var(--crm-text-muted)] xl:block">
+                New frontend form integrated with the original CRM create API
+              </p>
             </div>
           </div>
-
+        }
+      >
+        <div className="bg-[var(--crm-app-bg)]">
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1460px] space-y-6">
               <div className="overflow-hidden rounded-[2px] bg-[var(--crm-tab-grad)] shadow-[var(--crm-shadow-md)]">
@@ -515,6 +512,7 @@ export default function CreateLeadClient() {
                           </CreateLeadFieldLabel>
                           <Input
                             value={form.name}
+                            required
                             onChange={(e) =>
                               updateField("name", e.target.value)
                             }
@@ -522,10 +520,11 @@ export default function CreateLeadClient() {
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>Email</CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required>Email</CreateLeadFieldLabel>
                           <Input
                             type="email"
                             value={form.email}
+                            required
                             onChange={(e) =>
                               updateField("email", e.target.value)
                             }
@@ -533,11 +532,12 @@ export default function CreateLeadClient() {
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required>
                             Property Pincode
                           </CreateLeadFieldLabel>
                           <Input
                             value={form.propertyPincode}
+                            required
                             onChange={(e) =>
                               updateField("propertyPincode", e.target.value)
                             }
@@ -550,6 +550,7 @@ export default function CreateLeadClient() {
                           </CreateLeadFieldLabel>
                           <Input
                             value={form.phoneNumber}
+                            required
                             onChange={(e) =>
                               updateField("phoneNumber", e.target.value)
                             }

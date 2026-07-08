@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import CrmAppShell from "../Shared/CrmAppShell";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
@@ -130,22 +131,25 @@ export default function DesignDashboardClient() {
       profileName={roleLabel}
       profileRole={role}
       profileInitials={roleLabel.slice(0, 2).toUpperCase()}
+      enlargeLogo
+      headerMiddleContent={
+        <div className="flex min-w-0 items-center gap-3">
+          <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] xl:text-lg">
+              Designer Dashboard
+            </h1>
+            {effectiveDesignerName ? (
+              <p className="hidden text-xs text-[var(--crm-text-muted)] xl:block">
+                Designer name for APIs:{" "}
+                <span className="text-[var(--crm-text-secondary)]">{effectiveDesignerName}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      }
     >
         <div className="bg-[var(--crm-surface)]">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 px-4 md:px-6">
-              <h1 className="text-[1.75rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                Designer Dashboard
-              </h1>
-              {effectiveDesignerName ? (
-                <p className="text-[12px] font-medium text-[var(--crm-text-muted)]">
-                  Designer name for APIs:{" "}
-                  <span className="text-[var(--crm-text-secondary)]">{effectiveDesignerName}</span>
-                </p>
-              ) : null}
-            </div>
-          </div>
-
           <main className="px-4 py-6 md:px-6">
             <div className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 md:p-6">
               <h2 className="text-xl font-bold text-[var(--crm-text-primary)]">

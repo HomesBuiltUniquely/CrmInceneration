@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
@@ -103,18 +103,18 @@ export default function BookingTokenClient() {
         profileName={roleLabel}
         profileRole={role}
         profileInitials="SA"
-      >
-        <div className="min-w-0 bg-[var(--bt-bg)]">
-          <div className="border-b border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
-            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
-              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
-              <div>
-                <h1 className="text-base font-bold text-[var(--bt-text)]">Booking & Token</h1>
-                <p className="text-xs text-[var(--bt-muted)]">{workspaceLabel}</p>
-              </div>
+        enlargeLogo
+        headerMiddleContent={
+          <div className="flex min-w-0 items-center gap-3">
+            <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
+            <div className="min-w-0">
+              <h1 className="truncate text-base font-bold text-[var(--bt-text)] xl:text-lg">Booking & Token</h1>
+              <p className="hidden text-xs text-[var(--bt-muted)] xl:block">{workspaceLabel}</p>
             </div>
           </div>
-
+        }
+      >
+        <div className="min-w-0 bg-[var(--bt-bg)]">
           <main className="p-6 lg:p-8">
             <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
               <div>
