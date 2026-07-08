@@ -1,7 +1,15 @@
 import { BASE_URL } from "@/lib/base-url";
 
 export function bookingTokenCancelUpstreamUrl(recordId: string): string {
-  return `${BASE_URL}/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/cancel`;
+  return `${BASE_URL}/v1/booking-token/deals/${encodeURIComponent(recordId)}/cancel`;
+}
+
+export function bookingTokenCancelApproveUpstreamUrl(recordId: string): string {
+  return `${BASE_URL}/v1/booking-token/deals/${encodeURIComponent(recordId)}/cancel/approve`;
+}
+
+export function bookingTokenCancelRejectUpstreamUrl(recordId: string): string {
+  return `${BASE_URL}/v1/booking-token/deals/${encodeURIComponent(recordId)}/cancel/reject`;
 }
 
 export function bookingTokenConvertUpstreamCandidates(recordId: string): string[] {

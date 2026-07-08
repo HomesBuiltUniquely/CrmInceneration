@@ -1,12 +1,24 @@
 import type { BookingTokenTab, DealRow } from "@/app/Components/BookingToken/types";
 import { fetchBookingTokenDeals, type BookingTokenDeal } from "@/lib/booking-done-api";
 import {
-  bookingDateFilterQueryParams,
+  bookingDateFilterApiParams,
   resolveBookingDateRange,
   type BookingDateFilterState,
 } from "@/lib/booking-token-date-filter";
+import {
+  bookingDealFilterQueryParams,
+  type BookingDealFilterState,
+  DEFAULT_BOOKING_DEAL_FILTERS,
+} from "@/lib/booking-token-deal-filters";
 import { listingTypeQueryForTab, resolveListingType } from "@/lib/booking-token-listing-type";
 import { bookingTokenDealToDealRow } from "@/lib/booking-token-leads";
+
+export type BookingDashboardFetchOptions = {
+  tab: BookingTokenTab;
+  dateFilter: BookingDateFilterState;
+  dealFilters?: BookingDealFilterState;
+  size?: number;
+};
 
 /** Enough rows for date-filtered dashboard views (server + client filter). */
 export const BOOKING_TOKEN_DASHBOARD_FETCH_SIZE = 500;
@@ -88,16 +100,16 @@ export function filterApiDealsForTab(
 }
 
 /** Raw Hub deals for ledger / history views. */
-export async function fetchDashboardBookingTokenDeals(opts: {
-  tab: BookingTokenTab;
-  dateFilter: BookingDateFilterState;
-  size?: number;
-}): Promise<BookingTokenDeal[]> {
+export async function fetchDashboardBookingTokenDeals(
+  opts: BookingDashboardFetchOptions,
+): Promise<BookingTokenDeal[]> {
+  const dealFilters = opts.dealFilters ?? DEFAULT_BOOKING_DEAL_FILTERS;
   const response = await fetchBookingTokenDeals({
     page: 0,
     size: opts.size ?? BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
     listingType: listingTypeQueryForTab(opts.tab),
-    ...bookingDateFilterQueryParams(opts.dateFilter),
+    ...bookingDateFilterApiParams(opts.dateFilter),
+    ...bookingDealFilterQueryParams(dealFilters),
   });
 
   return filterApiDealsForTab(
@@ -106,12 +118,10 @@ export async function fetchDashboardBookingTokenDeals(opts: {
   );
 }
 
-/** Fetch deals for a dashboard tab, applying server date params + client safety filter. */
-export async function fetchDashboardDealRows(opts: {
-  tab: BookingTokenTab;
-  dateFilter: BookingDateFilterState;
-  size?: number;
-}): Promise<DealRow[]> {
+/** Fetch deals for a dashboard tab, applying server params + client safety filter. */
+export async function fetchDashboardDealRows(
+  opts: BookingDashboardFetchOptions,
+): Promise<DealRow[]> {
   const deals = await fetchDashboardBookingTokenDeals(opts);
   return deals.map(bookingTokenDealToDealRow);
 }

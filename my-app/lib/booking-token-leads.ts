@@ -20,7 +20,7 @@ import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
 import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status";
 import type { BookingTokenDeal } from "@/lib/booking-done-api";
 import type { PaymentHistoryEntry } from "@/lib/booking-payment-history-api";
-import type { BookingStatus, DealRow, LedgerItem, TokenStatus } from "@/app/Components/BookingToken/types";
+import type { BookingStatus, DealRow, LedgerItem, TokenStatus, CancellationApprovalStatus } from "@/app/Components/BookingToken/types";
 
 export const RECENT_LEDGER_ITEM_LIMIT = 5;
 export const RECENT_LEDGER_DEALS_FETCH = 20;
@@ -75,7 +75,22 @@ function mapHubBookingStatus(status: string): BookingStatus {
   const normalized = status.trim().toLowerCase();
   if (normalized === "confirmed") return "confirmed";
   if (normalized === "cancelled") return "cancelled";
+  if (normalized === "pending_cancellation") return "pending_cancellation";
   return "in_progress";
+}
+
+function normalizeCancellationApprovalStatus(
+  value?: string | null,
+): CancellationApprovalStatus {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (normalized === "PENDING") return "PENDING";
+  if (normalized === "REJECTED") return "REJECTED";
+  return "NONE";
+}
+
+function resolveAssigneeName(deal: BookingTokenDeal): string {
+  const assign = deal.assign?.trim() || deal.assignee?.trim();
+  return assign || "—";
 }
 
 export function buildBookingDoneSubmitPayload(
@@ -147,6 +162,12 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
   const remaining = resolveRemainingAmount(deal);
   const listingType = resolveListingType(deal);
   const isCancelled = isCancelListingType(listingType) || isCancelledBookingStatus(deal.bookingStatus);
+  const cancellationApprovalStatus = normalizeCancellationApprovalStatus(
+    deal.cancellationApprovalStatus,
+  );
+  const isPendingCancellation =
+    cancellationApprovalStatus === "PENDING" ||
+    mapHubBookingStatus(deal.bookingStatus) === "pending_cancellation";
 
   return {
     id: deal.id,
@@ -155,6 +176,7 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     leadIdentifier: deal.leadIdentifier,
     initials: initialsFromName(deal.customerName),
     customer: deal.customerName,
+    assign: resolveAssigneeName(deal),
     asset: assetParts.join(" · "),
     dealValue: formatQuoteAmount(deal.dealValue),
     dealValueAmount: deal.dealValue,
@@ -170,9 +192,10 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     submittedAt: deal.submittedAt,
     isCancelled,
     listingType,
-    showCancellation: canShowCancellation(listingType, deal.submittedAt),
-    showPay: canShowPay(listingType, remaining),
-    showConvert: canShowConvert(listingType, remaining),
+    showCancellation:
+      canShowCancellation(listingType, deal.submittedAt) && !isPendingCancellation,
+    showPay: canShowPay(listingType, remaining) && !isPendingCancellation,
+    showConvert: canShowConvert(listingType, remaining) && !isPendingCancellation,
     cancellationReason: deal.cancellationReason ?? null,
     cancelledAt: deal.cancelledAt ?? null,
     fromBookingDone: true,
@@ -180,6 +203,11 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     financeReviewAt: deal.financeReviewAt ?? null,
     financeReviewBy: deal.financeReviewBy ?? null,
     financeRejectReason: deal.financeRejectReason ?? null,
+    submittedByName: deal.submittedByName ?? null,
+    submittedByRole: deal.submittedByRole ?? null,
+    cancellationApprovalStatus,
+    cancellationRequestedByName: deal.cancellationRequestedByName ?? null,
+    canApproveCancellation: Boolean(deal.canApproveCancellation),
   };
 }
 

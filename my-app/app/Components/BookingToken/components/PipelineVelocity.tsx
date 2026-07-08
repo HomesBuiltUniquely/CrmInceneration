@@ -9,15 +9,22 @@ import {
   bookingDateFilterSummary,
   type BookingDateFilterState,
 } from "@/lib/booking-token-date-filter";
+import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
 import type { BookingTokenTab } from "../types";
 
 type Props = {
   refreshSignal?: number;
   dateFilter: BookingDateFilterState;
+  dealFilters?: BookingDealFilterState;
   tab: BookingTokenTab;
 };
 
-export default function PipelineVelocity({ refreshSignal = 0, dateFilter, tab }: Props) {
+export default function PipelineVelocity({
+  refreshSignal = 0,
+  dateFilter,
+  dealFilters,
+  tab,
+}: Props) {
   const [bars, setBars] = useState<PipelineBar[]>(() =>
     computePipelineVelocity([], tab, dateFilter),
   );
@@ -29,7 +36,7 @@ export default function PipelineVelocity({ refreshSignal = 0, dateFilter, tab }:
     async function loadPipeline() {
       setLoading(true);
       try {
-        const rows = await fetchDashboardDealRows({ tab, dateFilter });
+        const rows = await fetchDashboardDealRows({ tab, dateFilter, dealFilters });
         if (!cancelled) {
           setBars(computePipelineVelocity(rows, tab, dateFilter));
         }
@@ -44,7 +51,7 @@ export default function PipelineVelocity({ refreshSignal = 0, dateFilter, tab }:
     return () => {
       cancelled = true;
     };
-  }, [refreshSignal, dateFilter, tab]);
+  }, [refreshSignal, dateFilter, dealFilters, tab]);
 
   const max = Math.max(...bars.map((b) => b.value), 1);
   const hasData = bars.some((bar) => bar.value > 0);

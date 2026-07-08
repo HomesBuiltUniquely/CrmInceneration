@@ -65,6 +65,16 @@ export type BookingTokenDeal = {
   quoteId?: string;
   hubLeadId?: string;
   submittedAt: string;
+  /** Live CRM lead assignee */
+  assign?: string | null;
+  assignee?: string | null;
+  submittedByName?: string | null;
+  submittedByRole?: string | null;
+  extraAmountReceived?: number | null;
+  totalAmountReceived?: number | null;
+  cancellationApprovalStatus?: string | null;
+  cancellationRequestedByName?: string | null;
+  canApproveCancellation?: boolean;
   paymentProofCount?: number;
   financeReviewStatus?: string;
   financeReviewAt?: string | null;
@@ -191,9 +201,14 @@ export async function fetchBookingTokenDeals(opts?: {
   search?: string;
   /** Hub filter: token | booking | cancel — omit for All tab (token + booking) */
   listingType?: "token" | "booking" | "cancel";
-  /** ISO instant — filter by handoff / createdAt (inclusive) */
+  /** Preset: previous_month | 3m | 6m | 1y */
+  dateRange?: string;
+  /** ISO instant — filter by handoff / createdAt (inclusive); custom range wins over dateRange */
   submittedFrom?: string;
   submittedTo?: string;
+  submittedByRole?: string;
+  assignee?: string;
+  cancellationStatus?: string;
 }): Promise<BookingTokenDealsResponse> {
   const params = new URLSearchParams();
   params.set("page", String(opts?.page ?? 0));
@@ -204,11 +219,23 @@ export async function fetchBookingTokenDeals(opts?: {
   if (opts?.listingType) {
     params.set("listingType", opts.listingType);
   }
+  if (opts?.dateRange) {
+    params.set("dateRange", opts.dateRange);
+  }
   if (opts?.submittedFrom) {
     params.set("submittedFrom", opts.submittedFrom);
   }
   if (opts?.submittedTo) {
     params.set("submittedTo", opts.submittedTo);
+  }
+  if (opts?.submittedByRole) {
+    params.set("submittedByRole", opts.submittedByRole);
+  }
+  if (opts?.assignee?.trim()) {
+    params.set("assignee", opts.assignee.trim());
+  }
+  if (opts?.cancellationStatus) {
+    params.set("cancellationStatus", opts.cancellationStatus);
   }
 
   const res = await fetch(`/api/crm/booking-token/deals?${params.toString()}`, {
@@ -302,4 +329,52 @@ export async function convertBookingTokenDeal(
     );
   }
   return parsed;
+}
+
+export type BookingTokenCancelApprovalResponse = {
+  id: string;
+  listingType?: string;
+  bookingStatus?: string;
+  cancellationApprovalStatus?: string;
+};
+
+export async function approveBookingTokenCancellation(
+  recordId: string,
+): Promise<BookingTokenCancelApprovalResponse> {
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/cancel/approve`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+      body: "{}",
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to approve cancellation."));
+  }
+  return JSON.parse(text) as BookingTokenCancelApprovalResponse;
+}
+
+export async function rejectBookingTokenCancellation(
+  recordId: string,
+  reason: string,
+): Promise<BookingTokenCancelApprovalResponse> {
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/cancel/reject`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ reason: reason.trim() }),
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to reject cancellation."));
+  }
+  return JSON.parse(text) as BookingTokenCancelApprovalResponse;
 }

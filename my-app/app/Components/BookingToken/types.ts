@@ -9,7 +9,9 @@ export type FinanceReviewStatus =
   | "REJECTED";
 
 export type TokenStatus = "issued" | "minting" | "pending";
-export type BookingStatus = "confirmed" | "in_progress" | "cancelled";
+export type BookingStatus = "confirmed" | "in_progress" | "cancelled" | "pending_cancellation";
+
+export type CancellationApprovalStatus = "NONE" | "PENDING" | "REJECTED";
 
 export type KpiCard = {
   id: string;
@@ -29,6 +31,8 @@ export type DealRow = {
   leadIdentifier?: string;
   initials: string;
   customer: string;
+  /** Live CRM lead assignee (sales executive on the lead). */
+  assign: string;
   asset: string;
   dealValue: string;
   dealValueAmount: number;
@@ -60,6 +64,11 @@ export type DealRow = {
   financeReviewAt?: string | null;
   financeReviewBy?: string | null;
   financeRejectReason?: string | null;
+  submittedByName?: string | null;
+  submittedByRole?: string | null;
+  cancellationApprovalStatus?: CancellationApprovalStatus;
+  cancellationRequestedByName?: string | null;
+  canApproveCancellation?: boolean;
 };
 
 export type LedgerItem = {

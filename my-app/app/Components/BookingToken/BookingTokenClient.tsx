@@ -18,7 +18,13 @@ import RecentLedger from "./components/RecentLedger";
 import UrgentTasks from "./components/UrgentTasks";
 import PipelineVelocity from "./components/PipelineVelocity";
 import BookingTokenDateFilterPanel from "./components/BookingTokenDateFilterPanel";
+import BookingTokenDealFilterPanel from "./components/BookingTokenDealFilterPanel";
 import type { BookingTokenTab } from "./types";
+import {
+  DEFAULT_BOOKING_DEAL_FILTERS,
+  type BookingDealFilterState,
+} from "@/lib/booking-token-deal-filters";
+import { isSuperAdminRole, isAdminRole } from "@/lib/roleUtils";
 
 const TAB_ITEMS: { id: BookingTokenTab; label: string }[] = [
   { id: "all", label: "All" },
@@ -35,6 +41,9 @@ export default function BookingTokenClient() {
   const [tab, setTab] = useState<BookingTokenTab>("all");
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_BOOKING_DATE_FILTER,
+  );
+  const [dealFilters, setDealFilters] = useState<BookingDealFilterState>(
+    DEFAULT_BOOKING_DEAL_FILTERS,
   );
   const [kpiRefresh, setKpiRefresh] = useState(0);
   const [role, setRole] = useState("");
@@ -68,6 +77,13 @@ export default function BookingTokenClient() {
   );
 
   const showDashboardExtras = tab !== "cancel";
+  const showHierarchyFilters =
+    isAdminRole(role) || role === "SALES_ADMIN" || role === "SALES_MANAGER";
+  const workspaceLabel = isSuperAdminRole(role)
+    ? "Super Admin workspace"
+    : roleLabel
+      ? `${roleLabel} workspace`
+      : "Booking workspace";
 
   const ledgerTab = tab === "cancel" ? "all" : tab;
   const pipelineTab = tab === "cancel" ? "all" : tab;
@@ -94,7 +110,7 @@ export default function BookingTokenClient() {
               <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
               <div>
                 <h1 className="text-base font-bold text-[var(--bt-text)]">Booking & Token</h1>
-                <p className="text-xs text-[var(--bt-muted)]">Super Admin workspace</p>
+                <p className="text-xs text-[var(--bt-muted)]">{workspaceLabel}</p>
               </div>
             </div>
           </div>
@@ -122,6 +138,11 @@ export default function BookingTokenClient() {
                   ))}
                 </div>
                 <BookingTokenDateFilterPanel value={dateFilter} onChange={setDateFilter} />
+                <BookingTokenDealFilterPanel
+                  value={dealFilters}
+                  onChange={setDealFilters}
+                  showHierarchyFilters={showHierarchyFilters}
+                />
                 <button
                   type="button"
                   className="bt-btn bt-btn-toolbar"
@@ -138,11 +159,17 @@ export default function BookingTokenClient() {
                 </div>
               ) : null}
 
-              <KpiCards refreshSignal={kpiRefresh} dateFilter={dateFilter} tab={tab} />
+              <KpiCards
+                refreshSignal={kpiRefresh}
+                dateFilter={dateFilter}
+                dealFilters={dealFilters}
+                tab={tab}
+              />
 
               <DealsTable
                 tab={tab}
                 dateFilter={dateFilter}
+                dealFilters={dealFilters}
                 onDealCancelled={() => setTab("cancel")}
                 onDealsChanged={() => setKpiRefresh((n) => n + 1)}
                 onConvertedToBooking={() => setTab("booking")}
@@ -153,6 +180,7 @@ export default function BookingTokenClient() {
                   <RecentLedger
                     refreshSignal={kpiRefresh}
                     dateFilter={dateFilter}
+                    dealFilters={dealFilters}
                     tab={ledgerTab}
                   />
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -160,6 +188,7 @@ export default function BookingTokenClient() {
                     <PipelineVelocity
                       refreshSignal={kpiRefresh}
                       dateFilter={dateFilter}
+                      dealFilters={dealFilters}
                       tab={pipelineTab}
                     />
                   </div>
