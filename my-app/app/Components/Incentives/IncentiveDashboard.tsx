@@ -52,7 +52,7 @@ export default function IncentiveDashboard({ profile, viewingLabel, bookingCount
       </header>
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <SummaryCard label="Total Target" value={summary.totalTarget} />
+        <SummaryCard label="Period Target (15 days)" value={summary.totalTarget} />
         <SummaryCard
           label="Weighted Revenue"
           value={summary.revenueAchieved}
@@ -64,7 +64,7 @@ export default function IncentiveDashboard({ profile, viewingLabel, bookingCount
           value={summary.incentiveEarned}
           badge={
             summary.incentiveEligible
-              ? "Monthly payout"
+              ? "15-day payout"
               : `Need ${MIN_INCENTIVE_ACHIEVEMENT_PCT}% weighted`
           }
           highlight={summary.incentiveEligible}
@@ -156,9 +156,9 @@ export default function IncentiveDashboard({ profile, viewingLabel, bookingCount
           </div>
           <div className="rounded-lg border border-dashed border-[#334155] bg-[#111827] px-3 py-2 text-center">
             <p className="text-[9px] font-bold uppercase tracking-wide text-[#94a3b8]">
-              Monthly Target
+              Period Target (15 days)
             </p>
-            <p className="mt-1 text-lg font-bold">{payoutMath.monthlyTarget}</p>
+            <p className="mt-1 text-lg font-bold">{payoutMath.periodTarget}</p>
           </div>
           <dl className="mt-4 space-y-2 text-[12px]">
             <div className="flex justify-between gap-2">
@@ -181,7 +181,7 @@ export default function IncentiveDashboard({ profile, viewingLabel, bookingCount
             {payoutMath.totalPayout}
           </p>
           <p className="mt-3 text-[10px] italic text-[#64748b]">
-            *Monthly payout = target × slab rate when total weighted reaches slab % (min 40%).
+            *15-day payout = period target × slab rate when total weighted reaches slab % (min 40%).
           </p>
         </aside>
       </div>
@@ -232,8 +232,8 @@ export default function IncentiveDashboard({ profile, viewingLabel, bookingCount
               Booking Done — Weighted Breakdown
             </h3>
             <p className="mt-1 text-[12px] text-[var(--inc-muted)]">
-              Per-lead weighted values. Monthly incentive applies only when total weighted reaches
-              {` ${MIN_INCENTIVE_ACHIEVEMENT_PCT}%`} of target.
+              Per-lead weighted values. Incentive is paid per 15-day period when total weighted hits
+              the target slab.
             </p>
           </div>
           <button
