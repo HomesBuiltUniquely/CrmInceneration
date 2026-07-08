@@ -71,7 +71,7 @@ export default function PipelineVelocity({
       {loading ? (
         <div className="mt-6 flex h-40 items-end justify-between gap-1.5 px-1">
           {bars.map((bar) => (
-            <div key={bar.month} className="flex flex-1 flex-col items-center justify-end gap-2">
+            <div key={bar.id} className="flex flex-1 flex-col items-center justify-end gap-2">
               <div className="h-8 w-full max-w-[28px] animate-pulse rounded-t-sm bg-slate-200" />
               <span className="text-[9px] font-bold text-[var(--bt-muted)]">{bar.month}</span>
             </div>
@@ -83,7 +83,7 @@ export default function PipelineVelocity({
             {bars.map((bar) => {
               const barPx = Math.max(8, Math.round((bar.value / max) * 140));
               return (
-                <div key={bar.month} className="flex flex-1 flex-col items-center justify-end gap-2">
+                <div key={bar.id} className="flex flex-1 flex-col items-center justify-end gap-2">
                   <div
                     className="w-full max-w-[28px] rounded-t-sm bg-[var(--bt-green)] transition-all duration-300"
                     style={{

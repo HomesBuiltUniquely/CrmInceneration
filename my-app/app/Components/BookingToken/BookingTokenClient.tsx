@@ -141,6 +141,7 @@ export default function BookingTokenClient() {
                 <BookingTokenDealFilterPanel
                   value={dealFilters}
                   onChange={setDealFilters}
+                  viewerRole={role}
                   showHierarchyFilters={showHierarchyFilters}
                 />
                 <button

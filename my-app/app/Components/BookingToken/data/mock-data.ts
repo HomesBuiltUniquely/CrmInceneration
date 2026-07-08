@@ -178,18 +178,18 @@ export const URGENT_TASKS: UrgentTask[] = [
 ];
 
 export const PIPELINE_BARS: PipelineBar[] = [
-  { month: "JAN", value: 42 },
-  { month: "FEB", value: 55 },
-  { month: "MAR", value: 48 },
-  { month: "APR", value: 62 },
-  { month: "MAY", value: 58 },
-  { month: "JUN", value: 71 },
-  { month: "JUL", value: 65 },
-  { month: "AUG", value: 78 },
-  { month: "SEP", value: 82 },
-  { month: "OCT", value: 88 },
-  { month: "NOV", value: 92 },
-  { month: "DEC", value: 95 },
+  { id: "2024-0", month: "JAN", value: 42 },
+  { id: "2024-1", month: "FEB", value: 55 },
+  { id: "2024-2", month: "MAR", value: 48 },
+  { id: "2024-3", month: "APR", value: 62 },
+  { id: "2024-4", month: "MAY", value: 58 },
+  { id: "2024-5", month: "JUN", value: 71 },
+  { id: "2024-6", month: "JUL", value: 65 },
+  { id: "2024-7", month: "AUG", value: 78 },
+  { id: "2024-8", month: "SEP", value: 82 },
+  { id: "2024-9", month: "OCT", value: 88 },
+  { id: "2024-10", month: "NOV", value: 92 },
+  { id: "2024-11", month: "DEC", value: 95 },
 ];
 
 export const SIDEBAR_NAV = [

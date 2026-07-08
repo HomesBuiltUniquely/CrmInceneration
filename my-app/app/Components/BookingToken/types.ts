@@ -88,6 +88,8 @@ export type UrgentTask = {
 };
 
 export type PipelineBar = {
+  /** Unique period key, e.g. `2026-6` for July 2026 */
+  id: string;
   month: string;
   value: number;
 };

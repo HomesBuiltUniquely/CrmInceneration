@@ -7,6 +7,7 @@ import {
 } from "@/lib/booking-token-date-filter";
 import {
   bookingDealFilterQueryParams,
+  filterDealRowsByAssigneeScope,
   type BookingDealFilterState,
   DEFAULT_BOOKING_DEAL_FILTERS,
 } from "@/lib/booking-token-deal-filters";
@@ -17,11 +18,23 @@ export type BookingDashboardFetchOptions = {
   tab: BookingTokenTab;
   dateFilter: BookingDateFilterState;
   dealFilters?: BookingDealFilterState;
+  page?: number;
   size?: number;
 };
 
+/** Deals table page size */
+export const BOOKING_TOKEN_DEALS_PAGE_SIZE = 10;
+
 /** Enough rows for date-filtered dashboard views (server + client filter). */
 export const BOOKING_TOKEN_DASHBOARD_FETCH_SIZE = 500;
+
+export type BookingDealsPageResult = {
+  rows: DealRow[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+};
 
 export function filterDealRowsByDate(
   rows: DealRow[],
@@ -122,6 +135,69 @@ export async function fetchDashboardBookingTokenDeals(
 export async function fetchDashboardDealRows(
   opts: BookingDashboardFetchOptions,
 ): Promise<DealRow[]> {
-  const deals = await fetchDashboardBookingTokenDeals(opts);
-  return deals.map(bookingTokenDealToDealRow);
+  const dealFilters = opts.dealFilters ?? DEFAULT_BOOKING_DEAL_FILTERS;
+  const deals = await fetchDashboardBookingTokenDeals({
+    ...opts,
+    size: opts.size ?? BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
+  });
+  const rows = deals.map(bookingTokenDealToDealRow);
+  if (dealFilters.teamAssigneeScopes.length > 0) {
+    return filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
+  }
+  return rows;
+}
+
+/** Paginated deals for the dashboard table (10 per page by default). */
+export async function fetchDashboardDealsPage(
+  opts: BookingDashboardFetchOptions,
+): Promise<BookingDealsPageResult> {
+  const dealFilters = opts.dealFilters ?? DEFAULT_BOOKING_DEAL_FILTERS;
+  const page = Math.max(0, opts.page ?? 0);
+  const size = opts.size ?? BOOKING_TOKEN_DEALS_PAGE_SIZE;
+  const apiParams = bookingDealFilterQueryParams(dealFilters);
+  const managerOnlyClientFilter =
+    dealFilters.teamAssigneeScopes.length > 0 && !apiParams.assignee;
+
+  if (managerOnlyClientFilter) {
+    const deals = await fetchDashboardBookingTokenDeals({
+      ...opts,
+      size: BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
+    });
+    let rows = deals.map(bookingTokenDealToDealRow);
+    rows = filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
+    const totalElements = rows.length;
+    const totalPages = Math.max(1, Math.ceil(totalElements / size));
+    const safePage = Math.min(page, totalPages - 1);
+    const start = safePage * size;
+    return {
+      rows: rows.slice(start, start + size),
+      page: safePage,
+      size,
+      totalElements,
+      totalPages,
+    };
+  }
+
+  const response = await fetchBookingTokenDeals({
+    page,
+    size,
+    listingType: listingTypeQueryForTab(opts.tab),
+    ...bookingDateFilterApiParams(opts.dateFilter),
+    ...apiParams,
+  });
+
+  let deals = filterApiDealsByDate(response.deals, opts.dateFilter);
+  deals = filterApiDealsForTab(deals, opts.tab);
+  let rows = deals.map(bookingTokenDealToDealRow);
+  if (dealFilters.teamAssigneeScopes.length > 0) {
+    rows = filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
+  }
+
+  return {
+    rows,
+    page: response.page,
+    size: response.size,
+    totalElements: response.totalElements,
+    totalPages: Math.max(1, response.totalPages),
+  };
 }

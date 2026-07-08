@@ -31,7 +31,8 @@ import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isSuperAdminRole } from "@/lib/roleUtils";
 import {
-  fetchDashboardDealRows,
+  BOOKING_TOKEN_DEALS_PAGE_SIZE,
+  fetchDashboardDealsPage,
   filterDealRowsForTab,
 } from "@/lib/booking-token-deals-fetch";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
@@ -357,7 +358,9 @@ export default function DealsTable({
   const fromBookingDone = searchParams.get("from") === "booking-done";
 
   const [rows, setRows] = useState<DealRow[]>([]);
+  const [page, setPage] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -418,24 +421,37 @@ export default function DealsTable({
     setLoading(true);
     setLoadError("");
     try {
-      // Fetch all active deals and filter client-side so Pay auto-promote on Hub does not
-      // hide token-stage rows (Convert to Booking is manual after 10% is paid).
-      const mapped = await fetchDashboardDealRows({ tab, dateFilter, dealFilters });
+      const result = await fetchDashboardDealsPage({
+        tab,
+        dateFilter,
+        dealFilters,
+        page,
+        size: BOOKING_TOKEN_DEALS_PAGE_SIZE,
+      });
 
-      setRows(mapped);
-      setTotalElements(mapped.length);
+      setRows(result.rows);
+      setTotalElements(result.totalElements);
+      setTotalPages(result.totalPages);
+      if (result.page !== page) {
+        setPage(result.page);
+      }
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Unable to load deals.");
       setRows([]);
       setTotalElements(0);
+      setTotalPages(0);
     } finally {
       setLoading(false);
     }
+  }, [tab, dateFilter, dealFilters, page]);
+
+  useEffect(() => {
+    setPage(0);
   }, [tab, dateFilter, dealFilters]);
 
   useEffect(() => {
     void loadDeals();
-  }, [loadDeals, fromBookingDone, highlightId, tab]);
+  }, [loadDeals, fromBookingDone, highlightId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -559,6 +575,11 @@ export default function DealsTable({
         : tab === "token"
           ? "token"
           : "cancelled";
+
+  const showingFrom = totalElements === 0 ? 0 : page * BOOKING_TOKEN_DEALS_PAGE_SIZE + 1;
+  const showingTo = Math.min((page + 1) * BOOKING_TOKEN_DEALS_PAGE_SIZE, totalElements);
+  const canGoPrevious = page > 0 && !loading;
+  const canGoNext = page + 1 < totalPages && !loading;
 
   const emptyMessage =
     tab === "cancel"
@@ -783,18 +804,27 @@ export default function DealsTable({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--bt-border)] bg-slate-50/60 px-4 py-3 text-xs text-[var(--bt-muted)]">
           <span className="font-semibold uppercase tracking-wide">
-            Showing {displayRows.length} of {totalElements} {tabLabel} deals
+            {totalElements === 0
+              ? `Showing 0 ${tabLabel} deals`
+              : `Showing ${showingFrom}–${showingTo} of ${totalElements} ${tabLabel} deals`}
           </span>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-medium tabular-nums">
+              Page {totalPages === 0 ? 0 : page + 1} of {totalPages}
+            </span>
             <button
               type="button"
-              className="bt-btn bt-btn-pagination"
+              onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+              disabled={!canGoPrevious}
+              className="bt-btn bt-btn-pagination disabled:cursor-not-allowed disabled:opacity-40"
             >
               Previous
             </button>
             <button
               type="button"
-              className="bt-btn bt-btn-pagination"
+              onClick={() => setPage((prev) => prev + 1)}
+              disabled={!canGoNext}
+              className="bt-btn bt-btn-pagination disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next
             </button>
