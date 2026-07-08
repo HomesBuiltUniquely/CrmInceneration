@@ -4,15 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchIncentiveBookingLeads,
   fetchIncentiveBookingLeadsForExecutive,
-  resolveIncentiveLeadsForMonth,
+  resolveIncentiveLeadsForPeriod,
   type IncentiveBookingLead,
 } from "@/lib/incentives-booking-data";
+import type { IncentivePeriodHalf } from "@/lib/incentive-period";
 import type { IncentiveMemberRef } from "@/lib/incentives-profile";
 import { buildIncentiveProfile } from "@/lib/incentives-profile";
 
 type Props = {
   members: IncentiveMemberRef[];
   monthKey: string;
+  periodHalf: IncentivePeriodHalf;
   viewerId: number;
   canPickTeam: boolean;
   selectedId: number | null;
@@ -22,6 +24,7 @@ type Props = {
 export default function TeamIncentivesOverview({
   members,
   monthKey,
+  periodHalf,
   viewerId,
   canPickTeam,
   selectedId,
@@ -66,12 +69,13 @@ export default function TeamIncentivesOverview({
       : member.id === viewerId
         ? selfLeads
         : [];
-    const forMonth = resolveIncentiveLeadsForMonth(scoped, monthKey);
+    const forPeriod = resolveIncentiveLeadsForPeriod(scoped, monthKey, periodHalf);
     return {
       member,
       profile: buildIncentiveProfile(member, {
-        bookingLeads: forMonth,
+        bookingLeads: forPeriod,
         allBookingLeads: scoped,
+        periodHalf,
       }),
     };
   });

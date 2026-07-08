@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import CrmAppShell from "../Shared/CrmAppShell";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
@@ -238,16 +239,17 @@ export default function AppointmentManagementClient() {
       profileName={roleLabel}
       profileRole={role}
       profileInitials={roleLabel.slice(0, 2).toUpperCase()}
+      enlargeLogo
+      headerMiddleContent={
+        <div className="flex min-w-0 items-center gap-3">
+          <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
+          <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] md:text-lg">
+            {roleLabel} Panel
+          </h1>
+        </div>
+      }
     >
         <div className="bg-[var(--crm-surface)]">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <h1 className="text-[1.35rem] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[2rem]">
-                {roleLabel} Panel
-              </h1>
-            </div>
-          </div>
-
           <main className="px-4 py-6 md:px-6">
             <section className="mx-auto max-w-[1200px] rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface)]">
               <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-[var(--crm-border)] md:px-6">

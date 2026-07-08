@@ -9,6 +9,10 @@ import {
   assigneeScopeForExecutive,
   normalizeIncentiveLeadKey,
 } from "@/lib/incentives-lead-assignee";
+import {
+  leadInIncentivePeriod,
+  type IncentivePeriodHalf,
+} from "@/lib/incentive-period";
 import type { IncentiveMemberRef } from "@/lib/incentives-profile";
 
 export type IncentiveBookingLead = {
@@ -250,8 +254,22 @@ function leadMonthKey(iso: string): string | null {
 }
 
 /**
- * All booking_token records submitted in the selected month (one ledger row each).
- * Hub may store multiple records for the same lead — each payment submission is listed separately.
+ * All booking_token records submitted in the selected 15-day period (one ledger row each).
+ */
+export function resolveIncentiveLeadsForPeriod(
+  leads: IncentiveBookingLead[],
+  monthKey: string,
+  half: IncentivePeriodHalf,
+): IncentiveBookingLead[] {
+  return leads
+    .filter((lead) => leadInIncentivePeriod(lead.submittedAt, monthKey, half))
+    .sort(
+      (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
+    );
+}
+
+/**
+ * All booking_token records submitted in the selected month (both 15-day halves).
  */
 export function resolveIncentiveLeadsForMonth(
   leads: IncentiveBookingLead[],

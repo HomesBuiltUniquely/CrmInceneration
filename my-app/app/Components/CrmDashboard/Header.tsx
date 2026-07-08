@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
+import Image from "next/image";
 import AnalyticsBar from "./AnalyticsBar";
 import LeadFilters from "@/app/Components/CrmDashboard/LeadFilters";
 import type { DashboardFilterState } from "@/app/Components/CrmDashboard/LeadFilters";
@@ -31,9 +31,6 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
     () => sidebarSectionsForViewer(workspace, currentRole),
     [workspace, currentRole],
   );
-  const [activeDashboardView, setActiveDashboardView] = useState<"overview" | "design-module">(
-    "overview",
-  );
   const [dashboardFilters, setDashboardFilters] = useState<DashboardFilterState>({
     assignee: "",
     assignees: [],
@@ -46,10 +43,9 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
 
   const handleAppsItemSelect = useCallback(({ id }: { id: string }) => {
     if (id === "design-module") {
-      setActiveDashboardView("design-module");
+      window.location.href = "https://design.hubinterior.com";
       return true;
     }
-    setActiveDashboardView("overview");
     return false;
   }, []);
 
@@ -76,59 +72,36 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
       profileName={currentRole.replace(/_/g, " ")}
       profileRole={currentRole}
       profileInitials="AD"
+      enlargeLogo
+      headerMiddleContent={
+        <div className="flex w-full min-w-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
+            <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] xl:text-lg">
+              {dashboardTitle}
+            </h1>
+            <button
+              type="button"
+              onClick={() => router.push(leadsHref)}
+              className="rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
+            >
+              Lead Management
+            </button>
+          </div>
+          <div className="hidden shrink-0 rounded-lg bg-[var(--crm-surface-subtle)] px-4 py-1 text-sm font-bold text-[var(--crm-text-muted)] xl:block">
+            Q3 FY24
+          </div>
+        </div>
+      }
       onAppsItemSelect={handleAppsItemSelect}
     >
       <div className="bg-[var(--crm-surface)]">
-        <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] xl:flex xl:h-16 xl:w-full xl:justify-between xl:px-4 xl:shadow-[var(--crm-shadow-sm)]">
-          <div className="xl:flex xl:items-center xl:pt-2">
-            <div>
-              <Image src="/HowsCrmLogo.png" alt="Description" width={50} height={50} />
-            </div>
-            <h1 className="text-[var(--crm-text-primary)] xl:pl-3 xl:font-bold">
-              {dashboardTitle}
-              <button
-                type="button"
-                onClick={() => router.push(leadsHref)}
-                className="ml-4 rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)] transition-all duration-200 hover:-translate-y-px hover:bg-[rgba(37,99,235,0.16)]"
-              >
-                Lead Management
-              </button>
-            </h1>
-          </div>
-          <div className="xl:flex xl:items-center">
-            <div className="xl:mr-4 xl:h-7.5 xl:w-25 xl:rounded-lg xl:bg-[var(--crm-surface-subtle)] xl:pl-4.5 xl:pt-1 xl:font-bold xl:text-[var(--crm-text-muted)]">
-              Q3 FY24
-            </div>
-          </div>
+        <div>
+          <LeadFilters role={role} workspace={workspace} onFiltersChange={handleFiltersChange} />
+          <AnalyticsBar filters={dashboardFilters} workspace={workspace} />
+          <CrmPipeline filters={dashboardFilters} workspace={workspace} />
+          <InsightsStrip />
         </div>
-        {activeDashboardView === "design-module" ? (
-          <div className="bg-[var(--crm-app-bg)] p-4 md:p-6">
-            <div className="mx-auto space-y-4">
-              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 shadow-[var(--crm-shadow-sm)]">
-                <h2 className="text-[1.6rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                  Design Module
-                </h2>
-                <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
-                  Embedded design workspace inside the dashboard, same like the old CRM tab flow.
-                </p>
-              </div>
-              <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-md)]">
-                <iframe
-                  src="https://design.hubinterior.com"
-                  title="Design Module"
-                  className="h-[calc(100vh-150px)] w-full border-0 bg-[var(--crm-surface-subtle)]"
-                />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <LeadFilters role={role} workspace={workspace} onFiltersChange={handleFiltersChange} />
-            <AnalyticsBar filters={dashboardFilters} workspace={workspace} />
-            <CrmPipeline filters={dashboardFilters} workspace={workspace} />
-            <InsightsStrip />
-          </div>
-        )}
       </div>
     </CrmAppShell>
   );

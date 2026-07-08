@@ -56,9 +56,9 @@ export default function TopNav({
             <Image
               src="/logo-final-02.png"
               alt="Hows by HUB"
-              width={220}
-              height={72}
-              className="h-10 w-auto shrink-0 object-contain sm:h-11 md:h-12"
+              width={250}
+              height={84}
+              className="h-14 w-auto shrink-0 origin-left scale-[1.15] object-contain sm:h-16 sm:scale-[1.2] md:h-16 md:scale-[1.2]"
               priority
             />
             <span
@@ -68,7 +68,7 @@ export default function TopNav({
               |
             </span>
             <span className="whitespace-nowrap text-[16px] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[18px]">
-              Hows CRM
+              Lead Journey
             </span>
           </div>
 

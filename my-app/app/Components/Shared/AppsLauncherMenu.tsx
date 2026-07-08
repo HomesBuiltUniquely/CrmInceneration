@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
 import { cn } from "@/lib/cn";
 import type { QuickAccessParentItem, QuickAccessSubItem } from "./QuickAccessSidebar";
@@ -17,7 +17,7 @@ function SidebarIcon({ name, className }: { name: string; className?: string }) 
     viewBox: "0 0 24 24",
     fill: "none",
     xmlns: "http://www.w3.org/2000/svg",
-    className: cn("h-5 w-5", className),
+    className: cn("h-6 w-6", className),
   };
 
   switch (name) {
@@ -105,6 +105,47 @@ function SidebarIcon({ name, className }: { name: string; className?: string }) 
           <path d="M9.5 12H14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
         </svg>
       );
+    case "home":
+      return (
+        <svg {...baseProps}>
+          <path d="M4 11.5L12 5L20 11.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M6.5 10.8V19H17.5V10.8" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+          <path d="M10.2 19V14H13.8V19" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      );
+    case "gift":
+      return (
+        <svg {...baseProps}>
+          <rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M12 10V20" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M4 13.5H20" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M12 10H8.8A1.8 1.8 0 1 1 10.4 7.2L12 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M12 10H15.2A1.8 1.8 0 1 0 13.6 7.2L12 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        </svg>
+      );
+    case "folder":
+      return (
+        <svg {...baseProps}>
+          <path d="M3.8 8.2A2.2 2.2 0 0 1 6 6H9L10.7 7.6H18A2.2 2.2 0 0 1 20.2 9.8V17A2.2 2.2 0 0 1 18 19.2H6A2.2 2.2 0 0 1 3.8 17V8.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      );
+    case "sparkles":
+      return (
+        <svg {...baseProps}>
+          <path d="M12 4.5L13.4 8.3L17.2 9.7L13.4 11.1L12 14.9L10.6 11.1L6.8 9.7L10.6 8.3L12 4.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+          <path d="M18.5 4.8L19 6.2L20.4 6.7L19 7.2L18.5 8.6L18 7.2L16.6 6.7L18 6.2L18.5 4.8Z" fill="currentColor" />
+          <path d="M5.2 14.5L5.8 16.1L7.4 16.7L5.8 17.3L5.2 18.9L4.6 17.3L3 16.7L4.6 16.1L5.2 14.5Z" fill="currentColor" />
+        </svg>
+      );
+    case "grid":
+      return (
+        <svg {...baseProps}>
+          <rect x="4" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="14" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="4" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
+          <rect x="14" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      );
     default:
       return (
         <svg {...baseProps}>
@@ -115,12 +156,6 @@ function SidebarIcon({ name, className }: { name: string; className?: string }) 
 }
 
 function HowsHubLauncherIcon({ className }: { className?: string }) {
-  const uid = useId().replace(/:/g, "");
-  const g1 = `hows-tile-a-${uid}`;
-  const g2 = `hows-tile-b-${uid}`;
-  const g3 = `hows-tile-c-${uid}`;
-  const g4 = `hows-tile-d-${uid}`;
-
   return (
     <svg
       viewBox="0 0 32 32"
@@ -129,29 +164,10 @@ function HowsHubLauncherIcon({ className }: { className?: string }) {
       className={className}
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id={g1} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#38bdf8" />
-          <stop offset="100%" stopColor="#2563eb" />
-        </linearGradient>
-        <linearGradient id={g2} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#818cf8" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-        <linearGradient id={g3} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#22d3ee" />
-          <stop offset="100%" stopColor="#0891b2" />
-        </linearGradient>
-        <linearGradient id={g4} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#a78bfa" />
-          <stop offset="100%" stopColor="#7c3aed" />
-        </linearGradient>
-      </defs>
-      <rect x="2" y="2" width="12" height="12" rx="3.5" fill={`url(#${g1})`} />
-      <rect x="18" y="2" width="12" height="12" rx="3.5" fill={`url(#${g2})`} />
-      <rect x="2" y="18" width="12" height="12" rx="3.5" fill={`url(#${g3})`} />
-      <rect x="18" y="18" width="12" height="12" rx="3.5" fill={`url(#${g4})`} />
-      <circle cx="16" cy="16" r="2.2" fill="white" fillOpacity="0.95" />
+      <rect x="2" y="2" width="12" height="12" rx="3.2" fill="#1DA1E6" />
+      <circle cx="24" cy="8" r="6" fill="#1DA1E6" />
+      <rect x="2" y="18" width="12" height="12" rx="3.2" fill="#1DA1E6" />
+      <rect x="18" y="18" width="12" height="12" rx="3.2" fill="#1DA1E6" />
     </svg>
   );
 }
@@ -208,6 +224,39 @@ function appIconTileClass(icon: string, isActive: boolean): string {
   );
 }
 
+function AppItemIcon({
+  itemId,
+  icon,
+  label,
+}: {
+  itemId: string;
+  icon: string;
+  label: string;
+}) {
+  const iconByItem: Record<string, string> = {
+    "crm-dashboard": "home",
+    "presales-dashboard": "home",
+    "crm-my-leads": "users",
+    "presales-my-leads": "users",
+    "crm-incentives": "gift",
+    "crm-create-lead": "plus",
+    "presales-create-lead": "plus",
+    "crm-import-leads": "upload",
+    "crm-hub-calendar": "calendar",
+    "design-appointment": "calendar",
+    "crm-sales-managers": "id-card",
+    "crm-presales-executives": "id-card",
+    "crm-booking-token": "receipt",
+    "design-designer-dashboard": "sparkles",
+    "design-module": "palette",
+    "design-create-user": "plus",
+    "admin-panel": "settings",
+  };
+
+  const resolved = iconByItem[itemId] ?? icon ?? "grid";
+  return <SidebarIcon name={resolved} className="h-6 w-6" />;
+}
+
 type AppsLauncherMenuProps = {
   sections: QuickAccessParentItem[];
   profileRole?: string;
@@ -222,8 +271,10 @@ export default function AppsLauncherMenu({
   const router = useRouter();
   const pathname = usePathname();
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const clickTimeoutRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
+  const [clickedItemId, setClickedItemId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState(profileRole);
 
   useEffect(() => {
@@ -256,6 +307,14 @@ export default function AppsLauncherMenu({
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [open]);
 
+  useEffect(() => {
+    return () => {
+      if (clickTimeoutRef.current) {
+        window.clearTimeout(clickTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const filteredSections = useMemo(
     () => filterSidebarSections(sections, currentRole || profileRole),
     [currentRole, profileRole, sections],
@@ -276,15 +335,28 @@ export default function AppsLauncherMenu({
   }, [filteredSections, pathname]);
 
   const handleItemClick = (item: QuickAccessSubItem) => {
-    setOpen(false);
-    if (onItemSelect?.(item)) return;
-    if (!item.href) return;
-    if (/^https?:\/\//.test(item.href)) {
-      window.location.href = item.href;
-      return;
+    if (clickTimeoutRef.current) {
+      window.clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
     }
-    if (pathnameMatchesSidebarHref(pathname, item.href)) return;
-    router.push(item.href);
+
+    setClickedItemId(item.id);
+    clickTimeoutRef.current = window.setTimeout(() => {
+      setOpen(false);
+      setClickedItemId(null);
+      if (onItemSelect?.(item)) return;
+      if (item.id === "design-module" && !item.href) {
+        window.location.href = "https://design.hubinterior.com";
+        return;
+      }
+      if (!item.href) return;
+      if (/^https?:\/\//.test(item.href)) {
+        window.location.href = item.href;
+        return;
+      }
+      if (pathnameMatchesSidebarHref(pathname, item.href)) return;
+      router.push(item.href);
+    }, 140);
   };
 
   return (
@@ -295,22 +367,27 @@ export default function AppsLauncherMenu({
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
         className={cn(
-          "group inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent p-0 shadow-none outline-none ring-0 transition-colors duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent-ring)]",
+          "group inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent p-0 shadow-none outline-none ring-0 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent-ring)] active:scale-95",
           open
-            ? "bg-[var(--crm-accent-soft)]"
+            ? "scale-105 bg-[var(--crm-accent-soft)]"
             : "hover:bg-[var(--crm-surface-subtle)] active:bg-[var(--crm-accent-soft)]",
         )}
       >
-        <HowsHubLauncherIcon className="h-9 w-9 md:h-10 md:w-10" />
+        <HowsHubLauncherIcon
+          className={cn(
+            "h-9 w-9 transition-transform duration-300 ease-out md:h-10 md:w-10",
+            open ? "rotate-[8deg] scale-110" : "rotate-0 scale-100",
+          )}
+        />
       </button>
 
       {open ? (
         <div
           className={cn(
-            "absolute right-0 top-[calc(100%+8px)] z-50 w-[min(92vw,400px)] origin-top-right overflow-hidden rounded-[22px] border border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[0_20px_50px_rgba(15,23,42,0.16)] ring-1 ring-black/[0.04] transition-all duration-200 ease-out",
+            "absolute right-0 top-[calc(100%+8px)] z-50 w-[min(92vw,400px)] origin-top-right overflow-hidden rounded-[22px] border border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[0_20px_50px_rgba(15,23,42,0.16)] ring-1 ring-black/[0.04] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
             panelVisible
               ? "translate-y-0 scale-100 opacity-100"
-              : "pointer-events-none -translate-y-2 scale-95 opacity-0",
+              : "pointer-events-none -translate-y-2 scale-[0.96] opacity-0",
           )}
           role="dialog"
           aria-label="Hows apps"
@@ -328,9 +405,9 @@ export default function AppsLauncherMenu({
               <Image
                 src="/logo-final-02.png"
                 alt="Hows"
-                width={120}
-                height={40}
-                className="h-9 w-auto shrink-0 object-contain"
+                width={168}
+                height={56}
+                className="h-12 w-auto shrink-0 object-contain"
               />
             </div>
           </div>
@@ -342,27 +419,35 @@ export default function AppsLauncherMenu({
                   {section.label}
                 </div>
                 <div className="grid grid-cols-3 gap-2.5">
-                  {section.items.map((item) => {
+                  {section.items.map((item, itemIndex) => {
                     const isActive = item.id === activeItemId;
+                    const isClicked = clickedItemId === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => handleItemClick(item)}
                         className={cn(
-                          "group flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-[16px] border px-2 py-3 text-center transition-colors duration-200",
+                          "group flex min-h-[92px] flex-col items-center justify-center gap-2 rounded-[16px] border px-2 py-3 text-center transition-all duration-200 ease-out",
                           isActive
                             ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]"
                             : "border-transparent bg-[var(--crm-surface)] hover:border-[var(--crm-border)] hover:bg-[var(--crm-surface-subtle)]",
+                          panelVisible
+                            ? "translate-y-0 opacity-100"
+                            : "translate-y-1 opacity-0",
+                          isClicked
+                            ? "scale-[0.96] border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]"
+                            : "scale-100",
                         )}
+                        style={{ transitionDelay: `${itemIndex * 24}ms` }}
                       >
                         <div
                           className={cn(
-                            "flex h-11 w-11 items-center justify-center rounded-[14px]",
+                            "flex h-14 w-14 items-center justify-center rounded-[16px]",
                             appIconTileClass(item.icon, isActive),
                           )}
                         >
-                          <SidebarIcon name={item.icon} className="h-5 w-5" />
+                          <AppItemIcon itemId={item.id} icon={item.icon} label={item.label} />
                         </div>
                         <span
                           className={cn(
