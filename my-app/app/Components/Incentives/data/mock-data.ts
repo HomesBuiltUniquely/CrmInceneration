@@ -36,19 +36,31 @@ export const speedBonuses = {
 export type DealLedgerRow = {
   id: string;
   initials: string;
+  leadLabel: string;
   customer: string;
   dealValue: string;
-  closureTime: "SAME DAY" | "48 HOURS" | "72 HOURS+";
+  amountReceived: string;
+  weighted: string;
+  weightLabel: string;
+  weightTier: "full" | "half" | "none";
+  closureTime: "SAME DAY" | "48 HOURS" | "72 HOURS+" | "BOOKING DONE" | "TOKEN";
   contributionPct: number;
-  incentive: string;
 };
 
 export const dealLedger: DealLedgerRow[] = [
-  { id: "1", initials: "JS", customer: "Juned Shaikh", dealValue: "₹8,50,000", closureTime: "SAME DAY", contributionPct: 31, incentive: "₹3,825" },
-  { id: "2", initials: "VS", customer: "Viren Shah", dealValue: "₹7,30,000", closureTime: "72 HOURS+", contributionPct: 26.6, incentive: "₹3,285" },
-  { id: "3", initials: "AG", customer: "Ajay Gupta", dealValue: "₹3,45,000", closureTime: "48 HOURS", contributionPct: 12.6, incentive: "₹1,552.50" },
-  { id: "4", initials: "RK", customer: "Rahul Kulkarni", dealValue: "₹6,20,000", closureTime: "SAME DAY", contributionPct: 22.4, incentive: "₹2,790" },
-  { id: "5", initials: "PM", customer: "Priya Menon", dealValue: "₹4,85,000", closureTime: "48 HOURS", contributionPct: 17.5, incentive: "₹2,182" },
+  {
+    id: "1",
+    initials: "JS",
+    leadLabel: "Lead #1 · form",
+    customer: "Juned Shaikh",
+    dealValue: "₹8,50,000",
+    amountReceived: "₹85,000",
+    weighted: "₹8,50,000",
+    weightLabel: "Full (10% paid)",
+    weightTier: "full",
+    closureTime: "BOOKING DONE",
+    contributionPct: 31,
+  },
 ];
 
 export const journeyMarkers = [40, 50, 60, 80, 100];

@@ -70,6 +70,7 @@ export type BookingTokenDeal = {
   assignee?: string | null;
   submittedByName?: string | null;
   submittedByRole?: string | null;
+  submittedByUserId?: number;
   extraAmountReceived?: number | null;
   totalAmountReceived?: number | null;
   cancellationApprovalStatus?: string | null;
