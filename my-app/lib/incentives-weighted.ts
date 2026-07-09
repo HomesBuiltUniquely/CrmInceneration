@@ -1,10 +1,8 @@
 import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
+import { incentivePeriodKeyFromIso } from "@/lib/incentive-period";
 
 /** Minimum token payment (INR) for 50% weighted credit when below 10%. */
 export const INCENTIVE_TOKEN_HALF_MIN_INR = 25_000;
-
-/** Minimum token payment (% of quote) for 50% weighted credit when below 10%. */
-export const INCENTIVE_TOKEN_HALF_MIN_PCT = 5;
 
 export type IncentiveWeightTier = "full" | "half" | "none";
 
@@ -26,7 +24,7 @@ export function paymentPctOfQuote(quoteAmount: number, amountReceived: number): 
 /**
  * Weighted value from booking-done payment vs quotation (QV):
  * - ≥ 10% of QV received → 100% of QV
- * - Token (< 10%) with payment **above 5% of QV** OR ≥ ₹25,000 → 50% of QV
+ * - Token (< 10%) with payment ≥ ₹25,000 → 50% of QV
  * - otherwise → ₹0
  */
 export function calculateIncentiveWeightedValue(
@@ -62,16 +60,12 @@ export function calculateIncentiveWeightedValue(
     };
   }
 
-  const qualifiesTokenHalf =
-    paymentPct >= INCENTIVE_TOKEN_HALF_MIN_PCT ||
-    amountReceived >= INCENTIVE_TOKEN_HALF_MIN_INR;
-
-  if (qualifiesTokenHalf) {
+  if (amountReceived >= INCENTIVE_TOKEN_HALF_MIN_INR) {
     return {
       weightedInr: Math.round(quoteAmount * 0.5),
       tier: "half",
       weightPct: 50,
-      label: "Half (token ≥5%)",
+      label: "Half (token ≥₹25k)",
     };
   }
 
@@ -96,10 +90,8 @@ export type IncrementalWeightedResult = {
   label: string;
 };
 
-function recordMonthKey(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+function recordPeriodKey(iso: string): string | null {
+  return incentivePeriodKeyFromIso(iso);
 }
 
 function cumulativeWeightedForRecord(record: IncentiveBookingLead): IncentiveWeightedResult {
@@ -135,7 +127,7 @@ function monthCreditLabel(
   if (baseline > 0 && endCumulative.tier === "full" && monthCredit >= half - 1) {
     return "+50% (10% completed)";
   }
-  if (monthCredit >= half - 1 && monthCredit <= half + 1) return "Half (token ≥5%)";
+  if (monthCredit >= half - 1 && monthCredit <= half + 1) return "Half (token ≥₹25k)";
   return endCumulative.label;
 }
 
@@ -153,9 +145,9 @@ function monthCreditTier(
 }
 
 /**
- * Credit weighted revenue per calendar month per lead.
- * - Cross-month: July token 50%, August completion +50%.
- * - Same month: token then full 10% → 100% for that month (not split as 50% + 50% on two rows).
+ * Credit weighted revenue per 15-day incentive period per lead.
+ * - Cross-period: Jul 1–15 token 50%, Jul 16–31 completion +50%.
+ * - Same period: token then full 10% → 100% for that half (not split as 50% + 50% on two rows).
  */
 export function computeIncrementalWeightsByRecordId(
   allLeads: IncentiveBookingLead[],
@@ -171,36 +163,36 @@ export function computeIncrementalWeightsByRecordId(
   const result = new Map<string, IncrementalWeightedResult>();
 
   for (const records of byLead.values()) {
-    const byMonth = new Map<string, IncentiveBookingLead[]>();
+    const byPeriod = new Map<string, IncentiveBookingLead[]>();
     for (const record of records) {
-      const month = recordMonthKey(record.submittedAt);
-      if (!month) continue;
-      const bucket = byMonth.get(month) ?? [];
+      const period = recordPeriodKey(record.submittedAt);
+      if (!period) continue;
+      const bucket = byPeriod.get(period) ?? [];
       bucket.push(record);
-      byMonth.set(month, bucket);
+      byPeriod.set(period, bucket);
     }
 
-    const months = [...byMonth.keys()].sort();
+    const periods = [...byPeriod.keys()].sort();
     let baseline = 0;
 
-    for (const month of months) {
-      const monthRecords = byMonth.get(month) ?? [];
-      const best = pickBestRecordInMonth(monthRecords);
+    for (const period of periods) {
+      const periodRecords = byPeriod.get(period) ?? [];
+      const best = pickBestRecordInMonth(periodRecords);
       const endCumulative = cumulativeWeightedForRecord(best);
-      const monthCredit = Math.max(0, endCumulative.weightedInr - baseline);
+      const periodCredit = Math.max(0, endCumulative.weightedInr - baseline);
 
-      for (const record of monthRecords) {
+      for (const record of periodRecords) {
         const isBest = record.id === best.id;
-        const incrementalInr = isBest ? monthCredit : 0;
+        const incrementalInr = isBest ? periodCredit : 0;
         result.set(record.id, {
           incrementalInr,
           cumulativeInr: endCumulative.weightedInr,
           tier: isBest
-            ? monthCreditTier(monthCredit, endCumulative, record.quoteAmount)
+            ? monthCreditTier(periodCredit, endCumulative, record.quoteAmount)
             : "none",
           label: isBest
-            ? monthCreditLabel(monthCredit, endCumulative, baseline, record.quoteAmount)
-            : "Included in month total",
+            ? monthCreditLabel(periodCredit, endCumulative, baseline, record.quoteAmount)
+            : "Included in period total",
         });
       }
 

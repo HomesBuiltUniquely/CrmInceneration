@@ -14,14 +14,19 @@ import { buildIncentiveProfile } from "@/lib/incentives-profile";
 import {
   fetchIncentiveBookingLeads,
   fetchIncentiveBookingLeadsForExecutive,
-  resolveIncentiveLeadsForMonth,
+  resolveIncentiveLeadsForPeriod,
   type IncentiveBookingLead,
 } from "@/lib/incentives-booking-data";
+import {
+  currentIncentivePeriodHalf,
+  formatIncentivePeriodLabel,
+  INCENTIVE_PERIOD_HALF_OPTIONS,
+  type IncentivePeriodHalf,
+} from "@/lib/incentive-period";
 import { loadIncentivesRoster, type IncentivesRoster } from "@/lib/incentives-roster";
 import { applyMonthlyTargets, salesTargetsApi } from "@/lib/sales-targets-api";
 import {
   currentSalesTargetMonth,
-  formatSalesTargetMonthLabel,
   monthSelectOptions,
 } from "@/lib/sales-targets";
 import IncentiveDashboard from "./IncentiveDashboard";
@@ -39,6 +44,9 @@ export default function IncentivesClient() {
   const [selectedExecutiveId, setSelectedExecutiveId] = useState<number | null>(null);
   const [showTeamOverview, setShowTeamOverview] = useState(false);
   const [targetMonth, setTargetMonth] = useState(currentSalesTargetMonth());
+  const [targetPeriodHalf, setTargetPeriodHalf] = useState<IncentivePeriodHalf>(
+    currentIncentivePeriodHalf(),
+  );
   const [bookingLeads, setBookingLeads] = useState<IncentiveBookingLead[]>([]);
   const [executiveBookingLeads, setExecutiveBookingLeads] = useState<IncentiveBookingLead[]>([]);
   const [executiveLeadsLoading, setExecutiveLeadsLoading] = useState(false);
@@ -202,11 +210,11 @@ export default function IncentivesClient() {
   }, [bookingLeads, executiveBookingLeads, roster?.canPickTeam, selectedMember]);
 
   const selectedMemberLeads = useMemo(
-    () => resolveIncentiveLeadsForMonth(executiveScopedLeads, targetMonth),
-    [executiveScopedLeads, targetMonth],
+    () => resolveIncentiveLeadsForPeriod(executiveScopedLeads, targetMonth, targetPeriodHalf),
+    [executiveScopedLeads, targetMonth, targetPeriodHalf],
   );
 
-  const monthBookingLeads = selectedMemberLeads;
+  const periodBookingLeads = selectedMemberLeads;
 
   const selectedProfile = useMemo(
     () =>
@@ -214,9 +222,10 @@ export default function IncentivesClient() {
         ? buildIncentiveProfile(selectedMember, {
             bookingLeads: selectedMemberLeads,
             allBookingLeads: executiveScopedLeads,
+            periodHalf: targetPeriodHalf,
           })
         : null,
-    [selectedMember, selectedMemberLeads],
+    [selectedMember, selectedMemberLeads, executiveScopedLeads, targetPeriodHalf],
   );
 
   const viewingLabel = useMemo(() => {
@@ -264,23 +273,39 @@ export default function IncentivesClient() {
                   Incentive period
                 </p>
                 <p className="text-sm font-semibold text-[var(--inc-text)]">
-                  {formatSalesTargetMonthLabel(targetMonth)}
+                  {formatIncentivePeriodLabel(targetMonth, targetPeriodHalf)}
                 </p>
               </div>
-              <label className="flex items-center gap-2 text-sm text-[var(--inc-muted)]">
-                Month
-                <select
-                  value={targetMonth}
-                  onChange={(e) => setTargetMonth(e.target.value)}
-                  className="rounded-lg border border-[var(--inc-border)] bg-white px-3 py-2 text-[13px] text-[var(--inc-text)]"
-                >
-                  {monthOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-[var(--inc-muted)]">
+                  Month
+                  <select
+                    value={targetMonth}
+                    onChange={(e) => setTargetMonth(e.target.value)}
+                    className="rounded-lg border border-[var(--inc-border)] bg-white px-3 py-2 text-[13px] text-[var(--inc-text)]"
+                  >
+                    {monthOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-[var(--inc-muted)]">
+                  Period
+                  <select
+                    value={targetPeriodHalf}
+                    onChange={(e) => setTargetPeriodHalf(e.target.value as IncentivePeriodHalf)}
+                    className="rounded-lg border border-[var(--inc-border)] bg-white px-3 py-2 text-[13px] text-[var(--inc-text)]"
+                  >
+                    {INCENTIVE_PERIOD_HALF_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </section>
 
             {loading ? (
@@ -363,6 +388,7 @@ export default function IncentivesClient() {
                       <TeamIncentivesOverview
                         members={visibleExecutives}
                         monthKey={targetMonth}
+                        periodHalf={targetPeriodHalf}
                         viewerId={roster.viewer.id}
                         canPickTeam={roster.canPickTeam}
                         selectedId={selectedExecutiveId}
@@ -384,7 +410,7 @@ export default function IncentivesClient() {
                 <IncentiveDashboard
                   profile={selectedProfile}
                   viewingLabel={viewingLabel}
-                  bookingCount={monthBookingLeads.length}
+                  bookingCount={periodBookingLeads.length}
                 />
 
                 <button
