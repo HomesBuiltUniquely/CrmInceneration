@@ -29,3 +29,55 @@ export default function InsightsClient1() {
     </main>
   );
 }
+
+export function InsightsClient2() {
+  return (
+    <main>
+      <div className="flex flex-col gap-4 rounded-xl border border-indigo-200 bg-indigo-50 p-6 shadow-sm md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-indigo-700">CRM Insights</h1>
+          <p className="pt-2 text-base text-slate-600">
+            Real-time reporting for high-performing design teams.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-white px-3 py-2 text-sm text-slate-700">
+            Last 30 Days
+          </span>
+          <span className="rounded-full bg-white px-3 py-2 text-sm text-slate-700">
+            All Salespeople
+          </span>
+          <span className="rounded-full bg-white px-3 py-2 text-sm text-slate-700">
+            Location All
+          </span>
+          <button className="rounded bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700">
+            Export PDF
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export function InsightsClient3() {
+  return (
+    <main>
+      <div className="flex items-center justify-between rounded-2xl bg-slate-900 p-6 text-white shadow-lg">
+        <div>
+          <h1 className="text-3xl font-bold">CRM Insights</h1>
+          <p className="pt-2 text-sm text-slate-300">
+            Streamlined analytics for modern interior design operations.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="rounded border border-slate-700 px-3 py-2 text-sm">Last 30 Days</div>
+          <div className="rounded border border-slate-700 px-3 py-2 text-sm">All Salespeople</div>
+          <div className="rounded border border-slate-700 px-3 py-2 text-sm">Location All</div>
+          <button className="rounded bg-amber-400 px-4 py-2 font-semibold text-slate-900 hover:bg-amber-500">
+            Export PDF
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
