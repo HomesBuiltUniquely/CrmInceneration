@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
-import CrmAppShell from "../Shared/CrmAppShell";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -234,22 +233,29 @@ export default function AppointmentManagementClient() {
   };
 
   return (
-    <CrmAppShell
-      sections={dashboardSidebarSections}
-      profileName={roleLabel}
-      profileRole={role}
-      profileInitials={roleLabel.slice(0, 2).toUpperCase()}
-      enlargeLogo
-      headerMiddleContent={
-        <div className="flex min-w-0 items-center gap-3">
-          <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
-          <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] md:text-lg">
-            {roleLabel} Panel
-          </h1>
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div>
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName={roleLabel}
+            profileRole={role}
+            profileInitials={roleLabel.slice(0, 2).toUpperCase()}
+          />
         </div>
-      }
-    >
-        <div className="bg-[var(--crm-surface)]">
+
+        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
+            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
+              <h1 className="text-[1.35rem] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[2rem]">
+                {roleLabel} Panel
+              </h1>
+            </div>
+          </div>
+
           <main className="px-4 py-6 md:px-6">
             <section className="mx-auto max-w-[1200px] rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface)]">
               <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-4 dark:border-[var(--crm-border)] md:px-6">
@@ -387,6 +393,7 @@ export default function AppointmentManagementClient() {
             </section>
           </main>
         </div>
+      </div>
 
       {createOpen ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 px-4 backdrop-blur-sm">
@@ -530,6 +537,6 @@ export default function AppointmentManagementClient() {
           </div>
         </div>
       ) : null}
-    </CrmAppShell>
+    </div>
   );
 }

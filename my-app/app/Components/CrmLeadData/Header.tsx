@@ -6,8 +6,7 @@ import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
-import CrmAppShell from "../Shared/CrmAppShell";
-import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -639,28 +638,27 @@ export default function Header() {
   }, [currentRole]);
 
   return (
-    <CrmAppShell
-      sections={sidebarSections}
-      profileName={currentRole.replace(/_/g, " ")}
-      profileRole={currentRole}
-      profileInitials="AD"
-      scrollRootId="crm-leads-scroll-root"
-      hideHeader
-    >
-      <TopNav
-        search={search}
-        onSearchChange={setSearch}
-        sections={sidebarSections}
-        profileName={currentRole.replace(/_/g, " ")}
-        profileRole={currentRole}
-        profileInitials="AD"
-      />
-      {!authResolved ? (
-            <div className={`${LEADS_PAGE_CONTAINER_CLASS} mt-6 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] py-5 text-[13px] text-[var(--crm-text-muted)]`}>
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+      <div className="xl:grid xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div>
+          <QuickAccessSidebar
+            appBadge="LD"
+            appName="Lead"
+            appTagline="workspace"
+            sections={sidebarSections}
+            profileName={currentRole.replace(/_/g, " ")}
+            profileRole={currentRole}
+            profileInitials="AD"
+          />
+        </div>
+        <div id="crm-leads-scroll-root" className="xl:h-screen xl:overflow-y-auto">
+          <TopNav search={search} onSearchChange={setSearch} />
+          {!authResolved ? (
+            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               Loading your role access...
             </div>
           ) : isDesignRole ? (
-            <div className={`${LEADS_PAGE_CONTAINER_CLASS} mt-6 rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] py-5 text-[13px] text-[var(--crm-text-muted)]`}>
+            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               You don&apos;t have access to CRM lead management in this role.
             </div>
           ) : (
@@ -761,6 +759,8 @@ export default function Header() {
             </>
           )}
           <div className="h-10" />
-    </CrmAppShell>
+        </div>
+      </div>
+    </div>
   );
 }

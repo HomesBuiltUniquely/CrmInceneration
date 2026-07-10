@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import CrmAppShell from "../Shared/CrmAppShell";
+import { useEffect, useMemo, useState } from "react";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import AdminPanelContent from "./AdminPanelContent";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
@@ -32,35 +32,50 @@ export default function AdminPanelClient() {
 
   return (
     <div
+      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
       style={{
         fontFamily:
           "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
-    <CrmAppShell
-      sections={dashboardSidebarSections}
-      profileName={roleLabel}
-      profileRole={role}
-      profileInitials="AD"
-      enlargeLogo
-      headerMiddleContent={
-        <div className="flex min-w-0 items-center gap-3">
-          <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
-          <div className="min-w-0">
-          <h1 className="truncate text-base font-bold text-[var(--crm-text-primary)] xl:text-lg">
-            {roleLabel} Panel
-          </h1>
-          <p className="hidden text-xs text-[var(--crm-text-muted)] xl:block">
-            Configuration & controls - {roleLabel} view
-          </p>
-          </div>
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div>
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName={roleLabel}
+            profileRole={role}
+            profileInitials="AD"
+          />
         </div>
-      }
-    >
-        <div className="bg-[var(--crm-surface)]">
+
+        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
+            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
+              <div className="flex items-center gap-3">
+                <Image
+                  src="/HowsCrmLogo.png"
+                  alt="Hows CRM"
+                  width={46}
+                  height={46}
+                />
+                <div>
+                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
+                    {roleLabel} Panel
+                  </div>
+                  <div className="text-sm text-[var(--crm-text-muted)]">
+                    Configuration & controls - {roleLabel} view
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <AdminPanelContent />
         </div>
-    </CrmAppShell>
+      </div>
     </div>
   );
 }

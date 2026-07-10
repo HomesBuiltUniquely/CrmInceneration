@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import CrmAppShell from "../Shared/CrmAppShell";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -241,26 +241,31 @@ export default function IncentivesClient() {
   }, [roster, selectedMember]);
 
   return (
-    <div className="inc-root">
-      <CrmAppShell
-        sections={salesWorkspaceSidebarSections}
-        profileName={profileName}
-        profileRole={roleLabel}
-        profileInitials={profileInitials}
-        enlargeLogo
-        headerMiddleContent={
-          <div className="flex min-w-0 items-center gap-3">
-            <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
-            <div className="min-w-0">
-              <h1 className="truncate text-base font-bold text-[var(--inc-text)] xl:text-lg">Incentives</h1>
-              <p className="hidden text-xs text-[var(--inc-muted)] xl:block">
-                {roster?.canPickTeam ? "Team & individual performance" : "Your performance tracking"}
-              </p>
+    <div className="inc-root xl:h-screen xl:overflow-hidden">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <QuickAccessSidebar
+          appBadge="HO WS"
+          appName="Hows"
+          appTagline="by HUB"
+          sections={salesWorkspaceSidebarSections}
+          profileName={profileName}
+          profileRole={roleLabel}
+          profileInitials={profileInitials}
+        />
+
+        <div className="min-w-0 xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--inc-border)] bg-[var(--inc-surface)] shadow-sm">
+            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
+              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
+              <div>
+                <h1 className="text-base font-bold text-[var(--inc-text)]">Incentives</h1>
+                <p className="text-xs text-[var(--inc-muted)]">
+                  {roster?.canPickTeam ? "Team & individual performance" : "Your performance tracking"}
+                </p>
+              </div>
             </div>
           </div>
-        }
-      >
-        <div className="min-w-0">
+
           <main className="p-4 md:p-6 lg:p-8">
             <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--inc-border)] bg-[var(--inc-surface)] px-4 py-3 shadow-sm">
               <div>
@@ -419,7 +424,7 @@ export default function IncentivesClient() {
             )}
           </main>
         </div>
-      </CrmAppShell>
+      </div>
     </div>
   );
 }

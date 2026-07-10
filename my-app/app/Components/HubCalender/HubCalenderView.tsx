@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import CrmAppShell from "../Shared/CrmAppShell";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -487,27 +487,32 @@ export default function HubCalendarPage(): React.ReactElement | null {
         </div>
       )}
 
-      <CrmAppShell
-        sections={dashboardSidebarSections}
-        profileName={role.replace(/_/g, " ")}
-        profileRole={role}
-        profileInitials="AD"
-        enlargeLogo
-        headerMiddleContent={
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-md bg-[var(--crm-danger)] text-white">
-              <span className="block w-full bg-[var(--crm-danger-text)] py-px text-center text-[7px] font-bold uppercase leading-tight tracking-wide">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div>
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName={role.replace(/_/g, " ")}
+            profileRole={role}
+            profileInitials="AD"
+          />
+        </div>
+
+        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+          <div className="flex items-center gap-3 border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-6 py-3">
+            <div className="w-9 h-9 rounded-md overflow-hidden flex flex-col items-center justify-center bg-[var(--crm-danger)] text-white flex-shrink-0">
+              <span className="text-[7px] font-bold uppercase tracking-wide bg-[var(--crm-danger-text)] w-full text-center leading-tight py-px">
                 {MONTHS[today.getMonth()].substring(0, 3)}
               </span>
-              <span className="block text-center text-base font-bold leading-tight">{today.getDate()}</span>
+              <span className="text-base font-bold leading-tight">{today.getDate()}</span>
             </div>
-            <h1 className="truncate text-base font-semibold text-[var(--crm-text-primary)] xl:text-lg">
+            <h1 className="text-lg font-semibold text-[var(--crm-text-primary)]">
               HUB Calendar
             </h1>
           </div>
-        }
-      >
-        <div className="bg-[var(--crm-app-bg)]">
+
           <main className="px-4 py-6 md:px-6 lg:px-8">
             {!isAuthorized ? (
                 <div className="mx-auto flex max-w-xl h-64 flex-col items-center justify-center rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-sm">
@@ -743,7 +748,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
             )}
           </main>
         </div>
-      </CrmAppShell>
+      </div>
     </div>
   );
 }

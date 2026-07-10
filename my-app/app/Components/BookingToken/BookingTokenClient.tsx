@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import CrmAppShell from "../Shared/CrmAppShell";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessBookingTokenDashboard } from "@/lib/roleUtils";
@@ -18,13 +18,7 @@ import RecentLedger from "./components/RecentLedger";
 import UrgentTasks from "./components/UrgentTasks";
 import PipelineVelocity from "./components/PipelineVelocity";
 import BookingTokenDateFilterPanel from "./components/BookingTokenDateFilterPanel";
-import BookingTokenDealFilterPanel from "./components/BookingTokenDealFilterPanel";
 import type { BookingTokenTab } from "./types";
-import {
-  DEFAULT_BOOKING_DEAL_FILTERS,
-  type BookingDealFilterState,
-} from "@/lib/booking-token-deal-filters";
-import { isSuperAdminRole, isAdminRole } from "@/lib/roleUtils";
 
 const TAB_ITEMS: { id: BookingTokenTab; label: string }[] = [
   { id: "all", label: "All" },
@@ -41,9 +35,6 @@ export default function BookingTokenClient() {
   const [tab, setTab] = useState<BookingTokenTab>("all");
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_BOOKING_DATE_FILTER,
-  );
-  const [dealFilters, setDealFilters] = useState<BookingDealFilterState>(
-    DEFAULT_BOOKING_DEAL_FILTERS,
   );
   const [kpiRefresh, setKpiRefresh] = useState(0);
   const [role, setRole] = useState("");
@@ -77,13 +68,6 @@ export default function BookingTokenClient() {
   );
 
   const showDashboardExtras = tab !== "cancel";
-  const showHierarchyFilters =
-    isAdminRole(role) || role === "SALES_ADMIN" || role === "SALES_MANAGER";
-  const workspaceLabel = isSuperAdminRole(role)
-    ? "Super Admin workspace"
-    : roleLabel
-      ? `${roleLabel} workspace`
-      : "Booking workspace";
 
   const ledgerTab = tab === "cancel" ? "all" : tab;
   const pipelineTab = tab === "cancel" ? "all" : tab;
@@ -97,24 +81,29 @@ export default function BookingTokenClient() {
   }
 
   return (
-    <div className="bt-root min-h-screen bg-[var(--crm-app-bg)]">
-      <CrmAppShell
-        sections={dashboardSidebarSections}
-        profileName={roleLabel}
-        profileRole={role}
-        profileInitials="SA"
-        enlargeLogo
-        headerMiddleContent={
-          <div className="flex min-w-0 items-center gap-3">
-            <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={40} height={40} className="h-9 w-9" />
-            <div className="min-w-0">
-              <h1 className="truncate text-base font-bold text-[var(--bt-text)] xl:text-lg">Booking & Token</h1>
-              <p className="hidden text-xs text-[var(--bt-muted)] xl:block">{workspaceLabel}</p>
+    <div className="bt-root min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <QuickAccessSidebar
+          appBadge="HO WS"
+          appName="Hows"
+          appTagline="by HUB"
+          sections={dashboardSidebarSections}
+          profileName={roleLabel}
+          profileRole={role}
+          profileInitials="SA"
+        />
+
+        <div className="min-w-0 bg-[var(--bt-bg)] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
+            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
+              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
+              <div>
+                <h1 className="text-base font-bold text-[var(--bt-text)]">Booking & Token</h1>
+                <p className="text-xs text-[var(--bt-muted)]">Super Admin workspace</p>
+              </div>
             </div>
           </div>
-        }
-      >
-        <div className="min-w-0 bg-[var(--bt-bg)]">
+
           <main className="p-6 lg:p-8">
             <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -138,12 +127,6 @@ export default function BookingTokenClient() {
                   ))}
                 </div>
                 <BookingTokenDateFilterPanel value={dateFilter} onChange={setDateFilter} />
-                <BookingTokenDealFilterPanel
-                  value={dealFilters}
-                  onChange={setDealFilters}
-                  viewerRole={role}
-                  showHierarchyFilters={showHierarchyFilters}
-                />
                 <button
                   type="button"
                   className="bt-btn bt-btn-toolbar"
@@ -160,17 +143,11 @@ export default function BookingTokenClient() {
                 </div>
               ) : null}
 
-              <KpiCards
-                refreshSignal={kpiRefresh}
-                dateFilter={dateFilter}
-                dealFilters={dealFilters}
-                tab={tab}
-              />
+              <KpiCards refreshSignal={kpiRefresh} dateFilter={dateFilter} tab={tab} />
 
               <DealsTable
                 tab={tab}
                 dateFilter={dateFilter}
-                dealFilters={dealFilters}
                 onDealCancelled={() => setTab("cancel")}
                 onDealsChanged={() => setKpiRefresh((n) => n + 1)}
                 onConvertedToBooking={() => setTab("booking")}
@@ -181,7 +158,6 @@ export default function BookingTokenClient() {
                   <RecentLedger
                     refreshSignal={kpiRefresh}
                     dateFilter={dateFilter}
-                    dealFilters={dealFilters}
                     tab={ledgerTab}
                   />
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -189,7 +165,6 @@ export default function BookingTokenClient() {
                     <PipelineVelocity
                       refreshSignal={kpiRefresh}
                       dateFilter={dateFilter}
-                      dealFilters={dealFilters}
                       tab={pipelineTab}
                     />
                   </div>
@@ -198,7 +173,7 @@ export default function BookingTokenClient() {
             </div>
           </main>
         </div>
-      </CrmAppShell>
+      </div>
     </div>
   );
 }
