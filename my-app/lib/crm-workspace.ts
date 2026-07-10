@@ -164,6 +164,9 @@ export function defaultVerificationForLeadTypeFilter(
   if (explicit?.trim()) return explicit.trim();
   const lt = leadType.trim().toLowerCase();
   if (lt === "verified") return "verified";
+  if (lt === "ivr_call") {
+    return defaultLeadsVerificationStatus(workspace, explicit, viewerRole);
+  }
   if (lt === "whatsapplead") {
     if (workspace === "presales") return "unverified";
     const r = normalizeRole(viewerRole ?? "");

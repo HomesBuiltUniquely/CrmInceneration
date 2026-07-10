@@ -7,153 +7,16 @@ import { CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
 import { cn } from "@/lib/cn";
 import type { QuickAccessParentItem, QuickAccessSubItem } from "./QuickAccessSidebar";
 import {
+  appIconTileClass,
+  CrmSidebarIcon,
+  isImageSidebarIcon,
+  resolveAppLauncherIcon,
+} from "./CrmSidebarIcons";
+import {
   filterSidebarSections,
   pathnameMatchesSidebarHref,
   sidebarHrefMatchLength,
 } from "./sidebar-utils";
-
-function SidebarIcon({ name, className }: { name: string; className?: string }) {
-  const baseProps = {
-    viewBox: "0 0 24 24",
-    fill: "none",
-    xmlns: "http://www.w3.org/2000/svg",
-    className: cn("h-6 w-6", className),
-  };
-
-  switch (name) {
-    case "users":
-      return (
-        <svg {...baseProps}>
-          <path d="M16 20V18C16 16.9 15.1 16 14 16H6C4.9 16 4 16.9 4 18V20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <circle cx="10" cy="9" r="3" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M20 20V18.5C20 17.4 19.1 16.47 18 16.32" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M15 6.13C15.86 6.43 16.5 7.25 16.5 8.2C16.5 9.15 15.86 9.97 15 10.27" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "chart":
-      return (
-        <svg {...baseProps}>
-          <path d="M4 19H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M7 17V11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M12 17V7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M17 17V13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "plus":
-      return (
-        <svg {...baseProps}>
-          <path d="M12 5V19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M5 12H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "upload":
-      return (
-        <svg {...baseProps}>
-          <path d="M12 15V5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M8.5 8.5L12 5L15.5 8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M5 15.5V17C5 18.1 5.9 19 7 19H17C18.1 19 19 18.1 19 17V15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "calendar":
-      return (
-        <svg {...baseProps}>
-          <rect x="4" y="5" width="16" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M8 3.8V6.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M16 3.8V6.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M4 9H20" stroke="currentColor" strokeWidth="1.8" />
-        </svg>
-      );
-    case "palette":
-      return (
-        <svg {...baseProps}>
-          <path d="M12 4C7.58 4 4 7.13 4 11C4 13.76 6.02 16 8.5 16H9.27C10.23 16 11 16.77 11 17.73C11 18.98 12.02 20 13.27 20H13.5C17.64 20 21 16.64 21 12.5C21 7.81 17.08 4 12 4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <circle cx="8" cy="11" r="1" fill="currentColor" />
-          <circle cx="11" cy="8" r="1" fill="currentColor" />
-          <circle cx="15" cy="8.5" r="1" fill="currentColor" />
-          <circle cx="16.5" cy="12.5" r="1" fill="currentColor" />
-        </svg>
-      );
-    case "settings":
-      return (
-        <svg {...baseProps}>
-          <path d="M12 8.5A3.5 3.5 0 1 0 12 15.5A3.5 3.5 0 1 0 12 8.5Z" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M19.4 15A1 1 0 0 0 19.6 16.1L19.7 16.2A1 1 0 0 1 19.7 17.6L17.6 19.7A1 1 0 0 1 16.2 19.7L16.1 19.6A1 1 0 0 0 15 19.4A1 1 0 0 0 14.4 20.3V20.5A1 1 0 0 1 13.4 21.5H10.6A1 1 0 0 1 9.6 20.5V20.3A1 1 0 0 0 9 19.4A1 1 0 0 0 7.9 19.6L7.8 19.7A1 1 0 0 1 6.4 19.7L4.3 17.6A1 1 0 0 1 4.3 16.2L4.4 16.1A1 1 0 0 0 4.6 15A1 1 0 0 0 3.7 14.4H3.5A1 1 0 0 1 2.5 13.4V10.6A1 1 0 0 1 3.5 9.6H3.7A1 1 0 0 0 4.6 9A1 1 0 0 0 4.4 7.9L4.3 7.8A1 1 0 0 1 4.3 6.4L6.4 4.3A1 1 0 0 1 7.8 4.3L7.9 4.4A1 1 0 0 0 9 4.6A1 1 0 0 0 9.6 3.7V3.5A1 1 0 0 1 10.6 2.5H13.4A1 1 0 0 1 14.4 3.5V3.7A1 1 0 0 0 15 4.6A1 1 0 0 0 16.1 4.4L16.2 4.3A1 1 0 0 1 17.6 4.3L19.7 6.4A1 1 0 0 1 19.7 7.8L19.6 7.9A1 1 0 0 0 19.4 9A1 1 0 0 0 20.3 9.6H20.5A1 1 0 0 1 21.5 10.6V13.4A1 1 0 0 1 20.5 14.4H20.3A1 1 0 0 0 19.4 15Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-        </svg>
-      );
-    case "wrench":
-      return (
-        <svg {...baseProps}>
-          <path d="M14.5 6.5A4 4 0 0 0 18 12L11 19L8 16L15 9A4 4 0 0 0 14.5 6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="M6 18L4 20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        </svg>
-      );
-    case "id-card":
-      return (
-        <svg {...baseProps}>
-          <rect x="3.5" y="5" width="17" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
-          <circle cx="9" cy="11" r="2" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M6.8 15C7.4 14 8.1 13.5 9 13.5C9.9 13.5 10.6 14 11.2 15" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M13.5 10H17.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M13.5 13H17.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      );
-    case "receipt":
-      return (
-        <svg {...baseProps}>
-          <path d="M7 4.5H17V19.5L15 18L13 19.5L11 18L9 19.5L7 18V4.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="M9.5 9H14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-          <path d="M9.5 12H14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-        </svg>
-      );
-    case "home":
-      return (
-        <svg {...baseProps}>
-          <path d="M4 11.5L12 5L20 11.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M6.5 10.8V19H17.5V10.8" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-          <path d="M10.2 19V14H13.8V19" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        </svg>
-      );
-    case "gift":
-      return (
-        <svg {...baseProps}>
-          <rect x="4" y="10" width="16" height="10" rx="2" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M12 10V20" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M4 13.5H20" stroke="currentColor" strokeWidth="1.8" />
-          <path d="M12 10H8.8A1.8 1.8 0 1 1 10.4 7.2L12 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-          <path d="M12 10H15.2A1.8 1.8 0 1 0 13.6 7.2L12 10Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-        </svg>
-      );
-    case "folder":
-      return (
-        <svg {...baseProps}>
-          <path d="M3.8 8.2A2.2 2.2 0 0 1 6 6H9L10.7 7.6H18A2.2 2.2 0 0 1 20.2 9.8V17A2.2 2.2 0 0 1 18 19.2H6A2.2 2.2 0 0 1 3.8 17V8.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        </svg>
-      );
-    case "sparkles":
-      return (
-        <svg {...baseProps}>
-          <path d="M12 4.5L13.4 8.3L17.2 9.7L13.4 11.1L12 14.9L10.6 11.1L6.8 9.7L10.6 8.3L12 4.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-          <path d="M18.5 4.8L19 6.2L20.4 6.7L19 7.2L18.5 8.6L18 7.2L16.6 6.7L18 6.2L18.5 4.8Z" fill="currentColor" />
-          <path d="M5.2 14.5L5.8 16.1L7.4 16.7L5.8 17.3L5.2 18.9L4.6 17.3L3 16.7L4.6 16.1L5.2 14.5Z" fill="currentColor" />
-        </svg>
-      );
-    case "grid":
-      return (
-        <svg {...baseProps}>
-          <rect x="4" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
-          <rect x="14" y="4" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
-          <rect x="4" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
-          <rect x="14" y="14" width="6" height="6" rx="1.4" stroke="currentColor" strokeWidth="1.8" />
-        </svg>
-      );
-    default:
-      return (
-        <svg {...baseProps}>
-          <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.8" />
-        </svg>
-      );
-  }
-}
 
 function HowsHubLauncherIcon({ className }: { className?: string }) {
   return (
@@ -172,89 +35,21 @@ function HowsHubLauncherIcon({ className }: { className?: string }) {
   );
 }
 
-function appIconTileClass(icon: string, isActive: boolean): string {
-  const tones: Record<string, { idle: string; active: string }> = {
-    chart: {
-      idle: "from-[#dbeafe] to-[#bfdbfe] text-[#1d4ed8]",
-      active: "from-[#2563eb] to-[#1d4ed8] text-white",
-    },
-    users: {
-      idle: "from-[#cffafe] to-[#a5f3fc] text-[#0e7490]",
-      active: "from-[#0891b2] to-[#0e7490] text-white",
-    },
-    plus: {
-      idle: "from-[#d1fae5] to-[#a7f3d0] text-[#047857]",
-      active: "from-[#059669] to-[#047857] text-white",
-    },
-    upload: {
-      idle: "from-[#ffedd5] to-[#fed7aa] text-[#c2410c]",
-      active: "from-[#ea580c] to-[#c2410c] text-white",
-    },
-    calendar: {
-      idle: "from-[#ede9fe] to-[#ddd6fe] text-[#6d28d9]",
-      active: "from-[#7c3aed] to-[#6d28d9] text-white",
-    },
-    palette: {
-      idle: "from-[#fce7f3] to-[#fbcfe8] text-[#be185d]",
-      active: "from-[#db2777] to-[#be185d] text-white",
-    },
-    settings: {
-      idle: "from-[#e2e8f0] to-[#cbd5e1] text-[#475569]",
-      active: "from-[#64748b] to-[#475569] text-white",
-    },
-    wrench: {
-      idle: "from-[#fef3c7] to-[#fde68a] text-[#b45309]",
-      active: "from-[#d97706] to-[#b45309] text-white",
-    },
-    "id-card": {
-      idle: "from-[#e0e7ff] to-[#c7d2fe] text-[#4338ca]",
-      active: "from-[#4f46e5] to-[#4338ca] text-white",
-    },
-    receipt: {
-      idle: "from-[#ccfbf1] to-[#99f6e4] text-[#0f766e]",
-      active: "from-[#0d9488] to-[#0f766e] text-white",
-    },
-  };
-  const tone = tones[icon] ?? tones.chart;
-  return cn(
-    "bg-gradient-to-br transition-colors duration-200 ease-out",
-    isActive
-      ? `${tone.active} shadow-sm`
-      : `${tone.idle} group-hover:brightness-[1.02]`,
-  );
-}
-
 function AppItemIcon({
   itemId,
   icon,
-  label,
 }: {
   itemId: string;
   icon: string;
   label: string;
 }) {
-  const iconByItem: Record<string, string> = {
-    "crm-dashboard": "home",
-    "presales-dashboard": "home",
-    "crm-my-leads": "users",
-    "presales-my-leads": "users",
-    "crm-incentives": "gift",
-    "crm-create-lead": "plus",
-    "presales-create-lead": "plus",
-    "crm-import-leads": "upload",
-    "crm-hub-calendar": "calendar",
-    "design-appointment": "calendar",
-    "crm-sales-managers": "id-card",
-    "crm-presales-executives": "id-card",
-    "crm-booking-token": "receipt",
-    "design-designer-dashboard": "sparkles",
-    "design-module": "palette",
-    "design-create-user": "plus",
-    "admin-panel": "settings",
-  };
-
-  const resolved = iconByItem[itemId] ?? icon ?? "grid";
-  return <SidebarIcon name={resolved} className="h-6 w-6" />;
+  const resolved = resolveAppLauncherIcon(itemId, icon);
+  return (
+    <CrmSidebarIcon
+      name={resolved}
+      className={isImageSidebarIcon(resolved) ? "h-10 w-10" : "h-6 w-6"}
+    />
+  );
 }
 
 type AppsLauncherMenuProps = {
@@ -444,7 +239,7 @@ export default function AppsLauncherMenu({
                         <div
                           className={cn(
                             "flex h-14 w-14 items-center justify-center rounded-[16px]",
-                            appIconTileClass(item.icon, isActive),
+                            appIconTileClass(resolveAppLauncherIcon(item.id, item.icon), isActive),
                           )}
                         >
                           <AppItemIcon itemId={item.id} icon={item.icon} label={item.label} />

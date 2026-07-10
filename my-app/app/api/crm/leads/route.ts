@@ -23,6 +23,7 @@ import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
 import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
+import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -190,6 +191,7 @@ const LEADS_EXTRA_PARAMS = [
   "presalesMilestoneSubStage",
   "verificationStatus",
   "reinquiry",
+  "leadSource",
 ] as const;
 
 function buildLeadsExtraParams(
@@ -527,6 +529,7 @@ export async function GET(req: NextRequest) {
   const size = url.searchParams.get("size") ?? "20";
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
+  const hubLeadTypeParam = hubLeadTypeForFilterKey(leadTypeParam).trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
   const viewerRole = await resolveViewerRole(req);
   const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
@@ -553,7 +556,12 @@ export async function GET(req: NextRequest) {
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
 
   if (!mergeAll && managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
@@ -584,7 +592,12 @@ export async function GET(req: NextRequest) {
   }
 
   if (!mergeAll && !managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
@@ -615,7 +628,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam) && !isIvrCallFilterKey(leadTypeParam)) {
     const presalesPerType = 1000;
     const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(
@@ -697,15 +710,15 @@ export async function GET(req: NextRequest) {
   const selectedTypes =
     leadTypeParam === "all"
       ? allowedLeadTypes
-      : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+      : CRM_LEAD_TYPES.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+        ? allowedLeadTypes.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([hubLeadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
           : []
         : allowedLeadTypes;
 
   if (selectedTypes.length === 0) {
     return NextResponse.json(
-      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { error: `${viewerRoleKey || "Current role"} cannot access ${hubLeadTypeParam || leadTypeParam || "this lead type"}.` },
       { status: 403 }
     );
   }

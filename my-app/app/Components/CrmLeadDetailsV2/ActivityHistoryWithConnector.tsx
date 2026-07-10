@@ -5,10 +5,10 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ActivityItem } from "@/lib/data";
 import { formatCrmDateTime } from "@/lib/date-time-format";
 import {
@@ -150,12 +150,6 @@ function formatActivityDetailText(value: string): string {
   );
 }
 
-function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
-  const x = (window.innerWidth - panelWidth) / 2;
-  const y = (window.innerHeight - panelHeight) / 2;
-  return clampPanelPosition(x, y, panelWidth, panelHeight);
-}
-
 function clampPanelPosition(
   x: number,
   y: number,
@@ -209,7 +203,13 @@ const ActivityHistoryWithConnector = forwardRef<
   const [open, setOpen] = useState(false);
   const [panelEntered, setPanelEntered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [positionMode, setPositionMode] = useState<"centered" | "custom">("centered");
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 });
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
@@ -230,21 +230,12 @@ const ActivityHistoryWithConnector = forwardRef<
   }, [displayActivities]);
 
   const openPanel = useCallback(() => {
-    const panelWidth = Math.min(920, window.innerWidth - 32);
-    const estimatedHeight = Math.min(560, window.innerHeight - 48);
-    setPanelPosition(getCenteredPanelPosition(panelWidth, estimatedHeight));
+    setPositionMode("centered");
     setPanelEntered(false);
     setOpen(true);
   }, []);
 
   useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
-
-  useLayoutEffect(() => {
-    if (!open || !panelRef.current) return;
-    const rect = panelRef.current.getBoundingClientRect();
-    const centered = getCenteredPanelPosition(rect.width, rect.height);
-    setPanelPosition(centered);
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -256,7 +247,10 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const closePanel = useCallback(() => {
     setPanelEntered(false);
-    window.setTimeout(() => setOpen(false), 280);
+    window.setTimeout(() => {
+      setOpen(false);
+      setPositionMode("centered");
+    }, 280);
   }, []);
 
   const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -264,6 +258,10 @@ const ActivityHistoryWithConnector = forwardRef<
     if ((event.target as HTMLElement).closest("button")) return;
 
     const rect = panelRef.current.getBoundingClientRect();
+    if (positionMode === "centered") {
+      setPositionMode("custom");
+      setPanelPosition({ x: rect.left, y: rect.top });
+    }
     isDraggingRef.current = true;
     setIsDragging(true);
     dragOffsetRef.current = {
@@ -272,7 +270,7 @@ const ActivityHistoryWithConnector = forwardRef<
     };
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
-  }, []);
+  }, [positionMode]);
 
   const handleDragMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingRef.current || !panelRef.current) return;
@@ -309,6 +307,163 @@ const ActivityHistoryWithConnector = forwardRef<
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, closePanel]);
+
+  const panelTransform =
+    positionMode === "centered"
+      ? panelEntered
+        ? "translate(-50%, -50%) scale(1)"
+        : "translate(-50%, -50%) scale(0.86)"
+      : panelEntered
+        ? "scale(1)"
+        : "scale(0.86)";
+
+  const panelStyle =
+    positionMode === "centered"
+      ? { left: "50%", top: "50%", transform: panelTransform }
+      : { left: panelPosition.x, top: panelPosition.y, transform: panelTransform };
+
+  const modal =
+    open && portalReady
+      ? createPortal(
+          <>
+            <div
+              className={`fixed inset-0 z-[90] bg-black/25 backdrop-blur-[2px] transition-opacity duration-300 ${
+                panelEntered ? "opacity-100" : "opacity-0"
+              }`}
+              onClick={closePanel}
+              aria-hidden="true"
+            />
+            <div
+              ref={panelRef}
+              className={`fixed z-[95] flex h-[min(760px,calc(100vh-2rem))] w-[min(1180px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                panelEntered ? "opacity-100" : "opacity-0"
+              }`}
+              style={panelStyle}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Activity History"
+            >
+              <div
+                className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
+                  isDragging ? "cursor-grabbing" : "cursor-grab"
+                }`}
+                onPointerDown={handleDragStart}
+                onPointerMove={handleDragMove}
+                onPointerUp={handleDragEnd}
+                onPointerCancel={handleDragEnd}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#fef3c7] text-[#d97706]">
+                    📋
+                  </span>
+                  <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">
+                    Activity History
+                  </h2>
+                  <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
+                    {filterCounts.all} EVENTS
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={closePanel}
+                  className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
+                  aria-label="Close activity history"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] px-5 py-3">
+                <FilterPill
+                  active={filter === "all"}
+                  onClick={() => setFilter("all")}
+                  label={`All ${filterCounts.all}`}
+                />
+                <FilterPill
+                  active={filter === "calls"}
+                  onClick={() => setFilter("calls")}
+                  label={`Calls ${filterCounts.calls}`}
+                  icon="📞"
+                />
+                <FilterPill
+                  active={filter === "notes"}
+                  onClick={() => setFilter("notes")}
+                  label={`Notes ${filterCounts.notes}`}
+                  icon="📝"
+                />
+                <FilterPill
+                  active={filter === "updates"}
+                  onClick={() => setFilter("updates")}
+                  label={`Updates ${filterCounts.updates}`}
+                  icon="🔄"
+                />
+              </div>
+
+              <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="flex min-h-0 flex-col border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
+                  <p className="shrink-0 px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                    {filteredActivities.length} In {filter === "all" ? "All" : filter}
+                  </p>
+                  <ul className="min-h-0 flex-1 overflow-y-auto">
+                    {filteredActivities.map((item) => (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(item.id)}
+                          className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
+                            selectedId === item.id
+                              ? "bg-[#eff6ff]"
+                              : `text-[#475569] ${V2_BTN_LIST_ITEM}`
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <KindBadge kind={item.kind} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">
+                                  {item.kind}
+                                </p>
+                                <p className="shrink-0 text-[10px] text-[#9ca3af]">{item.timestamp}</p>
+                              </div>
+                              <p
+                                className="mt-1 line-clamp-2 text-[12px] font-semibold leading-snug text-[#111827]"
+                                title={item.title}
+                              >
+                                {item.title}
+                              </p>
+                              <p className="mt-1 truncate text-[11px] text-[#9ca3af]">{item.author}</p>
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="min-h-0 overflow-y-auto p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Event Detail</p>
+                  {selected ? (
+                    <div className="mt-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <KindBadge kind={selected.kind} />
+                        <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
+                      </div>
+                      <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">{selected.title}</p>
+                      <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
+                        <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
+                          {selected.detail}
+                        </p>
+                      </div>
+                      <p className="mt-3 text-[11px] text-[#9ca3af]">👤 By: {selected.author}</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body,
+        )
+      : null;
 
   return (
     <>
@@ -363,145 +518,7 @@ const ActivityHistoryWithConnector = forwardRef<
         </button>
       </article>
 
-      {open ? (
-        <div
-          className={`fixed inset-0 z-[90] bg-black/25 backdrop-blur-[2px] transition-opacity duration-300 ${
-            panelEntered ? "opacity-100" : "opacity-0"
-          }`}
-          onClick={closePanel}
-          aria-hidden="true"
-        />
-      ) : null}
-
-      {open ? (
-        <div
-          ref={panelRef}
-          className={`fixed z-[95] flex max-h-[calc(100vh-6rem)] w-[min(920px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-            panelEntered ? "scale-100 opacity-100" : "scale-[0.86] opacity-0"
-          }`}
-          style={{ left: panelPosition.x, top: panelPosition.y }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Activity History"
-        >
-          <div
-            className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
-              isDragging ? "cursor-grabbing" : "cursor-grab"
-            }`}
-            onPointerDown={handleDragStart}
-            onPointerMove={handleDragMove}
-            onPointerUp={handleDragEnd}
-            onPointerCancel={handleDragEnd}
-          >
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#fef3c7] text-[#d97706]">
-                📋
-              </span>
-              <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">
-                Activity History
-              </h2>
-              <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
-                {filterCounts.all} EVENTS
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={closePanel}
-              className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
-              aria-label="Close activity history"
-            >
-              ×
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] px-5 py-3">
-            <FilterPill
-              active={filter === "all"}
-              onClick={() => setFilter("all")}
-              label={`All ${filterCounts.all}`}
-            />
-            <FilterPill
-              active={filter === "calls"}
-              onClick={() => setFilter("calls")}
-              label={`Calls ${filterCounts.calls}`}
-              icon="📞"
-            />
-            <FilterPill
-              active={filter === "notes"}
-              onClick={() => setFilter("notes")}
-              label={`Notes ${filterCounts.notes}`}
-              icon="📝"
-            />
-            <FilterPill
-              active={filter === "updates"}
-              onClick={() => setFilter("updates")}
-              label={`Updates ${filterCounts.updates}`}
-              icon="🔄"
-            />
-          </div>
-
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="min-h-0 border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
-              <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                {filteredActivities.length} In {filter === "all" ? "All" : filter}
-              </p>
-              <ul className="max-h-[420px] overflow-y-auto">
-                {filteredActivities.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(item.id)}
-                      className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
-                        selectedId === item.id
-                          ? "bg-[#eff6ff]"
-                          : `text-[#475569] ${V2_BTN_LIST_ITEM}`
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <KindBadge kind={item.kind} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">
-                              {item.kind}
-                            </p>
-                            <p className="shrink-0 text-[10px] text-[#9ca3af]">{item.timestamp}</p>
-                          </div>
-                          <p
-                            className="mt-1 line-clamp-2 text-[12px] font-semibold leading-snug text-[#111827]"
-                            title={item.title}
-                          >
-                            {item.title}
-                          </p>
-                          <p className="mt-1 truncate text-[11px] text-[#9ca3af]">{item.author}</p>
-                        </div>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="min-h-[280px] p-4">
-              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Event Detail</p>
-              {selected ? (
-                <div className="mt-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <KindBadge kind={selected.kind} />
-                    <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
-                  </div>
-                  <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">{selected.title}</p>
-                  <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
-                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
-                      {selected.detail}
-                    </p>
-                  </div>
-                  <p className="mt-3 text-[11px] text-[#9ca3af]">👤 By: {selected.author}</p>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {modal}
     </>
   );
 });

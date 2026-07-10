@@ -472,7 +472,12 @@ export default function LeadsToolbar({
     () =>
       ADMIN_SOURCE_LEAD_TYPE_TILES.map((tile) => ({
         ...tile,
-        value: Number(pooledSourceCounts[tile.leadTypeKey] ?? 0),
+        value:
+          tile.leadTypeKey === "ivr_call"
+            ? 0
+            : Number(
+                pooledSourceCounts[tile.leadTypeKey as keyof typeof pooledSourceCounts] ?? 0,
+              ),
       })),
     [pooledSourceCounts],
   );

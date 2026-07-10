@@ -240,6 +240,9 @@ function LeadRowAction({
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
+            {row.leadSource === "IVR Call" ? (
+              <TinyTag chip={{ label: "IVR Call", tone: "violet" }} />
+            ) : null}
             {row.verificationTag === "verified" ? (
               <TinyTag chip={{ label: "Verified", tone: "green" }} />
             ) : row.verificationTag === "unverified" ? (

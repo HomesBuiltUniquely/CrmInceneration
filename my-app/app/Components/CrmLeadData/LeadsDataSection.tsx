@@ -114,6 +114,13 @@ import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
 import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
+import {
+  appendIvrLeadSourceFilter,
+  hubLeadTypeForFilterKey,
+  isIvrCallFilterKey,
+  isIvrCallLeadSource,
+} from "@/lib/ivr-lead-source";
+import { getLeadDisplaySource } from "@/lib/lead-display";
 
 type Props = {
   search: string;
@@ -593,10 +600,10 @@ async function fetchMergedPage(
         );
 
   /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge filter route. */
-  if (isDedicatedFilterLeadType(normalizedLeadType)) {
+  if (isDedicatedFilterLeadType(normalizedLeadType) || isIvrCallFilterKey(normalizedLeadType)) {
     const qs = new URLSearchParams();
     qs.set("mergeAll", "1");
-    qs.set("leadType", normalizedLeadType);
+    qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType));
     qs.set("milestoneScope", "crm");
     qs.set("page", String(page));
     qs.set("size", String(size));
@@ -613,6 +620,7 @@ async function fetchMergedPage(
     );
     if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
     if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+    appendIvrLeadSourceFilter(qs, normalizedLeadType);
     appendLeadPoolQuery(qs, leadsWorkspace);
     const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
       cache: "no-store",
@@ -648,7 +656,7 @@ async function fetchMergedPage(
         qs.set("page", String(pageNum));
         qs.set("size", String(pageSize));
         qs.set("sort", sort);
-        qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
+        qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType));
         qs.set("milestoneScope", "crm");
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
@@ -663,6 +671,7 @@ async function fetchMergedPage(
         );
         if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
         if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+        appendIvrLeadSourceFilter(qs, normalizedLeadType);
         appendLeadPoolQuery(qs, leadsWorkspace);
         const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
           cache: "no-store",
@@ -745,7 +754,7 @@ async function fetchMergedPage(
         milestoneStage: "",
         milestoneStageCategory: "",
         milestoneSubStage: "",
-        leadType: normalizedLeadType === "verified" ? "all" : normalizedLeadType,
+        leadType: hubLeadTypeForFilterKey(normalizedLeadType),
       });
       const [primaryAll, secondaryAll] = await Promise.all([
         fetchAllAdminLeads(
@@ -812,7 +821,7 @@ async function fetchMergedPage(
         milestoneStage,
         milestoneStageCategory,
         milestoneSubStage,
-        leadType: normalizedLeadType === "verified" ? "all" : normalizedLeadType,
+        leadType: hubLeadTypeForFilterKey(normalizedLeadType),
       },
       getCrmAuthHeaders(),
     );
@@ -829,7 +838,7 @@ async function fetchMergedPage(
   qs.set("page", usesRoleEndpoint ? "0" : String(page));
   qs.set("size", usesRoleEndpoint ? "500" : String(size));
   qs.set("sort", sort);
-  qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
+  qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType) || "all");
   qs.set("milestoneScope", "crm");
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
@@ -850,6 +859,7 @@ async function fetchMergedPage(
   if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
   if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
   if (usesRoleEndpoint) qs.set("roleView", leadView);
+  appendIvrLeadSourceFilter(qs, normalizedLeadType);
   appendLeadPoolQuery(qs, leadsWorkspace);
 
   const res = await fetch(
@@ -867,9 +877,25 @@ async function fetchMergedPage(
     throw new Error(text || `HTTP ${res.status}`);
   }
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
+  let content = Array.isArray(pageJson.content) ? pageJson.content : [];
+  if (isIvrCallFilterKey(normalizedLeadType)) {
+    content = content.filter((lead) => {
+      const source = getLeadDisplaySource({
+        ...(lead as Record<string, unknown>),
+        leadType: lead.leadType ?? "addlead",
+      });
+      return isIvrCallLeadSource(source);
+    });
+  }
   return {
     ...pageJson,
-    content: Array.isArray(pageJson.content) ? pageJson.content : [],
+    content,
+    ...(isIvrCallFilterKey(normalizedLeadType)
+      ? {
+          totalElements: content.length,
+          totalPages: Math.max(1, Math.ceil(content.length / Math.max(1, size))),
+        }
+      : {}),
   };
 }
 
