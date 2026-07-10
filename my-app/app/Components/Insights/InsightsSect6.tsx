@@ -142,6 +142,7 @@ export default function InsightSect6() {
                   ACTUAL
                 </p>
               </div>
+              
 
               <div>
                 <div className="relative h-36 w-24 bg-gray-200 sm:w-28">
