@@ -9,7 +9,6 @@ import type { QuickAccessParentItem, QuickAccessSubItem } from "./QuickAccessSid
 import {
   appIconTileClass,
   CrmSidebarIcon,
-  isImageSidebarIcon,
   resolveAppLauncherIcon,
 } from "./CrmSidebarIcons";
 import {
@@ -44,12 +43,7 @@ function AppItemIcon({
   label: string;
 }) {
   const resolved = resolveAppLauncherIcon(itemId, icon);
-  return (
-    <CrmSidebarIcon
-      name={resolved}
-      className={isImageSidebarIcon(resolved) ? "h-10 w-10" : "h-6 w-6"}
-    />
-  );
+  return <CrmSidebarIcon name={resolved} className="h-8 w-8" />;
 }
 
 type AppsLauncherMenuProps = {

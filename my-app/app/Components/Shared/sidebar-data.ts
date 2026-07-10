@@ -71,7 +71,7 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
         id: "design-module",
         label: "Design Module",
         description: "Your design project",
-        icon: "palette",
+        icon: "design-module-flaticon",
         href: "https://design.hubinterior.com",
       },
       { id: "design-create-user", label: "Create Design User", description: "Add new designer/manager", icon: "user-plus", href: "/admin-panel" },

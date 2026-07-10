@@ -8,29 +8,49 @@ type CrmSidebarIconProps = {
 const SW = 1.75;
 
 export const FLATICON_ICON_SRC: Record<string, string> = {
-  "crm-dashboard-flaticon": "/icons/crm-dashboard-flaticon.png",
   "presales-dashboard-flaticon": "/icons/presales-dashboard-flaticon.png",
-  "crm-my-leads-flaticon": "/icons/crm-my-leads-flaticon.png",
-  "crm-incentives-flaticon": "/icons/crm-incentives-flaticon.png",
-  "crm-create-lead-flaticon": "/icons/crm-create-lead-flaticon.png",
-  "crm-import-leads-flaticon": "/icons/crm-import-leads-flaticon.png",
-  "crm-hub-calendar-flaticon": "/icons/crm-hub-calendar-flaticon.png",
-  "crm-booking-token-flaticon": "/icons/crm-booking-token-flaticon.png",
-  "admin-panel-flaticon": "/icons/admin-panel-flaticon.png",
-  "designer-dashboard-flaticon": "/icons/designer-dashboard-flaticon.png",
-  "appointment-flaticon": "/icons/appointment-flaticon.png",
 };
 
-const IMAGE_SIDEBAR_ICONS = new Set(Object.keys(FLATICON_ICON_SRC));
+/** White-on-black PNGs rendered on the blue app tile via screen blend. */
+const BLEND_SCREEN_ICON_SRC: Record<string, string> = {
+  "crm-dashboard-flaticon": "/icons/crm-dashboard-icon.png",
+  "crm-my-leads-flaticon": "/icons/crm-my-leads-icon.png",
+  "crm-incentives-flaticon": "/icons/crm-incentives-icon.png",
+  "crm-create-lead-flaticon": "/icons/crm-create-lead-icon.png",
+  "crm-import-leads-flaticon": "/icons/crm-import-leads-icon.png",
+  "crm-hub-calendar-flaticon": "/icons/crm-hub-calendar-icon.png",
+  "crm-booking-token-flaticon": "/icons/crm-booking-token-icon.png",
+  "design-module-flaticon": "/icons/design-module-icon.png",
+  "designer-dashboard-flaticon": "/icons/designer-dashboard-icon.png",
+  "appointment-flaticon": "/icons/appointment-icon.png",
+  "admin-panel-flaticon": "/icons/admin-panel-icon.png",
+};
 
-/** @deprecated use FLATICON_ICON_SRC */
-export const CRM_DASHBOARD_ICON_SRC = FLATICON_ICON_SRC["crm-dashboard-flaticon"];
+const IMAGE_SIDEBAR_ICONS = new Set([
+  ...Object.keys(FLATICON_ICON_SRC),
+  ...Object.keys(BLEND_SCREEN_ICON_SRC),
+]);
+
+/** @deprecated dashboard uses inline SVG */
+export const CRM_DASHBOARD_ICON_SRC = "/icons/crm-dashboard-icon.png";
 
 export function isImageSidebarIcon(name: string): boolean {
   return IMAGE_SIDEBAR_ICONS.has(name);
 }
 
 export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
+  const blendSrc = BLEND_SCREEN_ICON_SRC[name];
+  if (blendSrc) {
+    return (
+      <img
+        src={blendSrc}
+        alt=""
+        aria-hidden="true"
+        className={cn("h-5 w-5 object-contain mix-blend-screen", className)}
+      />
+    );
+  }
+
   const imageSrc = FLATICON_ICON_SRC[name];
   if (imageSrc) {
     return (
@@ -412,7 +432,7 @@ export function resolveAppLauncherIcon(itemId: string, fallbackIcon?: string): s
     "crm-presales-executives": "headset",
     "crm-booking-token": "crm-booking-token-flaticon",
     "design-designer-dashboard": "designer-dashboard-flaticon",
-    "design-module": "palette",
+    "design-module": "design-module-flaticon",
     "design-create-user": "user-plus",
     "admin-panel": "admin-panel-flaticon",
   };
@@ -420,55 +440,33 @@ export function resolveAppLauncherIcon(itemId: string, fallbackIcon?: string): s
   return iconByItem[itemId] ?? fallbackIcon ?? "grid";
 }
 
+/** Lighter Hows blue tile behind white blend icons. */
+const HOWS_FLATICON_TILE = {
+  idle: "bg-[#6BC5F0]",
+  active: "bg-[#4DB8EE] ring-2 ring-[#1DA1E6]/25",
+} as const;
+
+function flaticonTileTone() {
+  return HOWS_FLATICON_TILE;
+}
+
 const ICON_TILE_TONES: Record<string, { idle: string; active: string }> = {
   "layout-dashboard": {
     idle: "from-[#dbeafe] to-[#bfdbfe] text-[#1d4ed8]",
     active: "from-[#2563eb] to-[#1d4ed8] text-white",
   },
-  "crm-dashboard-flaticon": {
-    idle: "from-[#dbeafe] to-[#bfdbfe]",
-    active: "from-[#2563eb] to-[#1d4ed8] ring-2 ring-[#2563eb]/25",
-  },
-  "presales-dashboard-flaticon": {
-    idle: "from-[#dbeafe] to-[#bfdbfe]",
-    active: "from-[#2563eb] to-[#1d4ed8] ring-2 ring-[#2563eb]/25",
-  },
-  "crm-my-leads-flaticon": {
-    idle: "from-[#cffafe] to-[#a5f3fc]",
-    active: "from-[#0891b2] to-[#0e7490] ring-2 ring-[#0891b2]/25",
-  },
-  "crm-incentives-flaticon": {
-    idle: "from-[#fef3c7] to-[#fde68a]",
-    active: "from-[#d97706] to-[#b45309] ring-2 ring-[#d97706]/25",
-  },
-  "crm-create-lead-flaticon": {
-    idle: "from-[#d1fae5] to-[#a7f3d0]",
-    active: "from-[#059669] to-[#047857] ring-2 ring-[#059669]/25",
-  },
-  "crm-import-leads-flaticon": {
-    idle: "from-[#ffedd5] to-[#fed7aa]",
-    active: "from-[#ea580c] to-[#c2410c] ring-2 ring-[#ea580c]/25",
-  },
-  "crm-hub-calendar-flaticon": {
-    idle: "from-[#ede9fe] to-[#ddd6fe]",
-    active: "from-[#7c3aed] to-[#6d28d9] ring-2 ring-[#7c3aed]/25",
-  },
-  "crm-booking-token-flaticon": {
-    idle: "from-[#ccfbf1] to-[#99f6e4]",
-    active: "from-[#0d9488] to-[#0f766e] ring-2 ring-[#0d9488]/25",
-  },
-  "admin-panel-flaticon": {
-    idle: "from-[#e2e8f0] to-[#cbd5e1]",
-    active: "from-[#64748b] to-[#475569] ring-2 ring-[#64748b]/25",
-  },
-  "designer-dashboard-flaticon": {
-    idle: "from-[#fce7f3] to-[#fbcfe8]",
-    active: "from-[#db2777] to-[#be185d] ring-2 ring-[#db2777]/25",
-  },
-  "appointment-flaticon": {
-    idle: "from-[#ede9fe] to-[#ddd6fe]",
-    active: "from-[#7c3aed] to-[#6d28d9] ring-2 ring-[#7c3aed]/25",
-  },
+  "crm-dashboard-flaticon": flaticonTileTone(),
+  "presales-dashboard-flaticon": flaticonTileTone(),
+  "crm-my-leads-flaticon": flaticonTileTone(),
+  "crm-incentives-flaticon": flaticonTileTone(),
+  "crm-create-lead-flaticon": flaticonTileTone(),
+  "crm-import-leads-flaticon": flaticonTileTone(),
+  "crm-hub-calendar-flaticon": flaticonTileTone(),
+  "crm-booking-token-flaticon": flaticonTileTone(),
+  "design-module-flaticon": flaticonTileTone(),
+  "designer-dashboard-flaticon": flaticonTileTone(),
+  "appointment-flaticon": flaticonTileTone(),
+  "admin-panel-flaticon": flaticonTileTone(),
   leads: {
     idle: "from-[#cffafe] to-[#a5f3fc] text-[#0e7490]",
     active: "from-[#0891b2] to-[#0e7490] text-white",
@@ -537,10 +535,12 @@ const ICON_TILE_TONES: Record<string, { idle: string; active: string }> = {
 
 export function appIconTileClass(icon: string, isActive: boolean): string {
   const tone = ICON_TILE_TONES[icon] ?? ICON_TILE_TONES["layout-dashboard"];
+  const isSolidTile = tone.idle.startsWith("bg-[");
   return cn(
-    "bg-gradient-to-br transition-colors duration-200 ease-out",
+    "transition-colors duration-200 ease-out",
+    isSolidTile ? "" : "bg-gradient-to-br",
     isActive
       ? `${tone.active} shadow-sm`
-      : `${tone.idle} group-hover:brightness-[1.02]`,
+      : `${tone.idle} ${isSolidTile ? "group-hover:brightness-105" : "group-hover:brightness-[1.02]"}`,
   );
 }
