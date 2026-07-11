@@ -9,7 +9,7 @@ export type LeadTypeCountPool = "sales" | "presales" | "total";
 
 export type LeadTypeSourceTile = {
   label: string;
-  leadTypeKey: CrmLeadType | "all";
+  leadTypeKey: CrmLeadType | "all" | "ivr_call";
 };
 
 export const ADMIN_SOURCE_LEAD_TYPE_TILES: LeadTypeSourceTile[] = [
@@ -17,6 +17,7 @@ export const ADMIN_SOURCE_LEAD_TYPE_TILES: LeadTypeSourceTile[] = [
   { label: "Google Ads", leadTypeKey: "glead" },
   { label: "Meta Ads", leadTypeKey: "mlead" },
   { label: "Add Lead", leadTypeKey: "addlead" },
+  { label: "IVR Call", leadTypeKey: "ivr_call" },
   { label: "Website Lead", leadTypeKey: "websitelead" },
   { label: "Walk-in Lead", leadTypeKey: "walkinlead" },
   { label: "WhatsApp", leadTypeKey: "whatsapplead" },

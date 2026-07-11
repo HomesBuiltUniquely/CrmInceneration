@@ -37,6 +37,8 @@ export type PaymentHistoryResponse = {
   leadId?: number;
   leadIdentifier?: string;
   customerName?: string;
+  assign?: string | null;
+  assignee?: string | null;
   quoteAmount: number;
   tenPercentAmount: number;
   amountReceived: number;

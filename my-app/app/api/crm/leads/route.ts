@@ -23,6 +23,7 @@ import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
 import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
+import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -190,6 +191,7 @@ const LEADS_EXTRA_PARAMS = [
   "presalesMilestoneSubStage",
   "verificationStatus",
   "reinquiry",
+  "leadSource",
 ] as const;
 
 function buildLeadsExtraParams(
@@ -282,6 +284,7 @@ async function fetchPresalesSearchLeads(
   sort: string,
   search: string,
   usePresalesSearchPool = true,
+  isNewCrmGlobalSearchMode = false,
 ): Promise<ApiLead[]> {
   const parseChunk = (json: unknown): Array<{ type?: string; lead?: ApiLead }> => {
     if (!json || typeof json !== "object") return [];
@@ -319,7 +322,11 @@ async function fetchPresalesSearchLeads(
     upstream.searchParams.set("page", String(pageNum));
     upstream.searchParams.set("size", String(searchSize));
     upstream.searchParams.set("sort", sort);
+    upstream.searchParams.set("milestoneScope", "crm");
     if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
     const res = await fetch(upstream.toString(), {
       headers: upstreamAuthHeaders(req),
@@ -373,7 +380,11 @@ async function fetchPresalesSearchLeads(
       upstream.searchParams.set("page", String(pageNum));
       upstream.searchParams.set("size", String(pageSize));
       upstream.searchParams.set("sort", sort);
+      upstream.searchParams.set("milestoneScope", "crm");
       if (search) upstream.searchParams.set("search", search);
+      if (isNewCrmGlobalSearchMode) {
+        upstream.searchParams.set("newCrmGlobalSearch", "true");
+      }
       appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
       const res = await fetch(upstream.toString(), {
         headers: upstreamAuthHeaders(req),
@@ -403,6 +414,7 @@ function filterAndSortMergedLeads(
   effDates: { from: string; to: string },
   usePresalesMilestoneFilters: boolean,
   search: string,
+  trustUpstreamSearch = false,
 ): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
   const assigneeAliasSet = parseAssigneeAliasSetQuery(
@@ -426,7 +438,7 @@ function filterAndSortMergedLeads(
 
   return leads
     .filter((lead) => {
-      if (search) {
+      if (search && !trustUpstreamSearch) {
         const needle = search.toLowerCase();
         const needleDigits = search.replace(/\D/g, "");
         const assigneeText =
@@ -527,6 +539,7 @@ export async function GET(req: NextRequest) {
   const size = url.searchParams.get("size") ?? "20";
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
+  const hubLeadTypeParam = hubLeadTypeForFilterKey(leadTypeParam).trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
   const viewerRole = await resolveViewerRole(req);
   const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
@@ -553,7 +566,12 @@ export async function GET(req: NextRequest) {
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
 
   if (!mergeAll && managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
@@ -584,7 +602,12 @@ export async function GET(req: NextRequest) {
   }
 
   if (!mergeAll && !managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
@@ -615,7 +638,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam) && !isIvrCallFilterKey(leadTypeParam)) {
     const presalesPerType = 1000;
     const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(
@@ -625,6 +648,7 @@ export async function GET(req: NextRequest) {
       sort,
       search,
       usePresalesSearchPool,
+      isNewCrmGlobalSearchMode,
     );
     const [walkInResult, whatsappResult] = await Promise.all([
       fetchWalkInLeadsForMerge({
@@ -670,6 +694,7 @@ export async function GET(req: NextRequest) {
       effDates,
       usePresalesMilestoneFilters,
       search,
+      usePresalesSearchPool && search.length > 0 && isNewCrmGlobalSearchMode,
     );
     const pageNum = Number.parseInt(page, 10) || 0;
     const pageSize = Number.parseInt(size, 10) || 20;
@@ -697,15 +722,15 @@ export async function GET(req: NextRequest) {
   const selectedTypes =
     leadTypeParam === "all"
       ? allowedLeadTypes
-      : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+      : CRM_LEAD_TYPES.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+        ? allowedLeadTypes.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([hubLeadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
           : []
         : allowedLeadTypes;
 
   if (selectedTypes.length === 0) {
     return NextResponse.json(
-      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { error: `${viewerRoleKey || "Current role"} cannot access ${hubLeadTypeParam || leadTypeParam || "this lead type"}.` },
       { status: 403 }
     );
   }
@@ -855,6 +880,7 @@ export async function GET(req: NextRequest) {
       sort,
       search,
       false,
+      isNewCrmGlobalSearchMode,
     );
     for (const lead of presalesRows) {
       const id = leadStableIdentifier(lead);

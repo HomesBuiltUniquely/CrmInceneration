@@ -21,6 +21,11 @@ import { appendCrmDateFilters } from "@/lib/crm-date-field-filter";
 import type { CrmDateField } from "@/lib/crm-date-field-filter";
 import { isAdminRole } from "@/lib/roleUtils";
 import {
+  appendIvrLeadSourceFilter,
+  hubLeadTypeForFilterKey,
+  isIvrCallFilterKey,
+} from "@/lib/ivr-lead-source";
+import {
   augmentLeadSourceCountsWithWalkIn,
   mergeWalkInCountIntoSourceCounts,
 } from "@/lib/crm-walkin-leads";
@@ -673,7 +678,10 @@ export function appendAdminLeadsFilters(qs: URLSearchParams, input: AdminLeadsFi
   });
 
   const lt = (input.leadType ?? "all").trim().toLowerCase();
-  if (lt && lt !== "all" && lt !== "verified") qs.set("leadType", lt);
+  if (lt && lt !== "all" && lt !== "verified") {
+    qs.set("leadType", hubLeadTypeForFilterKey(lt));
+  }
+  appendIvrLeadSourceFilter(qs, lt);
 
   const vs = (input.verificationStatus ?? "").trim();
   if (vs) qs.set("verificationStatus", vs);
@@ -796,11 +804,17 @@ export async function fetchAdminLeadsPage(
     if (!dedupedById.has(key)) dedupedById.set(key, lead);
   }
   const content = [...dedupedById.values()];
+  const resolvedTotalElements =
+    Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
+      ? uniquePrimaryTotal
+      : totalRowCount > 0
+        ? totalRowCount
+        : content.length;
 
   return {
     content,
-    totalElements: content.length,
-    totalRowCount,
+    totalElements: resolvedTotalElements,
+    totalRowCount: totalRowCount > 0 ? totalRowCount : resolvedTotalElements,
     ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
       ? { uniquePrimaryTotal }
       : {}),

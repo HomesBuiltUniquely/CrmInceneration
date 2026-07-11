@@ -10,6 +10,8 @@ import {
   formatAdditionalLeadSourcesLabel,
   isCrmLeadReinquiry,
 } from "@/lib/lead-source-utils";
+import { getLeadDisplaySource } from "@/lib/lead-display";
+import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
 import {
   formatPresalesListStatusLabel,
   getListDisplayMilestone,
@@ -69,6 +71,8 @@ export type ApiLead = {
   id?: number | string;
   /** Filter API often includes which source bucket this row came from */
   leadType?: string;
+  leadSource?: string;
+  LeadSource?: string;
   name?: string;
   fullName?: string;
   customerName?: string;
@@ -134,6 +138,7 @@ export type LeadRowModel = {
   name: string;
   company: string;
   statusLabel?: string;
+  leadSource?: string;
   verificationTag?: "verified" | "unverified";
   reinquiry?: boolean;
   /** Parsed `additionalLeadSources` for re-inquiry tooltip. */
@@ -590,6 +595,10 @@ export function mapApiLeadToRow(
     name: leadDisplayName(lead),
     company: companyFallback(lead),
     statusLabel,
+    leadSource: (() => {
+      const source = getLeadDisplaySource({ ...lead, leadType: lead.leadType ?? sourceLeadType });
+      return isIvrCallLeadSource(source) ? "IVR Call" : undefined;
+    })(),
     verificationTag: normalizeVerificationTag(lead),
     reinquiry: hasReinquiry(lead),
     reinquirySources: hasReinquiry(lead)

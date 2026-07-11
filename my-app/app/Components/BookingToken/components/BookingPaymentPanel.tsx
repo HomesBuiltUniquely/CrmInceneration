@@ -511,6 +511,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                 </p>
                 <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
                   <SummaryCard label="Lead ID" value={deal.leadIdentifier ?? `#${deal.leadId}`} />
+                  <SummaryCard label="Assign" value={deal.assign} />
                   <SummaryCard label="Deal value" value={deal.dealValue} />
                   <SummaryCard label="Token status" value={deal.tokenStatus.replace(/_/g, " ")} />
                   <SummaryCard label="Booking status" value={deal.bookingStatus.replace(/_/g, " ")} />
@@ -710,6 +711,7 @@ function buildSummaryFromDeal(deal: DealRow): PaymentHistoryResponse {
     leadId: deal.leadId,
     leadIdentifier: deal.leadIdentifier,
     customerName: deal.customer,
+    assign: deal.assign === "—" ? null : deal.assign,
     quoteAmount: deal.dealValueAmount,
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: deal.paidAmount,

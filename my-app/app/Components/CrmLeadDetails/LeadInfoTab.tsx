@@ -82,11 +82,11 @@ type Props = {
   onFloorPlanRemove?: () => void | Promise<void>;
   floorPlanUploading?: boolean;
   floorPlanRemoving?: boolean;
-  /** API detail: Full Name read-only (WhatsApp presales one-time lock). */
+  /** API detail: Full Name read-only (WhatsApp / IVR presales one-time lock). */
   nameFieldLocked?: boolean;
-  /** Hint when presales may edit WhatsApp name once before verify/handoff. */
+  /** Hint when presales may edit inbound lead name once before verify/handoff. */
   showWhatsappPresalesNameHint?: boolean;
-  /** Inline save for WhatsApp one-time name update. */
+  /** Inline save for inbound one-time name update. */
   onWhatsappNameSave?: () => void | Promise<void>;
   whatsappNameSaving?: boolean;
   /** Quote email (`POST /v1/quote/send`) — only on API-backed lead details. */
