@@ -43,6 +43,36 @@ export function sanitizeErrorMessage(message: string, fallback: string): string 
   return cleanMessage;
 }
 
+/** User-facing copy when design/New CRM has not produced a quote yet. */
+export const QUOTE_NOT_READY_USER_MESSAGE =
+  "Quote is not generated yet on the design side. Please generate the quote there first, then try Get Quote again.";
+
+const QUOTE_NOT_READY_PATTERNS: RegExp[] = [
+  /failed to resolve\s+internal\s+quote/i,
+  /resolve\s+internal\s+quote/i,
+  /internal\s+quote\s+link/i,
+  /quote\s+(?:link\s+)?(?:not\s+found|not\s+ready|not\s+available|unavailable|missing)/i,
+  /no\s+quote\s+(?:found|generated|available)/i,
+  /quote\s+(?:has\s+)?not\s+(?:been\s+)?generated/i,
+  /customer\s+(?:quote\s+)?link\s+(?:missing|not\s+found|unavailable)/i,
+];
+
+/**
+ * Map Hub/design quote API errors to plain language.
+ * Keeps already-friendly messages; replaces resolve/not-found jargon.
+ */
+export function toFriendlyQuoteErrorMessage(
+  message: string,
+  fallback: string = QUOTE_NOT_READY_USER_MESSAGE,
+): string {
+  const clean = message.trim();
+  if (!clean) return fallback;
+  if (QUOTE_NOT_READY_PATTERNS.some((pattern) => pattern.test(clean))) {
+    return QUOTE_NOT_READY_USER_MESSAGE;
+  }
+  return sanitizeErrorMessage(clean, fallback);
+}
+
 export async function getFriendlyApiErrorMessage(
   response: Response,
   fallbackMessage: string,
