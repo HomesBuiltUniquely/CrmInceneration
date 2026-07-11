@@ -804,11 +804,17 @@ export async function fetchAdminLeadsPage(
     if (!dedupedById.has(key)) dedupedById.set(key, lead);
   }
   const content = [...dedupedById.values()];
+  const resolvedTotalElements =
+    Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
+      ? uniquePrimaryTotal
+      : totalRowCount > 0
+        ? totalRowCount
+        : content.length;
 
   return {
     content,
-    totalElements: content.length,
-    totalRowCount,
+    totalElements: resolvedTotalElements,
+    totalRowCount: totalRowCount > 0 ? totalRowCount : resolvedTotalElements,
     ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
       ? { uniquePrimaryTotal }
       : {}),

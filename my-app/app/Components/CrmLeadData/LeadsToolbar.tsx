@@ -474,12 +474,12 @@ export default function LeadsToolbar({
         ...tile,
         value:
           tile.leadTypeKey === "ivr_call"
-            ? 0
+            ? Number(leadTypeCounts.ivr_call ?? 0)
             : Number(
                 pooledSourceCounts[tile.leadTypeKey as keyof typeof pooledSourceCounts] ?? 0,
               ),
       })),
-    [pooledSourceCounts],
+    [pooledSourceCounts, leadTypeCounts.ivr_call],
   );
   const adminPoolAllCount = pooledSourceCounts.all ?? 0;
   const adminPoolPrimaryTotal =

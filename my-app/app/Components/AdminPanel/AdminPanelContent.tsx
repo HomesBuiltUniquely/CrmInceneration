@@ -823,8 +823,7 @@ function AdminUserSection() {
                     color: C.muted,
                   }}
                 >
-                  You (logged-in Sales Admin) — user ID <strong style={{ color: C.text }}>{viewerUserId}</strong>.
-                  New managers are created under you automatically.
+                  New managers are created under you.
                 </div>
               </div>
             ) : needsParent ? (

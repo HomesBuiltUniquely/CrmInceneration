@@ -117,6 +117,7 @@ import {
 import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
 import {
   appendIvrLeadSourceFilter,
+  countIvrCallLeads,
   hubLeadTypeForFilterKey,
   isIvrCallFilterKey,
   isIvrCallLeadSource,
@@ -2411,37 +2412,24 @@ export default function LeadsDataSection({
             bffAssigneeAliasSet,
           );
           if (activeAssigneeScope.length === 0) {
-            const inboxScoped =
-              usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)
-                ? filterLeadsForClientWorkspaceInbox(
-                    Array.isArray(pageJson.content) ? pageJson.content : [],
-                    leadsWorkspace,
-                    verificationStatusFromHeader,
-                  )
-                : Array.isArray(pageJson.content)
-                  ? pageJson.content
-                  : [];
+            // Same as origin/main: trust Hub/BFF page meta (full pool totals).
+            // Only re-scope when sales-manager/exec client inbox filter is needed.
+            if (!usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)) {
+              return pageJson;
+            }
+            const inboxScoped = filterLeadsForClientWorkspaceInbox(
+              Array.isArray(pageJson.content) ? pageJson.content : [],
+              leadsWorkspace,
+              verificationStatusFromHeader,
+            );
             const roleScoped =
               requiresClientScopedDataset && !isGlobalSearchActive
                 ? inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
                 : inboxScoped;
-            const countBasis =
-              leadsWorkspace === "sales"
-                ? dedupeAdminPoolLeads(roleScoped as ApiLead[])
-                : roleScoped;
-            const primaryRows = pickPrimarySourceRows(countBasis);
-            const start = targetPage * targetSize;
+            // Client inbox filter only drops rows on the current page — keep Hub totals.
             return {
               ...pageJson,
-              content: countBasis.slice(start, start + targetSize),
-              totalElements: countBasis.length,
-              uniquePrimaryTotal: primaryRows.length,
-              totalRowCount: roleScoped.length,
-              totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
-              number: targetPage,
-              size: targetSize,
-              sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-              summaryTotals: computeJourneySummaryCounts(countBasis),
+              content: roleScoped,
             };
           }
           const scopedContent = filterLeadsByAssigneeScope(
@@ -2754,6 +2742,21 @@ export default function LeadsDataSection({
         }
         if (cancelled) return;
         const poolTotal = Number(heatmapData.totalElements ?? heatmapData.leads.length ?? 0);
+        const uniquePrimaryPool = Number(
+          heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
+        );
+        if (
+          (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") &&
+          !salesHierarchyFilterActive &&
+          activeAssigneeScope.length === 0
+        ) {
+          const customers = uniquePrimaryPool > 0 ? uniquePrimaryPool : poolTotal;
+          const rows = Math.max(poolTotal, customers);
+          if (customers > 0 || rows > 0) {
+            setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
+            setVisibleFilteredTotal(customers);
+          }
+        }
         const milestoneToolbarActive = Boolean(
           milestoneStage.trim() ||
             milestoneStageCategory.trim() ||
@@ -2824,6 +2827,11 @@ export default function LeadsDataSection({
         setLeadTypeCounts({
           ...countsWithInsights,
           verified: Number(heatmapData.verifiedCount ?? 0),
+          ivr_call: countIvrCallLeads(
+            heatmapData.primaryRows.length > 0
+              ? heatmapData.primaryRows
+              : heatmapData.leads,
+          ),
         });
       } catch {
         if (!cancelled) {
@@ -3176,20 +3184,39 @@ export default function LeadsDataSection({
     try {
 
       const applyAdminTotalsFromTablePage = (pageJson: SpringPage<ApiLead>) => {
-        const totalRows = pageJson.totalRowCount ?? pageJson.totalElements ?? 0;
-        const uniquePrimary = pageJson.uniquePrimaryTotal ?? totalRows;
-        const assigneeScopedTotals = pageJson.uniquePrimaryTotal !== undefined;
+        const pageContentLen = Array.isArray(pageJson.content) ? pageJson.content.length : 0;
+        const totalRows = Number(pageJson.totalRowCount ?? pageJson.totalElements ?? 0);
+        const uniquePrimary = Number(
+          pageJson.uniquePrimaryTotal ?? pageJson.totalRowCount ?? pageJson.totalElements ?? 0,
+        );
+        const pageSizeHint = Number(pageJson.size ?? 0);
+        /** Hub/BFF sometimes echoes the current page length as totalElements. */
+        const looksLikePageSizedTotal =
+          pageContentLen > 0 &&
+          totalRows > 0 &&
+          totalRows <= pageContentLen &&
+          uniquePrimary <= pageContentLen &&
+          (pageSizeHint === 0 || pageSizeHint >= pageContentLen);
+
+        if (looksLikePageSizedTotal) {
+          // Keep heatmap-driven pool totals; do not overwrite with page size (e.g. 20).
+          return;
+        }
+
         setVisibleFilteredTotal(
-          assigneeScopedTotals ? uniquePrimary : (pageJson.totalElements ?? 0),
+          Number.isFinite(uniquePrimary) && uniquePrimary > 0 ? uniquePrimary : totalRows,
         );
         if (
-          assigneeScopedTotals &&
-          (roleKeyForLoad === "SUPER_ADMIN" ||
-            roleKeyForLoad === "SALES_ADMIN" ||
-            roleKeyForLoad === "SALES_MANAGER" ||
-            roleKeyForLoad === "MANAGER")
+          roleKeyForLoad === "SUPER_ADMIN" ||
+          roleKeyForLoad === "SALES_ADMIN" ||
+          roleKeyForLoad === "SALES_MANAGER" ||
+          roleKeyForLoad === "MANAGER"
         ) {
-          setAdminPoolDisplayTotals({ uniquePrimary, totalRows });
+          setAdminPoolDisplayTotals({
+            uniquePrimary:
+              Number.isFinite(uniquePrimary) && uniquePrimary > 0 ? uniquePrimary : totalRows,
+            totalRows: Math.max(totalRows, uniquePrimary || 0),
+          });
         }
       };
 

@@ -35,3 +35,15 @@ export function appendIvrLeadSourceFilter(
     qs.set("leadSource", IVR_CALL_LEAD_SOURCE);
   }
 }
+
+import { getLeadDisplaySource } from "@/lib/lead-display";
+
+/** Count AddLead rows whose display source is IVR Call (virtual tile key `ivr_call`). */
+export function countIvrCallLeads(leads: Array<Record<string, unknown> | object>): number {
+  let n = 0;
+  for (const lead of leads) {
+    const source = getLeadDisplaySource(lead as Parameters<typeof getLeadDisplaySource>[0]);
+    if (isIvrCallLeadSource(source)) n += 1;
+  }
+  return n;
+}
