@@ -38,12 +38,15 @@ export function appendIvrLeadSourceFilter(
 
 import { getLeadDisplaySource } from "@/lib/lead-display";
 
+/** Keep rows whose display source is IVR Call (virtual tile key `ivr_call`). */
+export function filterIvrCallLeads<T extends Record<string, unknown> | object>(leads: T[]): T[] {
+  return leads.filter((lead) => {
+    const source = getLeadDisplaySource(lead as Parameters<typeof getLeadDisplaySource>[0]);
+    return isIvrCallLeadSource(source);
+  });
+}
+
 /** Count AddLead rows whose display source is IVR Call (virtual tile key `ivr_call`). */
 export function countIvrCallLeads(leads: Array<Record<string, unknown> | object>): number {
-  let n = 0;
-  for (const lead of leads) {
-    const source = getLeadDisplaySource(lead as Parameters<typeof getLeadDisplaySource>[0]);
-    if (isIvrCallLeadSource(source)) n += 1;
-  }
-  return n;
+  return filterIvrCallLeads(leads).length;
 }

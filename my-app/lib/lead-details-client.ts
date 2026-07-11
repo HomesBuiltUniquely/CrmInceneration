@@ -14,7 +14,9 @@ import {
   validateFloorPlanFile,
 } from "@/lib/floor-plan";
 import {
+  QUOTE_NOT_READY_USER_MESSAGE,
   sanitizeErrorMessage,
+  toFriendlyQuoteErrorMessage,
 } from "@/lib/friendly-api-error";
 import { mergeClearFloorPlanInDetail } from "@/lib/lead-detail-mapper";
 import type { Lead } from "@/lib/data";
@@ -564,13 +566,23 @@ async function parseNewCrmQuoteResponse(res: Response, text: string): Promise<Ne
       (parsed?.message && parsed.message.trim()) ||
       (parsed?.error && parsed.error.trim()) ||
       text.trim();
+    if (res.status === 404 || res.status === 204) {
+      throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+    }
     const message = isHtmlLikePayload(rawMessage)
-      ? `Get quote failed (${res.status}). Upstream service returned an invalid response.`
-      : sanitizeErrorMessage(
+      ? "Unable to fetch quote right now. Please try again in a moment."
+      : toFriendlyQuoteErrorMessage(
           rawMessage,
-          "Unable to fetch quote link right now. Please try again.",
+          "Unable to fetch quote right now. Please try again.",
         );
     throw new Error(message);
+  }
+  if (parsed?.ok === false) {
+    const rawMessage =
+      (parsed.message && parsed.message.trim()) ||
+      (parsed.error && parsed.error.trim()) ||
+      "";
+    throw new Error(toFriendlyQuoteErrorMessage(rawMessage, QUOTE_NOT_READY_USER_MESSAGE));
   }
   return parsed ?? {};
 }
@@ -623,9 +635,12 @@ export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
       (typeof row?.message === "string" && row.message.trim()) ||
       (typeof row?.error === "string" && row.error.trim()) ||
       text.trim();
+    if (res.status === 404 || res.status === 204) {
+      throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+    }
     const message = isHtmlLikePayload(rawMessage)
-      ? `List quotes failed (${res.status}). Upstream service returned an invalid response.`
-      : sanitizeErrorMessage(
+      ? "Unable to list quote versions right now. Please try again."
+      : toFriendlyQuoteErrorMessage(
           rawMessage,
           "Unable to list quote versions right now. Please try again.",
         );

@@ -19,6 +19,10 @@ import {
   uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
 import {
+  QUOTE_NOT_READY_USER_MESSAGE,
+  toFriendlyQuoteErrorMessage,
+} from "@/lib/friendly-api-error";
+import {
   detailJsonToLead,
   mapActivitiesJson,
   mergeLeadIntoDetail,
@@ -2227,7 +2231,9 @@ export default function LeadDetailsApiClient({
       }
     }
     if (!link) {
-      notifyError("Quote link is not available yet. Please fetch quote first.");
+      notifyError(
+        "Quote link is not available yet. Please generate the quote on the design side, then click Get Quote.",
+      );
       return;
     }
     if (!lead.email?.trim()) {
@@ -2249,7 +2255,11 @@ export default function LeadDetailsApiClient({
         notifyError("Failed to build email payload.");
       }
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Quote send failed");
+      notifyError(
+        e instanceof Error
+          ? toFriendlyQuoteErrorMessage(e.message, "Unable to send quote right now. Please try again.")
+          : "Unable to send quote right now. Please try again.",
+      );
     } finally {
       setQuoteSending(false);
     }
@@ -2340,7 +2350,7 @@ export default function LeadDetailsApiClient({
       const customerLink = extractCustomerQuoteLink(res);
       const internalLink = extractInternalQuoteLink(res);
       if (!customerLink) {
-        notifyError("Quote generated response missing customer link.");
+        notifyError(QUOTE_NOT_READY_USER_MESSAGE);
         return;
       }
       patchLead({ quoteLink: customerLink });
@@ -2356,17 +2366,22 @@ export default function LeadDetailsApiClient({
       } catch (e) {
         notifyError(
           e instanceof Error
-            ? `Quote generated, but saving quote link failed. Please retry. (${e.message})`
-            : "Quote generated, but saving quote link failed. Please retry.",
+            ? toFriendlyQuoteErrorMessage(
+                e.message,
+                "Quote was found, but saving the quote link failed. Please retry.",
+              )
+            : "Quote was found, but saving the quote link failed. Please retry.",
         );
       }
       if (internalLink && typeof window !== "undefined") {
         window.open(internalLink, "_blank", "noopener,noreferrer");
-      } else {
-        notifyError("Internal quote link is not available to open.");
       }
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Get quote failed");
+      notifyError(
+        e instanceof Error
+          ? toFriendlyQuoteErrorMessage(e.message, QUOTE_NOT_READY_USER_MESSAGE)
+          : QUOTE_NOT_READY_USER_MESSAGE,
+      );
     } finally {
       setQuoteFetching(false);
     }

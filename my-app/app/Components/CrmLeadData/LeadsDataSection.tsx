@@ -118,11 +118,10 @@ import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date
 import {
   appendIvrLeadSourceFilter,
   countIvrCallLeads,
+  filterIvrCallLeads,
   hubLeadTypeForFilterKey,
   isIvrCallFilterKey,
-  isIvrCallLeadSource,
 } from "@/lib/ivr-lead-source";
-import { getLeadDisplaySource } from "@/lib/lead-display";
 
 type Props = {
   search: string;
@@ -603,8 +602,123 @@ async function fetchMergedPage(
             viewerRole,
           );
 
+  /**
+   * IVR Call is a virtual tile (`leadSource`), not a Hub leadType.
+   * Hub often ignores `leadSource` and returns all Add Lead rows — always filter client-side
+   * from the same pool the IVR tile count uses.
+   */
+  if (isIvrCallFilterKey(normalizedLeadType)) {
+    const pageFromIvrLeads = (leads: ApiLead[]): SpringPage<ApiLead> => {
+      const sorted = [...leads].sort(
+        (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+      );
+      const countBasis =
+        leadsWorkspace === "sales" ? pickPrimarySourceRows(sorted) : sorted;
+      const filtered = filterIvrCallLeads(countBasis);
+      const totalElements = filtered.length;
+      const start = Math.max(0, page * size);
+      return {
+        content: filtered.slice(start, start + size),
+        totalElements,
+        uniquePrimaryTotal: totalElements,
+        totalRowCount: filtered.length,
+        totalPages: Math.max(1, Math.ceil(totalElements / Math.max(1, size))),
+        number: page,
+        size,
+      };
+    };
+
+    const managerAssigneePoolScope = usesAdminSalesPoolForAssigneeScope(
+      viewerRole,
+      leadsWorkspace,
+      assigneeAliasSet?.length ?? 0,
+    );
+
+    if (
+      (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
+      !usesRoleEndpoint
+    ) {
+      const { leads } = await fetchAllAdminLeads(
+        {
+          workspace: leadsWorkspace,
+          search,
+          assignee,
+          sort,
+          dateFrom,
+          dateTo,
+          dateField,
+          crmMonthWindow,
+          verificationStatus: resolvedVerification,
+          reinquiry,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          // Full pool (same as heatmap tile counts), then client-filter IVR.
+          leadType: "all",
+          assigneeAliasSet,
+        },
+        getCrmAuthHeaders(),
+      );
+      return pageFromIvrLeads(leads);
+    }
+
+    const pageSize = 500;
+    const all: ApiLead[] = [];
+    let totalPages = 1;
+    for (let pageNum = 0; pageNum < totalPages; pageNum += 1) {
+      const qs = new URLSearchParams();
+      qs.set("mergeAll", "1");
+      qs.set("leadType", "all");
+      qs.set("milestoneScope", "crm");
+      qs.set("page", String(pageNum));
+      qs.set("size", String(pageSize));
+      qs.set("sort", sort);
+      if (search.trim()) qs.set("search", search.trim());
+      appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+      appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
+      appendWorkspaceMilestoneFilterQuery(
+        qs,
+        leadsWorkspace,
+        milestoneStage,
+        milestoneStageCategory,
+        milestoneSubStage,
+      );
+      if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
+      if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+      if (usesRoleEndpoint) qs.set("roleView", leadView);
+      appendIvrLeadSourceFilter(qs, normalizedLeadType);
+      appendLeadPoolQuery(qs, leadsWorkspace);
+      const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: getCrmAuthHeaders(),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        if (res.status === 401) throw new Error("Session expired. Please login again.");
+        if (res.status === 403) throw new Error("You don't have access to this lead view.");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const pageJson = (await res.json()) as SpringPage<ApiLead>;
+      const chunk = Array.isArray(pageJson.content) ? pageJson.content : [];
+      all.push(...chunk);
+      totalPages = Math.max(1, Number(pageJson.totalPages ?? 1));
+      if (chunk.length < pageSize) break;
+    }
+
+    let scoped = dedupeAdminPoolLeads(all);
+    if (usesClientWorkspaceInboxFilter(leadsWorkspace, normalizedViewerRole)) {
+      scoped = filterLeadsForClientWorkspaceInbox(
+        scoped,
+        leadsWorkspace,
+        resolvedVerification,
+      );
+    }
+    return pageFromIvrLeads(scoped);
+  }
+
   /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge filter route. */
-  if (isDedicatedFilterLeadType(normalizedLeadType) || isIvrCallFilterKey(normalizedLeadType)) {
+  if (isDedicatedFilterLeadType(normalizedLeadType)) {
     const qs = new URLSearchParams();
     qs.set("mergeAll", "1");
     qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType));
@@ -624,7 +738,6 @@ async function fetchMergedPage(
     );
     if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
     if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
-    appendIvrLeadSourceFilter(qs, normalizedLeadType);
     appendLeadPoolQuery(qs, leadsWorkspace);
     const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
       cache: "no-store",
@@ -892,25 +1005,9 @@ async function fetchMergedPage(
     throw new Error(text || `HTTP ${res.status}`);
   }
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
-  let content = Array.isArray(pageJson.content) ? pageJson.content : [];
-  if (isIvrCallFilterKey(normalizedLeadType)) {
-    content = content.filter((lead) => {
-      const source = getLeadDisplaySource({
-        ...(lead as Record<string, unknown>),
-        leadType: lead.leadType ?? "addlead",
-      });
-      return isIvrCallLeadSource(source);
-    });
-  }
   return {
     ...pageJson,
-    content,
-    ...(isIvrCallFilterKey(normalizedLeadType)
-      ? {
-          totalElements: content.length,
-          totalPages: Math.max(1, Math.ceil(content.length / Math.max(1, size))),
-        }
-      : {}),
+    content: Array.isArray(pageJson.content) ? pageJson.content : [],
   };
 }
 
@@ -2624,10 +2721,11 @@ export default function LeadsDataSection({
     let cancelled = false;
     void (async () => {
       try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const salesScopedAssigneeFilterActive =
           leadsWorkspace === "sales" && salesHierarchyFilterActive;
         if (salesScopedAssigneeFilterActive) {
@@ -2896,10 +2994,11 @@ export default function LeadsDataSection({
     setError(null);
     void (async () => {
       try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
@@ -3019,10 +3118,11 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const raw = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc");
         if (cancelled) return;
         const scopedTeam =
