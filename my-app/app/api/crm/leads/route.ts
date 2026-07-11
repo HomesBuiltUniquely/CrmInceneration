@@ -284,6 +284,7 @@ async function fetchPresalesSearchLeads(
   sort: string,
   search: string,
   usePresalesSearchPool = true,
+  isNewCrmGlobalSearchMode = false,
 ): Promise<ApiLead[]> {
   const parseChunk = (json: unknown): Array<{ type?: string; lead?: ApiLead }> => {
     if (!json || typeof json !== "object") return [];
@@ -321,7 +322,11 @@ async function fetchPresalesSearchLeads(
     upstream.searchParams.set("page", String(pageNum));
     upstream.searchParams.set("size", String(searchSize));
     upstream.searchParams.set("sort", sort);
+    upstream.searchParams.set("milestoneScope", "crm");
     if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
     const res = await fetch(upstream.toString(), {
       headers: upstreamAuthHeaders(req),
@@ -375,7 +380,11 @@ async function fetchPresalesSearchLeads(
       upstream.searchParams.set("page", String(pageNum));
       upstream.searchParams.set("size", String(pageSize));
       upstream.searchParams.set("sort", sort);
+      upstream.searchParams.set("milestoneScope", "crm");
       if (search) upstream.searchParams.set("search", search);
+      if (isNewCrmGlobalSearchMode) {
+        upstream.searchParams.set("newCrmGlobalSearch", "true");
+      }
       appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
       const res = await fetch(upstream.toString(), {
         headers: upstreamAuthHeaders(req),
@@ -405,6 +414,7 @@ function filterAndSortMergedLeads(
   effDates: { from: string; to: string },
   usePresalesMilestoneFilters: boolean,
   search: string,
+  trustUpstreamSearch = false,
 ): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
   const assigneeAliasSet = parseAssigneeAliasSetQuery(
@@ -428,7 +438,7 @@ function filterAndSortMergedLeads(
 
   return leads
     .filter((lead) => {
-      if (search) {
+      if (search && !trustUpstreamSearch) {
         const needle = search.toLowerCase();
         const needleDigits = search.replace(/\D/g, "");
         const assigneeText =
@@ -638,6 +648,7 @@ export async function GET(req: NextRequest) {
       sort,
       search,
       usePresalesSearchPool,
+      isNewCrmGlobalSearchMode,
     );
     const [walkInResult, whatsappResult] = await Promise.all([
       fetchWalkInLeadsForMerge({
@@ -683,6 +694,7 @@ export async function GET(req: NextRequest) {
       effDates,
       usePresalesMilestoneFilters,
       search,
+      usePresalesSearchPool && search.length > 0 && isNewCrmGlobalSearchMode,
     );
     const pageNum = Number.parseInt(page, 10) || 0;
     const pageSize = Number.parseInt(size, 10) || 20;
@@ -868,6 +880,7 @@ export async function GET(req: NextRequest) {
       sort,
       search,
       false,
+      isNewCrmGlobalSearchMode,
     );
     for (const lead of presalesRows) {
       const id = leadStableIdentifier(lead);

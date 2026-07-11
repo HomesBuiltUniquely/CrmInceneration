@@ -8,6 +8,7 @@ import {
   readSalesStageFieldsFromLead,
   SALES_POOL_NO_MILESTONE,
   salesPoolMilestoneStage,
+  isCrmLeadVerified,
   type ApiLead,
 } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
@@ -143,6 +144,61 @@ export function filterLeadsForAdminWorkspacePool(
   workspace: CrmWorkspace,
 ): ApiLead[] {
   return leads.filter((lead) => leadBelongsToAdminWorkspacePool(lead, workspace));
+}
+
+/** Sales `/Leads` for manager/exec — verified sales-pool rows only (drops presales inbox). */
+export function filterLeadsForSalesClientInbox(
+  leads: ApiLead[],
+  verificationStatus = "",
+): ApiLead[] {
+  const pool = filterLeadsForAdminWorkspacePool(leads, "sales");
+  const vs = verificationStatus.trim().toLowerCase();
+  if (vs === "unverified") {
+    return pool.filter((lead) => !isCrmLeadVerified(lead));
+  }
+  if (vs === "verified" || !vs) {
+    return pool.filter((lead) => isCrmLeadVerified(lead));
+  }
+  return pool;
+}
+
+/** Presales `/presales-leads` client inbox — presales-pool rows with optional verification tab. */
+export function filterLeadsForPresalesClientInbox(
+  leads: ApiLead[],
+  verificationStatus = "",
+): ApiLead[] {
+  let pool = filterLeadsForAdminWorkspacePool(leads, "presales");
+  const vs = verificationStatus.trim().toLowerCase();
+  if (vs === "verified") pool = pool.filter((lead) => isCrmLeadVerified(lead));
+  if (vs === "unverified") pool = pool.filter((lead) => !isCrmLeadVerified(lead));
+  return pool;
+}
+
+export function filterLeadsForClientWorkspaceInbox(
+  leads: ApiLead[],
+  workspace: CrmWorkspace,
+  verificationStatus = "",
+): ApiLead[] {
+  if (workspace === "presales") {
+    return filterLeadsForPresalesClientInbox(leads, verificationStatus);
+  }
+  return filterLeadsForSalesClientInbox(leads, verificationStatus);
+}
+
+/** Client-scoped roles on `/Leads` (not admin pool APIs). */
+export function usesClientWorkspaceInboxFilter(
+  workspace: CrmWorkspace,
+  viewerRole: string,
+): boolean {
+  const role = normalizeRole(viewerRole);
+  if (workspace === "sales") {
+    return (
+      role === "SALES_MANAGER" ||
+      role === "MANAGER" ||
+      role === "SALES_EXECUTIVE"
+    );
+  }
+  return false;
 }
 
 /** Walk-in / WhatsApp use Hub filter or dedicated list — not admin assignee pool rows. */

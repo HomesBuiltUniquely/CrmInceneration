@@ -49,9 +49,11 @@ import {
   appendLeadPoolQuery,
   appendWorkspaceMilestoneFilterQuery,
   defaultVerificationForLeadTypeFilter,
+  filterLeadsForClientWorkspaceInbox,
   isDedicatedFilterLeadType,
   leadMatchesWorkspaceMilestoneFilter,
   pipelineRoleForWorkspace,
+  usesClientWorkspaceInboxFilter,
   type CrmWorkspace,
 } from "@/lib/crm-workspace";
 import { canUsePresalesHierarchyFilters, crmPipelineRoleParam } from "@/lib/roleUtils";
@@ -102,7 +104,6 @@ import {
 } from "@/lib/sales-admin-insight-tiles";
 import {
   countSalesManagerMineVsTeam,
-  narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import {
@@ -591,13 +592,15 @@ async function fetchMergedPage(
   const resolvedVerification =
     normalizedLeadType === "verified"
       ? "verified"
-      : explicitVerification ||
-        defaultVerificationForLeadTypeFilter(
-          normalizedLeadType,
-          leadsWorkspace,
-          verificationStatus,
-          viewerRole,
-        );
+      : search.trim()
+        ? explicitVerification
+        : explicitVerification ||
+          defaultVerificationForLeadTypeFilter(
+            normalizedLeadType,
+            leadsWorkspace,
+            verificationStatus,
+            viewerRole,
+          );
 
   /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge filter route. */
   if (isDedicatedFilterLeadType(normalizedLeadType) || isIvrCallFilterKey(normalizedLeadType)) {
@@ -707,14 +710,25 @@ async function fetchMergedPage(
     const merged = [...byId.values()].sort(
       (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
     );
-    const countBasis = leadsWorkspace === "sales" ? pickPrimarySourceRows(merged) : merged;
+    const workspaceScoped =
+      usesClientWorkspaceInboxFilter(leadsWorkspace, normalizedViewerRole)
+        ? filterLeadsForClientWorkspaceInbox(
+            merged,
+            leadsWorkspace,
+            resolvedVerification,
+          )
+        : merged;
+    const countBasis =
+      leadsWorkspace === "sales"
+        ? pickPrimarySourceRows(workspaceScoped)
+        : workspaceScoped;
     const start = Math.max(0, page * size);
     const pageRows = countBasis.slice(start, start + size);
     return {
       content: pageRows,
       totalElements: countBasis.length,
       uniquePrimaryTotal: countBasis.length,
-      totalRowCount: merged.length,
+      totalRowCount: workspaceScoped.length,
       totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, size))),
       number: page,
       size,
@@ -2329,9 +2343,17 @@ export default function LeadsDataSection({
           trustPresalesScope ||
           !requiresClientScopedDataset ||
           isGlobalSearchActive;
+        const inboxScoped =
+          usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)
+            ? filterLeadsForClientWorkspaceInbox(
+                allLeads,
+                leadsWorkspace,
+                verificationStatusFromHeader,
+              )
+            : allLeads;
         let roleScopedLeads = skipClientRoleFilter
-          ? allLeads
-          : allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey));
+          ? inboxScoped
+          : inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey));
         if (superAdminPresalesPoolActive) {
           roleScopedLeads = roleScopedLeads.filter((lead) =>
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
@@ -2388,7 +2410,40 @@ export default function LeadsDataSection({
             clientScopeRoleKey,
             bffAssigneeAliasSet,
           );
-          if (activeAssigneeScope.length === 0) return pageJson;
+          if (activeAssigneeScope.length === 0) {
+            const inboxScoped =
+              usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)
+                ? filterLeadsForClientWorkspaceInbox(
+                    Array.isArray(pageJson.content) ? pageJson.content : [],
+                    leadsWorkspace,
+                    verificationStatusFromHeader,
+                  )
+                : Array.isArray(pageJson.content)
+                  ? pageJson.content
+                  : [];
+            const roleScoped =
+              requiresClientScopedDataset && !isGlobalSearchActive
+                ? inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+                : inboxScoped;
+            const countBasis =
+              leadsWorkspace === "sales"
+                ? dedupeAdminPoolLeads(roleScoped as ApiLead[])
+                : roleScoped;
+            const primaryRows = pickPrimarySourceRows(countBasis);
+            const start = targetPage * targetSize;
+            return {
+              ...pageJson,
+              content: countBasis.slice(start, start + targetSize),
+              totalElements: countBasis.length,
+              uniquePrimaryTotal: primaryRows.length,
+              totalRowCount: roleScoped.length,
+              totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
+              number: targetPage,
+              size: targetSize,
+              sourceCounts: computeLeadTypeCountsFromRows(countBasis),
+              summaryTotals: computeJourneySummaryCounts(countBasis),
+            };
+          }
           const scopedContent = filterLeadsByAssigneeScope(
             Array.isArray(pageJson.content) ? pageJson.content : [],
             activeAssigneeScope,
@@ -2968,11 +3023,17 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const managerRole = roleKey === "SALES_MANAGER" || roleKey === "MANAGER";
+        const inboxScoped = usesClientWorkspaceInboxFilter(leadsWorkspace, roleKey)
+          ? filterLeadsForClientWorkspaceInbox(
+              raw,
+              leadsWorkspace,
+              verificationStatusFromHeader,
+            )
+          : raw;
         const scoped =
-          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey) || managerRole
-            ? raw
-            : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
+            ? inboxScoped
+            : inboxScoped.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
         // Only update total from this effect when
@@ -3351,12 +3412,20 @@ export default function LeadsDataSection({
 
   const isClientScopedRole = requiresClientScopedDataset;
   const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
-  const managerScopeRole =
-    clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
+  const workspaceInboxFiltered = useMemo(() => {
+    if (!usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey)) {
+      return contentFromApi;
+    }
+    return filterLeadsForClientWorkspaceInbox(
+      contentFromApi,
+      leadsWorkspace,
+      verificationStatusFromHeader,
+    );
+  }, [contentFromApi, leadsWorkspace, scopeRoleKey, verificationStatusFromHeader]);
   const roleScopedContent =
-    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope && !managerScopeRole
-      ? contentFromApi.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-      : contentFromApi;
+    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
+      ? workspaceInboxFiltered.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+      : workspaceInboxFiltered;
   const hasMilestoneFilter = Boolean(
     milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
   );

@@ -158,7 +158,8 @@ import {
 import {
   markWhatsappPresalesNameUpdateBeenUsed,
   resolveWhatsappPresalesNameLocked,
-  isDefaultWhatsappPlaceholderName,
+  isDefaultInboundPlaceholderName,
+  isPresalesOneTimeNameEditLead,
   shouldShowWhatsappPresalesNameHint,
   validateWhatsappCustomerNameForSave,
 } from "@/lib/whatsapp-presales-name-lock";
@@ -963,12 +964,17 @@ export default function LeadDetailsApiClient({
           /* list refresh on next load is enough */
         }
       });
-      if (lt === "whatsapplead") {
+      if (isPresalesOneTimeNameEditLead(lt, mapped.leadSource)) {
         const serverName = (mapped.name ?? "").trim();
         const serverPhone = mapped.phone ?? "";
         setWhatsappNameLockedFromServer(
           Boolean(serverName) &&
-            !isDefaultWhatsappPlaceholderName(serverName, serverPhone),
+            !isDefaultInboundPlaceholderName(
+              lt,
+              mapped.leadSource,
+              serverName,
+              serverPhone,
+            ),
         );
       } else {
         setWhatsappNameLockedFromServer(false);
@@ -1911,6 +1917,7 @@ export default function LeadDetailsApiClient({
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
+          leadSource: previousLead.leadSource,
           phone: previousLead.phone,
           handedOffToSales:
             isLeadHandedOffToSales(previousLead) ||
@@ -1987,6 +1994,7 @@ export default function LeadDetailsApiClient({
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
+          leadSource: previousLead.leadSource,
           phone: previousLead.phone,
           handedOffToSales:
             isLeadHandedOffToSales(previousLead) ||
@@ -2486,6 +2494,7 @@ export default function LeadDetailsApiClient({
     () => ({
       leadType: leadTypeParam,
       leadId,
+      leadSource: lead.leadSource,
       phone: lead.phone,
       handedOffToSales: inSalesPhase,
       viewerRoleKey,
@@ -2494,6 +2503,7 @@ export default function LeadDetailsApiClient({
     }),
     [
       inSalesPhase,
+      lead.leadSource,
       lead.name,
       lead.phone,
       leadId,
@@ -2515,7 +2525,12 @@ export default function LeadDetailsApiClient({
   const handleWhatsappNameSave = useCallback(async () => {
     if (!validLeadType || !showWhatsappPresalesNameHint) return;
     const trimmed = (lead.name ?? "").trim();
-    const validation = validateWhatsappCustomerNameForSave(trimmed, lead.phone);
+    const validation = validateWhatsappCustomerNameForSave(
+      trimmed,
+      lead.phone,
+      leadTypeParam,
+      lead.leadSource,
+    );
     if (!validation.ok) {
       notifyError(validation.message);
       return;
@@ -2529,7 +2544,7 @@ export default function LeadDetailsApiClient({
       const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
       setBaseDetail(stickyDetail);
       const mapped = detailJsonToLead(stickyDetail, lt);
-      markWhatsappPresalesNameUpdateBeenUsed(leadId);
+      markWhatsappPresalesNameUpdateBeenUsed(leadId, leadTypeParam, lead.leadSource);
       setWhatsappNameLockedFromServer(true);
       setWhatsappNameLockTick((t) => t + 1);
       setLead((prev) => ({

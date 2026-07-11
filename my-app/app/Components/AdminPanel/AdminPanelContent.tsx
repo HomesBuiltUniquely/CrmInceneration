@@ -425,10 +425,32 @@ function AdminUserSection() {
     "admins",
   );
   const [viewerRole, setViewerRole] = useState("");
+  const [viewerUserId, setViewerUserId] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
+  }, []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (!token) return;
+    let cancelled = false;
+    void getMe(token)
+      .then((res) => {
+        if (cancelled) return;
+        const raw = res as Record<string, unknown>;
+        const u =
+          raw.user && typeof raw.user === "object"
+            ? (raw.user as Record<string, unknown>)
+            : raw;
+        const id = Number(u.id ?? 0);
+        if (Number.isFinite(id) && id > 0) setViewerUserId(id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const [adminForm, setAdminForm] = useState<AdminForm>({
     username: "",
@@ -455,6 +477,10 @@ function AdminUserSection() {
 
   const canManageAdmins = viewerRole === "SUPER_ADMIN";
   const isSalesAdmin = viewerRole === "SALES_ADMIN";
+  /** Sales Admin is the parent of Sales/Presales Manager — no need to pick themselves. */
+  const parentIsSelf =
+    isSalesAdmin &&
+    (userForm.role === "SALES_MANAGER" || userForm.role === "PRESALES_MANAGER");
 
   useEffect(() => {
     if (!canManageAdmins && tab !== "createUser") {
@@ -542,9 +568,18 @@ function AdminUserSection() {
     DESIGNER: { label: "Design Manager *", options: designManagers },
   };
   const parentRequirement = parentConfig[userForm.role];
-  const needsParent = Boolean(parentRequirement);
+  const needsParent = Boolean(parentRequirement) && !parentIsSelf;
   const parentOptions = parentRequirement?.options ?? [];
   const parentLabel = parentRequirement?.label ?? "Parent *";
+
+  useEffect(() => {
+    if (!parentIsSelf || viewerUserId <= 0) return;
+    setUserForm((prev) =>
+      prev.parentId === String(viewerUserId)
+        ? prev
+        : { ...prev, parentId: String(viewerUserId) },
+    );
+  }, [parentIsSelf, viewerUserId]);
 
   return (
     <Card>
@@ -722,7 +757,12 @@ function AdminUserSection() {
           >
             <div>
               <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Role *</label>
-              <Select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+              <Select
+                value={userForm.role}
+                onChange={(e) =>
+                  setUserForm({ ...userForm, role: e.target.value, parentId: "" })
+                }
+              >
                 <option value="">Select Role</option>
                 {allowedRoleGroups.map((group) => (
                   <optgroup key={group.label} label={group.label}>
@@ -768,7 +808,26 @@ function AdminUserSection() {
                 ))}
               </Select>
             </div>
-            {needsParent ? (
+            {parentIsSelf && viewerUserId > 0 ? (
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>
+                  Parent (you)
+                </label>
+                <div
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    color: C.muted,
+                  }}
+                >
+                  You (logged-in Sales Admin) — user ID <strong style={{ color: C.text }}>{viewerUserId}</strong>.
+                  New managers are created under you automatically.
+                </div>
+              </div>
+            ) : needsParent ? (
               <div>
                 <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>{parentLabel}</label>
                 <Select value={userForm.parentId} onChange={(e) => setUserForm({ ...userForm, parentId: e.target.value })}>
@@ -791,7 +850,7 @@ function AdminUserSection() {
               !userForm.email.trim() ||
               !userForm.fullName.trim() ||
               !userForm.branch.trim() ||
-              (needsParent && !userForm.parentId)
+              (parentIsSelf ? viewerUserId <= 0 : needsParent && !userForm.parentId)
             }
             onClick={() => {
               const payload: Record<string, unknown> = {
@@ -804,8 +863,16 @@ function AdminUserSection() {
                 branch: userForm.branch,
                 role: userForm.role,
               };
-              const parentId = Number(userForm.parentId);
-              if (needsParent && Number.isFinite(parentId)) payload.managerId = parentId;
+              const resolvedParentId = parentIsSelf
+                ? viewerUserId
+                : Number(userForm.parentId);
+              if (
+                (needsParent || parentIsSelf) &&
+                Number.isFinite(resolvedParentId) &&
+                resolvedParentId > 0
+              ) {
+                payload.managerId = resolvedParentId;
+              }
 
               let req: Promise<Record<string, unknown>>;
               if (userForm.role === "SALES_MANAGER") {
