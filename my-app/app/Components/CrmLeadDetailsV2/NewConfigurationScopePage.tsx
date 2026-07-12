@@ -22,6 +22,7 @@ import {
   miscAddOnOptions,
   putConfigurationScopeAestheticNotes,
   putConfigurationScopeRequirements,
+  joinProjectUnderstanding,
   splitProjectUnderstanding,
   TIMELINE_EXPECTATION_OPTIONS,
   toPutRequirementsBody,
@@ -36,6 +37,7 @@ import {
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
 import { seedPropertyNameFromLead } from "@/lib/lead-discovery-field-sync";
+import { syncCrmLeadToDesignModule } from "@/lib/design-module-phase-sync";
 import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
@@ -408,6 +410,33 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         requirementsDirtyRef.current = false;
         setRequirements(saved);
         if (saved.bookingType) setBookingType(saved.bookingType);
+
+        // Keep Design Module View in sync when config scope is saved (not only on meeting schedule)
+        if (baseDetail) {
+          const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+          void syncCrmLeadToDesignModule({
+            leadType: validLeadType,
+            leadId,
+            lead: {
+              ...leadSnapshot,
+              floorPlanPublicLink:
+                floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
+              bookingType: saved.bookingType || leadSnapshot.bookingType,
+              configuration: leadConfiguration || leadSnapshot.configuration,
+            },
+            baseDetail,
+            designerName: leadSnapshot.designerName,
+            schedule: leadSnapshot.meetingDate?.trim()
+              ? {
+                  appointmentDate: leadSnapshot.meetingDate.trim(),
+                  scheduleTimezone: "Asia/Kolkata",
+                }
+              : undefined,
+          }).catch((err) => {
+            console.error("Design Module sync after config scope save failed:", err);
+          });
+        }
+
         return true;
       } catch (e) {
         const err = e as Error & { status?: number };
@@ -448,7 +477,15 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         setRequirementsSaving(false);
       }
     },
-    [leadId, notifyError, requirements, validLeadType],
+    [
+      baseDetail,
+      floorPlanPublicLink,
+      leadConfiguration,
+      leadId,
+      notifyError,
+      requirements,
+      validLeadType,
+    ],
   );
 
   const handleReferenceUpload = useCallback(
@@ -574,6 +611,33 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
       }
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
       notifyConfigurationScopeUpdated();
+
+      // Final push to Design after full config scope finalize
+      if (baseDetail) {
+        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+        void syncCrmLeadToDesignModule({
+          leadType: validLeadType,
+          leadId,
+          lead: {
+            ...leadSnapshot,
+            floorPlanPublicLink:
+              floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
+            bookingType: requirements.bookingType || leadSnapshot.bookingType,
+            configuration: leadConfiguration || leadSnapshot.configuration,
+          },
+          baseDetail,
+          designerName: leadSnapshot.designerName,
+          schedule: leadSnapshot.meetingDate?.trim()
+            ? {
+                appointmentDate: leadSnapshot.meetingDate.trim(),
+                scheduleTimezone: "Asia/Kolkata",
+              }
+            : undefined,
+        }).catch((err) => {
+          console.error("Design Module sync after config scope finalize failed:", err);
+        });
+      }
+
       notifySuccess("Configuration scope saved.");
       router.push(`/Leads/${validLeadType}/${leadId}`);
     } finally {
@@ -582,6 +646,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   }, [
     baseDetail,
     finalizing,
+    floorPlanPublicLink,
     flushAllSaves,
     frontendPrefs,
     leadConfiguration,
@@ -870,10 +935,18 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
                 }));
               }}
               onFamilySizeDetailsChange={(value) => {
-                patchRequirements((prev) => ({
-                  ...prev,
-                  projectUnderstanding: value.trim() || null,
-                }));
+                patchRequirements((prev) => {
+                  const { propertyNameSite } = splitProjectUnderstanding(
+                    prev.projectUnderstanding,
+                  );
+                  return {
+                    ...prev,
+                    projectUnderstanding: joinProjectUnderstanding(
+                      propertyNameSite,
+                      value,
+                    ),
+                  };
+                });
               }}
               onBookingTypeChange={handleBookingTypeChange}
               onConfigurationChange={setLeadConfiguration}

@@ -70,6 +70,33 @@ export function buildDesignModuleConvertPayload(
       completionEntry?.paymentKind,
     paymentHistory: paymentHistoryPayload,
     hubProofBaseUrl: HUB_PROOF_BASE_URL,
+    experience: {
+      quoteId:
+        (paymentHistory as { quoteId?: string | number }).quoteId ?? null,
+      quoteLink:
+        (paymentHistory as { quoteLink?: string }).quoteLink ??
+        (paymentHistory as { quoteUrl?: string }).quoteUrl ??
+        null,
+      quoteVersionLabel:
+        (paymentHistory as { quoteVersionLabel?: string }).quoteVersionLabel ?? null,
+    },
+    decision: {
+      finalBudget: paymentHistory.quoteAmount ?? null,
+      expectedTimeline:
+        (paymentHistory as { expectedTimeline?: string }).expectedTimeline ?? null,
+      decisionMaker:
+        (paymentHistory as { decisionMaker?: string }).decisionMaker ?? null,
+    },
+    bookingDone: {
+      quoteId: (paymentHistory as { quoteId?: string | number }).quoteId ?? null,
+      quoteAmount: paymentHistory.quoteAmount,
+      tenPercentAmount: paymentHistory.tenPercentAmount,
+      amountReceived: paymentHistory.amountReceived,
+      paymentKind:
+        (paymentHistory as { paymentKind?: string }).paymentKind ??
+        completionEntry?.paymentKind ??
+        null,
+    },
   };
 }
 
