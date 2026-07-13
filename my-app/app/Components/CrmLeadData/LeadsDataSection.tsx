@@ -2846,7 +2846,9 @@ export default function LeadsDataSection({
         if (
           (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") &&
           !salesHierarchyFilterActive &&
-          activeAssigneeScope.length === 0
+          activeAssigneeScope.length === 0 &&
+          // Lead-type / IVR tile filters own table totals — do not reset to full pool.
+          summaryLeadTypeRaw === "all"
         ) {
           const customers = uniquePrimaryPool > 0 ? uniquePrimaryPool : poolTotal;
           const rows = Math.max(poolTotal, customers);
@@ -3290,13 +3292,15 @@ export default function LeadsDataSection({
           pageJson.uniquePrimaryTotal ?? pageJson.totalRowCount ?? pageJson.totalElements ?? 0,
         );
         const pageSizeHint = Number(pageJson.size ?? 0);
-        /** Hub/BFF sometimes echoes the current page length as totalElements. */
+        /**
+         * Hub/BFF sometimes echoes the current page size as totalElements (e.g. 20 of 20).
+         * Do not treat a real short page (e.g. 4 IVR rows of 4 total) as that bug.
+         */
         const looksLikePageSizedTotal =
-          pageContentLen > 0 &&
-          totalRows > 0 &&
-          totalRows <= pageContentLen &&
-          uniquePrimary <= pageContentLen &&
-          (pageSizeHint === 0 || pageSizeHint >= pageContentLen);
+          pageSizeHint > 0 &&
+          pageContentLen === pageSizeHint &&
+          totalRows === pageSizeHint &&
+          uniquePrimary === pageSizeHint;
 
         if (looksLikePageSizedTotal) {
           // Keep heatmap-driven pool totals; do not overwrite with page size (e.g. 20).
@@ -3304,7 +3308,11 @@ export default function LeadsDataSection({
         }
 
         setVisibleFilteredTotal(
-          Number.isFinite(uniquePrimary) && uniquePrimary > 0 ? uniquePrimary : totalRows,
+          Number.isFinite(uniquePrimary) && uniquePrimary > 0
+            ? uniquePrimary
+            : Number.isFinite(totalRows)
+              ? totalRows
+              : 0,
         );
         if (
           roleKeyForLoad === "SUPER_ADMIN" ||
@@ -3314,7 +3322,9 @@ export default function LeadsDataSection({
         ) {
           setAdminPoolDisplayTotals({
             uniquePrimary:
-              Number.isFinite(uniquePrimary) && uniquePrimary > 0 ? uniquePrimary : totalRows,
+              Number.isFinite(uniquePrimary) && uniquePrimary >= 0
+                ? uniquePrimary
+                : totalRows,
             totalRows: Math.max(totalRows, uniquePrimary || 0),
           });
         }
@@ -3333,7 +3343,21 @@ export default function LeadsDataSection({
           setSuperAdminSearchPoolTotals(null);
         }
         if (usePageMetaForUi) {
-          if (
+          if (isIvrCallFilterKey(requestLeadType)) {
+            const ivrTotal = Number(pageJson.totalElements ?? 0);
+            setVisibleFilteredTotal(ivrTotal);
+            if (
+              roleKeyForLoad === "SUPER_ADMIN" ||
+              roleKeyForLoad === "SALES_ADMIN" ||
+              roleKeyForLoad === "SALES_MANAGER" ||
+              roleKeyForLoad === "MANAGER"
+            ) {
+              setAdminPoolDisplayTotals({
+                uniquePrimary: ivrTotal,
+                totalRows: Number(pageJson.totalRowCount ?? ivrTotal),
+              });
+            }
+          } else if (
             usesAdminLeadsApi(roleKeyForLoad) &&
             leadViewKey !== "my" &&
             leadViewKey !== "team"
@@ -3570,12 +3594,13 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
-  const showLostPathLeadsInTable = shouldShowLostPathLeadsInTable({
-    searchActive: isGlobalSearchActive,
-    insightTableMode,
-    milestoneStageCategory,
-    milestoneSubStage,
-  });
+  const showLostPathLeadsInTable =
+    shouldShowLostPathLeadsInTable({
+      searchActive: isGlobalSearchActive,
+      insightTableMode,
+      milestoneStageCategory,
+      milestoneSubStage,
+    }) || isIvrCallFilterKey(leadType);
   const tableContent = showLostPathLeadsInTable
     ? content
     : content.filter((lead) => !isLostPathLead(lead));
@@ -3642,22 +3667,32 @@ export default function LeadsDataSection({
     insightTableMode !== null
       ? rows.slice(page * size, page * size + size)
       : rows;
+  const ivrCallFilterActive = isIvrCallFilterKey(leadType);
   const total =
     insightTableMode !== null
       ? rows.length
       : adminMilestoneTableActive
         ? adminMilestoneTableLeads.length
-        : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
+        : ivrCallFilterActive
+          ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
+          : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
   const totalPages =
     insightTableMode !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
       : adminMilestoneTableActive
         ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-        : visibleFilteredTotal !== null
-          ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-          : data?.totalPages && data.totalPages > 0
-            ? data.totalPages
-            : Math.max(1, Math.ceil(total / Math.max(1, size)));
+        : ivrCallFilterActive
+          ? Math.max(
+              1,
+              Number(data?.totalPages) > 0
+                ? Number(data?.totalPages)
+                : Math.ceil(total / Math.max(1, size)),
+            )
+          : visibleFilteredTotal !== null
+            ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+            : data?.totalPages && data.totalPages > 0
+              ? data.totalPages
+              : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(visibleRows.map((row) => [row.id, row]));
