@@ -277,14 +277,14 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
     json = null;
   }
   if (!res.ok) {
-    const err =
-      (json &&
-        typeof json === "object" &&
-        (String((json as Record<string, unknown>).userMessage ?? "") ||
-          String((json as Record<string, unknown>).error ?? "") ||
-          String((json as Record<string, unknown>).message ?? ""))) ||
-      fallback;
-    throw new Error(err || fallback);
+    const body =
+      json && typeof json === "object"
+        ? (json as Record<string, unknown>)
+        : null;
+    const fromBody = [body?.userMessage, body?.error, body?.message]
+      .map((v) => (typeof v === "string" ? v.trim() : ""))
+      .find((v) => v.length > 0);
+    throw new Error(fromBody || fallback);
   }
   return json as T;
 }
