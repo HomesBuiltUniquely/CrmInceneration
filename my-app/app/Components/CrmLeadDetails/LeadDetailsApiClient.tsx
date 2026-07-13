@@ -43,6 +43,11 @@ import {
   type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
 import {
+  buildPhaseFieldsForDesignModule,
+  fetchConfigScopeSummary,
+  syncCrmLeadToDesignModule,
+} from "@/lib/design-module-phase-sync";
+import {
   canEditLeadPhoneAndEmail,
   shouldMaskLeadPhoneForRole,
 } from "@/lib/lead-contact-access";
@@ -433,6 +438,8 @@ async function postExternalIntakeLead(args: {
   /** Complete Task / modal overrides (sent before PUT lead detail). */
   propertyNotes?: string;
   configuration?: string;
+  /** Config scope summary for Design Module designer handoff. */
+  scopeSummary?: import("@/lib/design-module-phase-sync").DesignModuleConfigScopeSummary | null;
   /** When set (e.g. after scheduling), forwarded to Hub external-intake. */
   schedule?: {
     appointmentDate: string;
@@ -495,12 +502,27 @@ async function postExternalIntakeLead(args: {
 
   const idCandidates: Array<{ source: string; value: string }> = [
     { source: "baseDetail.externalLeadId", value: pickText(args.baseDetail.externalLeadId) },
+    { source: "baseDetail.leadIdentifier", value: pickText(args.baseDetail.leadIdentifier) },
+    { source: "baseDetail.uniqueId", value: pickText(args.baseDetail.uniqueId) },
+    { source: "lead.leadId", value: pickText(args.lead.leadId) },
+    { source: "lead.externalReferenceId", value: pickText(args.lead.externalReferenceId) },
     { source: "baseDetail.leadId", value: pickText(args.baseDetail.leadId) },
     { source: "baseDetail.id", value: pickText(args.baseDetail.id) },
     { source: "baseDetail.customerId", value: pickText(args.baseDetail.customerId) },
   ];
-  const chosen = idCandidates.find((c) => c.value);
+  // Prefer business ids like AL-xxx over bare numeric Hub ids ("35")
+  const chosen =
+    idCandidates.find((c) => c.value && !/^\d+$/.test(c.value.trim())) ||
+    idCandidates.find((c) => c.value);
   const externalLeadId = chosen ? normalizeExternalLeadId(chosen.value) : "";
+  const numericCrmLeadId = (() => {
+    const raw =
+      args.baseDetail.id ??
+      (typeof args.baseDetail.hubLeadId === "number" ? args.baseDetail.hubLeadId : undefined) ??
+      (typeof args.lead.id === "number" && args.lead.id > 0 ? args.lead.id : undefined);
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
   const payload: Record<string, unknown> = {
     projectName:
       pickText(args.baseDetail.fullName) ||
@@ -515,11 +537,20 @@ async function postExternalIntakeLead(args: {
       pickText(args.baseDetail.emailAddress) ||
       pickText(args.baseDetail.mail),
     externalLeadId,
+    pid: externalLeadId,
     sourceProject: "crm-inceneration",
     designerName: "",
     salesExecutive: "",
     salesExecutiveEmail: "",
   };
+  if (args.leadType && isCrmLeadType(args.leadType)) {
+    payload.leadType = args.leadType;
+    payload.crmLeadType = args.leadType;
+  }
+  if (numericCrmLeadId != null) {
+    payload.leadId = numericCrmLeadId;
+    payload.crmLeadId = numericCrmLeadId;
+  }
   const resolvedDesignerName = normalizeOptionalPersonField(
     pickText(args.schedule?.designerName) ||
       pickText(args.lead.designerName) ||
@@ -603,6 +634,25 @@ async function postExternalIntakeLead(args: {
     }
   }
 
+  // Discovery + Connection summary (designer handoff) — keep in sync with upsert
+  const phaseFields = buildPhaseFieldsForDesignModule({
+    lead: {
+      ...args.lead,
+      propertyNotes: propertyNotes || args.lead.propertyNotes,
+      configuration: configuration || args.lead.configuration,
+    },
+    scopeSummary: args.scopeSummary ?? null,
+    schedule: args.schedule,
+    salesExecutive: pickText(payload.salesExecutive),
+    salesExecutiveEmail: pickText(payload.salesExecutiveEmail),
+    pincode: pickText(args.lead.pincode) || pickText(args.baseDetail.pincode),
+    leadSource: pickText(args.lead.leadSource) || pickText(args.baseDetail.leadSource),
+    possessionDate:
+      pickText(args.lead.possessionDate) || pickText(args.baseDetail.possessionDate),
+    altPhone: pickText(args.lead.altPhone) || pickText(args.baseDetail.altPhone),
+  });
+  Object.assign(payload, phaseFields);
+
   if (!payload.externalLeadId) {
     console.warn(
       "Skipping external intake: no externalLeadId found.",
@@ -659,6 +709,10 @@ async function postDesignModuleCrmLeadUpsert(args: {
   contactNo?: string;
   clientEmail?: string;
   designerName?: string;
+  lead?: Lead;
+  scopeSummary?: import("@/lib/design-module-phase-sync").DesignModuleConfigScopeSummary | null;
+  salesExecutive?: string;
+  salesExecutiveEmail?: string;
   schedule?: {
     appointmentDate?: string;
     appointmentSlot?: string;
@@ -686,6 +740,26 @@ async function postDesignModuleCrmLeadUpsert(args: {
   }
   if (args.schedule?.scheduleTimezone?.trim()) {
     body.scheduleTimezone = args.schedule.scheduleTimezone.trim();
+  }
+
+  if (args.lead) {
+    Object.assign(
+      body,
+      buildPhaseFieldsForDesignModule({
+        lead: args.lead,
+        scopeSummary: args.scopeSummary ?? null,
+        schedule: {
+          ...args.schedule,
+          designerName: args.designerName,
+        },
+        salesExecutive: args.salesExecutive,
+        salesExecutiveEmail: args.salesExecutiveEmail,
+        pincode: args.lead.pincode,
+        leadSource: args.lead.leadSource,
+        possessionDate: args.lead.possessionDate,
+        altPhone: args.lead.altPhone,
+      }),
+    );
   }
 
   const res = await fetch("/api/crm/design-module/crm-lead/upsert", {
@@ -2193,8 +2267,33 @@ export default function LeadDetailsApiClient({
         notifyError(message);
         throw new Error(message);
       }
+
+      // Keep Design Module View data fresh when Discovery/Connection fields change
+      void syncCrmLeadToDesignModule({
+        leadType: lt,
+        leadId,
+        lead: saveLead,
+        baseDetail,
+        designerName: saveLead.designerName,
+        schedule: saveLead.meetingDate?.trim()
+          ? {
+              appointmentDate: saveLead.meetingDate.trim(),
+              scheduleTimezone: "Asia/Kolkata",
+            }
+          : undefined,
+      }).catch((e) => {
+        console.error("Design Module upsert after Discovery/Connection save failed:", e);
+      });
     },
-    [lead, leadId, leadTypeParam, notifyError, persistLeadDetailFields, validLeadType],
+    [
+      baseDetail,
+      lead,
+      leadId,
+      leadTypeParam,
+      notifyError,
+      persistLeadDetailFields,
+      validLeadType,
+    ],
   );
 
   const handleSendQuote = useCallback(async () => {
@@ -2908,37 +3007,63 @@ export default function LeadDetailsApiClient({
             meetingDate = slotDate;
             followUpDate = slotDate;
           }
-          designerName = args.meetingAppointment.designerName;
           const meetingDesignerName = args.meetingAppointment.designerName;
+          designerName = meetingDesignerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
             designerName: args.meetingAppointment.designerName,
           });
-          void postExternalIntakeLead({
-            lead,
-            baseDetail,
-            authUser: salesClosureAuthUser,
-            leadType: lt,
-            propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
-            configuration: resolveLeadPropertyGateField(args.configuration, lead.configuration),
-            schedule:
-              schedule.appointmentDate ||
-              schedule.appointmentSlot ||
-              schedule.designerName
-                ? schedule
-                : undefined,
-          })
-            .then(() => {
-              const numericLeadId = Number(
-                baseDetail.id ?? baseDetail.leadId ?? lead.id,
-              );
-              const externalLeadId =
-                typeof lead.leadId === "string" && lead.leadId.trim()
+          void (async () => {
+            try {
+              const enrichedLead: Lead = {
+                ...lead,
+                propertyNotes:
+                  resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes) ||
+                  lead.propertyNotes,
+                configuration:
+                  resolveLeadPropertyGateField(args.configuration, lead.configuration) ||
+                  lead.configuration,
+                meetingType: meetingType || lead.meetingType,
+                designerName: meetingDesignerName || lead.designerName,
+              };
+              const scopeSummary = await fetchConfigScopeSummary(lt, leadId, {
+                budget: enrichedLead.budget,
+              });
+              await postExternalIntakeLead({
+                lead: enrichedLead,
+                baseDetail,
+                authUser: salesClosureAuthUser,
+                leadType: lt,
+                propertyNotes: enrichedLead.propertyNotes,
+                configuration: enrichedLead.configuration,
+                scopeSummary,
+                schedule:
+                  schedule.appointmentDate ||
+                  schedule.appointmentSlot ||
+                  schedule.designerName
+                    ? schedule
+                    : undefined,
+              });
+              const numericLeadId = Number(baseDetail.id ?? lead.id);
+              const externalLeadIdCandidates = [
+                typeof lead.externalReferenceId === "string"
+                  ? lead.externalReferenceId.trim()
+                  : "",
+                typeof lead.leadId === "string" && !/^\d+$/.test(lead.leadId.trim())
                   ? lead.leadId.trim()
-                  : String(baseDetail.leadId ?? baseDetail.externalLeadId ?? "").trim();
+                  : "",
+                String(baseDetail.leadIdentifier ?? "").trim(),
+                String(baseDetail.externalLeadId ?? "").trim(),
+                typeof lead.leadId === "string" ? lead.leadId.trim() : "",
+                String(baseDetail.leadId ?? "").trim(),
+              ].filter(Boolean);
+              const externalLeadId =
+                externalLeadIdCandidates.find((v) => !/^\d+$/.test(v)) ||
+                externalLeadIdCandidates[0] ||
+                "";
               if (Number.isFinite(numericLeadId) && externalLeadId) {
-                void postDesignModuleCrmLeadUpsert({
+                await postDesignModuleCrmLeadUpsert({
                   leadType: lt,
                   leadId: numericLeadId,
                   leadIdentifier: externalLeadId,
@@ -2955,21 +3080,18 @@ export default function LeadDetailsApiClient({
                     baseDetail.email ?? baseDetail.emailAddress ?? "",
                   ).trim(),
                   designerName: meetingDesignerName,
+                  lead: enrichedLead,
+                  scopeSummary,
                   schedule,
-                }).catch((e) => {
-                  console.error(
-                    "Design Module CRM lead upsert failed after meeting schedule:",
-                    e,
-                  );
                 });
               }
-            })
-            .catch((e) => {
+            } catch (e) {
               console.error(
-                "External intake API call failed after meeting schedule:",
+                "Design Module sync failed after meeting schedule:",
                 e,
               );
-            });
+            }
+          })();
         }
 
         if (

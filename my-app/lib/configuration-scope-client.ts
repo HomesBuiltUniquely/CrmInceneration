@@ -50,7 +50,11 @@ export const TIMELINE_EXPECTATION_OPTIONS = [
 
 const PROJECT_UNDERSTANDING_SEP = "\n---\n";
 
-/** Split Hub `projectUnderstanding` into property + family fields for §1 UI. */
+/**
+ * Split Hub `projectUnderstanding` for §1 UI.
+ * Property name lives in `propertyName`; without a separator the whole string is family details.
+ * Legacy rows may still use `property\\n---\\nfamily`.
+ */
 export function splitProjectUnderstanding(value: string | null | undefined): {
   propertyNameSite: string;
   familySizeDetails: string;
@@ -58,7 +62,7 @@ export function splitProjectUnderstanding(value: string | null | undefined): {
   const raw = (value ?? "").trim();
   if (!raw) return { propertyNameSite: "", familySizeDetails: "" };
   const idx = raw.indexOf(PROJECT_UNDERSTANDING_SEP);
-  if (idx === -1) return { propertyNameSite: raw, familySizeDetails: "" };
+  if (idx === -1) return { propertyNameSite: "", familySizeDetails: raw };
   return {
     propertyNameSite: raw.slice(0, idx).trim(),
     familySizeDetails: raw.slice(idx + PROJECT_UNDERSTANDING_SEP.length).trim(),
@@ -73,7 +77,7 @@ export function joinProjectUnderstanding(
   const property = propertyNameSite.trim();
   const family = familySizeDetails.trim();
   if (!property && !family) return null;
-  if (!family) return property;
+  if (!family) return property || null;
   if (!property) return family;
   return `${property}${PROJECT_UNDERSTANDING_SEP}${family}`;
 }
