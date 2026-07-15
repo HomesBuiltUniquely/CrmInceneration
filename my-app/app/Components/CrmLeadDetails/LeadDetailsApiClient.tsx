@@ -2305,6 +2305,7 @@ export default function LeadDetailsApiClient({
           routeLeadId: leadId,
           leadBusinessId: lead.leadId,
           externalReferenceId: lead.externalReferenceId,
+          leadType: lt,
           baseDetail,
         });
         link =
@@ -2446,6 +2447,7 @@ export default function LeadDetailsApiClient({
         routeLeadId: leadId,
         leadBusinessId: lead.leadId,
         externalReferenceId: lead.externalReferenceId,
+        leadType: leadTypeParam,
         baseDetail,
       });
       const customerLink = extractCustomerQuoteLink(res);
@@ -2491,6 +2493,7 @@ export default function LeadDetailsApiClient({
     lead.externalReferenceId,
     lead.leadId,
     leadId,
+    leadTypeParam,
     notifyError,
     notifySuccess,
     patchLead,
