@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
@@ -42,7 +42,7 @@ import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { getConfigurationScopeRequirements, createDefaultRequirements } from "@/lib/configuration-scope-client";
-import { notifyOpenConfigurationScope } from "@/lib/configuration-scope-events";
+import { notifyOpenConfigurationScope, RESUME_MEETING_SCHEDULE_EVENT, type ResumeMeetingScheduleDetail } from "@/lib/configuration-scope-events";
 import {
   configurationScopeValidationSummary,
   hasLeadFloorPlan,
@@ -202,6 +202,8 @@ export default function CompleteTaskModal({
     (u.fullName ?? u.username ?? `User ${u.id}`).trim(),
   leadType,
   leadId,
+  resumeMeetingSchedule = null,
+  onResumeMeetingConsumed,
 }: {
   lead: Lead;
   open: boolean;
@@ -228,6 +230,9 @@ export default function CompleteTaskModal({
   /** Needed to validate Configuration Scope before Meeting Scheduled. */
   leadType?: string;
   leadId?: string;
+  /** After returning from Configuration Scope (meeting gate), reopen Schedule Hub Meeting. */
+  resumeMeetingSchedule?: { meetingFeedback?: string } | null;
+  onResumeMeetingConsumed?: () => void;
 }) {
   const presalesMode = Boolean(onPresalesApiComplete);
   const presalesLeadVerified =
@@ -264,6 +269,8 @@ export default function CompleteTaskModal({
   const [modalBookingType, setModalBookingType] = useState(lead.bookingType ?? "");
   const [modalPossessionDate, setModalPossessionDate] = useState(lead.possessionDate ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
+  /** Sticky until Complete Task closes so open-reset remounts still reopen Schedule Hub Meeting. */
+  const resumeMeetingSessionRef = useRef<{ meetingFeedback?: string } | null>(null);
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -288,19 +295,46 @@ export default function CompleteTaskModal({
   );
 
   useEffect(() => {
+    if (resumeMeetingSchedule) {
+      resumeMeetingSessionRef.current = resumeMeetingSchedule;
+      onResumeMeetingConsumed?.();
+    }
+  }, [onResumeMeetingConsumed, resumeMeetingSchedule]);
+
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
+      resumeMeetingSessionRef.current = null;
       setGatePopupMessage("");
       return;
     }
 
+    // Only reset form when Complete Task newly opens — not while it stays open under Configuration Scope.
+    const justOpened = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    if (!justOpened) return;
+
+    const pendingResume =
+      onApiComplete && !presalesMode ? resumeMeetingSessionRef.current : null;
+
+    const resumeFeedback = pendingResume?.meetingFeedback?.trim();
+    const nextFeedback =
+      resumeFeedback && isMeetingScheduleSubstage(resumeFeedback)
+        ? resumeFeedback
+        : pendingResume
+          ? "Meeting Scheduled"
+          : lead.status;
+
     setNextCallDate(defaultNextCallDate);
-    setFeedback(lead.status);
+    setFeedback(nextFeedback);
     setStatus("");
     setPath("");
     setNote("");
     setFeedbackMappings([]);
     setShowErrors(false);
-    setHubMeetingOpen(false);
+    setHubMeetingOpen(Boolean(pendingResume));
     setHubMeetingBusy(false);
     setHubMeetingError("");
     setConfigScopeGateBusy(false);
@@ -325,7 +359,51 @@ export default function CompleteTaskModal({
     lead.pincode,
     lead.propertyNotes,
     lead.status,
+    onApiComplete,
     open,
+    presalesMode,
+  ]);
+
+  // After Configuration Scope save from a meeting gate: reopen Schedule Hub Meeting only.
+  useEffect(() => {
+    if (!open) return;
+
+    const applyResume = (meetingFeedback?: string) => {
+      if (!onApiComplete || presalesMode) return;
+      const nextFeedback =
+        meetingFeedback?.trim() && isMeetingScheduleSubstage(meetingFeedback)
+          ? meetingFeedback.trim()
+          : "Meeting Scheduled";
+      resumeMeetingSessionRef.current = { meetingFeedback: nextFeedback };
+      setFeedback(nextFeedback);
+      setHubMeetingOpen(true);
+      setHubMeetingError("");
+      setApiError("");
+      onResumeMeetingConsumed?.();
+    };
+
+    if (resumeMeetingSchedule) {
+      applyResume(resumeMeetingSchedule.meetingFeedback);
+    }
+
+    const onResumeMeeting = (event: Event) => {
+      const detail = (event as CustomEvent<ResumeMeetingScheduleDetail>).detail;
+      if (!detail) return;
+      const expectedLeadId = (leadId ?? lead.id ?? "").trim();
+      if (detail.leadId && expectedLeadId && detail.leadId !== expectedLeadId) return;
+      applyResume(detail.meetingFeedback);
+    };
+
+    window.addEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+    return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+  }, [
+    lead.id,
+    leadId,
+    onApiComplete,
+    onResumeMeetingConsumed,
+    open,
+    presalesMode,
+    resumeMeetingSchedule,
   ]);
 
   useEffect(() => {
@@ -724,6 +802,7 @@ export default function CompleteTaskModal({
   /** Returns true when ready to schedule; otherwise opens Configuration Scope with highlights. */
   const ensureConfigScopeReadyForMeeting = async (options?: {
     setError?: (message: string) => void;
+    meetingFeedback?: string;
   }): Promise<boolean> => {
     if (!resolvedConfigLeadType || !resolvedConfigLeadId) {
       options?.setError?.(
@@ -755,13 +834,22 @@ export default function CompleteTaskModal({
 
       const summary = configurationScopeValidationSummary(issues);
       options?.setError?.(summary);
+      const meetingFeedback =
+        options?.meetingFeedback?.trim() ||
+        (isMeetingScheduleSubstage(feedback) ? feedback : undefined);
       notifyOpenConfigurationScope({
         leadType: resolvedConfigLeadType,
         leadId: resolvedConfigLeadId,
         highlightMissing: true,
         reason: "meeting-scheduled",
+        meetingFeedback,
       });
-      onClose();
+      // Keep Complete Task open under Configuration Scope so Schedule Hub Meeting
+      // can reopen immediately after scope is saved.
+      if (meetingFeedback && isMeetingScheduleSubstage(meetingFeedback)) {
+        setFeedback(meetingFeedback);
+      }
+      setHubMeetingOpen(false);
       return false;
     } finally {
       setConfigScopeGateBusy(false);
@@ -773,6 +861,7 @@ export default function CompleteTaskModal({
     if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
       const ready = await ensureConfigScopeReadyForMeeting({
         setError: (message) => setApiError(message),
+        meetingFeedback: value,
       });
       if (!ready) {
         setHubMeetingOpen(false);
@@ -799,6 +888,7 @@ export default function CompleteTaskModal({
     if (!presalesMode) {
       const configReady = await ensureConfigScopeReadyForMeeting({
         setError: (message) => setHubMeetingError(message),
+        meetingFeedback: feedback,
       });
       if (!configReady) return;
 
@@ -913,6 +1003,7 @@ export default function CompleteTaskModal({
     if (scheduleMode) {
       const ready = await ensureConfigScopeReadyForMeeting({
         setError: (message) => setApiError(message),
+        meetingFeedback: feedback,
       });
       if (!ready) return;
       setHubMeetingOpen(true);
@@ -1492,6 +1583,7 @@ export default function CompleteTaskModal({
                       void (async () => {
                         const ready = await ensureConfigScopeReadyForMeeting({
                           setError: (message) => setHubMeetingError(message),
+                          meetingFeedback: feedback,
                         });
                         if (!ready) return;
                         setHubMeetingOpen(true);

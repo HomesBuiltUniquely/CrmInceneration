@@ -65,6 +65,10 @@ import CompleteTaskModal, {
   type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
 import {
+  RESUME_MEETING_SCHEDULE_EVENT,
+  type ResumeMeetingScheduleDetail,
+} from "@/lib/configuration-scope-events";
+import {
   createAppointment,
   type CreateAppointmentResponse,
   resolveAppointmentContextForLead,
@@ -923,6 +927,9 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [resumeMeetingSchedule, setResumeMeetingSchedule] = useState<{
+    meetingFeedback?: string;
+  } | null>(null);
   const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
@@ -2705,6 +2712,22 @@ export default function LeadDetailsApiClient({
     validLeadType,
   ]);
 
+  /** After Configuration Scope finalize from a meeting gate, reopen Schedule Hub Meeting. */
+  useEffect(() => {
+    const onResumeMeeting = (event: Event) => {
+      const detail = (event as CustomEvent<ResumeMeetingScheduleDetail>).detail;
+      if (!detail?.leadId || detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setResumeMeetingSchedule({
+        meetingFeedback: detail.meetingFeedback,
+      });
+      setCompleteTaskVerifyFocus(false);
+      setCompleteTaskOpen(true);
+    };
+    window.addEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+    return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+  }, [leadId, leadType]);
+
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
     () =>
@@ -3421,6 +3444,7 @@ export default function LeadDetailsApiClient({
           onClose={() => {
             setCompleteTaskOpen(false);
             setCompleteTaskVerifyFocus(false);
+            setResumeMeetingSchedule(null);
           }}
           forcePresalesVerifyPanel={completeTaskVerifyFocus}
           onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
@@ -3442,6 +3466,8 @@ export default function LeadDetailsApiClient({
           onPhoneCall={handlePhoneCallLog}
           leadType={leadType}
           leadId={leadId}
+          resumeMeetingSchedule={resumeMeetingSchedule}
+          onResumeMeetingConsumed={() => setResumeMeetingSchedule(null)}
         />
         <BookingDoneModal
           open={bookingDoneOpen}
@@ -3674,6 +3700,7 @@ export default function LeadDetailsApiClient({
         onClose={() => {
           setCompleteTaskOpen(false);
           setCompleteTaskVerifyFocus(false);
+          setResumeMeetingSchedule(null);
         }}
         forcePresalesVerifyPanel={completeTaskVerifyFocus}
         onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
@@ -3695,6 +3722,8 @@ export default function LeadDetailsApiClient({
         onPhoneCall={handlePhoneCallLog}
         leadType={leadType}
         leadId={leadId}
+        resumeMeetingSchedule={resumeMeetingSchedule}
+        onResumeMeetingConsumed={() => setResumeMeetingSchedule(null)}
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
