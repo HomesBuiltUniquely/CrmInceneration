@@ -18,6 +18,10 @@ import {
   sanitizeErrorMessage,
   toFriendlyQuoteErrorMessage,
 } from "@/lib/friendly-api-error";
+import {
+  extractCustomerQuoteLink,
+  extractInternalQuoteLink,
+} from "@/lib/crm-quote-links";
 import { mergeClearFloorPlanInDetail } from "@/lib/lead-detail-mapper";
 import type { Lead } from "@/lib/data";
 function authHeaders(): HeadersInit {
@@ -567,7 +571,9 @@ async function parseNewCrmQuoteResponse(res: Response, text: string): Promise<Ne
       (parsed?.error && parsed.error.trim()) ||
       text.trim();
     if (res.status === 404 || res.status === 204) {
-      throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+      throw new Error(
+        toFriendlyQuoteErrorMessage(rawMessage, QUOTE_NOT_READY_USER_MESSAGE),
+      );
     }
     const message = isHtmlLikePayload(rawMessage)
       ? "Unable to fetch quote right now. Please try again in a moment."
@@ -649,31 +655,145 @@ export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
   return parsed ?? {};
 }
 
+function pickQuoteIdCandidate(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return String(value);
+  }
+  return "";
+}
+
+function isBusinessQuoteLeadId(id: string): boolean {
+  return Boolean(id.trim()) && !/^\d+$/.test(id.trim());
+}
+
+/**
+ * Build unique quote lookup ids — business ids (GL-/AL-/pid) first, numeric Hub ids last.
+ * Design Module quotes are usually keyed by business/external id, not route `/Leads/.../1272`.
+ * Also tries Design upsert pid forms `${leadType}-${routeId}` / `${leadType}#${routeId}`.
+ */
+export function collectQuoteLookupCandidateIds(args: {
+  routeLeadId?: string;
+  leadBusinessId?: string;
+  externalReferenceId?: string;
+  leadType?: string;
+  baseDetail?: Record<string, unknown> | null;
+}): string[] {
+  const detail = args.baseDetail ?? {};
+  const routeId = (args.routeLeadId ?? "").trim();
+  const leadType = (args.leadType ?? pickQuoteIdCandidate(detail.leadType) ?? "")
+    .trim()
+    .toLowerCase();
+
+  const typedPairIds: string[] = [];
+  if (leadType && routeId && /^\d+$/.test(routeId)) {
+    typedPairIds.push(`${leadType}-${routeId}`, `${leadType}#${routeId}`);
+  }
+
+  const raw = [
+    args.externalReferenceId,
+    args.leadBusinessId,
+    pickQuoteIdCandidate(detail.uniqueId),
+    pickQuoteIdCandidate(detail.leadIdentifier),
+    pickQuoteIdCandidate(detail.lead_identifier),
+    pickQuoteIdCandidate(detail.externalLeadId),
+    pickQuoteIdCandidate(detail.externalReferenceId),
+    pickQuoteIdCandidate(detail.pid),
+    pickQuoteIdCandidate(detail.leadId),
+    pickQuoteIdCandidate(detail.leadRef),
+    pickQuoteIdCandidate(detail.leadCode),
+    ...typedPairIds,
+    pickQuoteIdCandidate(detail.customerId),
+    args.routeLeadId,
+    pickQuoteIdCandidate(detail.id),
+  ];
+
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const pushUnique = (id: string) => {
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  };
+
+  for (const id of raw) {
+    if (id && isBusinessQuoteLeadId(id)) pushUnique(id);
+  }
+  for (const id of raw) {
+    if (id && !isBusinessQuoteLeadId(id)) pushUnique(id);
+  }
+  return ordered;
+}
+
+function quoteResponseHasLink(res: NewCrmQuoteResponse): boolean {
+  return Boolean(extractCustomerQuoteLink(res) || extractInternalQuoteLink(res));
+}
+
+/**
+ * Resolve quote link by trying business + numeric lead ids on both
+ * `/by-lead` (Design Module) and `/by-external` (Hub).
+ */
+export async function resolveNewCrmQuoteInternalLink(args: {
+  routeLeadId?: string;
+  leadBusinessId?: string;
+  externalReferenceId?: string;
+  leadType?: string;
+  baseDetail?: Record<string, unknown> | null;
+}): Promise<NewCrmQuoteResponse> {
+  const ids = collectQuoteLookupCandidateIds(args);
+  if (ids.length === 0) {
+    throw new Error("Lead ID is required to fetch quote.");
+  }
+
+  let lastError: unknown;
+  for (const id of ids) {
+    try {
+      const res = await getNewCrmQuoteInternalLinkByLead(id);
+      if (quoteResponseHasLink(res)) return res;
+    } catch (e) {
+      lastError = e;
+    }
+    try {
+      const res = await getNewCrmQuoteInternalLinkByExternal(id);
+      if (quoteResponseHasLink(res)) return res;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (lastError instanceof Error) throw lastError;
+  throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+}
+
 /** Try list + internal-link routes for one business lead id (with optional external ref fallback). */
 export async function fetchNewCrmQuotePayloads(
   businessLeadId: string,
   externalReferenceId = "",
 ): Promise<unknown[]> {
-  const id = businessLeadId.trim();
-  const externalId = externalReferenceId.trim();
   const payloads: unknown[] = [];
+  const ids = collectQuoteLookupCandidateIds({
+    leadBusinessId: businessLeadId,
+    externalReferenceId,
+    routeLeadId: businessLeadId,
+  });
 
-  if (id) {
+  for (const id of ids) {
     // `GET /api/new-crm/quotes/by-lead/{id}` is not deployed upstream yet (404).
     // Quotes load via internal-link + Prolance revisions below.
     try {
-      payloads.push(await getNewCrmQuoteInternalLinkByLead(id));
+      const res = await getNewCrmQuoteInternalLinkByLead(id);
+      if (quoteResponseHasLink(res)) payloads.push(res);
     } catch {
       // Fall through to by-external.
     }
-  }
-
-  if (externalId) {
     try {
-      payloads.push(await getNewCrmQuoteInternalLinkByExternal(externalId));
+      const res = await getNewCrmQuoteInternalLinkByExternal(id);
+      if (quoteResponseHasLink(res)) payloads.push(res);
     } catch {
-      // No quote on external id either.
+      // No quote on this id.
     }
+    if (payloads.length > 0) break;
   }
 
   return payloads;

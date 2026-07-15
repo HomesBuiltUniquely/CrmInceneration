@@ -5,8 +5,7 @@ import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
   getLeadDetail,
-  getNewCrmQuoteInternalLinkByExternal,
-  getNewCrmQuoteInternalLinkByLead,
+  resolveNewCrmQuoteInternalLink,
   postManualActivity,
   postQuoteSend,
   postStageRollback,
@@ -2313,32 +2312,30 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     let link = lead.quoteLink?.trim() ?? "";
     if (!link) {
-      const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
-      if (leadIdentifier) {
-        try {
-          let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
-          try {
-            res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
-          } catch {
-            const externalId = lead.externalReferenceId?.trim() ?? "";
-            if (!externalId) throw new Error("Quote link unavailable");
-            res = await getNewCrmQuoteInternalLinkByExternal(externalId);
-          }
-          link =
-            (res.internalQuoteUrl ?? "").trim() ||
-            (res.customerQuoteUrl ?? "").trim();
-          if (link) {
-            patchLead({ quoteLink: link });
-            setBaseDetail((prev) => ({
-              ...prev,
-              quoteLink: link,
-              quoteURL: link,
-              proposalLink: link,
-            }));
-          }
-        } catch {
-          // ignore fetch-link error and keep user-facing validation below
+      try {
+        const res = await resolveNewCrmQuoteInternalLink({
+          routeLeadId: leadId,
+          leadBusinessId: lead.leadId,
+          externalReferenceId: lead.externalReferenceId,
+          leadType: lt,
+          baseDetail,
+        });
+        link =
+          extractCustomerQuoteLink(res) ||
+          extractInternalQuoteLink(res) ||
+          (res.internalQuoteUrl ?? "").trim() ||
+          (res.customerQuoteUrl ?? "").trim();
+        if (link) {
+          patchLead({ quoteLink: link });
+          setBaseDetail((prev) => ({
+            ...prev,
+            quoteLink: link,
+            quoteURL: link,
+            proposalLink: link,
+          }));
         }
+      } catch {
+        // ignore fetch-link error and keep user-facing validation below
       }
     }
     if (!link) {
@@ -2375,11 +2372,16 @@ export default function LeadDetailsApiClient({
       setQuoteSending(false);
     }
   }, [
+    baseDetail,
+    lead,
     lead.email,
+    lead.externalReferenceId,
     lead.leadId,
     lead.quoteLink,
     leadId,
     leadTypeParam,
+    notifyError,
+    notifySuccess,
     patchLead,
     quoteBody,
     quoteSubject,
@@ -2442,22 +2444,24 @@ export default function LeadDetailsApiClient({
 
   const handleGetQuote = useCallback(async () => {
     if (!validLeadType) return;
-    const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
-    if (!leadIdentifier) {
+    const candidatesOk =
+      Boolean(lead.leadId?.trim()) ||
+      Boolean(lead.externalReferenceId?.trim()) ||
+      Boolean(leadId.trim());
+    if (!candidatesOk) {
       notifyError("Lead ID is required to fetch quote.");
       return;
     }
     setQuoteFetching(true);
     setQuoteLinkPersistError("");
     try {
-      let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
-      try {
-        res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
-      } catch (byLeadError) {
-        const externalId = lead.externalReferenceId?.trim() ?? "";
-        if (!externalId) throw byLeadError;
-        res = await getNewCrmQuoteInternalLinkByExternal(externalId);
-      }
+      const res = await resolveNewCrmQuoteInternalLink({
+        routeLeadId: leadId,
+        leadBusinessId: lead.leadId,
+        externalReferenceId: lead.externalReferenceId,
+        leadType: leadTypeParam,
+        baseDetail,
+      });
       const customerLink = extractCustomerQuoteLink(res);
       const internalLink = extractInternalQuoteLink(res);
       if (!customerLink) {
@@ -2497,9 +2501,11 @@ export default function LeadDetailsApiClient({
       setQuoteFetching(false);
     }
   }, [
+    baseDetail,
     lead.externalReferenceId,
     lead.leadId,
     leadId,
+    leadTypeParam,
     notifyError,
     notifySuccess,
     patchLead,
