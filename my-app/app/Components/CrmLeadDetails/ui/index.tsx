@@ -118,14 +118,37 @@ export function CardTitle({
 export function FieldLabel({
   children,
   required,
+  requiredHint,
 }: {
   children: ReactNode;
   required?: boolean;
+  /** Friendly hover text for the red *. */
+  requiredHint?: string;
 }) {
   return (
-    <label className="mb-[6px] block text-[11px] font-medium tracking-[0.3px] text-[var(--crm-text-muted)]">
+    <label className="mb-[6px] inline-flex items-center text-[11px] font-medium tracking-[0.3px] text-[var(--crm-text-muted)]">
       {children}
-      {required && <span className="ml-1 text-[var(--crm-required)]">*</span>}
+      {required ? (
+        requiredHint ? (
+          <span
+            className="group/req relative ml-1 inline-flex cursor-help"
+            tabIndex={0}
+            aria-label={requiredHint}
+          >
+            <span className="text-[var(--crm-required)]" aria-hidden="true">
+              *
+            </span>
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute left-1/2 top-full z-50 mt-1.5 w-56 -translate-x-1/2 rounded-lg border border-[#f0d9b5] bg-[#fffaf3] px-2.5 py-2 text-left text-[11px] font-medium tracking-normal text-[#7a5530] shadow-md opacity-0 transition-opacity duration-150 group-hover/req:opacity-100 group-focus-within/req:opacity-100"
+            >
+              {requiredHint}
+            </span>
+          </span>
+        ) : (
+          <span className="ml-1 text-[#e11d48]">*</span>
+        )
+      ) : null}
     </label>
   );
 }

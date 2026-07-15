@@ -132,7 +132,7 @@ function filterHiddenCatalogRooms(catalog: string[]): string[] {
 }
 
 /** Pre-selected on first open when nothing is saved yet. */
-export const DEFAULT_SELECTED_ROOM_NAMES = ["Living Room", "Modular Kitchen"] as const;
+export const DEFAULT_SELECTED_ROOM_NAMES = ["Modular Kitchen"] as const;
 
 const DEFAULT_UNIT_BY_ROOM: Record<string, string> = {
   "living room": "TV Unit",
@@ -251,7 +251,7 @@ function missingDefaultRooms(data: ConfigurationScopeRequirements): boolean {
   );
 }
 
-/** Add Living Room / Modular Kitchen when absent (e.g. partial version-0 row). */
+/** Add Modular Kitchen when absent (e.g. partial version-0 row). */
 export function ensureDefaultSelectedRooms(
   selectedRooms: ScopeSelectedRoom[],
 ): { rooms: ScopeSelectedRoom[]; changed: boolean } {

@@ -2134,7 +2134,11 @@ export default function LeadDetailsApiClient({
   ]);
 
   const persistLeadDetailFields = useCallback(
-    async (successMessage: string, leadOverride?: Lead) => {
+    async (
+      successMessage: string,
+      leadOverride?: Lead,
+      options?: { silent?: boolean },
+    ) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const leadToSave = leadOverride ?? lead;
@@ -2173,7 +2177,9 @@ export default function LeadDetailsApiClient({
           lt,
           leadId,
         ).catch(() => undefined);
-        notifySuccess(successMessage);
+        if (!options?.silent && successMessage.trim()) {
+          notifySuccess(successMessage);
+        }
         maybeOpenSalesClosureAfterWon([
           leadToSave.status,
           leadToSave.stageBlock?.milestoneStage,
@@ -2213,7 +2219,7 @@ export default function LeadDetailsApiClient({
   }, [persistLeadDetailFields]);
 
   const handleLeadContactSave = useCallback(
-    async (patch: Partial<Lead>) => {
+    async (patch: Partial<Lead>, options?: { silent?: boolean }) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const mergedLead = { ...lead, ...patch };
@@ -2237,7 +2243,9 @@ export default function LeadDetailsApiClient({
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
           }),
         );
-        notifySuccess("Contact details saved.");
+        if (!options?.silent) {
+          notifySuccess("Contact details saved.");
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : "Save failed";
         setSecondBoxError(message);
@@ -2250,12 +2258,16 @@ export default function LeadDetailsApiClient({
   );
 
   const handleConnectionPhaseSave = useCallback(
-    async (draft?: DiscoveryPhaseSaveDraft) => {
+    async (draft?: DiscoveryPhaseSaveDraft, options?: { silent?: boolean }) => {
       const saveLead = draft ? { ...lead, ...draft } : lead;
       if (draft) {
         setLead((prev) => ({ ...prev, ...draft }));
       }
-      await persistLeadDetailFields("Discovery phase saved.", saveLead);
+      await persistLeadDetailFields(
+        options?.silent ? "" : "Discovery phase saved.",
+        saveLead,
+        { silent: options?.silent },
+      );
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const propertyLocation = saveLead.propertyLocation ?? "";
@@ -3422,6 +3434,8 @@ export default function LeadDetailsApiClient({
           userRole={viewerRoleKey}
           presalesHandedOff={presalesHandedOff || inSalesPhase}
           onPhoneCall={handlePhoneCallLog}
+          leadType={leadType}
+          leadId={leadId}
         />
         <BookingDoneModal
           open={bookingDoneOpen}
@@ -3673,6 +3687,8 @@ export default function LeadDetailsApiClient({
         userRole={viewerRoleKey}
         presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
+        leadType={leadType}
+        leadId={leadId}
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">
