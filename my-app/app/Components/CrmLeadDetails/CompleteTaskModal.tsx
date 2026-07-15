@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
@@ -202,6 +202,7 @@ export default function CompleteTaskModal({
     (u.fullName ?? u.username ?? `User ${u.id}`).trim(),
   leadType,
   leadId,
+  preferMeetingScheduleOnOpen = false,
 }: {
   lead: Lead;
   open: boolean;
@@ -228,6 +229,8 @@ export default function CompleteTaskModal({
   /** Needed to validate Configuration Scope before Meeting Scheduled. */
   leadType?: string;
   leadId?: string;
+  /** After Configuration Scope finalize — pre-select Meeting Scheduled + open Hub schedule. */
+  preferMeetingScheduleOnOpen?: boolean;
 }) {
   const presalesMode = Boolean(onPresalesApiComplete);
   const presalesLeadVerified =
@@ -633,6 +636,7 @@ export default function CompleteTaskModal({
       if (path) setPath("");
     }
   }, [feedback, feedbackOptions, path, status]);
+
   const selectedFeedbackOption = useMemo(
     () => feedbackOptions.find((m) => m.label === feedback),
     [feedback, feedbackOptions],
@@ -767,6 +771,39 @@ export default function CompleteTaskModal({
       setConfigScopeGateBusy(false);
     }
   };
+
+  /** Continue from Configuration Scope finalize → Meeting Scheduled + Schedule Hub popup. */
+  const preferMeetingAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      preferMeetingAppliedRef.current = false;
+      return;
+    }
+    if (!preferMeetingScheduleOnOpen || preferMeetingAppliedRef.current) return;
+    if (presalesMode || !onApiComplete) return;
+    if (feedbackLoading || feedbackOptions.length === 0) return;
+
+    const meetingOption = feedbackOptions.find((option) =>
+      isMeetingScheduleSubstage(option.label),
+    );
+    if (!meetingOption) return;
+
+    preferMeetingAppliedRef.current = true;
+    setFeedback(meetingOption.label);
+    setStatus(meetingOption.stage);
+    setPath(meetingOption.stageCategory);
+    // Scope was just finalized — open schedule UI without re-gate redirect.
+    setHubMeetingOpen(true);
+    setHubMeetingError("");
+    setApiError("");
+  }, [
+    feedbackOptions,
+    feedbackLoading,
+    open,
+    preferMeetingScheduleOnOpen,
+    onApiComplete,
+    presalesMode,
+  ]);
 
   const handleFeedbackSelect = async (value: string) => {
     setFeedback(value);
