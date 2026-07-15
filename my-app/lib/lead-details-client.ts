@@ -571,7 +571,9 @@ async function parseNewCrmQuoteResponse(res: Response, text: string): Promise<Ne
       (parsed?.error && parsed.error.trim()) ||
       text.trim();
     if (res.status === 404 || res.status === 204) {
-      throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+      throw new Error(
+        toFriendlyQuoteErrorMessage(rawMessage, QUOTE_NOT_READY_USER_MESSAGE),
+      );
     }
     const message = isHtmlLikePayload(rawMessage)
       ? "Unable to fetch quote right now. Please try again in a moment."
@@ -668,14 +670,26 @@ function isBusinessQuoteLeadId(id: string): boolean {
 /**
  * Build unique quote lookup ids — business ids (GL-/AL-/pid) first, numeric Hub ids last.
  * Design Module quotes are usually keyed by business/external id, not route `/Leads/.../1272`.
+ * Also tries Design upsert pid forms `${leadType}-${routeId}` / `${leadType}#${routeId}`.
  */
 export function collectQuoteLookupCandidateIds(args: {
   routeLeadId?: string;
   leadBusinessId?: string;
   externalReferenceId?: string;
+  leadType?: string;
   baseDetail?: Record<string, unknown> | null;
 }): string[] {
   const detail = args.baseDetail ?? {};
+  const routeId = (args.routeLeadId ?? "").trim();
+  const leadType = (args.leadType ?? pickQuoteIdCandidate(detail.leadType) ?? "")
+    .trim()
+    .toLowerCase();
+
+  const typedPairIds: string[] = [];
+  if (leadType && routeId && /^\d+$/.test(routeId)) {
+    typedPairIds.push(`${leadType}-${routeId}`, `${leadType}#${routeId}`);
+  }
+
   const raw = [
     args.externalReferenceId,
     args.leadBusinessId,
@@ -688,6 +702,8 @@ export function collectQuoteLookupCandidateIds(args: {
     pickQuoteIdCandidate(detail.leadId),
     pickQuoteIdCandidate(detail.leadRef),
     pickQuoteIdCandidate(detail.leadCode),
+    ...typedPairIds,
+    pickQuoteIdCandidate(detail.customerId),
     args.routeLeadId,
     pickQuoteIdCandidate(detail.id),
   ];
@@ -722,6 +738,7 @@ export async function resolveNewCrmQuoteInternalLink(args: {
   routeLeadId?: string;
   leadBusinessId?: string;
   externalReferenceId?: string;
+  leadType?: string;
   baseDetail?: Record<string, unknown> | null;
 }): Promise<NewCrmQuoteResponse> {
   const ids = collectQuoteLookupCandidateIds(args);

@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-
-const EXTERNAL_API_BASE = (
-  process.env.DESIGN_MODULE_URL?.trim() || "https://api.hubinterior.com"
-).replace(/\/+$/, "");
+import { fetchDesignModuleQuoteAcrossUpstreams } from "@/lib/design-module-quote-upstream";
 
 function buildProxyHeaders(req: NextRequest): HeadersInit {
   const upstream = upstreamAuthHeaders(req);
@@ -33,19 +30,23 @@ export async function GET(
     );
   }
 
-  const res = await fetch(
-    `${EXTERNAL_API_BASE}/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
-    {
-      method: "GET",
+  try {
+    const attempt = await fetchDesignModuleQuoteAcrossUpstreams({
+      path: `/api/new-crm/quotes/internal-link/by-lead/${encodeURIComponent(id)}`,
+      alternatePaths: [`/api/crm/quotes/internal-link/${encodeURIComponent(id)}`],
       headers: buildProxyHeaders(req),
-      cache: "no-store",
-    },
-  );
-  const text = await res.text();
-  return new NextResponse(text, {
-    status: res.status,
-    headers: {
-      "Content-Type": res.headers.get("Content-Type") ?? "application/json",
-    },
-  });
+    });
+    return new NextResponse(attempt.text, {
+      status: attempt.status,
+      headers: {
+        "Content-Type": attempt.contentType ?? "application/json",
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unable to reach Design Module quote API.";
+    return NextResponse.json({ ok: false, message }, { status: 502 });
+  }
 }
