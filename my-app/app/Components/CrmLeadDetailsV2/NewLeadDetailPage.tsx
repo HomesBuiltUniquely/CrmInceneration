@@ -1693,9 +1693,9 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
 
   return (
-    <div className="grid grid-cols-1 items-start gap-x-10 gap-y-5 lg:grid-cols-2">
-      <div className="min-w-0 space-y-5">
-        <div className="min-w-0">
+    <div className="grid gap-x-10 gap-y-5 lg:grid-cols-2">
+      <div className="space-y-5">
+        <div>
           <PhaseFieldLabel>Property Name</PhaseFieldLabel>
           {editing ? (
             <Input
@@ -1705,23 +1705,21 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               className={V2_INPUT}
             />
           ) : (
-            <div className="flex min-h-[34px] items-center">
-              <ValuePill
-                icon={
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M3 21h18" />
-                    <path d="M5 21V7l8-4v18" />
-                    <path d="M19 21V11l-6-4" />
-                  </svg>
-                }
-              >
-                {lead.propertyLocation || "—"}
-              </ValuePill>
-            </div>
+            <ValuePill
+              icon={
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 21h18" />
+                  <path d="M5 21V7l8-4v18" />
+                  <path d="M19 21V11l-6-4" />
+                </svg>
+              }
+            >
+              {lead.propertyLocation || "—"}
+            </ValuePill>
           )}
         </div>
 
-        <div className="min-w-0">
+        <div>
           <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.budget}>
             Budget Range
           </PhaseFieldLabel>
@@ -1739,13 +1737,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               ))}
             </Select>
           ) : (
-            <div className="flex min-h-[34px] items-center">
-              <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
-            </div>
+            <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
           )}
         </div>
 
-        <div className="min-w-0">
+        <div>
           <PhaseFieldLabel>Language Preferred</PhaseFieldLabel>
           {editing ? (
             <Select
@@ -1760,34 +1756,32 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               ))}
             </Select>
           ) : (
-            <div className="flex min-h-[34px] items-center">
-              <ValuePill
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <path d="M2 12h20" />
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                  </svg>
-                }
-              >
-                {lead.language || "—"}
-              </ValuePill>
-            </div>
+            <ValuePill
+              icon={
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M2 12h20" />
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                </svg>
+              }
+            >
+              {lead.language || "—"}
+            </ValuePill>
           )}
         </div>
       </div>
 
-      <div className="min-w-0 space-y-5">
-        <div className="min-w-0">
+      <div className="space-y-5">
+        <div>
           <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
             Configuration
           </PhaseFieldLabel>
@@ -1812,13 +1806,13 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               ) : null}
             </>
           ) : (
-            <div className="flex min-h-[34px] items-center">
+            <div className="flex flex-wrap items-center gap-2">
               <ValuePill>{lead.configuration || "—"}</ValuePill>
             </div>
           )}
         </div>
 
-        <div className="min-w-0">
+        <div>
           <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
             Type
           </PhaseFieldLabel>
@@ -1836,13 +1830,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               ))}
             </Select>
           ) : (
-            <div className="flex min-h-[34px] items-center">
-              <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
-            </div>
+            <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
           )}
         </div>
 
-        <div className="min-w-0">
+        <div>
           <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
             Property Notes
           </PhaseFieldLabel>
@@ -1854,29 +1846,27 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
               className={V2_INPUT}
             />
           ) : (
-            <div className="flex min-h-[34px] items-center">
-              <ValuePill
-                icon={
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                  </svg>
-                }
-              >
-                {lead.propertyNotes || "—"}
-              </ValuePill>
-            </div>
+            <ValuePill
+              icon={
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+              }
+            >
+              {lead.propertyNotes || "—"}
+            </ValuePill>
           )}
         </div>
       </div>
@@ -2202,9 +2192,9 @@ function PhaseFieldLabel({
   const margin = className.includes("mb-") ? "" : "mb-1.5";
   return (
     <p
-      className={`${margin} flex w-full min-w-0 items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
+      className={`${margin} inline-flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
     >
-      <span className="min-w-0 truncate">{children}</span>
+      {children}
       {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
     </p>
   );
@@ -2229,14 +2219,14 @@ function ValuePill({
 }) {
   return (
     <span
-      className={`inline-flex min-h-[34px] max-w-full items-center gap-2 rounded-full px-3.5 py-1.5 text-left text-[14px] font-bold leading-snug text-[#1a2432] ${
+      className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
         variant === "green"
           ? "bg-[#e8fbf0] text-[#0f8f3d]"
           : "bg-[#f0f3f7]"
       }`}
     >
-      {icon ? <span className="shrink-0 text-[#4a5568]">{icon}</span> : null}
-      <span className="min-w-0 break-words">{children}</span>
+      {icon ? <span className="text-[#4a5568]">{icon}</span> : null}
+      {children}
     </span>
   );
 }

@@ -2,9 +2,7 @@ import type { PaymentHistoryResponse } from "@/lib/booking-payment-history-api";
 import { bookingPaymentHistoryUpstreamUrl } from "@/lib/booking-payment-upstream";
 
 export const DESIGN_MODULE_URL = (
-  process.env.DESIGN_MODULE_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API?.trim() ||
-  "https://api.hubinterior.com"
+  process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
 ).replace(/\/+$/, "");
 
 export const HUB_SYNC_API_KEY =

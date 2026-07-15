@@ -454,10 +454,9 @@ export async function syncCrmLeadToDesignModule(args: {
   });
   if (!res.ok) {
     const msg = await res.text().catch(() => "");
-    const reason = `Design Module CRM lead upsert failed (${res.status})${msg ? `: ${msg}` : ""}`;
-    // Background sync — never throw (avoids red Console Error overlay during CRM save).
-    console.warn("[design-module-phase-sync]", reason);
-    return { ok: false, reason };
+    throw new Error(
+      `Design Module CRM lead upsert failed (${res.status})${msg ? `: ${msg}` : ""}`,
+    );
   }
   return { ok: true };
 }

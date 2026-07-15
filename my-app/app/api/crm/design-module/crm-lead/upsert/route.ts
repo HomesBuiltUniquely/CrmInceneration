@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const DESIGN_MODULE_URL = (
-  process.env.DESIGN_MODULE_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API?.trim() ||
-  "https://api.hubinterior.com"
+  process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
 ).replace(/\/+$/, "");
 const HUB_SYNC_API_KEY =
   process.env.HUB_SYNC_API_KEY?.trim() ||
@@ -20,46 +18,32 @@ export async function POST(req: NextRequest) {
   }
 
   const url = `${DESIGN_MODULE_URL}/api/hub/crm-lead/upsert`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": HUB_SYNC_API_KEY,
+    },
+    body: bodyText,
+    cache: "no-store",
+  });
+  const text = await res.text();
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": HUB_SYNC_API_KEY,
-      },
-      body: bodyText,
-      cache: "no-store",
-    });
-    const text = await res.text();
-
-    if (!res.ok) {
-      console.warn("[design-module/crm-lead/upsert] upstream rejected", {
-        url,
-        status: res.status,
-        leadType: parsed?.leadType ?? null,
-        leadId: parsed?.leadId ?? null,
-        leadIdentifier: parsed?.leadIdentifier ?? parsed?.externalLeadId ?? null,
-        response: text.slice(0, 500),
-      });
-    }
-
-    return new NextResponse(text || JSON.stringify({ success: res.ok }), {
+  if (!res.ok) {
+    console.warn("[design-module/crm-lead/upsert] upstream rejected", {
+      url,
       status: res.status,
-      headers: {
-        "Content-Type": res.headers.get("Content-Type") ?? "application/json",
-      },
+      leadType: parsed?.leadType ?? null,
+      leadId: parsed?.leadId ?? null,
+      leadIdentifier: parsed?.leadIdentifier ?? parsed?.externalLeadId ?? null,
+      response: text,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn("[design-module/crm-lead/upsert] unreachable", { url, message });
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Design Module unreachable at ${DESIGN_MODULE_URL}. Set DESIGN_MODULE_URL or start the Design Module service.`,
-        debugMessage: message,
-      },
-      { status: 503 },
-    );
   }
+
+  return new NextResponse(text, {
+    status: res.status,
+    headers: {
+      "Content-Type": res.headers.get("Content-Type") ?? "application/json",
+    },
+  });
 }
