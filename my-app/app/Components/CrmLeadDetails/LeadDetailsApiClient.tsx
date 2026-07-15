@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
@@ -94,6 +94,10 @@ import {
   usesPresalesMilestoneClientOverlay,
 } from "@/lib/lead-presales-milestone-store";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
+import {
+  CONFIGURATION_SCOPE_FINALIZED_EVENT,
+  type ConfigurationScopeFinalizedDetail,
+} from "@/lib/configuration-scope-events";
 import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import {
@@ -923,6 +927,7 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [preferMeetingScheduleOnOpen, setPreferMeetingScheduleOnOpen] = useState(false);
   const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
@@ -2292,8 +2297,6 @@ export default function LeadDetailsApiClient({
               scheduleTimezone: "Asia/Kolkata",
             }
           : undefined,
-      }).catch((e) => {
-        console.error("Design Module upsert after Discovery/Connection save failed:", e);
       });
     },
     [
@@ -2712,6 +2715,21 @@ export default function LeadDetailsApiClient({
       (isPresalesRole(viewerRoleKey) || canViewBothMilestonePipelines(viewerRoleKey)),
     [inSalesPhase, viewerRoleKey],
   );
+
+  useEffect(() => {
+    const onScopeFinalized = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeFinalizedDetail>).detail;
+      if (!detail?.continueMeetingSchedule) return;
+      if (detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setPreferMeetingScheduleOnOpen(true);
+      setCompleteTaskOpen(true);
+      setCompleteTaskVerifyFocus(false);
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_FINALIZED_EVENT, onScopeFinalized);
+    return () =>
+      window.removeEventListener(CONFIGURATION_SCOPE_FINALIZED_EVENT, onScopeFinalized);
+  }, [leadId, leadType]);
 
   useEffect(() => {
     if (!completeTaskOpen || !usePresalesCompleteTask || !canVerifyCurrentLead) return;
@@ -3421,8 +3439,10 @@ export default function LeadDetailsApiClient({
           onClose={() => {
             setCompleteTaskOpen(false);
             setCompleteTaskVerifyFocus(false);
+            setPreferMeetingScheduleOnOpen(false);
           }}
           forcePresalesVerifyPanel={completeTaskVerifyFocus}
+          preferMeetingScheduleOnOpen={preferMeetingScheduleOnOpen}
           onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
           onPresalesApiComplete={
             usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined
@@ -3674,8 +3694,10 @@ export default function LeadDetailsApiClient({
         onClose={() => {
           setCompleteTaskOpen(false);
           setCompleteTaskVerifyFocus(false);
+          setPreferMeetingScheduleOnOpen(false);
         }}
         forcePresalesVerifyPanel={completeTaskVerifyFocus}
+        preferMeetingScheduleOnOpen={preferMeetingScheduleOnOpen}
         onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
         onPresalesApiComplete={
           usePresalesCompleteTask ? handlePresalesCompleteTaskApi : undefined

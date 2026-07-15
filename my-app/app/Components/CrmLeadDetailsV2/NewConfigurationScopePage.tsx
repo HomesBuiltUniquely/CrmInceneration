@@ -8,7 +8,10 @@ import ReferenceViewModal from "./ReferenceViewModal";
 import { RequiredAsterisk, REQUIRED_FIELD_HINTS } from "./RequiredFieldHint";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
-import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
+import {
+  notifyConfigurationScopeFinalized,
+  notifyConfigurationScopeUpdated,
+} from "@/lib/configuration-scope-events";
 import {
   validateConfigurationScopeForMeeting,
   type ConfigurationScopeValidationIssue,
@@ -225,6 +228,8 @@ export default function NewConfigurationScopePage({
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
   const [showMissingFieldHints, setShowMissingFieldHints] = useState(highlightMissing);
   const [showFinalizeCelebration, setShowFinalizeCelebration] = useState(false);
+  /** When user was sent here from Meeting Scheduled gate, reopen schedule after success. */
+  const continueMeetingScheduleRef = useRef(highlightMissing);
   const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(
     () => mergeRequirementDefaults(createDefaultRequirements()).requirements,
   );
@@ -415,7 +420,18 @@ export default function NewConfigurationScopePage({
   const saveRequirements = useCallback(
     async (payload?: ConfigurationScopeRequirements, isRetry = false): Promise<boolean> => {
       const toSave = payload ?? requirements;
-      if (!validLeadType || !toSave || requirementsSaveInFlightRef.current) return false;
+      if (!validLeadType || !toSave) return false;
+
+      // Wait for any autosave already in flight so Finalize doesn't silently no-op.
+      if (requirementsSaveInFlightRef.current) {
+        for (let i = 0; i < 40 && requirementsSaveInFlightRef.current; i += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 50));
+        }
+        if (requirementsSaveInFlightRef.current) {
+          notifyError("Still saving Requirement Scope. Please try Finalize again in a moment.");
+          return false;
+        }
+      }
 
       requirementsSaveInFlightRef.current = true;
       setRequirementsSaving(true);
@@ -426,7 +442,8 @@ export default function NewConfigurationScopePage({
           toPutRequirementsBody(toSave),
         );
         requirementsDirtyRef.current = false;
-        setRequirements(saved);
+        const savedAt = saved.updatedAt?.trim() || new Date().toISOString();
+        setRequirements({ ...saved, updatedAt: savedAt });
         if (saved.bookingType) setBookingType(saved.bookingType);
 
         // Keep Design Module View in sync when config scope is saved (not only on meeting schedule)
@@ -450,8 +467,6 @@ export default function NewConfigurationScopePage({
                   scheduleTimezone: "Asia/Kolkata",
                 }
               : undefined,
-          }).catch((err) => {
-            console.error("Design Module sync after config scope save failed:", err);
           });
         }
 
@@ -472,6 +487,7 @@ export default function NewConfigurationScopePage({
               familyContactName: toSave.familyContactName,
               familyContactRelationship: toSave.familyContactRelationship,
               familyContactPhone: toSave.familyContactPhone,
+              propertyName: toSave.propertyName,
               bookingType: toSave.bookingType,
               projectUnderstanding: toSave.projectUnderstanding,
               designStylePreference: toSave.designStylePreference,
@@ -550,8 +566,10 @@ export default function NewConfigurationScopePage({
 
   const saveAestheticNotes = useCallback(
     async (force = false): Promise<boolean> => {
-      if (!validLeadType || aestheticNotesSaving) return false;
-      if (!force && !aestheticNotesDirtyRef.current) return true;
+      if (!validLeadType) return false;
+      // Only hit Hub when notes changed — empty aesthetic PUT used to fail finalize falsely.
+      if (!aestheticNotesDirtyRef.current) return true;
+      if (aestheticNotesSaving) return false;
 
       setAestheticNotesSaving(true);
       try {
@@ -563,7 +581,7 @@ export default function NewConfigurationScopePage({
         aestheticNotesDirtyRef.current = false;
         setReferences(data.references);
         setAestheticNotes(data.aestheticNotes ?? aestheticNotes);
-        setReferencesUpdatedAt(data.updatedAt ?? null);
+        setReferencesUpdatedAt(data.updatedAt ?? new Date().toISOString());
         return true;
       } catch (e) {
         notifyError(e instanceof Error ? e.message : "Unable to save aesthetic notes.");
@@ -626,6 +644,7 @@ export default function NewConfigurationScopePage({
   useEffect(() => {
     if (highlightMissing) {
       setShowMissingFieldHints(true);
+      continueMeetingScheduleRef.current = true;
     }
   }, [highlightMissing]);
 
@@ -648,6 +667,15 @@ export default function NewConfigurationScopePage({
   const finishAfterCelebration = useCallback(() => {
     setShowFinalizeCelebration(false);
     notifySuccess("Configuration scope saved.");
+    const continueMeeting = continueMeetingScheduleRef.current;
+    continueMeetingScheduleRef.current = false;
+    if (validLeadType) {
+      notifyConfigurationScopeFinalized({
+        leadType: validLeadType,
+        leadId,
+        continueMeetingSchedule: continueMeeting,
+      });
+    }
     if (onClose) {
       onClose();
     } else if (validLeadType) {
@@ -680,14 +708,42 @@ export default function NewConfigurationScopePage({
     }
     setFinalizing(true);
     try {
-      const ok = await flushAllSaves();
-      if (!ok) return;
+      const toFlush: ConfigurationScopeRequirements = {
+        ...requirements,
+        bookingType: bookingType.trim() || requirements.bookingType,
+      };
+      setRequirements(toFlush);
+
+      const requirementsOk = await saveRequirements(toFlush);
+      if (!requirementsOk) {
+        notifyError(
+          "Configuration Scope could not be saved. Please try Finalize & Submit again.",
+        );
+        return;
+      }
+      const notesOk = await saveAestheticNotes(true);
+      if (!notesOk) {
+        notifyError(
+          "Requirement Scope was saved, but aesthetic notes could not be saved. Please try again.",
+        );
+        return;
+      }
+
       if (baseDetail && validLeadType) {
         const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
         const nextConfiguration = leadConfiguration.trim();
+        const nextBookingType = bookingType.trim();
         const currentConfiguration = (leadSnapshot.configuration ?? "").trim();
-        if (nextConfiguration && nextConfiguration !== currentConfiguration) {
-          const leadForSave = { ...leadSnapshot, configuration: nextConfiguration };
+        const currentBookingType = (leadSnapshot.bookingType ?? "").trim();
+        const needsLeadPatch =
+          (nextConfiguration && nextConfiguration !== currentConfiguration) ||
+          (nextBookingType && nextBookingType !== currentBookingType);
+        if (needsLeadPatch) {
+          const leadForSave = {
+            ...leadSnapshot,
+            configuration: nextConfiguration || leadSnapshot.configuration,
+            bookingType: nextBookingType || leadSnapshot.bookingType,
+          };
           const body = mergeLeadIntoDetail(baseDetail, leadForSave);
           const updated = await putLeadDetail(validLeadType, leadId, body);
           setBaseDetail(updated);
@@ -696,7 +752,6 @@ export default function NewConfigurationScopePage({
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
       notifyConfigurationScopeUpdated();
 
-      // Final push to Design after full config scope finalize
       if (baseDetail) {
         const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
         void syncCrmLeadToDesignModule({
@@ -706,7 +761,7 @@ export default function NewConfigurationScopePage({
             ...leadSnapshot,
             floorPlanPublicLink:
               floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
-            bookingType: requirements.bookingType || leadSnapshot.bookingType,
+            bookingType: bookingType || leadSnapshot.bookingType,
             configuration: leadConfiguration || leadSnapshot.configuration,
           },
           baseDetail,
@@ -717,12 +772,16 @@ export default function NewConfigurationScopePage({
                 scheduleTimezone: "Asia/Kolkata",
               }
             : undefined,
-        }).catch((err) => {
-          console.error("Design Module sync after config scope finalize failed:", err);
         });
       }
 
       setShowFinalizeCelebration(true);
+    } catch (e) {
+      notifyError(
+        e instanceof Error
+          ? e.message
+          : "Configuration Scope could not be saved. Please try again.",
+      );
     } finally {
       setFinalizing(false);
     }
@@ -731,14 +790,14 @@ export default function NewConfigurationScopePage({
     bookingType,
     finalizing,
     floorPlanPublicLink,
-    flushAllSaves,
     frontendPrefs,
     hasFloorPlanUploaded,
     leadConfiguration,
     leadId,
     notifyError,
-    onClose,
     requirements,
+    saveAestheticNotes,
+    saveRequirements,
     showFinalizeCelebration,
     validLeadType,
   ]);
