@@ -46,7 +46,9 @@ import {
 } from "@/lib/configuration-scope-client";
 import {
   OPEN_CONFIGURATION_SCOPE_EVENT,
+  notifyResumeMeetingSchedule,
   type OpenConfigurationScopeDetail,
+  type ResumeMeetingScheduleDetail,
 } from "@/lib/configuration-scope-events";
 import {
   buildDecisionMakerOptions,
@@ -1693,182 +1695,176 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
 
   return (
-    <div className="grid gap-x-10 gap-y-5 lg:grid-cols-2">
-      <div className="space-y-5">
-        <div>
-          <PhaseFieldLabel>Property Name</PhaseFieldLabel>
-          {editing ? (
-            <Input
-              placeholder="Property name / site"
-              value={lead.propertyLocation ?? ""}
-              onChange={(e) => onLeadPatch({ propertyLocation: e.target.value })}
-              className={V2_INPUT}
-            />
-          ) : (
-            <ValuePill
-              icon={
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M3 21h18" />
-                  <path d="M5 21V7l8-4v18" />
-                  <path d="M19 21V11l-6-4" />
-                </svg>
-              }
-            >
-              {lead.propertyLocation || "—"}
-            </ValuePill>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.budget}>
-            Budget Range
-          </PhaseFieldLabel>
-          {editing ? (
-            <Select
-              value={lead.budget ?? ""}
-              onChange={(e) => onLeadPatch({ budget: e.target.value })}
-              className={V2_INPUT}
-            >
-              <option value="">Select Budget</option>
-              {budgetOptions.map((budget) => (
-                <option key={budget} value={budget}>
-                  {budget}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel>Language Preferred</PhaseFieldLabel>
-          {editing ? (
-            <Select
-              value={lead.language ?? ""}
-              onChange={(e) => onLeadPatch({ language: e.target.value })}
-              className={V2_INPUT}
-            >
-              {LANGUAGE_OPTIONS.map((language) => (
-                <option key={language} value={language}>
-                  {language}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <ValuePill
-              icon={
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M2 12h20" />
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                </svg>
-              }
-            >
-              {lead.language || "—"}
-            </ValuePill>
-          )}
-        </div>
+    <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0">Property Name</PhaseFieldLabel>
+        {editing ? (
+          <Input
+            placeholder="Property name / site"
+            value={lead.propertyLocation ?? ""}
+            onChange={(e) => onLeadPatch({ propertyLocation: e.target.value })}
+            className={V2_INPUT}
+          />
+        ) : (
+          <ValuePill
+            icon={
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 21h18" />
+                <path d="M5 21V7l8-4v18" />
+                <path d="M19 21V11l-6-4" />
+              </svg>
+            }
+          >
+            {lead.propertyLocation || "—"}
+          </ValuePill>
+        )}
       </div>
 
-      <div className="space-y-5">
-        <div>
-          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
-            Configuration
-          </PhaseFieldLabel>
-          {editing ? (
-            <>
-              <Select
-                value={lead.configuration ?? ""}
-                onChange={(e) => onLeadPatch({ configuration: e.target.value })}
-                className={V2_INPUT}
-              >
-                <option value="">Select Configuration</option>
-                {configurationOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-              {isAdsLead && !(lead.configuration ?? "").trim() ? (
-                <p className="mt-1.5 text-[11px] text-[#9ca3af]">
-                  Not provided by the ad form — enter configuration and click Done to save.
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <ValuePill>{lead.configuration || "—"}</ValuePill>
-            </div>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
-            Type
-          </PhaseFieldLabel>
-          {editing ? (
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
+          Configuration
+        </PhaseFieldLabel>
+        {editing ? (
+          <>
             <Select
-              value={lead.bookingType ?? ""}
-              onChange={(e) => onLeadPatch({ bookingType: e.target.value })}
+              value={lead.configuration ?? ""}
+              onChange={(e) => onLeadPatch({ configuration: e.target.value })}
               className={V2_INPUT}
             >
-              <option value="">Select Type</option>
-              {BOOKING_TYPE_OPTIONS.map((option) => (
+              <option value="">Select Configuration</option>
+              {configurationOptions.map((option) => (
                 <option key={option} value={option}>
-                  {bookingTypeDisplay(option)}
+                  {option}
                 </option>
               ))}
             </Select>
-          ) : (
-            <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
-          )}
-        </div>
+            {isAdsLead && !(lead.configuration ?? "").trim() ? (
+              <p className="text-[11px] text-[#9ca3af]">
+                Not provided by the ad form — enter configuration and click Done to save.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <ValuePill>{lead.configuration || "—"}</ValuePill>
+        )}
+      </div>
 
-        <div>
-          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
-            Property Notes
-          </PhaseFieldLabel>
-          {editing ? (
-            <Textarea
-              placeholder="Add extra property notes..."
-              value={lead.propertyNotes ?? ""}
-              onChange={(e) => onLeadPatch({ propertyNotes: e.target.value })}
-              className={V2_INPUT}
-            />
-          ) : (
-            <ValuePill
-              icon={
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                </svg>
-              }
-            >
-              {lead.propertyNotes || "—"}
-            </ValuePill>
-          )}
-        </div>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.budget}>
+          Budget Range
+        </PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.budget ?? ""}
+            onChange={(e) => onLeadPatch({ budget: e.target.value })}
+            className={V2_INPUT}
+          >
+            <option value="">Select Budget</option>
+            {budgetOptions.map((budget) => (
+              <option key={budget} value={budget}>
+                {budget}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
+          Type
+        </PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.bookingType ?? ""}
+            onChange={(e) => onLeadPatch({ bookingType: e.target.value })}
+            className={V2_INPUT}
+          >
+            <option value="">Select Type</option>
+            {BOOKING_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {bookingTypeDisplay(option)}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0">Language Preferred</PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.language ?? ""}
+            onChange={(e) => onLeadPatch({ language: e.target.value })}
+            className={V2_INPUT}
+          >
+            {LANGUAGE_OPTIONS.map((language) => (
+              <option key={language} value={language}>
+                {language}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill
+            icon={
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+            }
+          >
+            {lead.language || "—"}
+          </ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
+          Property Notes
+        </PhaseFieldLabel>
+        {editing ? (
+          <Textarea
+            placeholder="Add extra property notes..."
+            value={lead.propertyNotes ?? ""}
+            onChange={(e) => onLeadPatch({ propertyNotes: e.target.value })}
+            className={V2_INPUT}
+          />
+        ) : (
+          <ValuePill
+            icon={
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            }
+          >
+            {lead.propertyNotes || "—"}
+          </ValuePill>
+        )}
       </div>
     </div>
   );
@@ -1918,18 +1914,75 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const appointmentMeetingTypeRef = useRef("");
   const [configScopeOpen, setConfigScopeOpen] = useState(false);
   const [configScopeHighlightMissing, setConfigScopeHighlightMissing] = useState(false);
+  const pendingResumeMeetingRef = useRef<ResumeMeetingScheduleDetail | null>(null);
+  const pendingResumeStorageKey = `crm:pending-meeting-resume:${leadType}:${leadId}`;
+
+  const readPendingResume = (): ResumeMeetingScheduleDetail | null => {
+    if (pendingResumeMeetingRef.current) return pendingResumeMeetingRef.current;
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(pendingResumeStorageKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ResumeMeetingScheduleDetail;
+      if (!parsed?.leadId) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const writePendingResume = (detail: ResumeMeetingScheduleDetail | null) => {
+    pendingResumeMeetingRef.current = detail;
+    if (typeof window === "undefined") return;
+    try {
+      if (detail) {
+        window.sessionStorage.setItem(pendingResumeStorageKey, JSON.stringify(detail));
+      } else {
+        window.sessionStorage.removeItem(pendingResumeStorageKey);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
 
   useEffect(() => {
     const onOpenScope = (event: Event) => {
       const detail = (event as CustomEvent<OpenConfigurationScopeDetail>).detail;
       if (!detail?.leadId || detail.leadId !== leadId) return;
       if (detail.leadType && detail.leadType !== leadType) return;
+      if (detail.reason === "meeting-scheduled") {
+        writePendingResume({
+          leadType: detail.leadType || leadType,
+          leadId: detail.leadId,
+          meetingFeedback: detail.meetingFeedback,
+        });
+      } else {
+        writePendingResume(null);
+      }
       setConfigScopeHighlightMissing(Boolean(detail.highlightMissing));
       setConfigScopeOpen(true);
     };
     window.addEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
     return () => window.removeEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
-  }, [leadId, leadType]);
+  }, [leadId, leadType, pendingResumeStorageKey]);
+
+  const closeConfigScopeWithoutResume = () => {
+    writePendingResume(null);
+    setConfigScopeOpen(false);
+    setConfigScopeHighlightMissing(false);
+  };
+
+  const closeConfigScopeAndResumeMeeting = () => {
+    const pending = readPendingResume();
+    writePendingResume(null);
+    setConfigScopeOpen(false);
+    setConfigScopeHighlightMissing(false);
+    // Only return to Schedule Hub Meeting when scope was opened from that meeting flow.
+    if (!pending) return;
+    window.setTimeout(() => {
+      notifyResumeMeetingSchedule(pending);
+    }, 50);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -2065,10 +2118,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
       <CrmFullscreenOverlayModal
         open={configScopeOpen}
-        onClose={() => {
-          setConfigScopeOpen(false);
-          setConfigScopeHighlightMissing(false);
-        }}
+        onClose={closeConfigScopeWithoutResume}
         title="Configuration Scope"
         hideHeader
         zOverlay={100}
@@ -2079,10 +2129,8 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
           leadId={leadId}
           embedded
           highlightMissing={configScopeHighlightMissing}
-          onClose={() => {
-            setConfigScopeOpen(false);
-            setConfigScopeHighlightMissing(false);
-          }}
+          onClose={closeConfigScopeWithoutResume}
+          onSavedAndClose={closeConfigScopeAndResumeMeeting}
         />
       </CrmFullscreenOverlayModal>
 
@@ -2192,7 +2240,7 @@ function PhaseFieldLabel({
   const margin = className.includes("mb-") ? "" : "mb-1.5";
   return (
     <p
-      className={`${margin} inline-flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
+      className={`${margin} flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
     >
       {children}
       {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
@@ -2219,7 +2267,7 @@ function ValuePill({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
+      className={`inline-flex w-fit max-w-full items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
         variant === "green"
           ? "bg-[#e8fbf0] text-[#0f8f3d]"
           : "bg-[#f0f3f7]"

@@ -78,6 +78,8 @@ type Props = {
   leadId: string;
   /** When set (e.g. opened inside lead-detail overlay), close instead of navigating away. */
   onClose?: () => void;
+  /** Called after a successful Finalize when returning to Schedule Hub Meeting (immediate, no celebration). */
+  onSavedAndClose?: () => void;
   /** Softer page chrome when embedded in a fullscreen overlay. */
   embedded?: boolean;
   /** Highlight every missing required field (e.g. redirected from Meeting Scheduled). */
@@ -209,6 +211,7 @@ export default function NewConfigurationScopePage({
   leadType,
   leadId,
   onClose,
+  onSavedAndClose,
   embedded = false,
   highlightMissing = false,
 }: Props) {
@@ -648,12 +651,14 @@ export default function NewConfigurationScopePage({
   const finishAfterCelebration = useCallback(() => {
     setShowFinalizeCelebration(false);
     notifySuccess("Configuration scope saved.");
-    if (onClose) {
+    if (onSavedAndClose) {
+      onSavedAndClose();
+    } else if (onClose) {
       onClose();
     } else if (validLeadType) {
       router.push(`/Leads/${validLeadType}/${leadId}`);
     }
-  }, [leadId, notifySuccess, onClose, router, validLeadType]);
+  }, [leadId, notifySuccess, onClose, onSavedAndClose, router, validLeadType]);
 
   const handleFinalizeSubmit = useCallback(async () => {
     if (!validLeadType || finalizing || showFinalizeCelebration) return;
@@ -722,6 +727,13 @@ export default function NewConfigurationScopePage({
         });
       }
 
+      // Meeting gate: reopen Schedule Hub Meeting immediately on save (no celebration delay).
+      if (onSavedAndClose) {
+        notifySuccess("Configuration scope saved.");
+        onSavedAndClose();
+        return;
+      }
+
       setShowFinalizeCelebration(true);
     } finally {
       setFinalizing(false);
@@ -737,7 +749,9 @@ export default function NewConfigurationScopePage({
     leadConfiguration,
     leadId,
     notifyError,
+    notifySuccess,
     onClose,
+    onSavedAndClose,
     requirements,
     showFinalizeCelebration,
     validLeadType,
