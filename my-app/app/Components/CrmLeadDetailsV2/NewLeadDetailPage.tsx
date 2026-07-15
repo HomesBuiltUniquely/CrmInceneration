@@ -283,17 +283,7 @@ function LeadDetailHeader() {
       <div className="grid gap-4 lg:grid-cols-[1fr_440px] lg:items-start">
         <div>
           <div data-no-dblclick-close className="max-w-[560px]">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center justify-center rounded-[4px] border border-[#f4a525] bg-[#fff9ef] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.09em] text-[#f4a525]">
-                Priority Lead
-              </span>
-              <LeadSourceBadge
-                primary={formatLeadSourceLabel(lead.leadSource)}
-                extras={lead.additionalLeadSourcesList}
-              />
-            </div>
-
-            <p className="mt-1 text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
+            <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
               Lead Information
             </p>
 
@@ -504,15 +494,6 @@ function LeadDetailHeader() {
         </div>
       </div>
     </div>
-  );
-}
-
-function LeadSourceBadge({ primary, extras }: { primary: string; extras?: string[] }) {
-  const label = primary || extras?.[0] || "External Lead";
-  return (
-    <span className="inline-flex items-center rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em] text-[#1d4ed8]">
-      {label}
-    </span>
   );
 }
 
