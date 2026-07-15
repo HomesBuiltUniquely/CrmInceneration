@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
-import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
-import { buildLeadDetailPath, type CrmWorkspace } from "@/lib/crm-workspace";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
+import CrmFullscreenOverlayModal from "@/app/Components/Shared/CrmFullscreenOverlayModal";
+import NewLeadDetailApiClient from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailApiClient";
+import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
+import { flushLeadDetailPendingSaves } from "@/lib/lead-detail-pending-flush";
+import { LEAD_DETAIL_OVERLAY_CLOSE_EVENT } from "@/lib/lead-detail-overlay-close";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -127,6 +130,7 @@ type LeadRowActionProps = {
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
+  onOpenLead?: (row: LeadRowModel) => void;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
@@ -166,31 +170,6 @@ function AlertButton({
   );
 }
 
-function openLeadDetail(
-  router: ReturnType<typeof useRouter>,
-  row: LeadRowModel,
-  leadsWorkspace: CrmWorkspace = "sales",
-) {
-  persistLeadsListScrollBeforeNavigate();
-  const url = buildLeadDetailPath(row.leadType, row.id, leadsWorkspace);
-  if (typeof window !== "undefined") {
-    const width = 1080;
-    const height = 720;
-    const left = Math.max(0, Math.floor((window.screen.width - width) / 2));
-    const top = Math.max(0, Math.floor((window.screen.height - height) / 2));
-    const popup = window.open(
-      url,
-      "_blank",
-      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
-    );
-    if (popup) {
-      popup.focus();
-      return;
-    }
-  }
-  router.push(url, { scroll: false });
-}
-
 function LeadRowAction({
   row,
   selected,
@@ -200,13 +179,13 @@ function LeadRowAction({
   gridClass,
   onDelete,
   onAssign,
-  leadsWorkspace = "sales",
+  onOpenLead,
 }: LeadRowActionProps) {
-  const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
+  const open = () => onOpenLead?.(row);
   return (
     <div
-      onClick={() => openLeadDetail(router, row, leadsWorkspace)}
+      onClick={open}
       className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-4 py-3 transition-all hover:bg-[var(--crm-surface-subtle)] ${
         selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
       }`}
@@ -215,7 +194,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLeadDetail(router, row, leadsWorkspace);
+          open();
         }
       }}
     >
@@ -454,9 +433,14 @@ export default function LeadsTable({
   onSelectedRowIdsChange,
   onDeleteRow,
   onAssignRow,
-  leadsWorkspace = "sales",
+  leadsWorkspace: _leadsWorkspace = "sales",
 }: LeadsTableProps) {
+  const { notifySuccess } = useGlobalNotifier();
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [openLead, setOpenLead] = useState<{
+    leadType: string;
+    leadId: string;
+  } | null>(null);
 
   useEffect(() => {
     const readOverrides = () => {
@@ -559,7 +543,12 @@ export default function LeadsTable({
               gridClass={gridClass}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
-              leadsWorkspace={leadsWorkspace}
+              onOpenLead={(row) =>
+                setOpenLead({
+                  leadType: row.leadType,
+                  leadId: row.id,
+                })
+              }
             />
           ))
         )}
@@ -574,6 +563,34 @@ export default function LeadsTable({
           />
         ) : null}
       </div>
+
+      <CrmFullscreenOverlayModal
+        open={Boolean(openLead)}
+        onClose={() => setOpenLead(null)}
+        onBeforeClose={async () => {
+          const labels = await flushLeadDetailPendingSaves();
+          if (labels.length > 0) {
+            notifySuccess(
+              `Auto-saved fields you forgot to save: ${labels.join(", ")}`,
+              5500,
+            );
+          }
+        }}
+        title="Lead details"
+        hideHeader
+        closeOnBackdrop
+        closeEventName={LEAD_DETAIL_OVERLAY_CLOSE_EVENT}
+        zOverlay={80}
+        zPanel={85}
+      >
+        {openLead ? (
+          <NewLeadDetailApiClient
+            key={`${openLead.leadType}-${openLead.leadId}`}
+            leadType={openLead.leadType}
+            leadId={openLead.leadId}
+          />
+        ) : null}
+      </CrmFullscreenOverlayModal>
     </section>
   );
 }

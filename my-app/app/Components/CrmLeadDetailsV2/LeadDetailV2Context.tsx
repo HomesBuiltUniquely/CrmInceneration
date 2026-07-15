@@ -51,11 +51,17 @@ export type LeadDetailV2ContextValue = {
   milestoneCategoryLabel: string;
   milestoneSubLabel: string;
   onLeadPatch: (patch: Partial<Lead>) => void;
-  onConnectionPhaseSave: (draft?: import("@/lib/lead-discovery-field-sync").DiscoveryPhaseSaveDraft) => void | Promise<void>;
+  onConnectionPhaseSave: (
+    draft?: import("@/lib/lead-discovery-field-sync").DiscoveryPhaseSaveDraft,
+    options?: { silent?: boolean },
+  ) => void | Promise<void>;
   connectionPhaseSaving: boolean;
   canEditLeadPhoneEmail: boolean;
   shouldMaskLeadPhone: boolean;
-  onLeadContactSave: (patch: Partial<Lead>) => void | Promise<void>;
+  onLeadContactSave: (
+    patch: Partial<Lead>,
+    options?: { silent?: boolean },
+  ) => void | Promise<void>;
   leadContactSaving: boolean;
   onPhoneCall?: () => void | Promise<void>;
   onWhatsAppMessage?: () => void | Promise<void>;

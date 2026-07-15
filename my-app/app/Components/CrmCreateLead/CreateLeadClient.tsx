@@ -296,6 +296,15 @@ export default function CreateLeadClient() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  /** Digits only, max 10 — blocks typing / paste beyond 10 digits. */
+  function updatePhoneDigits(
+    key: "phoneNumber" | "altPhoneNumber",
+    raw: string,
+  ) {
+    const digits = raw.replace(/\D/g, "").slice(0, 10);
+    updateField(key, digits);
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -303,6 +312,19 @@ export default function CreateLeadClient() {
 
     if (!form.name.trim() || !form.phoneNumber.trim()) {
       setError("Name and phone are required.");
+      return;
+    }
+
+    if (!/^\d{10}$/.test(form.phoneNumber.trim())) {
+      setError("Phone number must be exactly 10 digits.");
+      return;
+    }
+
+    if (
+      form.altPhoneNumber.trim() &&
+      !/^\d{10}$/.test(form.altPhoneNumber.trim())
+    ) {
+      setError("Alternate phone must be exactly 10 digits.");
       return;
     }
 
@@ -557,9 +579,14 @@ export default function CreateLeadClient() {
                             Phone
                           </CreateLeadFieldLabel>
                           <Input
+                            type="tel"
+                            inputMode="numeric"
+                            autoComplete="tel"
+                            maxLength={10}
+                            placeholder="10-digit mobile number"
                             value={form.phoneNumber}
                             onChange={(e) =>
-                              updateField("phoneNumber", e.target.value)
+                              updatePhoneDigits("phoneNumber", e.target.value)
                             }
                             className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
@@ -574,9 +601,14 @@ export default function CreateLeadClient() {
                             Alternate Phone
                           </CreateLeadFieldLabel>
                           <Input
+                            type="tel"
+                            inputMode="numeric"
+                            autoComplete="tel"
+                            maxLength={10}
+                            placeholder="10-digit mobile number"
                             value={form.altPhoneNumber}
                             onChange={(e) =>
-                              updateField("altPhoneNumber", e.target.value)
+                              updatePhoneDigits("altPhoneNumber", e.target.value)
                             }
                             className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />

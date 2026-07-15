@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
 import { getConfigurationScopeRequirements } from "@/lib/configuration-scope-client";
 import { CONFIGURATION_SCOPE_UPDATED_EVENT } from "@/lib/configuration-scope-events";
+import {
+  hasLeadFloorPlan,
+  isConfigurationScopeReadyForMeeting,
+} from "@/lib/configuration-scope-validation";
 import { computeLeadDataCompleteness } from "@/lib/lead-data-completeness";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -38,9 +42,14 @@ export default function DataCompletenessMeter() {
       try {
         const requirements = await getConfigurationScopeRequirements(validLeadType, leadId);
         if (requestId !== requestRef.current) return;
-        const hasRooms = requirements.selectedRooms.length > 0;
-        const persisted = (requirements.version ?? 0) > 0 || Boolean(requirements.updatedAt);
-        setScopeOfWorkComplete(hasRooms && persisted);
+        setScopeOfWorkComplete(
+          isConfigurationScopeReadyForMeeting({
+            requirements,
+            configuration: lead.configuration,
+            bookingType: lead.bookingType || requirements.bookingType,
+            hasFloorPlan: hasLeadFloorPlan(lead),
+          }),
+        );
       } catch {
         if (requestId === requestRef.current) setScopeOfWorkComplete(false);
       } finally {
@@ -50,7 +59,7 @@ export default function DataCompletenessMeter() {
         }
       }
     },
-    [leadId, validLeadType],
+    [lead.bookingType, lead.configuration, lead.floorPlan, lead.floorPlanPublicLink, lead.floorPlanViewPath, leadId, validLeadType],
   );
 
   useEffect(() => {

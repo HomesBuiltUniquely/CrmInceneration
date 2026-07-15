@@ -1,10 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
+import NewConfigurationScopePage from "./NewConfigurationScopePage";
+import CrmFullscreenOverlayModal from "@/app/Components/Shared/CrmFullscreenOverlayModal";
 import ActivityHistoryWithConnector, {
   type ActivityHistoryHandle,
 } from "./ActivityHistoryWithConnector";
@@ -25,6 +26,15 @@ import {
   V2_LINK_TEXT,
 } from "./lead-detail-v2-motion";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
+import { RequiredAsterisk, REQUIRED_FIELD_HINTS } from "./RequiredFieldHint";
+import {
+  discoveryFieldLabels,
+  registerLeadDetailPendingFlush,
+} from "@/lib/lead-detail-pending-flush";
+import {
+  isEmptySpaceDoubleClickTarget,
+  requestLeadDetailOverlayClose,
+} from "@/lib/lead-detail-overlay-close";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import {
   createDefaultRequirements,
@@ -34,6 +44,10 @@ import {
   toPutRequirementsBody,
   type ConfigurationScopeRequirements,
 } from "@/lib/configuration-scope-client";
+import {
+  OPEN_CONFIGURATION_SCOPE_EVENT,
+  type OpenConfigurationScopeDetail,
+} from "@/lib/configuration-scope-events";
 import {
   buildDecisionMakerOptions,
   DECISION_MAKER_SELF_VALUE,
@@ -257,42 +271,42 @@ function LeadDetailHeader() {
   }, [hasLeadPhone, notifyError, onWhatsAppMessage]);
 
   return (
-    <div className="py-4 lg:py-5">
+    <div
+      className="py-4 lg:py-5"
+      onDoubleClick={(event) => {
+        if (!isEmptySpaceDoubleClickTarget(event.target)) return;
+        event.preventDefault();
+        requestLeadDetailOverlayClose();
+      }}
+      title="Double-click empty space to close"
+    >
       <div className="grid gap-4 lg:grid-cols-[1fr_440px] lg:items-start">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center justify-center rounded-[4px] border border-[#f4a525] bg-[#fff9ef] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.09em] text-[#f4a525]">
-              Priority Lead
-            </span>
-            <LeadSourceBadge
-              primary={formatLeadSourceLabel(lead.leadSource)}
-              extras={lead.additionalLeadSourcesList}
-            />
-          </div>
+          <div data-no-dblclick-close className="max-w-[560px]">
+            <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
+              Lead Information
+            </p>
 
-          <p className="mt-1 text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
-            Lead Information
-          </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <CreatedMetaChip createdAt={lead.createdAt} />
+              <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
+                Lead came {leadComeCount} times
+              </span>
+            </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <CreatedMetaChip createdAt={lead.createdAt} />
-            <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
-              Lead came {leadComeCount} times
-            </span>
-          </div>
+            <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
+              <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
+              <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
+              <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
+            </div>
 
-          <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
-            <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
-            <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
-            <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
-          </div>
-
-          <div className="mt-3 max-w-[560px]">
-            <DataCompletenessMeter />
+            <div className="mt-3 max-w-[560px]">
+              <DataCompletenessMeter />
+            </div>
           </div>
         </div>
 
-        <div className="w-full lg:mb-8">
+        <div data-no-dblclick-close className="w-full lg:mb-8">
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
             {canStageRollback ? (
               <button
@@ -483,15 +497,6 @@ function LeadDetailHeader() {
   );
 }
 
-function LeadSourceBadge({ primary, extras }: { primary: string; extras?: string[] }) {
-  const label = primary || extras?.[0] || "External Lead";
-  return (
-    <span className="inline-flex items-center rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em] text-[#1d4ed8]">
-      {label}
-    </span>
-  );
-}
-
 function CreatedMetaChip({ createdAt }: { createdAt: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-[#bae6fd] bg-[#f0f9ff] px-2.5 py-1 text-[11px] font-semibold text-[#0369a1]">
@@ -630,6 +635,52 @@ function FamilyContactCard() {
     if (editSnapshot) setDraft(editSnapshot);
     exitEditing();
   };
+
+  useEffect(() => {
+    if (!editing || !isDirty) return;
+    return registerLeadDetailPendingFlush(async () => {
+      if (!validLeadType || !requirements || !editSnapshot) return [];
+      if (familyContactDraftsEqual(draft, editSnapshot)) {
+        exitEditing();
+        return [];
+      }
+      const labels = discoveryFieldLabels(
+        {
+          familyContactName: editSnapshot.name,
+          familyContactRelationship: editSnapshot.role,
+          familyContactPhone: editSnapshot.phone,
+        },
+        {
+          familyContactName: draft.name,
+          familyContactRelationship: draft.role,
+          familyContactPhone: draft.phone,
+        },
+      );
+      setSaving(true);
+      try {
+        const nextRequirements: ConfigurationScopeRequirements = {
+          ...requirements,
+          familyContactName: draft.name.trim() || null,
+          familyContactRelationship: draft.role.trim() || null,
+          familyContactPhone: draft.phone.trim() || null,
+        };
+        const saved = await putConfigurationScopeRequirements(
+          validLeadType,
+          leadId,
+          toPutRequirementsBody(nextRequirements),
+        );
+        setRequirements(saved);
+        patchConfigurationScopeFrontendPrefs(validLeadType, leadId, {
+          familyContactRelationship: draft.role.trim() || null,
+        });
+        persistFamilyContactRole(leadId, draft.role);
+        exitEditing();
+        return labels;
+      } finally {
+        setSaving(false);
+      }
+    });
+  }, [draft, editSnapshot, editing, isDirty, leadId, requirements, validLeadType]);
 
   const handleSave = async () => {
     if (!validLeadType || !requirements) {
@@ -1045,6 +1096,30 @@ function LeadProfileCard() {
     setEditingContact(false);
     setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
   };
+
+  const contactDirty =
+    editingContact &&
+    (contactDraft.phone.trim() !== (lead.phone ?? "").trim() ||
+      contactDraft.email.trim() !== (lead.email ?? "").trim());
+
+  useEffect(() => {
+    if (!contactDirty) return;
+    return registerLeadDetailPendingFlush(async () => {
+      const before = { phone: lead.phone ?? "", email: lead.email ?? "" };
+      const patch = {
+        phone: contactDraft.phone.trim(),
+        email: contactDraft.email.trim(),
+      };
+      const labels = discoveryFieldLabels(before, patch);
+      if (labels.length === 0) {
+        setEditingContact(false);
+        return [];
+      }
+      await onLeadContactSave(patch, { silent: true });
+      setEditingContact(false);
+      return labels;
+    });
+  }, [contactDirty, contactDraft.email, contactDraft.phone, lead.email, lead.phone, onLeadContactSave]);
 
   const saveContactEdit = async () => {
     const patch = {
@@ -1492,6 +1567,21 @@ function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) 
     exitEditing();
   };
 
+  useEffect(() => {
+    if (!editing || !isDirty || !editSnapshot) return;
+    return registerLeadDetailPendingFlush(async () => {
+      const draft = readDiscoveryPhaseDraft(lead);
+      const labels = discoveryFieldLabels(editSnapshot, draft);
+      if (labels.length === 0) {
+        exitEditing();
+        return [];
+      }
+      await onConnectionPhaseSave(draft, { silent: true });
+      exitEditing();
+      return labels;
+    });
+  }, [editSnapshot, editing, isDirty, lead, onConnectionPhaseSave]);
+
   const handleSave = async () => {
     if (!isDirty) {
       exitEditing();
@@ -1630,7 +1720,9 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
         </div>
 
         <div>
-          <PhaseFieldLabel>Budget Range</PhaseFieldLabel>
+          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.budget}>
+            Budget Range
+          </PhaseFieldLabel>
           {editing ? (
             <Select
               value={lead.budget ?? ""}
@@ -1690,7 +1782,9 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
 
       <div className="space-y-5">
         <div>
-          <PhaseFieldLabel>Configuration</PhaseFieldLabel>
+          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
+            Configuration
+          </PhaseFieldLabel>
           {editing ? (
             <>
               <Select
@@ -1719,7 +1813,9 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
         </div>
 
         <div>
-          <PhaseFieldLabel>Type</PhaseFieldLabel>
+          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
+            Type
+          </PhaseFieldLabel>
           {editing ? (
             <Select
               value={lead.bookingType ?? ""}
@@ -1739,7 +1835,9 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
         </div>
 
         <div>
-          <PhaseFieldLabel>Property Notes</PhaseFieldLabel>
+          <PhaseFieldLabel required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
+            Property Notes
+          </PhaseFieldLabel>
           {editing ? (
             <Textarea
               placeholder="Add extra property notes..."
@@ -1818,6 +1916,20 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const designQaValue = apiDesignQaLink || designQaLink || "";
   const [appointmentMeetingType, setAppointmentMeetingType] = useState("");
   const appointmentMeetingTypeRef = useRef("");
+  const [configScopeOpen, setConfigScopeOpen] = useState(false);
+  const [configScopeHighlightMissing, setConfigScopeHighlightMissing] = useState(false);
+
+  useEffect(() => {
+    const onOpenScope = (event: Event) => {
+      const detail = (event as CustomEvent<OpenConfigurationScopeDetail>).detail;
+      if (!detail?.leadId || detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setConfigScopeHighlightMissing(Boolean(detail.highlightMissing));
+      setConfigScopeOpen(true);
+    };
+    window.addEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
+    return () => window.removeEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
+  }, [leadId, leadType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1881,7 +1993,13 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
         <div id="deal-connection-floor-plan" className="scroll-mt-24">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <PhaseFieldLabel className="mb-0">Floor Plan</PhaseFieldLabel>
+            <PhaseFieldLabel
+              className="mb-0"
+              required
+              requiredHint={REQUIRED_FIELD_HINTS.floorPlan}
+            >
+              Floor Plan
+            </PhaseFieldLabel>
             <div className="flex flex-wrap gap-1">
               <FloorPlanFileTypeBadge label="PDF" />
               <FloorPlanFileTypeBadge label="JPG" />
@@ -1907,8 +2025,13 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
             Scope of Work
           </p>
           <div id="deal-scope-of-work" className="scroll-mt-24">
-            <Link
-              href={`/Leads/${leadType}/${leadId}/configuration-scope`}
+            <button
+              type="button"
+              disabled={!canInteract}
+              onClick={() => {
+                setConfigScopeHighlightMissing(false);
+                setConfigScopeOpen(true);
+              }}
               className={`group flex h-[116px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#8ee2b4] bg-white text-[12px] font-bold uppercase tracking-wide text-[#2c7a53] ${V2_CARD_LINK} ${
                 !canInteract ? "pointer-events-none opacity-60" : ""
               }`}
@@ -1932,13 +2055,36 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
               <span className="text-[10px] font-semibold normal-case tracking-normal text-[#5f8d73]">
                 Open and update requirement details
               </span>
-            </Link>
+            </button>
           </div>
         </div>
         <div className="mt-4 rounded-lg border border-[#e4e8ef] bg-white p-3">
           <DesignPreferencesWithModal leadId={designQaLeadId} />
         </div>
       </section>
+
+      <CrmFullscreenOverlayModal
+        open={configScopeOpen}
+        onClose={() => {
+          setConfigScopeOpen(false);
+          setConfigScopeHighlightMissing(false);
+        }}
+        title="Configuration Scope"
+        hideHeader
+        zOverlay={100}
+        zPanel={105}
+      >
+        <NewConfigurationScopePage
+          leadType={leadType}
+          leadId={leadId}
+          embedded
+          highlightMissing={configScopeHighlightMissing}
+          onClose={() => {
+            setConfigScopeOpen(false);
+            setConfigScopeHighlightMissing(false);
+          }}
+        />
+      </CrmFullscreenOverlayModal>
 
       <section className="flex flex-col rounded-xl border border-[#e8ecf1] border-l-[3px] border-l-[#1ed760] bg-[#f8fafc] p-4">
         <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
@@ -2035,16 +2181,21 @@ function DesignQaLinkField({
 function PhaseFieldLabel({
   children,
   className = "",
+  required = false,
+  requiredHint,
 }: {
   children: ReactNode;
   className?: string;
+  required?: boolean;
+  requiredHint?: string;
 }) {
   const margin = className.includes("mb-") ? "" : "mb-1.5";
   return (
     <p
-      className={`${margin} text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
+      className={`${margin} inline-flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
     >
       {children}
+      {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
     </p>
   );
 }
