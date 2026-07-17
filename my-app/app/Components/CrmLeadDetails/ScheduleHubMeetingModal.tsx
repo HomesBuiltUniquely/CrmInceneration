@@ -215,7 +215,7 @@ function SummaryColumn({
     <div
       className={cn(
         "relative flex min-h-[80px] flex-col justify-center px-4 py-3 transition sm:px-5",
-        children && "hover:bg-emerald-50/50",
+        children ? "hover:bg-emerald-50/50" : undefined,
       )}
     >
       <span className="mb-2 text-[11px] leading-none text-[var(--crm-text-muted)]">
