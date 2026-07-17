@@ -2331,24 +2331,28 @@ function RoomConfigCard({
         </div>
         <div>
           <FormLabel>False Ceiling</FormLabel>
-          <label className={`mt-2 flex cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${SCOPE_CHIP}`}>
-            <input
-              type="checkbox"
-              checked={Boolean(room.falseCeilingRequired)}
-              onChange={(e) => onUpdate({ falseCeilingRequired: e.target.checked })}
-              className="sr-only"
-            />
+          <button
+            type="button"
+            onClick={() =>
+              onUpdate({ falseCeilingRequired: !Boolean(room.falseCeilingRequired) })
+            }
+            className={`mt-2 flex w-full cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-left ${SCOPE_CHIP}`}
+            aria-pressed={Boolean(room.falseCeilingRequired)}
+          >
             <span
-              className={`inline-flex h-4 w-4 items-center justify-center rounded-[3px] border ${
+              className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border ${
                 room.falseCeilingRequired
                   ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white"
                   : "border-[#d1d5db] bg-white"
               }`}
+              aria-hidden="true"
             >
               {room.falseCeilingRequired ? "✓" : ""}
             </span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">Required</span>
-          </label>
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">
+              Required
+            </span>
+          </button>
         </div>
       </div>
 

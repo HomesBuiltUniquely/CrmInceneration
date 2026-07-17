@@ -13,7 +13,8 @@ export type ScopeSelectedRoom = {
   iconLabel?: string;
   sortOrder?: number;
   units: ScopeRoomUnit[];
-  falseCeilingRequired?: boolean;
+  /** Per-room false ceiling requirement — persisted with requirements PUT. */
+  falseCeilingRequired: boolean;
   notes?: string;
 };
 
@@ -208,6 +209,60 @@ function readStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === "string");
 }
 
+function readFalseCeilingRequired(item: Record<string, unknown>): boolean {
+  if ("falseCeilingRequired" in item) return Boolean(item.falseCeilingRequired);
+  if ("false_ceiling_required" in item) return Boolean(item.false_ceiling_required);
+  if ("falseCeiling" in item) return Boolean(item.falseCeiling);
+  if ("false_ceiling" in item) return Boolean(item.false_ceiling);
+  return false;
+}
+
+function normalizeRoomForPut(room: ScopeSelectedRoom): ScopeSelectedRoom {
+  return {
+    id: room.id,
+    roomName: room.roomName,
+    iconLabel: room.iconLabel,
+    sortOrder: typeof room.sortOrder === "number" ? room.sortOrder : 0,
+    units: (room.units ?? [])
+      .map((unit) => ({
+        label: String(unit.label ?? "").trim(),
+        selected: unit.selected !== false,
+      }))
+      .filter((unit) => unit.label),
+    // Always send an explicit boolean so Hub persists it with room data.
+    falseCeilingRequired: Boolean(room.falseCeilingRequired),
+    notes: typeof room.notes === "string" ? room.notes : "",
+  };
+}
+
+function mergeSentRoomFlags(
+  saved: ConfigurationScopeRequirements,
+  sentRooms: ScopeSelectedRoom[],
+): ConfigurationScopeRequirements {
+  const byId = new Map(sentRooms.map((room) => [room.id, room]));
+  const byName = new Map(
+    sentRooms.map((room) => [room.roomName.trim().toLowerCase(), room]),
+  );
+  return {
+    ...saved,
+    selectedRooms: saved.selectedRooms.map((room) => {
+      const sent =
+        byId.get(room.id) ?? byName.get(room.roomName.trim().toLowerCase());
+      if (!sent) {
+        return {
+          ...room,
+          falseCeilingRequired: Boolean(room.falseCeilingRequired),
+        };
+      }
+      return {
+        ...room,
+        falseCeilingRequired: Boolean(sent.falseCeilingRequired),
+        notes: typeof sent.notes === "string" ? sent.notes : room.notes,
+      };
+    }),
+  };
+}
+
 function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -235,7 +290,7 @@ function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
               : defaultRoomIcon(roomName),
         sortOrder: typeof item.sortOrder === "number" ? item.sortOrder : index,
         units,
-        falseCeilingRequired: Boolean(item.falseCeilingRequired ?? item.false_ceiling_required),
+        falseCeilingRequired: readFalseCeilingRequired(item),
         notes: typeof item.notes === "string" ? item.notes : "",
       };
     })
@@ -321,8 +376,12 @@ export function mergeRequirementDefaults(
   selectedRooms = selectedRooms.map((room) => {
     const key = room.roomName.trim().toLowerCase();
     const isDefault = DEFAULT_SELECTED_ROOM_NAMES.some((name) => name.toLowerCase() === key);
-    if (!isDefault || room.units.length > 0) return room;
-    return { ...room, units: defaultUnitsForRoom(room.roomName) };
+    const withFlag = {
+      ...room,
+      falseCeilingRequired: Boolean(room.falseCeilingRequired),
+    };
+    if (!isDefault || withFlag.units.length > 0) return withFlag;
+    return { ...withFlag, units: defaultUnitsForRoom(room.roomName) };
   });
 
   return {
@@ -341,7 +400,7 @@ export function toPutRequirementsBody(
   return {
     version: req.version,
     availableRoomCatalog: req.availableRoomCatalog,
-    selectedRooms: req.selectedRooms,
+    selectedRooms: (req.selectedRooms ?? []).map(normalizeRoomForPut),
     miscAddOns: req.miscAddOns,
     kitchenLayout: req.kitchenLayout,
     materialFinish: req.materialFinish,
@@ -649,11 +708,13 @@ export async function putConfigurationScopeRequirements(
     err.status = res.status;
     throw err;
   }
-  return hydrateFamilyContactRelationship(
+  const normalized = hydrateFamilyContactRelationship(
     mergeRequirementDefaults(normalizeRequirements(data)).requirements,
     leadType,
     id,
   );
+  // Keep per-room falseCeilingRequired from the request if Hub omits it on response.
+  return mergeSentRoomFlags(normalized, body.selectedRooms);
 }
 
 export async function getConfigurationScopeReferences(
