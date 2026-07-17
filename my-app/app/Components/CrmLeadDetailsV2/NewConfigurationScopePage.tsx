@@ -25,6 +25,8 @@ import {
   getConfigurationScopeRequirements,
   mergeRequirementDefaults,
   miscAddOnOptions,
+  normalizeMiscAddOns,
+  normalizeStringList,
   putConfigurationScopeAestheticNotes,
   putConfigurationScopeRequirements,
   joinProjectUnderstanding,
@@ -469,7 +471,7 @@ export default function NewConfigurationScopePage({
               ...fresh,
               selectedRooms: toSave.selectedRooms,
               availableRoomCatalog: toSave.availableRoomCatalog,
-              miscAddOns: toSave.miscAddOns,
+              miscAddOns: normalizeMiscAddOns(toSave.miscAddOns),
               kitchenLayout: toSave.kitchenLayout,
               materialFinish: toSave.materialFinish,
               familyContactName: toSave.familyContactName,
@@ -1885,11 +1887,11 @@ function RequirementScopeSection({
   };
 }) {
   const [newRoomName, setNewRoomName] = useState("");
-  const catalog =
-    requirements?.availableRoomCatalog?.length
-      ? requirements.availableRoomCatalog
-      : [...DEFAULT_ROOM_CATALOG];
-  const selectedRooms = requirements?.selectedRooms ?? [];
+  const catalogSource = normalizeStringList(requirements?.availableRoomCatalog);
+  const catalog = catalogSource.length > 0 ? catalogSource : [...DEFAULT_ROOM_CATALOG];
+  const selectedRooms = Array.isArray(requirements?.selectedRooms)
+    ? requirements.selectedRooms
+    : [];
   const selectedNames = new Set(
     selectedRooms.map((room) => room.roomName.trim().toLowerCase()),
   );
@@ -1897,21 +1899,22 @@ function RequirementScopeSection({
   const toggleRoom = (roomName: string) => {
     const key = roomName.trim().toLowerCase();
     onPatchRequirements((prev) => {
-      const exists = prev.selectedRooms.some(
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const exists = rooms.some(
         (room) => room.roomName.trim().toLowerCase() === key,
       );
       if (exists) {
         return {
           ...prev,
-          selectedRooms: prev.selectedRooms.filter(
+          selectedRooms: rooms.filter(
             (room) => room.roomName.trim().toLowerCase() !== key,
           ),
         };
       }
-      const nextRoom = createDefaultSelectedRoom(roomName, prev.selectedRooms.length);
+      const nextRoom = createDefaultSelectedRoom(roomName, rooms.length);
       return {
         ...prev,
-        selectedRooms: [...prev.selectedRooms, nextRoom],
+        selectedRooms: [...rooms, nextRoom],
       };
     });
   };
@@ -1920,50 +1923,61 @@ function RequirementScopeSection({
     const trimmed = newRoomName.trim();
     if (!trimmed) return;
     onPatchRequirements((prev) => {
-      const catalogSet = new Set(prev.availableRoomCatalog);
+      const catalogSet = new Set(normalizeStringList(prev.availableRoomCatalog));
       catalogSet.add(trimmed);
-      const exists = prev.selectedRooms.some(
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const exists = rooms.some(
         (room) => room.roomName.trim().toLowerCase() === trimmed.toLowerCase(),
       );
-      const selectedRooms = exists
-        ? prev.selectedRooms
-        : [...prev.selectedRooms, createDefaultSelectedRoom(trimmed, prev.selectedRooms.length)];
+      const nextRooms = exists
+        ? rooms
+        : [...rooms, createDefaultSelectedRoom(trimmed, rooms.length)];
       return {
         ...prev,
         availableRoomCatalog: Array.from(catalogSet),
-        selectedRooms,
+        selectedRooms: nextRooms,
       };
     });
     setNewRoomName("");
   };
 
   const updateRoom = (roomId: string, patch: Partial<ScopeSelectedRoom>) => {
-    onPatchRequirements((prev) => ({
-      ...prev,
-      selectedRooms: prev.selectedRooms.map((room) =>
-        room.id === roomId ? { ...room, ...patch } : room,
-      ),
-    }));
+    onPatchRequirements((prev) => {
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      return {
+        ...prev,
+        selectedRooms: rooms.map((room) =>
+          room.id === roomId ? { ...room, ...patch } : room,
+        ),
+      };
+    });
   };
 
   const removeRoom = (room: ScopeSelectedRoom) => {
     const key = room.roomName.trim().toLowerCase();
-    onPatchRequirements((prev) => ({
-      ...prev,
-      selectedRooms: prev.selectedRooms.filter(
-        (entry) => entry.roomName.trim().toLowerCase() !== key,
-      ),
-      availableRoomCatalog: prev.availableRoomCatalog.filter(
-        (name) => name.trim().toLowerCase() !== key,
-      ),
-    }));
+    onPatchRequirements((prev) => {
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const catalogList = normalizeStringList(prev.availableRoomCatalog);
+      return {
+        ...prev,
+        selectedRooms: rooms.filter(
+          (entry) => entry.roomName.trim().toLowerCase() !== key,
+        ),
+        availableRoomCatalog: catalogList.filter(
+          (name) => name.trim().toLowerCase() !== key,
+        ),
+      };
+    });
   };
 
   const toggleMiscAddOn = (item: string) => {
+    const label = item.trim();
+    if (!label) return;
     onPatchRequirements((prev) => {
-      const selected = new Set(prev.miscAddOns);
-      if (selected.has(item)) selected.delete(item);
-      else selected.add(item);
+      const current = normalizeMiscAddOns(prev.miscAddOns);
+      const selected = new Set(current);
+      if (selected.has(label)) selected.delete(label);
+      else selected.add(label);
       return { ...prev, miscAddOns: Array.from(selected) };
     });
   };
@@ -2130,15 +2144,16 @@ function ScopeExtrasSection({
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
   floorPlanError?: string;
-  miscAddOns: string[];
+  miscAddOns: string[] | null | undefined;
   kitchenLayout: string;
   materialFinish: string;
   onMiscAddOnToggle: (item: string) => void;
   onKitchenLayoutChange: (value: string) => void;
   onMaterialFinishChange: (value: string) => void;
 }) {
-  const addOnOptions = miscAddOnOptions([], miscAddOns);
-  const selectedAddOns = new Set(miscAddOns);
+  const safeAddOns = normalizeMiscAddOns(miscAddOns);
+  const addOnOptions = miscAddOnOptions([], safeAddOns);
+  const selectedAddOns = new Set(safeAddOns);
 
   return (
     <>
@@ -2160,17 +2175,14 @@ function ScopeExtrasSection({
           {addOnOptions.map((item) => {
             const checked = selectedAddOns.has(item);
             return (
-              <label
+              <button
                 key={item}
-                className={`flex min-h-[42px] cursor-pointer items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] font-medium text-[#374151] ${SCOPE_CHIP}`}
+                type="button"
+                aria-pressed={checked}
+                onClick={() => onMiscAddOnToggle(item)}
+                className={`flex min-h-[42px] w-full cursor-pointer items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-left text-[13px] font-medium text-[#374151] ${SCOPE_CHIP}`}
               >
                 {item}
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => onMiscAddOnToggle(item)}
-                  className="sr-only"
-                />
                 <span
                   className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border ${
                     checked ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white" : "border-[#d1d5db] bg-white"
@@ -2178,7 +2190,7 @@ function ScopeExtrasSection({
                 >
                   {checked ? "✓" : ""}
                 </span>
-              </label>
+              </button>
             );
           })}
         </div>
@@ -2244,10 +2256,11 @@ function RoomConfigCard({
   notesError?: string;
 }) {
   const [newUnitLabel, setNewUnitLabel] = useState("");
+  const units = Array.isArray(room.units) ? room.units : [];
 
   const toggleUnit = (label: string) => {
     onUpdate({
-      units: room.units.map((unit) =>
+      units: units.map((unit) =>
         unit.label === label ? { ...unit, selected: !unit.selected } : unit,
       ),
     });
@@ -2256,12 +2269,12 @@ function RoomConfigCard({
   const addUnit = () => {
     const trimmed = newUnitLabel.trim();
     if (!trimmed) return;
-    if (room.units.some((unit) => unit.label.toLowerCase() === trimmed.toLowerCase())) {
+    if (units.some((unit) => unit.label.toLowerCase() === trimmed.toLowerCase())) {
       setNewUnitLabel("");
       return;
     }
     onUpdate({
-      units: [...room.units, { label: trimmed, selected: true }],
+      units: [...units, { label: trimmed, selected: true }],
     });
     setNewUnitLabel("");
   };
@@ -2297,7 +2310,7 @@ function RoomConfigCard({
             Units Required (min. 2)
           </FormLabel>
           <div className={`mt-2 flex flex-wrap gap-2 ${unitsError ? `p-1 ${SCOPE_HINT_RING}` : ""}`}>
-            {room.units.map((unit) => (
+            {units.map((unit) => (
               <button
                 key={unit.label}
                 type="button"

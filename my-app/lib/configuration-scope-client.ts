@@ -206,7 +206,29 @@ function readNullableString(
 
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
+  return value
+    .map((v) => {
+      if (typeof v === "string") return v.trim();
+      if (v && typeof v === "object") {
+        const row = v as Record<string, unknown>;
+        const label = row.label ?? row.name ?? row.value;
+        return typeof label === "string" ? label.trim() : "";
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+export function normalizeStringList(value: unknown): string[] {
+  return readStringArray(value);
+}
+
+export function normalizeMiscAddOns(value: unknown): string[] {
+  return normalizeStringList(value);
+}
+
+function asSelectedRooms(value: unknown): ScopeSelectedRoom[] {
+  return Array.isArray(value) ? (value as ScopeSelectedRoom[]) : [];
 }
 
 function readFalseCeilingRequired(item: Record<string, unknown>): boolean {
@@ -239,23 +261,26 @@ function mergeSentRoomFlags(
   saved: ConfigurationScopeRequirements,
   sentRooms: ScopeSelectedRoom[],
 ): ConfigurationScopeRequirements {
+  const rooms = asSelectedRooms(saved.selectedRooms);
   const byId = new Map(sentRooms.map((room) => [room.id, room]));
   const byName = new Map(
     sentRooms.map((room) => [room.roomName.trim().toLowerCase(), room]),
   );
   return {
     ...saved,
-    selectedRooms: saved.selectedRooms.map((room) => {
+    selectedRooms: rooms.map((room) => {
       const sent =
         byId.get(room.id) ?? byName.get(room.roomName.trim().toLowerCase());
       if (!sent) {
         return {
           ...room,
+          units: Array.isArray(room.units) ? room.units : [],
           falseCeilingRequired: Boolean(room.falseCeilingRequired),
         };
       }
       return {
         ...room,
+        units: Array.isArray(room.units) ? room.units : [],
         falseCeilingRequired: Boolean(sent.falseCeilingRequired),
         notes: typeof sent.notes === "string" ? sent.notes : room.notes,
       };
@@ -299,7 +324,9 @@ function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
 
 function missingDefaultRooms(data: ConfigurationScopeRequirements): boolean {
   const selected = new Set(
-    data.selectedRooms.map((room) => room.roomName.trim().toLowerCase()),
+    asSelectedRooms(data.selectedRooms).map((room) =>
+      room.roomName.trim().toLowerCase(),
+    ),
   );
   return DEFAULT_SELECTED_ROOM_NAMES.some(
     (name) => !selected.has(name.toLowerCase()),
@@ -347,7 +374,7 @@ export function isFreshRequirementScope(
 ): boolean {
   return (
     (data.version ?? 0) === 0 &&
-    data.selectedRooms.length === 0 &&
+    asSelectedRooms(data.selectedRooms).length === 0 &&
     !data.updatedAt
   );
 }
@@ -356,15 +383,16 @@ export function isFreshRequirementScope(
 export function mergeRequirementDefaults(
   data: ConfigurationScopeRequirements,
 ): { requirements: ConfigurationScopeRequirements; needsPersist: boolean } {
+  const catalogSource = normalizeStringList(data.availableRoomCatalog);
   const catalog = filterHiddenCatalogRooms(
-    data.availableRoomCatalog.length > 0
-      ? [...data.availableRoomCatalog]
+    catalogSource.length > 0
+      ? catalogSource
       : isFreshRequirementScope(data)
         ? [...DEFAULT_ROOM_CATALOG]
         : [],
   );
 
-  let selectedRooms = data.selectedRooms;
+  let selectedRooms = asSelectedRooms(data.selectedRooms);
   let needsPersist = false;
 
   if (isFreshRequirementScope(data)) {
@@ -376,8 +404,10 @@ export function mergeRequirementDefaults(
   selectedRooms = selectedRooms.map((room) => {
     const key = room.roomName.trim().toLowerCase();
     const isDefault = DEFAULT_SELECTED_ROOM_NAMES.some((name) => name.toLowerCase() === key);
+    const units = Array.isArray(room.units) ? room.units : [];
     const withFlag = {
       ...room,
+      units,
       falseCeilingRequired: Boolean(room.falseCeilingRequired),
     };
     if (!isDefault || withFlag.units.length > 0) return withFlag;
@@ -389,6 +419,7 @@ export function mergeRequirementDefaults(
       ...data,
       availableRoomCatalog: catalog,
       selectedRooms,
+      miscAddOns: normalizeMiscAddOns(data.miscAddOns),
     },
     needsPersist,
   };
@@ -399,9 +430,14 @@ export function toPutRequirementsBody(
 ): PutConfigurationScopeRequirementsBody {
   return {
     version: req.version,
-    availableRoomCatalog: req.availableRoomCatalog,
-    selectedRooms: (req.selectedRooms ?? []).map(normalizeRoomForPut),
-    miscAddOns: req.miscAddOns,
+    availableRoomCatalog: Array.isArray(req.availableRoomCatalog)
+      ? req.availableRoomCatalog.map((x) => String(x).trim()).filter(Boolean)
+      : [],
+    selectedRooms: (Array.isArray(req.selectedRooms) ? req.selectedRooms : []).map(
+      normalizeRoomForPut,
+    ),
+    // Always send a clean string[] so Hub stores add-ons with the same requirements API.
+    miscAddOns: normalizeMiscAddOns(req.miscAddOns),
     kitchenLayout: req.kitchenLayout,
     materialFinish: req.materialFinish,
     familyContactName: req.familyContactName,
@@ -545,10 +581,9 @@ function normalizeRequirements(
     leadType: typeof data.leadType === "string" ? data.leadType : undefined,
     availableRoomCatalog: catalog,
     selectedRooms: normalizeSelectedRooms(selectedRaw),
-    miscAddOns:
-      readStringArray(data.miscAddOns).length > 0
-        ? readStringArray(data.miscAddOns)
-        : readStringArray(data.misc_addons),
+    miscAddOns: normalizeMiscAddOns(
+      (data.miscAddOns ?? data.misc_addons ?? data.miscAddons) as unknown,
+    ),
     kitchenLayout:
       typeof data.kitchenLayout === "string"
         ? data.kitchenLayout
@@ -609,8 +644,13 @@ function normalizeReferences(
   };
 }
 
-export function miscAddOnOptions(catalog: string[], selected: string[]): string[] {
-  const merged = new Set([...DEFAULT_MISC_ADD_ONS, ...catalog, ...selected]);
+export function miscAddOnOptions(
+  catalog: string[] | null | undefined,
+  selected: string[] | null | undefined,
+): string[] {
+  const safeCatalog = normalizeMiscAddOns(catalog);
+  const safeSelected = normalizeMiscAddOns(selected);
+  const merged = new Set([...DEFAULT_MISC_ADD_ONS, ...safeCatalog, ...safeSelected]);
   return Array.from(merged);
 }
 
@@ -713,8 +753,11 @@ export async function putConfigurationScopeRequirements(
     leadType,
     id,
   );
-  // Keep per-room falseCeilingRequired from the request if Hub omits it on response.
-  return mergeSentRoomFlags(normalized, body.selectedRooms);
+  // Prefer values we just sent — Hub sometimes omits miscAddOns / falseCeilingRequired.
+  return {
+    ...mergeSentRoomFlags(normalized, body.selectedRooms),
+    miscAddOns: normalizeMiscAddOns(body.miscAddOns),
+  };
 }
 
 export async function getConfigurationScopeReferences(
