@@ -176,3 +176,139 @@ export function isConfigurationScopeReadyForMeeting(
 export function issueKeys(issues: ConfigurationScopeValidationIssue[]): Set<string> {
   return new Set(issues.map((issue) => issue.key));
 }
+
+/** High-level checklist for Scope of Work UI. */
+export type ScopeMeetingChecklistItem = {
+  id: string;
+  label: string;
+  complete: boolean;
+  /** Meeting Scheduled cannot proceed until these are done. */
+  mandatory: boolean;
+};
+
+/**
+ * Checklist for the circular completion meter on Configure Scope.
+ * Mandatory items gate Meeting Scheduled; recommended items keep % honest
+ * when the form still has empty sections.
+ */
+export function buildConfigurationScopeMeetingChecklist(
+  input: ConfigurationScopeValidationInput,
+): ScopeMeetingChecklistItem[] {
+  const issues = validateConfigurationScopeForMeeting(input);
+  const keys = issueKeys(issues);
+  const roomsIncomplete = keys.has("rooms") || keys.has("roomsExtra");
+  const roomDetailsPending = [...keys].some(
+    (key) => key.startsWith("roomUnits:") || key.startsWith("roomNotes:"),
+  );
+  const req = input.requirements;
+  const hasFamilyContact =
+    isFilled(req.familyContactName) || isFilled(req.familyContactPhone);
+
+  return [
+    {
+      id: "propertyName",
+      label: "Property name",
+      complete: !keys.has("propertyName"),
+      mandatory: true,
+    },
+    {
+      id: "configuration",
+      label: "BHK type",
+      complete: !keys.has("configuration"),
+      mandatory: true,
+    },
+    {
+      id: "bookingType",
+      label: "Type",
+      complete: !keys.has("bookingType"),
+      mandatory: true,
+    },
+    {
+      id: "expectedTimeline",
+      label: "Timeline",
+      complete: !keys.has("expectedTimeline"),
+      mandatory: true,
+    },
+    {
+      id: "rooms",
+      label: "Rooms",
+      complete: !roomsIncomplete,
+      mandatory: true,
+    },
+    {
+      id: "roomDetails",
+      label: "Room details",
+      // No rooms yet → details are also pending (do not mark complete by default).
+      complete: !roomsIncomplete && !roomDetailsPending,
+      mandatory: true,
+    },
+    {
+      id: "floorPlan",
+      label: "Floor plan",
+      complete: !keys.has("floorPlan"),
+      mandatory: true,
+    },
+    {
+      id: "kitchenLayout",
+      label: "Kitchen layout",
+      complete: isFilled(req.kitchenLayout),
+      mandatory: false,
+    },
+    {
+      id: "materialFinish",
+      label: "Material / finish",
+      complete: isFilled(req.materialFinish),
+      mandatory: false,
+    },
+    {
+      id: "familyContact",
+      label: "Family contact",
+      complete: hasFamilyContact,
+      mandatory: false,
+    },
+    {
+      id: "designStyle",
+      label: "Design style",
+      complete: isFilled(req.designStylePreference),
+      mandatory: false,
+    },
+    {
+      id: "projectUnderstanding",
+      label: "Project notes",
+      complete: isFilled(req.projectUnderstanding),
+      mandatory: false,
+    },
+  ];
+}
+
+export function configurationScopeMeetingCompletion(
+  input: ConfigurationScopeValidationInput,
+): {
+  percent: number;
+  items: ScopeMeetingChecklistItem[];
+  pendingLabels: string[];
+  pendingMandatoryLabels: string[];
+  /** True only when Meeting Scheduled gate passes. */
+  ready: boolean;
+  mandatoryDone: number;
+  mandatoryTotal: number;
+} {
+  const items = buildConfigurationScopeMeetingChecklist(input);
+  const completeCount = items.filter((item) => item.complete).length;
+  const percent =
+    items.length === 0 ? 0 : Math.round((completeCount / items.length) * 100);
+  const mandatoryItems = items.filter((item) => item.mandatory);
+  const mandatoryDone = mandatoryItems.filter((item) => item.complete).length;
+  const ready = isConfigurationScopeReadyForMeeting(input);
+  return {
+    percent,
+    items,
+    pendingLabels: items.filter((item) => !item.complete).map((item) => item.label),
+    pendingMandatoryLabels: mandatoryItems
+      .filter((item) => !item.complete)
+      .map((item) => item.label),
+    ready,
+    mandatoryDone,
+    mandatoryTotal: mandatoryItems.length,
+  };
+}

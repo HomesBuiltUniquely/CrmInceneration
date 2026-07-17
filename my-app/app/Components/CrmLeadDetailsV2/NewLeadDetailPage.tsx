@@ -11,6 +11,7 @@ import ActivityHistoryWithConnector, {
 } from "./ActivityHistoryWithConnector";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
+import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
 import {
   V2_BTN_AMBER,
   V2_BTN_DONE,
@@ -2077,39 +2078,13 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
           <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
             Scope of Work
           </p>
-          <div id="deal-scope-of-work" className="scroll-mt-24">
-            <button
-              type="button"
-              disabled={!canInteract}
-              onClick={() => {
-                setConfigScopeHighlightMissing(false);
-                setConfigScopeOpen(true);
-              }}
-              className={`group flex h-[116px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#8ee2b4] bg-white text-[12px] font-bold uppercase tracking-wide text-[#2c7a53] ${V2_CARD_LINK} ${
-                !canInteract ? "pointer-events-none opacity-60" : ""
-              }`}
-            >
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#d3f0df] bg-[#f4fff9] text-[#2c7a53] transition-all duration-200 group-hover:scale-105">
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-5 w-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                </svg>
-              </span>
-              <span>Configure Scope</span>
-              <span className="text-[10px] font-semibold normal-case tracking-normal text-[#5f8d73]">
-                Open and update requirement details
-              </span>
-            </button>
-          </div>
+          <ScopeOfWorkCompletenessCard
+            canInteract={canInteract}
+            onOpen={(highlightMissing) => {
+              setConfigScopeHighlightMissing(highlightMissing);
+              setConfigScopeOpen(true);
+            }}
+          />
         </div>
         <div className="mt-4 rounded-lg border border-[#e4e8ef] bg-white p-3">
           <DesignPreferencesWithModal leadId={designQaLeadId} />

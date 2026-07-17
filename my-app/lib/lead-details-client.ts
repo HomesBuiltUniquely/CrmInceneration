@@ -382,7 +382,7 @@ export async function putHubScheduleDates(
 export async function postManualActivity(
   leadType: CrmLeadType,
   id: string,
-  activityType: "CALL" | "WHATSAPP" | "SMS" | "NOTE",
+  activityType: "CALL" | "WHATSAPP" | "SMS" | "NOTE" | "ASSIGNMENT",
   value: string
 ): Promise<string> {
   const res = await fetch(`/api/crm/lead/${leadType}/${id}/activity`, {
@@ -404,6 +404,36 @@ export async function postManualActivity(
     );
   }
   return text;
+}
+
+/** Activity text after Presales verify / sales handoff (WhatsApp, IVR, etc.). */
+export function buildLeadVerifiedActivityValue(args: {
+  verifiedBy: string;
+  assignedTo?: string;
+}): string {
+  const by = args.verifiedBy.trim() || "Presales";
+  const assigned = (args.assignedTo ?? "").trim();
+  if (assigned) {
+    return `Lead verified by ${by} (Presales). Assigned to ${assigned}.`;
+  }
+  return `Lead verified by ${by} (Presales). No sales executive assigned.`;
+}
+
+/**
+ * Persist verify + assignment into activity history.
+ * Prefers ASSIGNMENT (shows under Assignments filter); falls back to NOTE.
+ */
+export async function postLeadVerifiedActivity(
+  leadType: CrmLeadType,
+  id: string,
+  args: { verifiedBy: string; assignedTo?: string },
+): Promise<void> {
+  const value = buildLeadVerifiedActivityValue(args);
+  try {
+    await postManualActivity(leadType, id, "ASSIGNMENT", value);
+  } catch {
+    await postManualActivity(leadType, id, "NOTE", value);
+  }
 }
 
 function verifyPayloadMessage(parsed: Record<string, unknown> | null): string | null {

@@ -1051,7 +1051,7 @@ function mapBackendActivityType(raw: string): ActivityType {
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";
-  if (u.includes("ASSIGN")) return "assignment";
+  if (u.includes("ASSIGN") || u.includes("VERIF")) return "assignment";
   if (u.includes("NOTE")) return "note";
   if (u.includes("CALL")) return "call";
   if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD")) return "status";

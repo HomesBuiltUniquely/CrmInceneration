@@ -45,12 +45,14 @@ export type CrossPoolHeatmapSharedFilters = {
   viewerWorkspace: CrmWorkspace;
 };
 
-/** Each assignee pool uses its own verification default — not the viewer CRM tab default. */
+/** Each assignee pool uses its own verification default — not the viewer CRM tab default.
+ * Global search: no verified/unverified filter on either pool. */
 export function verificationForCrossPoolHeatmap(
   targetWorkspace: CrmWorkspace,
   shared: CrossPoolHeatmapSharedFilters,
 ): string {
   if (shared.summaryLeadType === "verified") return "verified";
+  if (shared.search.trim()) return "";
   const explicit = shared.verificationStatusProp.trim();
   if (explicit && targetWorkspace === shared.viewerWorkspace) return explicit;
   return defaultVerificationForLeadTypeFilter(
