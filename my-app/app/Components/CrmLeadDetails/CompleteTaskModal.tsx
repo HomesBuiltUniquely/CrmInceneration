@@ -38,6 +38,7 @@ import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
+import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -135,8 +136,18 @@ function getTodayStartDateTimeLocal(): string {
 export type PresalesVerifyFromCompleteTaskPayload = {
   pincode: string;
   salesExecutiveId?: number;
+  /** Display name of selected sales executive (for activity history). */
+  salesExecutiveName?: string;
   note: string;
 };
+
+function verifyHandoffButtonTitle(lead: Lead): string {
+  if (lead.leadType === "whatsapplead") return "Verify WhatsApp Lead";
+  if (lead.leadType === "addlead" && isIvrCallLeadSource(lead.leadSource)) {
+    return "Verify IVR Lead";
+  }
+  return "Verify & hand off to sales";
+}
 
 export type PresalesCompleteTaskApiPayload = {
   presalesMilestoneStage: string;
@@ -1061,12 +1072,18 @@ export default function CompleteTaskModal({
       setApiError("");
       try {
         const salesExecutiveId = Number(verifySalesExecutiveId);
+        const selectedExec = salesExecutiveOptions.find(
+          (u) => Number(u.id) === salesExecutiveId,
+        );
         await onPresalesVerify({
           pincode: verifyPincode.trim(),
           salesExecutiveId:
             Number.isFinite(salesExecutiveId) && salesExecutiveId > 0
               ? salesExecutiveId
               : undefined,
+          salesExecutiveName: selectedExec
+            ? salesExecutiveLabel(selectedExec)
+            : undefined,
           note: note.trim(),
         });
         onClose();
@@ -1426,11 +1443,7 @@ export default function CompleteTaskModal({
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
-                  title={
-                    lead.leadType === "whatsapplead"
-                      ? "Verify WhatsApp Lead"
-                      : "Verify & hand off to sales"
-                  }
+                  title={verifyHandoffButtonTitle(lead)}
                   handoffLabel={
                     feedback.trim() ||
                     "Data Conversion → Won → Assigned"
@@ -1727,9 +1740,7 @@ export default function CompleteTaskModal({
                   ? "Verifying..."
                   : "Saving..."
                 : verifyHandoffMode
-                  ? lead.leadType === "whatsapplead"
-                    ? "Verify WhatsApp Lead"
-                    : "Verify & hand off to sales"
+                  ? verifyHandoffButtonTitle(lead)
                   : "Save note"}
             </Button>
           </div>

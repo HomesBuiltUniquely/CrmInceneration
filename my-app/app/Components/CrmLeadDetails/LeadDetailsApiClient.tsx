@@ -6,6 +6,7 @@ import {
   getLeadActivities,
   getLeadDetail,
   resolveNewCrmQuoteInternalLink,
+  postLeadVerifiedActivity,
   postManualActivity,
   postQuoteSend,
   postStageRollback,
@@ -2792,12 +2793,38 @@ export default function LeadDetailsApiClient({
         payload.salesExecutiveId = args.salesExecutiveId;
       }
 
+      const assignedToName =
+        (args.salesExecutiveName ?? "").trim() ||
+        (args.salesExecutiveId && args.salesExecutiveId > 0
+          ? salesExecutiveLabel(
+              salesExecutiveOptions.find((u) => u.id === args.salesExecutiveId) ?? {
+                id: args.salesExecutiveId,
+              },
+            )
+          : "");
+
+      const verifiedByName =
+        (salesClosureAuthUser ? getNameFromUser(salesClosureAuthUser) : "").trim() ||
+        (typeof window !== "undefined"
+          ? (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim()
+          : "") ||
+        "Presales";
+
       const lt = leadTypeParam as CrmLeadType;
-      await postVerifyLead(lt, leadId, payload);
+      const verifyResult = await postVerifyLead(lt, leadId, payload);
+      const assignedFromHub =
+        verifyResult &&
+        typeof verifyResult === "object" &&
+        typeof (verifyResult as { assignedTo?: unknown }).assignedTo === "string"
+          ? String((verifyResult as { assignedTo: string }).assignedTo).trim()
+          : "";
+      const assignedDisplay = assignedToName || assignedFromHub;
+
       notifySuccess("Lead successfully handed off to sales team.");
       setLead((prev) => ({
         ...prev,
         verified: true,
+        ...(assignedDisplay ? { assignee: assignedDisplay } : {}),
         stageBlock: {
           ...prev.stageBlock,
           presalesMilestoneStage: "Data Conversion",
@@ -2812,6 +2839,13 @@ export default function LeadDetailsApiClient({
           presalesMilestoneSubStage: "Assigned",
         }),
       );
+
+      // Activity history: who verified (Presales) + whom assigned (Sales).
+      await postLeadVerifiedActivity(lt, leadId, {
+        verifiedBy: verifiedByName,
+        assignedTo: assignedDisplay || undefined,
+      }).catch(() => undefined);
+
       if (args.note.trim()) {
         await postManualActivity(lt, leadId, "NOTE", args.note.trim());
       }
@@ -2824,6 +2858,8 @@ export default function LeadDetailsApiClient({
       load,
       notifySuccess,
       refreshActivities,
+      salesClosureAuthUser,
+      salesExecutiveOptions,
       validLeadType,
     ],
   );

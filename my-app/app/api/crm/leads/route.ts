@@ -549,6 +549,10 @@ export async function GET(req: NextRequest) {
     milestoneScope === "crm" &&
     newCrmGlobalSearch &&
     NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRoleKey);
+  // Global search: show verified + unverified (do not forward CRM inbox verified filter).
+  if (isNewCrmGlobalSearchMode && search.length > 0) {
+    url.searchParams.delete("verificationStatus");
+  }
   const allowedLeadTypes = isNewCrmGlobalSearchMode
     ? [...CRM_LEAD_TYPES]
     : getAllowedLeadTypesForRole(viewerRoleKey);
@@ -556,9 +560,11 @@ export async function GET(req: NextRequest) {
   const leadPool = (url.searchParams.get("leadPool") ?? "").trim().toLowerCase();
   const usePresalesSearchPool = isPresalesRole(viewerRoleKey) || leadPool === "presales";
   const usePresalesMilestoneFilters = usePresalesSearchPool;
+  // CRM `/Leads` defaults to verified sales pool; IVR intake lives in unverified
+  // presales. Global search must merge presales-search (no verified filter) or
+  // phone/name matches never appear from CRM even though Presales finds them.
   const includePresalesInGlobalSearch =
     isNewCrmGlobalSearchMode &&
-    viewerRoleKey === "SUPER_ADMIN" &&
     !usePresalesSearchPool &&
     search.length > 0;
 
@@ -873,13 +879,17 @@ export async function GET(req: NextRequest) {
     }
   }
   if (includePresalesInGlobalSearch) {
+    // Do not forward CRM `verificationStatus=verified` into presales-search —
+    // that hides unverified IVR / intake rows the user is looking for.
+    const presalesSearchUrl = new URL(url.toString());
+    presalesSearchUrl.searchParams.delete("verificationStatus");
     const presalesRows = await fetchPresalesSearchLeads(
       req,
-      url,
+      presalesSearchUrl,
       effDates,
       sort,
       search,
-      false,
+      true,
       isNewCrmGlobalSearchMode,
     );
     for (const lead of presalesRows) {

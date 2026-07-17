@@ -110,6 +110,22 @@ function formatActivitySummaryTitle(raw: string): string {
   const text = raw.trim();
   if (!text) return "Activity";
 
+  const verifyAssignMatch = text.match(
+    /^Lead verified by\s+(.+?)(?:\s*\(Presales\))?\.\s*Assigned to\s+(.+)\.?$/i,
+  );
+  if (verifyAssignMatch) {
+    const by = verifyAssignMatch[1].trim();
+    const to = verifyAssignMatch[2].replace(/\.$/, "").trim();
+    return `Verified by ${by} · Assigned to ${to}`;
+  }
+
+  const verifyOnlyMatch = text.match(
+    /^Lead verified by\s+(.+?)(?:\s*\(Presales\))?\.\s*No sales executive assigned\.?$/i,
+  );
+  if (verifyOnlyMatch) {
+    return `Verified by ${verifyOnlyMatch[1].trim()} · No assignment`;
+  }
+
   const quoteMatch = text.match(/quote\s*link\s*set\s*to:\s*(https?:\/\/\S+)/i);
   if (quoteMatch) {
     try {

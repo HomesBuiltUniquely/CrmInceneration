@@ -87,12 +87,119 @@ function SummaryIconBox({ children }: { children: ReactNode }) {
   );
 }
 
+function SelectChevron() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+type SelectionOption = {
+  value: string;
+  label: string;
+};
+
+function SelectionDropdown({
+  ariaLabel,
+  value,
+  options,
+  placeholder,
+  loadingLabel,
+  disabled = false,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: SelectionOption[];
+  placeholder: string;
+  loadingLabel?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="absolute inset-0 z-20">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="absolute inset-0 cursor-pointer rounded-none disabled:cursor-not-allowed"
+      />
+      {open ? (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute left-2 right-2 top-[calc(100%+6px)] z-50 max-h-[280px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+        >
+          <div className="px-2.5 py-2 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">
+            {loadingLabel || placeholder}
+          </div>
+          {options.map((option) => {
+            const selected = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition",
+                  selected
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "text-slate-700 hover:bg-slate-50",
+                )}
+              >
+                <span className="truncate">{option.label}</span>
+                {selected ? (
+                  <span className="ml-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white">
+                    ✓
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+          {!loadingLabel && options.length === 0 ? (
+            <p className="px-2.5 py-3 text-[12px] text-slate-500">No options available.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SummaryColumn({
   leading,
   label,
   value,
   meta,
   trailing,
+  required = false,
   children,
 }: {
   leading: ReactNode;
@@ -100,12 +207,21 @@ function SummaryColumn({
   value: ReactNode;
   meta?: ReactNode;
   trailing?: ReactNode;
+  required?: boolean;
   /** Optional interactive control (e.g. select) layered over the column. */
   children?: ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-[80px] flex-col justify-center px-4 py-3 sm:px-5">
-      <span className="mb-2 text-[11px] leading-none text-[var(--crm-text-muted)]">{label}</span>
+    <div
+      className={cn(
+        "relative flex min-h-[80px] flex-col justify-center px-4 py-3 transition sm:px-5",
+        children && "hover:bg-emerald-50/50",
+      )}
+    >
+      <span className="mb-2 text-[11px] leading-none text-[var(--crm-text-muted)]">
+        {label}
+        {required ? <span className="ml-0.5 font-bold text-rose-500">*</span> : null}
+      </span>
       <div className="flex items-center gap-3">
         <div className="shrink-0">{leading}</div>
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
@@ -117,7 +233,11 @@ function SummaryColumn({
               <div className="mt-0.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">{meta}</div>
             ) : null}
           </div>
-          {trailing ? <div className="shrink-0 self-center">{trailing}</div> : null}
+          {trailing ? (
+            <div className="shrink-0 self-center text-[var(--crm-text-muted)]">
+              {trailing}
+            </div>
+          ) : null}
         </div>
       </div>
       {children}
@@ -362,32 +482,37 @@ export default function ScheduleHubMeetingModal({
               </span>
             }
             label="Designer"
+            required
             value={
               <>
-                <span className="truncate">{designerName || "Select designer"}</span>
+                <span className="truncate">{designerName || "Choose a designer"}</span>
                 {designerName ? <VerifiedBadge /> : null}
               </>
             }
+            meta={
+              designerName ? (
+                <span className="font-semibold text-emerald-600">✓ Designer selected</span>
+              ) : (
+                "Required — click here to select"
+              )
+            }
+            trailing={<SelectChevron />}
           >
-            <select
-              aria-label="Select designer"
+            <SelectionDropdown
+              ariaLabel="Select designer"
               value={designerName}
-              onChange={(e) => {
-                setDesignerName(e.target.value);
+              onChange={(value) => {
+                setDesignerName(value);
                 setSelectedStartMin(null);
               }}
+              options={designers.map((designer) => ({
+                value: designer.name,
+                label: designer.name,
+              }))}
+              placeholder="Select a designer"
+              loadingLabel={designersLoading ? "Loading designers…" : undefined}
               disabled={designersLoading || busy}
-              className="absolute inset-0 z-[1] cursor-pointer opacity-0"
-            >
-              <option value="">
-                {designersLoading ? "Loading designers…" : "Select designer"}
-              </option>
-              {designers.map((d) => (
-                <option key={d.id} value={d.name}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            />
           </SummaryColumn>
           <SummaryColumn
             leading={
@@ -396,22 +521,32 @@ export default function ScheduleHubMeetingModal({
               </SummaryIconBox>
             }
             label="Meeting Type"
-            value={<span className="truncate">{meetingTypeLabel}</span>}
+            required
+            value={
+              <span className="truncate">
+                {meetingType ? meetingTypeLabel : "Choose meeting type"}
+              </span>
+            }
+            meta={
+              meetingType ? (
+                <span className="font-semibold text-emerald-600">✓ Meeting type selected</span>
+              ) : (
+                "Required — click here to select"
+              )
+            }
+            trailing={<SelectChevron />}
           >
-            <select
-              aria-label="Select meeting type"
+            <SelectionDropdown
+              ariaLabel="Select meeting type"
               value={meetingType}
-              onChange={(e) => setMeetingType(e.target.value)}
+              onChange={setMeetingType}
+              options={MEETING_TYPE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              placeholder="Select meeting type"
               disabled={busy}
-              className="absolute inset-0 z-[1] cursor-pointer opacity-0"
-            >
-              <option value="">Select meeting type</option>
-              {MEETING_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            />
           </SummaryColumn>
           <SummaryColumn
             leading={
@@ -681,8 +816,20 @@ export default function ScheduleHubMeetingModal({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setSelectedStartMin(null)}
-              disabled={busy || selectedStartMin === null}
+              onClick={() => {
+                setDesignerName("");
+                setMeetingType("");
+                setSelectedStartMin(null);
+                setBookedBlocks([]);
+                setLocalError("");
+                setShowNoteError(false);
+              }}
+              disabled={
+                busy ||
+                (!designerName.trim() &&
+                  !meetingType.trim() &&
+                  selectedStartMin === null)
+              }
             >
               Clear Selection
             </Button>

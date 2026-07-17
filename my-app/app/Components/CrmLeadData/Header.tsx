@@ -502,7 +502,10 @@ export default function Header() {
       milestoneSubStage,
     );
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
-    if (listVerificationStatus.trim()) q.set("verificationStatus", listVerificationStatus.trim());
+    // Global search shows all leads (verified + unverified) in CRM and Presales.
+    if (!search.trim() && listVerificationStatus.trim()) {
+      q.set("verificationStatus", listVerificationStatus.trim());
+    }
     return q.toString();
   }, [
     search,

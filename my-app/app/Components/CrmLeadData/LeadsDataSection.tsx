@@ -589,11 +589,13 @@ async function fetchMergedPage(
   const normalizedViewerRole = normalizeRole(viewerRole);
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const explicitVerification = verificationStatus.trim();
+  // Global search must return verified + unverified (IVR intake, etc.).
+  // CRM inbox still defaults to verified when the search box is empty.
   const resolvedVerification =
     normalizedLeadType === "verified"
       ? "verified"
       : search.trim()
-        ? explicitVerification
+        ? ""
         : explicitVerification ||
           defaultVerificationForLeadTypeFilter(
             normalizedLeadType,
@@ -861,10 +863,9 @@ async function fetchMergedPage(
     !usesRoleEndpoint &&
     !isDedicatedFilterLeadType(normalizedLeadType)
   ) {
-    const superAdminGlobalSearchAcrossPools =
-      normalizeRole(viewerRole) === "SUPER_ADMIN" &&
-      search.trim().length > 0;
-    if (superAdminGlobalSearchAcrossPools) {
+    const adminGlobalSearchAcrossPools =
+      usesAdminLeadsApi(viewerRole) && search.trim().length > 0;
+    if (adminGlobalSearchAcrossPools) {
       const primaryWorkspace: CrmWorkspace = leadsWorkspace === "presales" ? "presales" : "sales";
       const secondaryWorkspace: CrmWorkspace =
         primaryWorkspace === "sales" ? "presales" : "sales";
@@ -876,8 +877,8 @@ async function fetchMergedPage(
         dateTo,
         dateField,
         crmMonthWindow,
-        verificationStatus:
-          workspace === "presales" ? "" : resolvedVerification,
+        // Both pools: no verified/unverified filter while searching.
+        verificationStatus: "",
         reinquiry,
         milestoneStage: "",
         milestoneStageCategory: "",
@@ -2089,6 +2090,10 @@ export default function LeadsDataSection({
     clientScopeRoleKey === "PRESALES_EXECUTIVE" ||
     clientScopeRoleKey === "PRE_SALES";
   const isGlobalSearchActive = debouncedSearch.trim().length > 0;
+  /** Admin roles: search both sales + presales pools (IVR/intake live in presales). */
+  const adminGlobalSearchAcrossPools =
+    usesAdminLeadsApi(clientScopeRoleKey) && isGlobalSearchActive;
+  /** SUPER_ADMIN UI: Sales/Presales pool match pills during cross-pool search. */
   const superAdminGlobalSearchActive =
     clientScopeRoleKey === "SUPER_ADMIN" && isGlobalSearchActive;
   const superAdminPresalesPoolSet = useMemo(
@@ -2372,7 +2377,7 @@ export default function LeadsDataSection({
           ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
           : leads;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
-        const queryAssignee = superAdminGlobalSearchActive ? "" : assigneeName;
+        const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2441,8 +2446,11 @@ export default function LeadsDataSection({
           trustPresalesScope ||
           !requiresClientScopedDataset ||
           isGlobalSearchActive;
+        // Global search may return unverified / presales IVR rows — do not strip them
+        // with the sales verified-inbox filter (same reason Presales search finds them).
         const inboxScoped =
-          usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)
+          usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) &&
+          !isGlobalSearchActive
             ? filterLeadsForClientWorkspaceInbox(
                 allLeads,
                 leadsWorkspace,
@@ -2570,6 +2578,7 @@ export default function LeadsDataSection({
       requiresClientScopedDataset,
       isGlobalSearchActive,
       superAdminGlobalSearchActive,
+      adminGlobalSearchAcrossPools,
       activeAssigneeScope,
       activeAssigneeScopeKey,
       effectiveAssigneeScope,
@@ -2610,7 +2619,7 @@ export default function LeadsDataSection({
       const assigneeFetchSeed =
         effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
-        const queryAssignee = superAdminGlobalSearchActive ? "" : assigneeName;
+        const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2667,7 +2676,7 @@ export default function LeadsDataSection({
         }
         return applyAssigneeScopeFilter(allLeads);
       };
-      if (superAdminGlobalSearchActive) {
+      if (superAdminGlobalSearchActive || adminGlobalSearchAcrossPools) {
         return applySuperAdminPool(await fetchAllPagesForAssignee(""));
       }
 
@@ -2705,6 +2714,7 @@ export default function LeadsDataSection({
       superAdminPresalesPoolSet,
       leadsWorkspace,
       superAdminGlobalSearchActive,
+      adminGlobalSearchAcrossPools,
     ],
   );
 
@@ -2776,13 +2786,15 @@ export default function LeadsDataSection({
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusFromHeader.trim() ||
-              defaultVerificationForLeadTypeFilter(
-                summaryLeadType,
-                leadsWorkspace,
-                verificationStatusFromHeader,
-                roleKey,
-              );
+            : debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader.trim() ||
+                defaultVerificationForLeadTypeFilter(
+                  summaryLeadType,
+                  leadsWorkspace,
+                  verificationStatusFromHeader,
+                  roleKey,
+                );
         if (salesHierarchyFilterActive) {
           return;
         }
@@ -2813,7 +2825,9 @@ export default function LeadsDataSection({
             dateField,
             crmMonthWindow: crmMonthWindowProp,
             summaryLeadType,
-            verificationStatusProp: verificationStatusFromHeader,
+            verificationStatusProp: debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader,
             reinquiry,
             roleKey,
             viewerWorkspace: leadsWorkspace,
@@ -3004,13 +3018,15 @@ export default function LeadsDataSection({
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusFromHeader.trim() ||
-              defaultVerificationForLeadTypeFilter(
-                summaryLeadType,
-                leadsWorkspace,
-                verificationStatusFromHeader,
-                roleKey,
-              );
+            : debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader.trim() ||
+                defaultVerificationForLeadTypeFilter(
+                  summaryLeadType,
+                  leadsWorkspace,
+                  verificationStatusFromHeader,
+                  roleKey,
+                );
         const milestoneAliasSet =
           effectiveAssigneeScope.length > 0
             ? effectiveAssigneeScope
@@ -3133,8 +3149,10 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const inboxScoped = usesClientWorkspaceInboxFilter(leadsWorkspace, roleKey)
-          ? filterLeadsForClientWorkspaceInbox(
+        const inboxScoped =
+          usesClientWorkspaceInboxFilter(leadsWorkspace, roleKey) &&
+          !isGlobalSearchActive
+            ? filterLeadsForClientWorkspaceInbox(
               raw,
               leadsWorkspace,
               verificationStatusFromHeader,
@@ -3564,7 +3582,10 @@ export default function LeadsDataSection({
   const isClientScopedRole = requiresClientScopedDataset;
   const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
   const workspaceInboxFiltered = useMemo(() => {
-    if (!usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey)) {
+    if (
+      !usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey) ||
+      isGlobalSearchActive
+    ) {
       return contentFromApi;
     }
     return filterLeadsForClientWorkspaceInbox(
@@ -3572,7 +3593,13 @@ export default function LeadsDataSection({
       leadsWorkspace,
       verificationStatusFromHeader,
     );
-  }, [contentFromApi, leadsWorkspace, scopeRoleKey, verificationStatusFromHeader]);
+  }, [
+    contentFromApi,
+    isGlobalSearchActive,
+    leadsWorkspace,
+    scopeRoleKey,
+    verificationStatusFromHeader,
+  ]);
   const roleScopedContent =
     isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
       ? workspaceInboxFiltered.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
