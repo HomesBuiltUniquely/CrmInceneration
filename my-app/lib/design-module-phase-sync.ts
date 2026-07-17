@@ -185,7 +185,9 @@ export function buildConfigScopeSummary(
     familyContactPhone: trimOrNull(requirements.familyContactPhone),
     designHandoffNotes: trimOrNull(requirements.designHandoffNotes),
     salesRiskNotes: trimOrNull(requirements.salesRiskNotes),
-    miscAddOns: (requirements.miscAddOns ?? []).map((x) => String(x).trim()).filter(Boolean),
+    miscAddOns: (requirements.miscAddOns ?? [])
+      .map((x) => String(x).trim())
+      .filter(Boolean),
     wfhSetup: Boolean(prefs?.wfhSetup),
     petFriendly: Boolean(prefs?.petFriendly),
     referenceInspiration: {

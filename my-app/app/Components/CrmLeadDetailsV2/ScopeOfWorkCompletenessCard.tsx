@@ -215,11 +215,11 @@ export default function ScopeOfWorkCompletenessCard({ canInteract, onOpen }: Pro
               </p>
               {completion.ready && !loading ? (
                 <span className="rounded-full bg-[#e8faf0] px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-[#16a34a]">
-                  Meeting gate ok
+                  Ready to schedule meeting
                 </span>
               ) : (
                 <span className="rounded-full bg-[#fff7ed] px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-[#c2410c]">
-                  Needed for Meeting Scheduled
+                  Complete scope to schedule meeting
                 </span>
               )}
             </div>
