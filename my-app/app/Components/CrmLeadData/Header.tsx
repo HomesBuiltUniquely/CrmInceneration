@@ -727,6 +727,7 @@ export default function Header() {
                 }}
                 onSortChange={setSort}
                 onResetAll={handleResetAll}
+                onClearSearch={() => setSearch("")}
                 onAssigneeChange={(next) => {
                   if (
                     currentRole === "SALES_EXECUTIVE" ||

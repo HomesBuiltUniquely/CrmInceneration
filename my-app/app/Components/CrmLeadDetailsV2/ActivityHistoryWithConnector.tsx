@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -19,7 +20,7 @@ import {
 } from "./lead-detail-v2-motion";
 
 export type ActivityHistoryHandle = {
-  openPanel: () => void;
+  openPanel: (activityId?: string) => void;
 };
 
 type ActivityKind = "note" | "update" | "call";
@@ -33,12 +34,6 @@ type DisplayActivityItem = {
   author: string;
   detail: string;
 };
-
-const MOCK_SUMMARY_ITEMS = [
-  { id: "mock-1", title: "Lead Created", time: "Oct 12, 09:15 AM", icon: "user-plus" as const },
-  { id: "mock-2", title: "Meeting Scheduled", time: "Nov 15, 02:30 PM", icon: "calendar" as const },
-  { id: "mock-3", title: "Call Logged", time: "Nov 22, 10:30 AM", icon: "phone" as const },
-];
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
   {
@@ -179,15 +174,26 @@ function clampPanelPosition(
   };
 }
 
+function activityListKey(activities: ActivityItem[] | undefined): string {
+  if (!activities?.length) return "mock";
+  return activities.map((item) => `${item.id}:${item.timestamp}:${item.description}`).join("|");
+}
+
 const ActivityHistoryWithConnector = forwardRef<
   ActivityHistoryHandle,
   { activities?: ActivityItem[] }
 >(function ActivityHistoryWithConnector({ activities }, ref) {
+  const activitiesKey = activityListKey(activities);
   const hasApiActivities = Boolean(activities && activities.length > 0);
-  const displayActivities =
-    hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
-  const summaryItems = hasApiActivities
-    ? displayActivities.slice(0, 3).map((item) => ({
+
+  const displayActivities = useMemo(() => {
+    if (hasApiActivities && activities) return activities.map(mapApiActivity);
+    return MOCK_ACTIVITIES;
+  }, [activities, activitiesKey, hasApiActivities]);
+
+  const summaryItems = useMemo(
+    () =>
+      displayActivities.slice(0, 3).map((item) => ({
         id: item.id,
         title: item.title,
         time: item.timestamp,
@@ -197,22 +203,29 @@ const ActivityHistoryWithConnector = forwardRef<
             : item.kind === "note"
               ? ("user-plus" as const)
               : ("calendar" as const),
-      }))
-    : MOCK_SUMMARY_ITEMS;
-  const filterCounts = hasApiActivities
-    ? displayActivities.reduce(
-        (acc, item) => {
-          acc.all += 1;
-          if (item.kind === "call") acc.calls += 1;
-          if (item.kind === "note") acc.notes += 1;
-          if (item.kind === "update") acc.updates += 1;
-          return acc;
-        },
-        { all: 0, calls: 0, notes: 0, updates: 0 },
-      )
-    : MOCK_FILTER_COUNTS;
+      })),
+    [displayActivities],
+  );
+
+  const filterCounts = useMemo(
+    () =>
+      hasApiActivities
+        ? displayActivities.reduce(
+            (acc, item) => {
+              acc.all += 1;
+              if (item.kind === "call") acc.calls += 1;
+              if (item.kind === "note") acc.notes += 1;
+              if (item.kind === "update") acc.updates += 1;
+              return acc;
+            },
+            { all: 0, calls: 0, notes: 0, updates: 0 },
+          )
+        : MOCK_FILTER_COUNTS,
+    [displayActivities, hasApiActivities],
+  );
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const detailPaneRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
@@ -229,27 +242,58 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
-  const filteredActivities = displayActivities.filter((item) => {
-    if (filter === "all") return true;
-    if (filter === "calls") return item.kind === "call";
-    if (filter === "notes") return item.kind === "note";
-    return item.kind === "update";
-  });
+
+  const filteredActivities = useMemo(
+    () =>
+      displayActivities.filter((item) => {
+        if (filter === "all") return true;
+        if (filter === "calls") return item.kind === "call";
+        if (filter === "notes") return item.kind === "note";
+        return item.kind === "update";
+      }),
+    [displayActivities, filter],
+  );
+
   const selected =
     filteredActivities.find((a) => a.id === selectedId) ||
     displayActivities.find((a) => a.id === selectedId) ||
     filteredActivities[0] ||
     displayActivities[0];
 
+  // Only reset when the activity list content changes — not on every render.
   useEffect(() => {
-    setSelectedId(displayActivities[0]?.id ?? "");
-  }, [displayActivities]);
+    setSelectedId((prev) => {
+      if (prev && displayActivities.some((item) => item.id === prev)) return prev;
+      return displayActivities[0]?.id ?? "";
+    });
+  }, [activitiesKey, displayActivities]);
 
-  const openPanel = useCallback(() => {
-    setPositionMode("centered");
-    setPanelEntered(false);
-    setOpen(true);
+  // Keep detail in sync when the active filter hides the current selection.
+  useEffect(() => {
+    if (!filteredActivities.length) return;
+    if (filteredActivities.some((item) => item.id === selectedId)) return;
+    setSelectedId(filteredActivities[0].id);
+  }, [filteredActivities, selectedId]);
+
+  const selectActivity = useCallback((activityId: string) => {
+    setSelectedId(activityId);
+    window.requestAnimationFrame(() => {
+      detailPaneRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, []);
+
+  const openPanel = useCallback(
+    (activityId?: string) => {
+      if (activityId && displayActivities.some((item) => item.id === activityId)) {
+        setFilter("all");
+        setSelectedId(activityId);
+      }
+      setPositionMode("centered");
+      setPanelEntered(false);
+      setOpen(true);
+    },
+    [displayActivities],
+  );
 
   useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
 
@@ -269,24 +313,27 @@ const ActivityHistoryWithConnector = forwardRef<
     }, 280);
   }, []);
 
-  const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!panelRef.current || event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
+  const handleDragStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!panelRef.current || event.button !== 0) return;
+      if ((event.target as HTMLElement).closest("button")) return;
 
-    const rect = panelRef.current.getBoundingClientRect();
-    if (positionMode === "centered") {
-      setPositionMode("custom");
-      setPanelPosition({ x: rect.left, y: rect.top });
-    }
-    isDraggingRef.current = true;
-    setIsDragging(true);
-    dragOffsetRef.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }, [positionMode]);
+      const rect = panelRef.current.getBoundingClientRect();
+      if (positionMode === "centered") {
+        setPositionMode("custom");
+        setPanelPosition({ x: rect.left, y: rect.top });
+      }
+      isDraggingRef.current = true;
+      setIsDragging(true);
+      dragOffsetRef.current = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    [positionMode],
+  );
 
   const handleDragMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingRef.current || !panelRef.current) return;
@@ -358,6 +405,7 @@ const ActivityHistoryWithConnector = forwardRef<
               role="dialog"
               aria-modal="true"
               aria-label="Activity History"
+              data-no-dblclick-close
             >
               <div
                 className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
@@ -417,17 +465,23 @@ const ActivityHistoryWithConnector = forwardRef<
 
               <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="flex min-h-0 flex-col border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
-                  <p className="shrink-0 px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                    {filteredActivities.length} In {filter === "all" ? "All" : filter}
-                  </p>
+                  <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                      {filteredActivities.length} In {filter === "all" ? "All" : filter}
+                    </p>
+                    <p className="text-[10px] font-medium text-[#94a3b8]">
+                      Click once to view details
+                    </p>
+                  </div>
                   <ul className="min-h-0 flex-1 overflow-y-auto">
                     {filteredActivities.map((item) => (
                       <li key={item.id}>
                         <button
                           type="button"
-                          onClick={() => setSelectedId(item.id)}
+                          onClick={() => selectActivity(item.id)}
+                          aria-pressed={selected?.id === item.id}
                           className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
-                            selectedId === item.id
+                            selected?.id === item.id
                               ? "bg-[#eff6ff]"
                               : `text-[#475569] ${V2_BTN_LIST_ITEM}`
                           }`}
@@ -456,15 +510,19 @@ const ActivityHistoryWithConnector = forwardRef<
                   </ul>
                 </div>
 
-                <div className="min-h-0 overflow-y-auto p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Event Detail</p>
+                <div ref={detailPaneRef} className="min-h-0 overflow-y-auto p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                    Event Detail
+                  </p>
                   {selected ? (
                     <div className="mt-3">
                       <div className="flex items-start justify-between gap-2">
                         <KindBadge kind={selected.kind} />
                         <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
                       </div>
-                      <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">{selected.title}</p>
+                      <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
+                        {selected.title}
+                      </p>
                       <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
                         <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
                           {selected.detail}
@@ -483,33 +541,40 @@ const ActivityHistoryWithConnector = forwardRef<
 
   return (
     <>
-      <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
+      <article className="rounded-xl border border-[#e0e5ec] bg-white p-4" data-no-dblclick-close>
         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
           Activity History
         </p>
+        <p className="mt-1 text-[11px] text-[#94a3b8]">Click a note to open details</p>
 
         <ul className="mt-3 divide-y divide-[#f1f5f9]">
           {summaryItems.map((item) => (
-            <li key={item.id} className="flex gap-3 py-3 first:pt-0 last:pb-0">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#6b7280]">
-                <SummaryIcon type={item.icon} />
-              </div>
-              <div className="min-w-0 flex-1 self-center">
-                <p
-                  className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#111827]"
-                  title={item.title}
-                >
-                  {item.title}
-                </p>
-                <p className="mt-1 text-[11px] leading-none text-[#9ca3af]">{item.time}</p>
-              </div>
+            <li key={item.id} className="first:pt-0 last:pb-0">
+              <button
+                type="button"
+                onClick={() => openPanel(item.id)}
+                className={`flex w-full gap-3 py-3 text-left ${V2_BTN_LIST_ITEM}`}
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#6b7280]">
+                  <SummaryIcon type={item.icon} />
+                </div>
+                <div className="min-w-0 flex-1 self-center">
+                  <p
+                    className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#111827]"
+                    title={item.title}
+                  >
+                    {item.title}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-none text-[#9ca3af]">{item.time}</p>
+                </div>
+              </button>
             </li>
           ))}
         </ul>
 
         <button
           type="button"
-          onClick={openPanel}
+          onClick={() => openPanel()}
           aria-expanded={open}
           className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-bold uppercase tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
             open

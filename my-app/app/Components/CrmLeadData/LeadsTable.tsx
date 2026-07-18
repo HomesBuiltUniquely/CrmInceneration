@@ -419,6 +419,8 @@ type LeadsTableProps = {
   onDeleteRow?: (row: LeadRowModel) => void;
   onAssignRow?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
+  /** When set, empty state explains that search is filtering the list. */
+  searchQuery?: string;
 };
 
 export default function LeadsTable({
@@ -434,6 +436,7 @@ export default function LeadsTable({
   onDeleteRow,
   onAssignRow,
   leadsWorkspace: _leadsWorkspace = "sales",
+  searchQuery = "",
 }: LeadsTableProps) {
   const { notifySuccess } = useGlobalNotifier();
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
@@ -522,7 +525,17 @@ export default function LeadsTable({
           </div>
         ) : rows.length === 0 ? (
           <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
-            No leads found.
+            {searchQuery.trim() ? (
+              <>
+                No leads match{" "}
+                <span className="font-semibold text-[var(--crm-text-primary)]">
+                  “{searchQuery.trim()}”
+                </span>
+                . Clear search to see all leads.
+              </>
+            ) : (
+              "No leads found."
+            )}
           </div>
         ) : (
           rows.map((r, idx) => (

@@ -44,6 +44,7 @@ export default function TopNav({
     if (typeof window === "undefined") return "";
     return window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
   });
+  const searchActive = search.trim().length > 0;
 
   const handleDashboardClick = () => {
     if (!hasDashboardByRole(role)) return;
@@ -88,14 +89,32 @@ export default function TopNav({
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex w-[340px] items-center gap-2 rounded-xl bg-[var(--crm-surface-subtle)] px-3 py-2 ring-1 ring-[var(--crm-border)]">
+          <div
+            className={`flex w-[340px] items-center gap-2 rounded-xl px-3 py-2 transition-colors ${
+              searchActive
+                ? "bg-[var(--crm-accent-soft)] ring-2 ring-[var(--crm-accent)]"
+                : "bg-[var(--crm-surface-subtle)] ring-1 ring-[var(--crm-border)]"
+            }`}
+          >
             <SearchIcon />
             <input
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               className="w-full bg-transparent text-[12px] font-medium text-[var(--crm-text-secondary)] placeholder:text-[var(--crm-text-muted)] focus:outline-none"
               placeholder="Search leads, tasks, owners..."
+              aria-label="Search leads"
             />
+            {searchActive ? (
+              <button
+                type="button"
+                onClick={() => onSearchChange("")}
+                className="shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[var(--crm-accent)] hover:bg-white/70"
+                aria-label="Clear search"
+                title="Clear search"
+              >
+                Clear
+              </button>
+            ) : null}
           </div>
           <button className="rounded-xl  bg-[var(--crm-accent)] px-4 py-2 text-[12px] font-semibold  text-white shadow-[var(--crm-shadow-sm)]  transition-colorshover:brightness-110">
             + Add New Lead

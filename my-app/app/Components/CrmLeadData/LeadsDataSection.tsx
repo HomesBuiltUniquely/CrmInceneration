@@ -184,6 +184,8 @@ type Props = {
   superAdminPresalesAssigneeNames?: string[];
   /** Resets search and all header filters (passed up to Header). */
   onResetAll?: () => void;
+  /** Clears only the global search query (keeps other filters). */
+  onClearSearch?: () => void;
   /** Route workspace: sales `/Leads` vs presales `/presales-leads`. */
   leadsWorkspace?: CrmWorkspace;
 };
@@ -1260,6 +1262,7 @@ export default function LeadsDataSection({
   onInsightTableModeChange,
   superAdminPresalesAssigneeNames,
   onResetAll,
+  onClearSearch,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -4329,6 +4332,37 @@ export default function LeadsDataSection({
         deleteAllDisabled={isDeleting || !canDeleteAll}
         onDeleteAllClick={() => setDeleteModalType("all")}
       />
+      {isGlobalSearchActive ? (
+        <div
+          className={`${LEADS_PAGE_CONTAINER_CLASS} pt-2`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-3 py-1.5">
+            <p className="min-w-0 truncate text-[12px] font-semibold text-[var(--crm-text-primary)]">
+              <span className="mr-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--crm-accent)]">
+                Search
+              </span>
+              Showing results for{" "}
+              <span className="rounded bg-white/80 px-1.5 py-0.5 font-bold text-[var(--crm-accent)]">
+                “{debouncedSearch.trim()}”
+              </span>
+              {loading ? (
+                <span className="ml-1.5 font-medium text-[var(--crm-text-secondary)]">
+                  · Searching…
+                </span>
+              ) : null}
+            </p>
+            <button
+              type="button"
+              onClick={() => onClearSearch?.()}
+              className="shrink-0 rounded-md border border-[var(--crm-accent-ring)] bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)]"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      ) : null}
       {isBulkBarVisible ? (
       <section className={`${LEADS_PAGE_CONTAINER_CLASS} sticky top-2 z-20 mt-3`}>
         <div className="rounded-2xl border border-emerald-200 bg-[#dcefe8] px-4 py-2.5 shadow-[0_6px_18px_rgba(16,24,40,0.08)]">
@@ -4411,6 +4445,7 @@ export default function LeadsDataSection({
         onDeleteRow={canBulkDelete ? (row) => void requestDeleteLeadRow(row) : undefined}
         onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
         leadsWorkspace={leadsWorkspace}
+        searchQuery={debouncedSearch}
       />
       {rowAssignModalOpen && rowAssignLead ? (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(9,14,30,0.55)] backdrop-blur-[4px] px-3 py-4">
