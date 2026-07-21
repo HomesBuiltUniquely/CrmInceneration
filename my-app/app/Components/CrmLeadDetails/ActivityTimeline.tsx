@@ -70,6 +70,7 @@ const FILTER_ORDER: ActivityFilter[] = [
   "update",
   "design_qa_invite",
   "design_qa_submitted",
+  "quote_sent_to_customer",
 ];
 
 const FILTER_LABELS: Record<ActivityFilter, string> = {
@@ -81,6 +82,7 @@ const FILTER_LABELS: Record<ActivityFilter, string> = {
   update: "Updates",
   design_qa_invite: "Design QA",
   design_qa_submitted: "QA Submit",
+  quote_sent_to_customer: "Quote Sent",
 };
 
 function ActivityDetail({ item }: { item: ActivityItem }) {
