@@ -11,6 +11,10 @@ import {
   DEFAULT_BOOKING_DATE_FILTER,
   type BookingDateFilterState,
 } from "@/lib/booking-token-date-filter";
+import {
+  DEFAULT_BOOKING_DEAL_FILTERS,
+  type BookingDealFilterState,
+} from "@/lib/booking-token-deal-filters";
 import "./booking-token.css";
 import KpiCards from "./components/KpiCards";
 import DealsTable from "./components/DealsTable";
@@ -18,6 +22,7 @@ import RecentLedger from "./components/RecentLedger";
 import UrgentTasks from "./components/UrgentTasks";
 import PipelineVelocity from "./components/PipelineVelocity";
 import BookingTokenDateFilterPanel from "./components/BookingTokenDateFilterPanel";
+import BookingTokenDealFilterPanel from "./components/BookingTokenDealFilterPanel";
 import type { BookingTokenTab } from "./types";
 
 const TAB_ITEMS: { id: BookingTokenTab; label: string }[] = [
@@ -35,6 +40,9 @@ export default function BookingTokenClient() {
   const [tab, setTab] = useState<BookingTokenTab>("all");
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_BOOKING_DATE_FILTER,
+  );
+  const [dealFilters, setDealFilters] = useState<BookingDealFilterState>(
+    DEFAULT_BOOKING_DEAL_FILTERS,
   );
   const [kpiRefresh, setKpiRefresh] = useState(0);
   const [role, setRole] = useState("");
@@ -68,6 +76,7 @@ export default function BookingTokenClient() {
   );
 
   const showDashboardExtras = tab !== "cancel";
+  const showHierarchyFilters = role !== "SALES_EXECUTIVE";
 
   const ledgerTab = tab === "cancel" ? "all" : tab;
   const pipelineTab = tab === "cancel" ? "all" : tab;
@@ -127,10 +136,13 @@ export default function BookingTokenClient() {
                   ))}
                 </div>
                 <BookingTokenDateFilterPanel value={dateFilter} onChange={setDateFilter} />
-                <button
-                  type="button"
-                  className="bt-btn bt-btn-toolbar"
-                >
+                <BookingTokenDealFilterPanel
+                  value={dealFilters}
+                  onChange={setDealFilters}
+                  viewerRole={role}
+                  showHierarchyFilters={showHierarchyFilters}
+                />
+                <button type="button" className="bt-btn bt-btn-toolbar">
                   Export
                 </button>
               </div>
@@ -143,11 +155,17 @@ export default function BookingTokenClient() {
                 </div>
               ) : null}
 
-              <KpiCards refreshSignal={kpiRefresh} dateFilter={dateFilter} tab={tab} />
+              <KpiCards
+                refreshSignal={kpiRefresh}
+                dateFilter={dateFilter}
+                dealFilters={dealFilters}
+                tab={tab}
+              />
 
               <DealsTable
                 tab={tab}
                 dateFilter={dateFilter}
+                dealFilters={dealFilters}
                 onDealCancelled={() => setTab("cancel")}
                 onDealsChanged={() => setKpiRefresh((n) => n + 1)}
                 onConvertedToBooking={() => setTab("booking")}
@@ -158,6 +176,7 @@ export default function BookingTokenClient() {
                   <RecentLedger
                     refreshSignal={kpiRefresh}
                     dateFilter={dateFilter}
+                    dealFilters={dealFilters}
                     tab={ledgerTab}
                   />
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -165,6 +184,7 @@ export default function BookingTokenClient() {
                     <PipelineVelocity
                       refreshSignal={kpiRefresh}
                       dateFilter={dateFilter}
+                      dealFilters={dealFilters}
                       tab={pipelineTab}
                     />
                   </div>

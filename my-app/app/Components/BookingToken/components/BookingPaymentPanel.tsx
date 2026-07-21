@@ -40,6 +40,15 @@ import {
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { isSuperAdminRole } from "@/lib/roleUtils";
+import {
+  formatBookingDateDisplay,
+  formatFormSubmittedAt,
+} from "@/lib/booking-token-display-format";
+import {
+  dealLevelLabel,
+  dealLevelTone,
+  type DealLevelTone,
+} from "@/lib/booking-token-listing-type";
 
 export type BookingPaymentPanelMode = "view" | "pay";
 
@@ -87,16 +96,7 @@ function formatPaymentSource(source?: string): string {
 }
 
 function formatHistoryDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  return formatFormSubmittedAt(iso);
 }
 
 export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdated }: Props) {
@@ -128,6 +128,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, []);
 
   const isBookingView = mode === "view" && deal?.listingType === "booking";
+  const isTokenView = mode === "view" && deal?.listingType === "token";
+  const isCancelView =
+    mode === "view" &&
+    Boolean(
+      deal &&
+        (deal.listingType === "cancel" ||
+          deal.isCancelled ||
+          deal.bookingStatus === "cancelled" ||
+          deal.bookingStatus === "pending_cancellation" ||
+          deal.cancellationApprovalStatus === "PENDING"),
+    );
+  /** View action on any tab (token, booking, cancel, all) — same columns as the deals table. */
+  const isRichDetailView = mode === "view";
 
   const summary = historyData ?? (deal ? buildSummaryFromDeal(deal) : null);
   const history = summary?.history ?? [];
@@ -166,7 +179,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, [open, deal, loadHistory]);
 
   useEffect(() => {
-    if (!open || !deal || !isBookingView) return;
+    if (!open || !deal || !isRichDetailView) return;
     let cancelled = false;
     setLoadingLead(true);
     void (async () => {
@@ -183,7 +196,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     return () => {
       cancelled = true;
     };
-  }, [deal, isBookingView, open]);
+  }, [deal, isRichDetailView, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -366,7 +379,16 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   if (!open || !deal || !summary) return null;
 
-  const title = mode === "pay" ? "Record Payment" : isBookingView ? "Booking details" : "Payment History";
+  const title =
+    mode === "pay"
+      ? "Record Payment"
+      : isCancelView
+        ? "Cancellation details"
+        : isBookingView
+          ? "Booking details"
+          : isTokenView
+            ? "Token details"
+            : "Deal details";
   const canPay = summary.remainingAmount > 0;
 
   const paymentHistoryBlock = (
@@ -474,8 +496,14 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#ecfdf5] text-[#059669]">
-                ₹
+              <span
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
+                  isCancelView
+                    ? "bg-red-50 text-red-600"
+                    : "bg-[#ecfdf5] text-[#059669]"
+                }`}
+              >
+                {isCancelView ? "✕" : "₹"}
               </span>
               <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">{title}</h2>
             </div>
@@ -493,9 +521,24 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           </button>
         </div>
 
-        {isBookingView ? (
+        {isRichDetailView ? (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
             <div className="space-y-5">
+              {isCancelView ? (
+                <section>
+                  <p className="border-b border-[#f1f5f9] pb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                    Cancellation details
+                  </p>
+                  <div className="mt-3">
+                    <CancellationDetailsGrid
+                      deal={deal}
+                      leadDetails={leadDetails}
+                      loadingLead={loadingLead}
+                    />
+                  </div>
+                </section>
+              ) : null}
+
               <section>
                 <p className="border-b border-[#f1f5f9] pb-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
                   Lead details
@@ -510,20 +553,29 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   Deal summary
                 </p>
                 <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <SummaryCard label="Lead ID" value={deal.leadIdentifier ?? `#${deal.leadId}`} />
-                  <SummaryCard label="Assign" value={deal.assign} />
-                  <SummaryCard label="Deal value" value={deal.dealValue} />
-                  <SummaryCard label="Token status" value={deal.tokenStatus.replace(/_/g, " ")} />
-                  <SummaryCard label="Booking status" value={deal.bookingStatus.replace(/_/g, " ")} />
+                  <SummaryCard
+                    label="Level"
+                    value={dealLevelLabel(deal)}
+                    levelTone={dealLevelTone(deal)}
+                  />
+                  <SummaryCard
+                    label="Booking date"
+                    value={formatBookingDateDisplay(deal.bookingDate)}
+                  />
                   <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-                  <SummaryCard label="Remaining (10%)" value={formatQuoteAmount(summary.remainingAmount)} />
+                  {summary.remainingAmount > 0 ? (
+                    <SummaryCard
+                      label="Remaining (10%)"
+                      value={formatQuoteAmount(summary.remainingAmount)}
+                    />
+                  ) : null}
                   {deal && shouldShowFinanceReview(deal.financeReviewStatus ?? "NOT_READY", deal.remainingAmount) ? (
                     <SummaryCard
                       label="Finance review"
                       value={financeReviewLabel(deal.financeReviewStatus ?? "NOT_READY")}
-                      highlight={deal.financeReviewStatus === "PENDING"}
+                      tone={normalizeFinanceReviewStatus(deal.financeReviewStatus)}
                     />
                   ) : null}
                 </div>
@@ -544,11 +596,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
           <SummaryCard label="10% amount" value={formatQuoteAmount(summary.tenPercentAmount)} />
           <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-          <SummaryCard
-            label="Remaining (10%)"
-            value={formatQuoteAmount(summary.remainingAmount)}
-            highlight={summary.remainingAmount > 0}
-          />
+          {summary.remainingAmount > 0 ? (
+            <SummaryCard
+              label="Remaining (10%)"
+              value={formatQuoteAmount(summary.remainingAmount)}
+              highlight
+            />
+          ) : null}
         </div>
 
         <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1.05fr_0.95fr]">
@@ -724,19 +778,124 @@ function SummaryCard({
   label,
   value,
   highlight = false,
+  tone,
+  levelTone,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  tone?: FinanceReviewStatus;
+  levelTone?: DealLevelTone;
 }) {
+  const toneClass =
+    levelTone === "booking"
+      ? "border-blue-200 bg-blue-50"
+      : levelTone === "token"
+        ? "border-amber-200 bg-amber-50"
+        : levelTone === "cancel"
+          ? "border-red-200 bg-red-50"
+          : tone === "APPROVED"
+            ? "border-emerald-200 bg-emerald-50"
+            : tone === "PENDING"
+              ? "border-amber-200 bg-amber-50"
+              : tone === "REJECTED"
+                ? "border-red-200 bg-red-50"
+                : highlight
+                  ? "border-[#bbf7d0] bg-[#ecfdf5]"
+                  : "border-[#e5e7eb] bg-[#f9fafb]";
+  const valueClass =
+    levelTone === "booking"
+      ? "text-blue-800"
+      : levelTone === "token"
+        ? "text-amber-800"
+        : levelTone === "cancel"
+          ? "text-red-800"
+          : tone === "APPROVED"
+            ? "text-emerald-800"
+            : tone === "PENDING"
+              ? "text-amber-800"
+              : tone === "REJECTED"
+                ? "text-red-800"
+                : "text-[#111827]";
+
   return (
-    <div
-      className={`rounded-lg border px-3 py-2.5 ${
-        highlight ? "border-[#bbf7d0] bg-[#ecfdf5]" : "border-[#e5e7eb] bg-[#f9fafb]"
-      }`}
-    >
+    <div className={`rounded-lg border px-3 py-2.5 ${toneClass}`}>
       <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">{label}</p>
-      <p className="mt-1 text-[15px] font-bold text-[#111827]">{value}</p>
+      <p className={`mt-1 text-[15px] font-bold ${valueClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function displayValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : "—";
+}
+
+function cancellationStatusLabel(deal: DealRow): string {
+  if (deal.cancellationApprovalStatus === "PENDING") return "Pending approval";
+  if (deal.cancellationApprovalStatus === "REJECTED") return "Rejected";
+  if (deal.listingType === "cancel" || deal.isCancelled || deal.bookingStatus === "cancelled") {
+    return "Cancelled";
+  }
+  return deal.bookingStatus.replace(/_/g, " ");
+}
+
+function CancellationDetailsGrid({
+  deal,
+  leadDetails,
+  loadingLead,
+}: {
+  deal: DealRow;
+  leadDetails: BookingLeadDetails;
+  loadingLead: boolean;
+}) {
+  const assignee =
+    leadDetails.assignee !== "—" ? leadDetails.assignee : displayValue(deal.assign);
+  const designer =
+    loadingLead && deal.designerName === "—"
+      ? "Loading…"
+      : displayValue(deal.designerName !== "—" ? deal.designerName : leadDetails.designerName);
+  const isPending = deal.cancellationApprovalStatus === "PENDING";
+  const cancelledBy = isPending
+    ? "—"
+    : displayValue(deal.cancelledByName ?? deal.cancellationApprovedByName);
+  const requestedBy = displayValue(deal.cancellationRequestedByName);
+  const approvedBy = displayValue(deal.cancellationApprovedByName);
+  const cancelledOn = deal.cancelledAt ? formatHistoryDate(deal.cancelledAt) : "—";
+  const requestedOn = deal.cancellationRequestedAt
+    ? formatHistoryDate(deal.cancellationRequestedAt)
+    : "—";
+  const bookingDateLabel = formatBookingDateDisplay(deal.bookingDate);
+  const reason = displayValue(deal.cancellationReason);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SummaryCard label="Status" value={cancellationStatusLabel(deal)} highlight />
+        {isPending ? (
+          <>
+            <SummaryCard label="Requested by" value={requestedBy} />
+            <SummaryCard label="Requested on" value={requestedOn} />
+          </>
+        ) : (
+          <>
+            <SummaryCard label="Cancelled by" value={cancelledBy} />
+            <SummaryCard label="Approved by" value={approvedBy} />
+            <SummaryCard label="Cancelled on" value={cancelledOn} />
+          </>
+        )}
+        <SummaryCard label="Booking date" value={bookingDateLabel} />
+        <SummaryCard label="Lead assigned to" value={assignee} />
+        <SummaryCard label="Designer" value={designer} />
+      </div>
+      <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2.5">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-[#b91c1c]">
+          Cancellation reason
+        </p>
+        <p className="mt-1 whitespace-pre-wrap break-words text-[13px] font-semibold leading-snug text-[#7f1d1d]">
+          {reason}
+        </p>
+      </div>
     </div>
   );
 }

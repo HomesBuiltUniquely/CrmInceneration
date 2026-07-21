@@ -62,6 +62,51 @@ export function listingTypeLabel(type: BookingListingType): string {
   return "Token";
 }
 
+/** Human label for deal-summary “Level” (Token / Booking / Cancel). */
+export function dealLevelLabel(deal: {
+  listingType?: string | null;
+  bookingStatus?: string | null;
+  isCancelled?: boolean | null;
+  cancellationApprovalStatus?: string | null;
+}): string {
+  const listing = deal.listingType?.trim().toLowerCase();
+  const status = deal.bookingStatus?.trim().toLowerCase() ?? "";
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+
+  if (
+    listing === "cancel" ||
+    deal.isCancelled ||
+    status === "cancelled" ||
+    status === "pending_cancellation" ||
+    approval === "PENDING"
+  ) {
+    if (status === "pending_cancellation" || approval === "PENDING") {
+      return "Cancel (pending)";
+    }
+    return "Cancel";
+  }
+
+  if (listing === "booking" || status === "confirmed") {
+    return "Booking";
+  }
+
+  return "Token";
+}
+
+export type DealLevelTone = "token" | "booking" | "cancel";
+
+export function dealLevelTone(deal: {
+  listingType?: string | null;
+  bookingStatus?: string | null;
+  isCancelled?: boolean | null;
+  cancellationApprovalStatus?: string | null;
+}): DealLevelTone {
+  const label = dealLevelLabel(deal);
+  if (label.startsWith("Cancel")) return "cancel";
+  if (label === "Booking") return "booking";
+  return "token";
+}
+
 /** Cancel within 24h of handoff — token (partial) or booking (after convert). */
 export function canShowCancellation(
   listingType: BookingListingType,

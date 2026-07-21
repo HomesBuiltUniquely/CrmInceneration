@@ -115,6 +115,9 @@ export function shouldShowLostPathLeadsInTable(args: {
   milestoneSubStage: string;
 }): boolean {
   if (args.searchActive) return true;
+  if (args.insightTableMode === "lostQuoteSent" || args.insightTableMode === "quoteSent") {
+    return true;
+  }
   if (isLostSegmentInsightMode(args.insightTableMode)) return true;
   const filterText = `${args.milestoneStageCategory} ${args.milestoneSubStage}`.trim();
   if (isLostCategory(args.milestoneStageCategory) || /\blost\b/i.test(filterText)) {

@@ -18,6 +18,10 @@ import {
   V2_BTN_GHOST_ICON,
   V2_BTN_LIST_ITEM,
 } from "./lead-detail-v2-motion";
+import {
+  isQuoteSentActivityText,
+  pickQuoteSentMotivateLine,
+} from "@/lib/quote-sent-motivate";
 
 export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
@@ -33,6 +37,8 @@ type DisplayActivityItem = {
   timestamp: string;
   author: string;
   detail: string;
+  isQuoteSent?: boolean;
+  motivateLine?: string;
 };
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
@@ -84,19 +90,48 @@ function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
   return "update";
 }
 
+function extractQuoteIdFromActivityText(...parts: Array<string | null | undefined>): string {
+  const text = parts.map((p) => String(p ?? "")).join(" ");
+  const fromPath = text.match(/\/quote\/(\d+)/i);
+  if (fromPath?.[1]) return fromPath[1];
+  const fromHash = text.match(/#(\d{3,})/);
+  if (fromHash?.[1]) return fromHash[1];
+  return "";
+}
+
 function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
   const detail =
     activity.note?.trim() ||
     (activity.change
       ? `${activity.change.old || "—"} → ${activity.change.new || "—"}`
       : activity.description);
+  const isQuoteSent =
+    activity.type === "quote_sent_to_customer" ||
+    isQuoteSentActivityText(
+      activity.type,
+      activity.description,
+      detail,
+      activity.change?.new,
+    );
+  const quoteId = extractQuoteIdFromActivityText(
+    activity.description,
+    detail,
+    activity.change?.new,
+  );
+  const title = isQuoteSent
+    ? quoteId
+      ? `Quote Sent to Customer ⭐ · #${quoteId}`
+      : "Quote Sent to Customer ⭐"
+    : formatActivitySummaryTitle(activity.description);
   return {
     id: activity.id,
     kind: mapApiTypeToKind(activity.type),
-    title: formatActivitySummaryTitle(activity.description),
+    title,
     timestamp: formatActivityDisplayTime(activity.timestamp),
     author: activity.by,
     detail: formatActivityDetailText(detail),
+    isQuoteSent,
+    motivateLine: isQuoteSent ? pickQuoteSentMotivateLine(activity.id) : undefined,
   };
 }
 
@@ -121,15 +156,23 @@ function formatActivitySummaryTitle(raw: string): string {
     return `Verified by ${verifyOnlyMatch[1].trim()} · No assignment`;
   }
 
-  const quoteMatch = text.match(/quote\s*link\s*set\s*to:\s*(https?:\/\/\S+)/i);
-  if (quoteMatch) {
-    try {
-      const url = new URL(quoteMatch[1]);
-      const quoteId = url.pathname.split("/").filter(Boolean).pop();
-      return quoteId ? `Quote link set · #${quoteId}` : "Quote link set";
-    } catch {
-      return "Quote link set";
-    }
+  // Legacy audit only — not Quote Sent tile signal.
+  const quoteLinkMatch = text.match(
+    /quote\s*link\s*(?:set|changed)(?:\s*to)?[:\s]*(https?:\/\/\S+)?/i,
+  );
+  if (quoteLinkMatch) {
+    const qid = extractQuoteIdFromActivityText(text, quoteLinkMatch[1]);
+    return qid ? `Quote link set · #${qid}` : "Quote link saved";
+  }
+
+  if (/^quote\s*sent\s*to\s*customer/i.test(text)) {
+    const qid = extractQuoteIdFromActivityText(text);
+    return qid ? `Quote Sent to Customer ⭐ · #${qid}` : "Quote Sent to Customer ⭐";
+  }
+
+  if (/\bquote\s*sent\b/i.test(text) && !/status\s*changed/i.test(text) && !/quote\s*link\s*set/i.test(text)) {
+    const qid = extractQuoteIdFromActivityText(text);
+    return qid ? `Quote Sent to Customer ⭐ · #${qid}` : "Quote Sent to Customer ⭐";
   }
 
   const followUpMatch = text.match(
@@ -474,39 +517,70 @@ const ActivityHistoryWithConnector = forwardRef<
                     </p>
                   </div>
                   <ul className="min-h-0 flex-1 overflow-y-auto">
-                    {filteredActivities.map((item) => (
+                    {filteredActivities.map((item) => {
+                      const isQuote = Boolean(item.isQuoteSent);
+                      const selectedRow = selected?.id === item.id;
+                      return (
                       <li key={item.id}>
                         <button
                           type="button"
                           onClick={() => selectActivity(item.id)}
-                          aria-pressed={selected?.id === item.id}
-                          className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
-                            selected?.id === item.id
-                              ? "bg-[#eff6ff]"
-                              : `text-[#475569] ${V2_BTN_LIST_ITEM}`
+                          aria-pressed={selectedRow}
+                          className={`w-full border-b px-4 py-3 text-left ${
+                            isQuote
+                              ? selectedRow
+                                ? "border-emerald-200 bg-[#d1fae5]"
+                                : `border-emerald-100 bg-[#ecfdf5] text-[#065f46] ${V2_BTN_LIST_ITEM}`
+                              : selectedRow
+                                ? "border-[#f1f5f9] bg-[#eff6ff]"
+                                : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`
                           }`}
                         >
                           <div className="flex items-start gap-3">
-                            <KindBadge kind={item.kind} />
+                            <KindBadge kind={item.kind} quoteSent={isQuote} />
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">
-                                  {item.kind}
+                                <p
+                                  className={`text-[10px] font-bold uppercase tracking-wide ${
+                                    isQuote ? "text-emerald-700" : "text-[#9ca3af]"
+                                  }`}
+                                >
+                                  {isQuote ? "Quote Sent to Customer ⭐" : item.kind}
                                 </p>
-                                <p className="shrink-0 text-[10px] text-[#9ca3af]">{item.timestamp}</p>
+                                <p
+                                  className={`shrink-0 text-[10px] ${
+                                    isQuote ? "text-emerald-600/80" : "text-[#9ca3af]"
+                                  }`}
+                                >
+                                  {item.timestamp}
+                                </p>
                               </div>
                               <p
-                                className="mt-1 line-clamp-2 text-[12px] font-semibold leading-snug text-[#111827]"
+                                className={`mt-1 line-clamp-2 text-[12px] font-semibold leading-snug ${
+                                  isQuote ? "text-emerald-950" : "text-[#111827]"
+                                }`}
                                 title={item.title}
                               >
                                 {item.title}
                               </p>
-                              <p className="mt-1 truncate text-[11px] text-[#9ca3af]">{item.author}</p>
+                              {isQuote && item.motivateLine ? (
+                                <p className="mt-1 line-clamp-2 text-[11px] font-medium italic leading-snug text-emerald-800">
+                                  {item.motivateLine}
+                                </p>
+                              ) : null}
+                              <p
+                                className={`mt-1 truncate text-[11px] ${
+                                  isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
+                                }`}
+                              >
+                                {item.author}
+                              </p>
                             </div>
                           </div>
                         </button>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </div>
 
@@ -517,13 +591,29 @@ const ActivityHistoryWithConnector = forwardRef<
                   {selected ? (
                     <div className="mt-3">
                       <div className="flex items-start justify-between gap-2">
-                        <KindBadge kind={selected.kind} />
+                        <KindBadge kind={selected.kind} quoteSent={Boolean(selected.isQuoteSent)} />
                         <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
                       </div>
                       <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
                         {selected.title}
                       </p>
-                      <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
+                      {selected.isQuoteSent && selected.motivateLine ? (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-[#ecfdf5] px-3 py-2.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700">
+                            Keep going
+                          </p>
+                          <p className="mt-1 text-[13px] font-semibold leading-snug text-emerald-900">
+                            {selected.motivateLine}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div
+                        className={`mt-3 rounded-lg border p-3 ${
+                          selected.isQuoteSent
+                            ? "border-emerald-100 bg-[#f0fdf4]"
+                            : "border-[#e5e7eb] bg-[#f9fafb]"
+                        }`}
+                      >
                         <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
                           {selected.detail}
                         </p>
@@ -548,28 +638,53 @@ const ActivityHistoryWithConnector = forwardRef<
         <p className="mt-1 text-[11px] text-[#94a3b8]">Click a note to open details</p>
 
         <ul className="mt-3 divide-y divide-[#f1f5f9]">
-          {summaryItems.map((item) => (
+          {summaryItems.map((item) => {
+            const full = displayActivities.find((a) => a.id === item.id);
+            const isQuote = Boolean(full?.isQuoteSent);
+            return (
             <li key={item.id} className="first:pt-0 last:pb-0">
               <button
                 type="button"
                 onClick={() => openPanel(item.id)}
-                className={`flex w-full gap-3 py-3 text-left ${V2_BTN_LIST_ITEM}`}
+                className={`flex w-full gap-3 rounded-lg px-1 py-3 text-left ${
+                  isQuote ? "bg-[#ecfdf5]" : ""
+                } ${V2_BTN_LIST_ITEM}`}
               >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#6b7280]">
-                  <SummaryIcon type={item.icon} />
+                <div
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    isQuote
+                      ? "bg-[#d1fae5] text-emerald-700"
+                      : "bg-[#f3f4f6] text-[#6b7280]"
+                  }`}
+                >
+                  <SummaryIcon type={isQuote ? "quote" : item.icon} />
                 </div>
                 <div className="min-w-0 flex-1 self-center">
                   <p
-                    className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#111827]"
+                    className={`line-clamp-2 text-[13px] font-semibold leading-snug ${
+                      isQuote ? "text-emerald-950" : "text-[#111827]"
+                    }`}
                     title={item.title}
                   >
                     {item.title}
                   </p>
-                  <p className="mt-1 text-[11px] leading-none text-[#9ca3af]">{item.time}</p>
+                  {isQuote && full?.motivateLine ? (
+                    <p className="mt-1 line-clamp-1 text-[11px] font-medium italic text-emerald-800">
+                      {full.motivateLine}
+                    </p>
+                  ) : null}
+                  <p
+                    className={`mt-1 text-[11px] leading-none ${
+                      isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
+                    }`}
+                  >
+                    {item.time}
+                  </p>
                 </div>
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         <button
@@ -633,7 +748,14 @@ function FilterPill({
   );
 }
 
-function KindBadge({ kind }: { kind: ActivityKind }) {
+function KindBadge({ kind, quoteSent }: { kind: ActivityKind; quoteSent?: boolean }) {
+  if (quoteSent) {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#bbf7d0] text-[10px] font-bold uppercase text-emerald-800">
+        Q
+      </span>
+    );
+  }
   const styles =
     kind === "note"
       ? "bg-[#fef3c7] text-[#d97706]"
@@ -650,7 +772,15 @@ function KindBadge({ kind }: { kind: ActivityKind }) {
   );
 }
 
-function SummaryIcon({ type }: { type: "user-plus" | "calendar" | "phone" }) {
+function SummaryIcon({ type }: { type: "user-plus" | "calendar" | "phone" | "quote" }) {
+  if (type === "quote") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    );
+  }
   if (type === "user-plus") {
     return (
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
