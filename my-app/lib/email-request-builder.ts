@@ -1,4 +1,5 @@
 import type { Lead } from "@/lib/data";
+import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
 import { resolveEmailSubstage, shouldSendEmail } from "@/lib/email-substage-mapper";
 
 /**
@@ -16,6 +17,9 @@ export interface EmailRequestPayload {
   meetingType?: "online" | "physical";
   quotedAmount?: string;
   quoteLink?: string;
+  /** Design / Hub quote id — stored in quote_sent_info when present. */
+  quoteId?: string;
+  leadType?: string;
   reconnectDate?: string;
   cancellationReason?: string;
   feedbackFormLink?: string;
@@ -49,7 +53,9 @@ export function buildEmailRequest(
     subStage: emailSubstage,
     clientName: lead.name?.trim() || "Valued Customer",
     clientEmail: lead.email.trim(),
-    leadId: lead.leadId || lead.id,
+    // Hub quote_sent_info update needs numeric DB id + leadType (not business leadId alone).
+    leadId: lead.id?.trim() || lead.leadId?.trim() || undefined,
+    leadType: lead.leadType?.trim() || undefined,
   };
 
   // Add optional fields based on substage
@@ -97,6 +103,13 @@ export function buildEmailRequest(
       }
       if (lead.quoteLink) {
         payload.quoteLink = lead.quoteLink;
+      }
+      {
+        const quoteId =
+          lead.quoteId?.trim() ||
+          (lead.quoteLink ? extractQuoteIdFromUrl(lead.quoteLink) : "") ||
+          "";
+        if (quoteId) payload.quoteId = quoteId;
       }
       break;
 

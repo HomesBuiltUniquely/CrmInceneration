@@ -24,6 +24,7 @@ import {
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { formatFollowUpDueDateLabel, resolveEffectiveFollowUpDateRaw } from "@/lib/follow-up-date";
+import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 
 export const CRM_LEAD_TYPES = [
   "formlead",
@@ -118,6 +119,18 @@ export type ApiLead = {
   presalesMilestoneSubStage?: string | null;
   /** Hub admin pool rows: assignee's CRM role (SALES_EXECUTIVE, PRESALES_EXECUTIVE, …). */
   assigneeRole?: string | null;
+  /** Hub `quote_sent_info` JSON + flat aliases (Quote Sent tile source of truth). */
+  quoteSentInfo?: import("@/lib/quote-sent-info").QuoteSentInfo | null;
+  quoteSentToCustomer?: boolean | null;
+  quoteSentAt?: string | null;
+  quoteSentBy?: string | null;
+  quoteSentCount?: number | null;
+  lastQuoteSentAt?: string | null;
+  lastQuoteSentBy?: string | null;
+  quoteId?: string | null;
+  quoteLink?: string | null;
+  quoteURL?: string | null;
+  proposalLink?: string | null;
   stage?: {
     milestoneStage?: string | null;
     milestoneStageCategory?: string | null;
@@ -144,6 +157,8 @@ export type LeadRowModel = {
   /** Parsed `additionalLeadSources` for re-inquiry tooltip. */
   reinquirySources?: string;
   callDelayed?: boolean;
+  /** Quote Sent insight: lost-path rows shown at end with red highlight. */
+  lostQuoteHighlight?: boolean;
   journey: {
     stage: string;
     progressLabel: string;
@@ -207,8 +222,20 @@ export function parseLeadSortTimestamp(lead: ApiLead): number {
 
 export function normalizeLeadSortFields(lead: ApiLead): ApiLead {
   const updatedAt = readLeadUpdatedAtRaw(lead);
-  if (!updatedAt) return lead;
-  return { ...lead, updatedAt };
+  const qs = extractQuoteSentFields(lead as Record<string, unknown>);
+  const withQuote: ApiLead = {
+    ...lead,
+    quoteSentInfo: qs.quoteSentInfo ?? lead.quoteSentInfo ?? null,
+    quoteSentToCustomer: qs.quoteSentToCustomer || Boolean(lead.quoteSentToCustomer),
+    quoteSentAt: qs.quoteSentAt ?? lead.quoteSentAt ?? null,
+    quoteSentBy: qs.quoteSentBy ?? lead.quoteSentBy ?? null,
+    quoteSentCount: qs.quoteSentCount || lead.quoteSentCount || 0,
+    lastQuoteSentAt: qs.lastQuoteSentAt ?? lead.lastQuoteSentAt ?? null,
+    lastQuoteSentBy: qs.lastQuoteSentBy ?? lead.lastQuoteSentBy ?? null,
+    quoteId: qs.quoteId ?? lead.quoteId ?? null,
+  };
+  if (!updatedAt) return withQuote;
+  return { ...withQuote, updatedAt };
 }
 
 function normalizeVerificationTag(lead: ApiLead): "verified" | "unverified" | undefined {

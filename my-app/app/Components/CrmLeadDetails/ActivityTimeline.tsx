@@ -51,6 +51,12 @@ const typeConfig: Record<
     dotClass: "border-teal-400/30 bg-teal-500/10 text-teal-300",
     labelClass: "text-teal-300",
   },
+  quote_sent_to_customer: {
+    label: "Quote Sent",
+    icon: "⭐",
+    dotClass: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
+    labelClass: "text-emerald-300",
+  },
 };
 
 type ActivityFilter = "all" | ActivityType;
@@ -64,6 +70,7 @@ const FILTER_ORDER: ActivityFilter[] = [
   "update",
   "design_qa_invite",
   "design_qa_submitted",
+  "quote_sent_to_customer",
 ];
 
 const FILTER_LABELS: Record<ActivityFilter, string> = {
@@ -75,10 +82,12 @@ const FILTER_LABELS: Record<ActivityFilter, string> = {
   update: "Updates",
   design_qa_invite: "Design QA",
   design_qa_submitted: "QA Submit",
+  quote_sent_to_customer: "Quote Sent",
 };
 
 function ActivityDetail({ item }: { item: ActivityItem }) {
   const cfg = typeConfig[item.type];
+  const isQuoteSent = item.type === "quote_sent_to_customer";
   return (
     <div className="min-w-0">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -90,7 +99,7 @@ function ActivityDetail({ item }: { item: ActivityItem }) {
           )}
         >
           <span>{cfg.icon}</span>
-          {cfg.label}
+          {isQuoteSent ? "Quote Sent to Customer" : cfg.label}
         </span>
         <span className="font-mono text-[11px] text-[var(--crm-text-muted)]">{item.timestamp}</span>
       </div>
