@@ -153,14 +153,17 @@ export default function PaymentProofUploadSection({
   );
 
   return (
-    <section className="mt-6 rounded-lg border border-[#dbeafe] bg-[#f8fbff] p-4">
+    <section className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 text-[16px]" aria-hidden>
+        <span
+          className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#ecfdf5] text-[15px] text-[#047857]"
+          aria-hidden
+        >
           📎
         </span>
         <div>
-          <p className="text-[15px] font-bold text-[#1e3a8a]">Payment Proof</p>
-          <p className="mt-1 text-[13px] text-[#475569]">
+          <p className="text-[15px] font-bold text-[#0f172a]">Payment Proof</p>
+          <p className="mt-1 text-[13px] text-[#64748b]">
             Enter the payment amount received and upload screenshots (UPI, bank transfer, cheque,
             etc.).
           </p>
@@ -169,21 +172,21 @@ export default function PaymentProofUploadSection({
 
       <label className="mt-4 block">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#64748b]">
+          <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#94a3b8]">
             Amount received
           </span>
           {tenPercentAmount != null ? (
             <button
               type="button"
               onClick={fillTenPercent}
-              className="text-[11px] font-bold uppercase tracking-wide text-[#2563eb] hover:underline"
+              className="text-[11px] font-bold uppercase tracking-wide text-[#047857] hover:underline"
             >
               Use 10% amount ({formatQuoteAmount(tenPercentAmount)})
             </button>
           ) : null}
         </div>
-        <div className="mt-2 flex overflow-hidden rounded-lg border border-[#bfdbfe] bg-white focus-within:border-[#2563eb] focus-within:ring-2 focus-within:ring-[#dbeafe]">
-          <span className="inline-flex items-center border-r border-[#dbeafe] bg-[#eff6ff] px-3 text-[14px] font-semibold text-[#1e3a8a]">
+        <div className="mt-2 flex overflow-hidden rounded-lg border border-[#d6dce6] bg-white focus-within:border-[#86efac] focus-within:ring-2 focus-within:ring-[#bbf7d0]">
+          <span className="inline-flex items-center border-r border-[#e2e8f0] bg-[#f8fafc] px-3 text-[14px] font-semibold text-[#334155]">
             ₹
           </span>
           <input
@@ -215,7 +218,7 @@ export default function PaymentProofUploadSection({
               Selected quotation amount: {formatQuoteAmount(selectedQuote.amount)}
             </p>
             {tenPercentAmount != null ? (
-              <p className="text-[12px] font-semibold text-[#1e3a8a]">
+              <p className="text-[12px] font-semibold text-[#047857]">
                 Required 10% booking advance: {formatQuoteAmount(tenPercentAmount)}
               </p>
             ) : null}
@@ -232,19 +235,19 @@ export default function PaymentProofUploadSection({
           className={`mt-3 rounded-lg border px-4 py-3 ${
             paymentKind === "FULL_10%"
               ? "border-[#bbf7d0] bg-[#ecfdf5]"
-              : "border-[#fde68a] bg-[#fffbeb]"
+              : "border-[#e2e8f0] bg-white"
           }`}
         >
           <p
             className={`text-[11px] font-bold uppercase tracking-[0.1em] ${
-              paymentKind === "FULL_10%" ? "text-[#047857]" : "text-[#b45309]"
+              paymentKind === "FULL_10%" ? "text-[#047857]" : "text-[#475569]"
             }`}
           >
             {bookingPaymentKindLabel(paymentKind)}
           </p>
           <p
             className={`mt-1 text-[13px] ${
-              paymentKind === "FULL_10%" ? "text-[#065f46]" : "text-[#92400e]"
+              paymentKind === "FULL_10%" ? "text-[#065f46]" : "text-[#64748b]"
             }`}
           >
             {bookingPaymentKindDescription(paymentKind, receivedAmount, tenPercentAmount)} Received:{" "}
@@ -256,8 +259,8 @@ export default function PaymentProofUploadSection({
       <div
         className={`mt-4 rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
           dragActive
-            ? "border-[#2563eb] bg-[#eff6ff]"
-            : "border-[#bfdbfe] bg-white hover:border-[#93c5fd] hover:bg-[#f8fbff]"
+            ? "border-[#86efac] bg-[#ecfdf5]"
+            : "border-[#d6dce6] bg-white hover:border-[#86efac] hover:bg-[#f0fdf4]"
         }`}
         onDragEnter={(event) => {
           event.preventDefault();
@@ -273,10 +276,10 @@ export default function PaymentProofUploadSection({
         }}
         onDrop={onDrop}
       >
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#eff6ff] text-[22px]">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#ecfdf5] text-[22px]">
           🖼️
         </div>
-        <p className="mt-3 text-[14px] font-semibold text-[#1e293b]">
+        <p className="mt-3 text-[14px] font-semibold text-[#0f172a]">
           Drop payment screenshots here
         </p>
         <p className="mt-1 text-[12px] text-[#64748b]">
@@ -286,7 +289,7 @@ export default function PaymentProofUploadSection({
           type="button"
           disabled={busy || files.length >= maxFiles}
           onClick={() => inputRef.current?.click()}
-          className="mt-4 inline-flex h-10 items-center justify-center rounded-[6px] bg-[#2563eb] px-4 text-[12px] font-bold uppercase tracking-wide text-white transition hover:bg-[#1d4ed8] disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-4 inline-flex h-10 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] transition hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? "Uploading…" : "Upload screenshots"}
         </button>
@@ -313,7 +316,7 @@ export default function PaymentProofUploadSection({
           {files.map((file) => (
             <article
               key={file.id}
-              className="overflow-hidden rounded-xl border border-[#dbeafe] bg-white shadow-sm"
+              className="overflow-hidden rounded-xl border border-[#e2e8f0] bg-white shadow-sm"
             >
               <div className="relative aspect-[4/3] bg-[#f1f5f9]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}

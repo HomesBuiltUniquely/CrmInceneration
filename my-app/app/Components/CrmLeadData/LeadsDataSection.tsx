@@ -94,7 +94,7 @@ import {
   computeAutoFollowUpDateToPersist,
   persistAutoFollowUpDatesForLeads,
 } from "@/lib/lead-follow-up-persist";
-import { computeLostSegmentCounts, isLostPathLead, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
+import { computeLostSegmentCounts, isLostPathLead, isLostSegmentInsightMode, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
 import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
@@ -1303,6 +1303,9 @@ export default function LeadsDataSection({
   const [adminMilestoneTableLeads, setAdminMilestoneTableLeads] = useState<ApiLead[] | null>(
     null,
   );
+  /** Full primary-source pool for insight tiles (overdue, lost segment, etc.) — same source as tile counts. */
+  const [insightTablePoolLeads, setInsightTablePoolLeads] = useState<ApiLead[] | null>(null);
+  const [insightPoolRefreshNonce, setInsightPoolRefreshNonce] = useState(0);
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(() => {
     const mode = persistedView.insightTableMode;
     return (mode as InsightTableMode | null | undefined) ?? null;
@@ -3261,10 +3264,16 @@ export default function LeadsDataSection({
 
   const load = useCallback(async (opts?: { forceNetwork?: boolean }) => {
     const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
-    const insightModeActive = insightTableMode !== null;
-    const requestPage = insightModeActive ? 0 : page;
-    const requestSize = insightModeActive ? 500 : size;
-    const requestLeadType = insightModeActive ? "all" : leadType;
+    /** Insight tiles use a dedicated full-pool effect (not paged Hub fetches). */
+    if (insightTableMode !== null) {
+      return;
+    }
+
+    setInsightTablePoolLeads(null);
+
+    const requestPage = page;
+    const requestSize = size;
+    const requestLeadType = leadType;
     const cacheKey = buildLeadsListCacheKey({
       requestPage,
       requestSize,
@@ -3284,7 +3293,7 @@ export default function LeadsDataSection({
       activeAssigneeScopeKey,
       leadsWorkspace,
       roleKeyForLoad,
-      insightModeActive,
+      insightModeActive: false,
     });
     const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
@@ -3424,7 +3433,6 @@ export default function LeadsDataSection({
         salesHierarchyFilterActive ||
         !requiresClientScopedDataset ||
         isGlobalSearchActive ||
-        insightModeActive ||
         trustPresalesUpstreamLeadScope(normalizeRole(authRoleProp ?? currentRole));
       const requested = {
         page: requestPage,
@@ -3444,7 +3452,7 @@ export default function LeadsDataSection({
         contentLength: (json.content ?? []).length,
         totalElements: json.totalElements ?? 0,
       });
-      if (!insightModeActive && (json.content?.length ?? 0) === 0 && page > 0) {
+      if ((json.content?.length ?? 0) === 0 && page > 0) {
         const fallbackPage = page - 1;
         const fallbackRequested = { ...requested, page: fallbackPage };
         console.info("[crm:leads] empty page fallback", fallbackRequested);
@@ -3492,9 +3500,11 @@ export default function LeadsDataSection({
     dateTo,
     debouncedSearch,
     activeAssigneeScopeKey,
+    activeAssigneeScope,
     salesHierarchyFilterActive,
     effectiveAssigneeScopeKey,
     fetchScopedMergedPage,
+    fetchAllScopedMergedLeads,
     leadType,
     milestoneStage,
     milestoneStageCategory,
@@ -3516,6 +3526,71 @@ export default function LeadsDataSection({
   ]);
 
   useEffect(() => {
+    if (insightTableMode === null) {
+      setInsightTablePoolLeads(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setPage(0);
+    void (async () => {
+      try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
+        const summaryLeadType =
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
+            ? "all"
+            : summaryLeadTypeRaw;
+        const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
+        if (cancelled) return;
+        let pool = salesInsightCountLeads(scopedRows);
+        if (activeAssigneeScope.length > 0) {
+          pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope);
+        }
+        setInsightTablePoolLeads(pool);
+        setData({
+          content: pool,
+          totalElements: pool.length,
+          totalPages: Math.max(1, Math.ceil(pool.length / Math.max(1, size))),
+          size,
+          number: 0,
+        } as SpringPage<ApiLead>);
+        setVisibleFilteredTotal(pool.length);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "Failed to load insight leads";
+        setError(msg);
+        setInsightTablePoolLeads([]);
+        setVisibleFilteredTotal(0);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    insightTableMode,
+    leadType,
+    sort,
+    dateFrom,
+    dateTo,
+    dateField,
+    debouncedSearch,
+    crmMonthWindowProp,
+    verificationStatusFromHeader,
+    reinquiry,
+    leadViewKey,
+    leadsWorkspace,
+    activeAssigneeScope,
+    size,
+    fetchAllScopedMergedLeads,
+    insightPoolRefreshNonce,
+  ]);
+
+  useEffect(() => {
     const roleKey = normalizeRole(authRoleProp ?? currentRole);
     const milestoneToolbarActive = Boolean(
       milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
@@ -3528,8 +3603,11 @@ export default function LeadsDataSection({
     ) {
       return;
     }
+    if (insightTableMode !== null) {
+      return;
+    }
     void load();
-  }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+  }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage, insightTableMode]);
 
   const whatsappListActive = leadType.trim().toLowerCase() === "whatsapplead";
 
@@ -3553,24 +3631,36 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     const onInvalidate = () => {
-      void load({ forceNetwork: true });
+      if (insightTableMode !== null) {
+        setInsightPoolRefreshNonce((n) => n + 1);
+      } else {
+        void load({ forceNetwork: true });
+      }
       setLastRefreshTime(new Date());
     };
     window.addEventListener("crm:leads-invalidate", onInvalidate);
     return () => window.removeEventListener("crm:leads-invalidate", onInvalidate);
-  }, [load]);
+  }, [load, insightTableMode]);
 
   const handleRefresh = useCallback(async () => {
     setError(null);
+    if (insightTableMode !== null) {
+      setInsightPoolRefreshNonce((n) => n + 1);
+      setLastRefreshTime(new Date());
+      return;
+    }
     handleResetAll();
     await load();
     setLastRefreshTime(new Date());
-  }, [load, handleResetAll]);
+  }, [load, handleResetAll, insightTableMode]);
 
   const adminMilestoneTableActive = adminMilestoneTableLeads !== null;
+  const insightTablePoolActive = insightTablePoolLeads !== null;
   const contentFromApi = adminMilestoneTableActive
     ? adminMilestoneTableLeads.slice(page * size, page * size + size)
-    : (data?.content ?? []);
+    : insightTablePoolActive
+      ? insightTablePoolLeads
+      : (data?.content ?? []);
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const scopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
@@ -3660,10 +3750,10 @@ export default function LeadsDataSection({
   }, [autoFollowUpPersistSignature, content, leadTypeFallbackForPersist]);
   const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
   const insightOpts = normalizeInsightCountOpts({
-    viewerRole: roleKeyForInsight,
+    viewerRole: roleKeyForInsight === "SALES_ADMIN" ? "SALES_MANAGER" : roleKeyForInsight,
     currentUserName: currentUserName ?? "",
     managerTeamNames: scopedTeamForInsight,
-    leadView: insightLeadView,
+    leadView: roleKeyForInsight === "SALES_ADMIN" ? "default" : insightLeadView,
     dateFrom,
     dateTo,
   });
@@ -3680,9 +3770,12 @@ export default function LeadsDataSection({
         : leadType.trim().toLowerCase()) as CrmLeadType,
     );
     const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
+    const quoteInsight =
+      insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent";
     return {
       ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
       callDelayed: isFirstCallDelayedLead(lead),
+      lostQuoteHighlight: quoteInsight && isLostPathLead(lead),
     };
   });
   const norm = (v: string) => v.trim().toLowerCase();
@@ -3725,11 +3818,13 @@ export default function LeadsDataSection({
               : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
-  const rowsById = new Map(visibleRows.map((row) => [row.id, row]));
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
   const selectedLeads = selectedRowIds
     .map((id) => rowsById.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
   const selectedCount = selectedLeads.length;
+  const insightSelectAllRowIds =
+    insightTableMode !== null ? rows.map((row) => row.id) : undefined;
   const isBulkBarVisible = selectedCount > 0;
   const selectedLeadsByType = useMemo(
     () => groupRowsByLeadType(selectedLeads),
@@ -4136,8 +4231,8 @@ export default function LeadsDataSection({
                 ? "Meeting Rescheduled — substage filter"
                 : insightTableMode === "meetingCancelled"
                   ? "Meeting Cancelled — substage filter"
-                  : insightTableMode === "quoteSent"
-                    ? "Quote Sent — meeting done, quotation shared"
+                  : insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent"
+                    ? "Quote Sent"
                     : insightTableMode === "quoteDue"
                       ? "Quote Due — Meeting Done but Quote Pending"
                       : insightTableMode === "lostDiscovery"
@@ -4442,6 +4537,7 @@ export default function LeadsDataSection({
         onPageSizeChange={(nextSize) => setSize(nextSize)}
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
+        selectAllRowIds={insightSelectAllRowIds}
         onDeleteRow={canBulkDelete ? (row) => void requestDeleteLeadRow(row) : undefined}
         onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
         leadsWorkspace={leadsWorkspace}

@@ -27,6 +27,8 @@ import {
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import BookingCelebrationOverlay from "./BookingCelebrationOverlay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
+import { dealLevelLabel } from "@/lib/booking-token-listing-type";
 
 type Props = {
   open: boolean;
@@ -457,10 +459,8 @@ export default function ConvertToBookingModal({
             <section>
               <SectionTitle>Deal summary</SectionTitle>
               <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-                <InfoCard label="Lead ID" value={deal.leadIdentifier ?? `#${deal.leadId}`} />
-                <InfoCard label="Deal value" value={deal.dealValue} />
-                <InfoCard label="Token status" value={deal.tokenStatus.replace(/_/g, " ")} />
-                <InfoCard label="Booking status" value={deal.bookingStatus.replace(/_/g, " ")} />
+                <InfoCard label="Level" value={dealLevelLabel(deal)} />
+                <InfoCard label="Booking date" value={formatBookingDateDisplay(deal.bookingDate)} />
                 <InfoCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
                 <InfoCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                 <InfoCard
@@ -468,11 +468,13 @@ export default function ConvertToBookingModal({
                   value={formatQuoteAmount(summary.amountReceived)}
                   tone="success"
                 />
-                <InfoCard
-                  label="Remaining (10%)"
-                  value={formatQuoteAmount(summary.remainingAmount)}
-                  tone={summary.remainingAmount > 0 ? "warning" : "success"}
-                />
+                {summary.remainingAmount > 0 ? (
+                  <InfoCard
+                    label="Remaining (10%)"
+                    value={formatQuoteAmount(summary.remainingAmount)}
+                    tone="warning"
+                  />
+                ) : null}
               </div>
             </section>
             <section>

@@ -21,6 +21,7 @@ import {
 } from "@/lib/lead-quote-options";
 import { publishLeadQuoteSelection, readLeadQuoteSelection } from "@/lib/lead-quote-selection";
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
+import BookingDateSection from "@/app/Components/CrmLeadDetailsV2/BookingDateSection";
 import {
   bookingPaymentKindDescription,
   bookingPaymentKindLabel,
@@ -31,6 +32,8 @@ import {
   parsePaymentAmountInput,
   readPaymentAmount,
   readPaymentProofs,
+  readBookingDate,
+  isValidBookingDateValue,
   clearBookingDoneDraft,
   paymentProofsToFiles,
 } from "@/lib/booking-done-payment-storage";
@@ -310,6 +313,11 @@ export default function BookingDoneModal({
     return Math.max(0, tenPercentAmount - amountReceived);
   }, [amountReceived, tenPercentAmount]);
 
+  const hasBookingDate = useMemo(() => {
+    void paymentDraftRevision;
+    return isValidBookingDateValue(readBookingDate(leadType, leadId));
+  }, [leadId, leadType, paymentDraftRevision]);
+
   async function handleConfirmSubmit() {
     setHandoffError("");
     const validation = validateBookingDoneHandoff({
@@ -493,6 +501,12 @@ export default function BookingDoneModal({
             amountRefreshing={quoteAmountRefreshing}
           />
 
+          <BookingDateSection
+            leadType={leadType}
+            leadId={leadId}
+            onBookingDateChange={bumpPaymentDraft}
+          />
+
           <PaymentProofUploadSection
             leadType={leadType}
             leadId={leadId}
@@ -542,7 +556,7 @@ export default function BookingDoneModal({
             <button
               type="button"
               onClick={() => void handleConfirmSubmit()}
-              disabled={handoffComplete || submitting || !selectedQuote || !paymentKind}
+              disabled={handoffComplete || submitting || !selectedQuote || !paymentKind || !hasBookingDate}
               className="inline-flex h-10 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] transition hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? "Sending…" : CONFIRM_BOOKING_TOKEN_LABEL}
@@ -576,16 +590,20 @@ function QuotationSection({
   const revisionOptions = sortQuotesForRevisionDisplay(options);
 
   return (
-    <section className="mt-4 rounded-lg border border-[#e8dfd8] bg-[#fffaf8] p-4">
+    <section className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
       <div className="flex items-start gap-2">
-        <span className="mt-0.5 text-[16px] text-[#b4534a]" aria-hidden>
+        <span
+          className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#ecfdf5] text-[15px] text-[#047857]"
+          aria-hidden
+        >
           🕒
         </span>
         <div>
-          <p className="text-[15px] font-bold text-[#3f2b23]">Revision History</p>
-          <p className="mt-1 text-[13px] text-[#7c665d]">
+          <p className="text-[15px] font-bold text-[#0f172a]">Revision History</p>
+          <p className="mt-1 text-[13px] text-[#64748b]">
             Click a version to select it for booking. Use{" "}
-            <span className="font-semibold">Open quotation</span> to view the quote in a new tab.
+            <span className="font-semibold text-[#334155]">Open quotation</span> to view the quote in a
+            new tab.
           </p>
         </div>
       </div>
@@ -599,7 +617,7 @@ function QuotationSection({
         </p>
       ) : null}
       {loadState === "empty" ? (
-        <p className="mt-4 rounded-md border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[13px] text-[#92400e]">
+        <p className="mt-4 rounded-md border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] text-[#64748b]">
           No quotation found for this lead yet.
         </p>
       ) : null}
@@ -624,18 +642,18 @@ function QuotationSection({
                   }}
                   className={`block cursor-pointer rounded-xl border px-4 py-3 text-left transition ${
                     selected
-                      ? "border-[#d7b0aa] bg-[#fff1ef] shadow-[inset_4px_0_0_#9f3d33]"
-                      : "border-[#e7ddd7] bg-white hover:border-[#d7c5bf] hover:bg-[#fffdfb]"
+                      ? "border-[#86efac] bg-[#ecfdf5] shadow-[inset_4px_0_0_#16a34a]"
+                      : "border-[#e2e8f0] bg-white hover:border-[#cbd5e1] hover:bg-white"
                   }`}
                 >
-                  <p className="text-[15px] font-bold text-[#3f2b23]">{option.label}</p>
-                  <p className="mt-2 text-[12px] text-[#8b766d]">
+                  <p className="text-[15px] font-bold text-[#0f172a]">{option.label}</p>
+                  <p className="mt-2 text-[12px] text-[#64748b]">
                     Created on {formatQuoteCreatedAt(option.createdAt)}
                   </p>
                   {option.quoteId ? (
-                    <p className="mt-1 text-[12px] text-[#8b766d]">ID {option.quoteId}</p>
+                    <p className="mt-1 text-[12px] text-[#64748b]">ID {option.quoteId}</p>
                   ) : null}
-                  <p className="mt-3 text-[18px] font-bold text-[#1f2937]">
+                  <p className="mt-3 text-[18px] font-bold text-[#0f172a]">
                     {formatQuoteAmount(option.amount)}
                   </p>
                   {quoteUrl ? (
@@ -644,7 +662,7 @@ function QuotationSection({
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(event) => event.stopPropagation()}
-                      className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-[#b4534a] hover:underline"
+                      className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-[#047857] hover:underline"
                     >
                       Open quotation →
                     </a>

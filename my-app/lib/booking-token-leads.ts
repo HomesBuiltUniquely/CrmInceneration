@@ -7,6 +7,8 @@ import {
   parsePaymentAmountInput,
   readPaymentAmount,
   readPaymentProofs,
+  readBookingDate,
+  isValidBookingDateValue,
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount, resolveQuoteVerifyUrl, type LeadQuoteOption } from "@/lib/crm-quote-links";
 import {
@@ -21,6 +23,7 @@ import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status
 import type { BookingTokenDeal } from "@/lib/booking-done-api";
 import type { PaymentHistoryEntry } from "@/lib/booking-payment-history-api";
 import type { BookingStatus, DealRow, LedgerItem, TokenStatus, CancellationApprovalStatus } from "@/app/Components/BookingToken/types";
+import { displayDash } from "@/lib/booking-token-display-format";
 
 export const RECENT_LEDGER_ITEM_LIMIT = 5;
 export const RECENT_LEDGER_DEALS_FETCH = 20;
@@ -41,6 +44,7 @@ export type BookingDoneSubmitPayload = {
   amountReceived: number;
   paymentKind: BookingPaymentKind;
   quoteVerifyUrl?: string;
+  bookingDate: string;
 };
 
 function initialsFromName(name: string): string {
@@ -48,6 +52,15 @@ function initialsFromName(name: string): string {
   if (parts.length === 0) return "LD";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+function readOptionalDealString(deal: BookingTokenDeal, ...keys: string[]): string | null {
+  const row = deal as BookingTokenDeal & Record<string, unknown>;
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 function formatExpClosing(submittedAt: string): string {
@@ -109,6 +122,9 @@ export function buildBookingDoneSubmitPayload(
   const paymentKind = classifyBookingPayment(amountReceived, quoteAmount);
   if (!paymentKind) return null;
 
+  const bookingDate = readBookingDate(input.leadType, input.leadId);
+  if (!isValidBookingDateValue(bookingDate)) return null;
+
   return {
     hubLeadId: hubLeadId || undefined,
     quoteId: selectedQuote.quoteId,
@@ -117,6 +133,7 @@ export function buildBookingDoneSubmitPayload(
     tenPercentAmount,
     amountReceived,
     paymentKind,
+    bookingDate,
     quoteVerifyUrl:
       resolveQuoteVerifyUrl(selectedQuote, hubLeadId ?? "") || undefined,
   };
@@ -142,6 +159,10 @@ export function validateBookingDoneHandoff(
   if (amountReceived == null || amountReceived <= 0) {
     return { ok: false, message: "Enter the payment amount received before continuing." };
   }
+  const bookingDate = readBookingDate(input.leadType, input.leadId);
+  if (!isValidBookingDateValue(bookingDate)) {
+    return { ok: false, message: "Select a booking date before continuing." };
+  }
   return { ok: true };
 }
 
@@ -151,6 +172,19 @@ function resolveRemainingAmount(deal: BookingTokenDeal): number {
   }
   const ten = deal.tenPercentAmount ?? 0;
   return Math.max(0, ten - deal.preBookingAmount);
+}
+
+function resolveDesignerName(deal: BookingTokenDeal): string {
+  const name = readOptionalDealString(deal, "designerName", "designer_name");
+  return displayDash(name);
+}
+
+function resolveBookingDate(deal: BookingTokenDeal): string | null {
+  return (
+    readOptionalDealString(deal, "bookingDate", "booking_date") ??
+    deal.bookingDate?.trim() ??
+    null
+  );
 }
 
 export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
@@ -177,6 +211,10 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     initials: initialsFromName(deal.customerName),
     customer: deal.customerName,
     assign: resolveAssigneeName(deal),
+    designerName: resolveDesignerName(deal),
+    bookingDate: resolveBookingDate(deal),
+    createdAt:
+      readOptionalDealString(deal, "createdAt", "created_at") ?? deal.createdAt ?? null,
     asset: assetParts.join(" · "),
     dealValue: formatQuoteAmount(deal.dealValue),
     dealValueAmount: deal.dealValue,
@@ -198,6 +236,14 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     showConvert: canShowConvert(listingType, remaining) && !isPendingCancellation,
     cancellationReason: deal.cancellationReason ?? null,
     cancelledAt: deal.cancelledAt ?? null,
+    cancelledByName:
+      readOptionalDealString(deal, "cancelledByName", "cancelled_by_name") ?? null,
+    cancellationRequestedAt:
+      readOptionalDealString(
+        deal,
+        "cancellationRequestedAt",
+        "cancellation_requested_at",
+      ) ?? deal.cancellationRequestedAt ?? null,
     fromBookingDone: true,
     financeReviewStatus: normalizeFinanceReviewStatus(deal.financeReviewStatus),
     financeReviewAt: deal.financeReviewAt ?? null,
@@ -206,7 +252,32 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     submittedByName: deal.submittedByName ?? null,
     submittedByRole: deal.submittedByRole ?? null,
     cancellationApprovalStatus,
-    cancellationRequestedByName: deal.cancellationRequestedByName ?? null,
+    cancellationRequestedByName:
+      readOptionalDealString(
+        deal,
+        "cancellationRequestedByName",
+        "cancellation_requested_by_name",
+      ) ?? deal.cancellationRequestedByName ?? null,
+    cancellationApprovedByName:
+      readOptionalDealString(
+        deal,
+        "cancellationApprovedByName",
+        "cancellation_approved_by_name",
+        "cancellationReviewedByName",
+        "cancellation_reviewed_by_name",
+        "approvedByName",
+        "approved_by_name",
+      ) ?? deal.cancellationApprovedByName ?? null,
+    cancellationApprovedAt:
+      readOptionalDealString(
+        deal,
+        "cancellationApprovedAt",
+        "cancellation_approved_at",
+        "cancellationReviewedAt",
+        "cancellation_reviewed_at",
+        "approvedAt",
+        "approved_at",
+      ) ?? deal.cancellationApprovedAt ?? null,
     canApproveCancellation: Boolean(deal.canApproveCancellation),
   };
 }

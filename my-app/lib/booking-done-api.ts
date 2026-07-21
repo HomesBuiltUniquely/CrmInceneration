@@ -11,6 +11,8 @@ export type BookingDoneSubmitInput = {
   amountReceived: number;
   paymentKind: BookingPaymentKind;
   quoteVerifyUrl?: string;
+  /** Calendar day of booking (`YYYY-MM-DD`). */
+  bookingDate?: string;
 };
 
 export type BookingTokenRecord = {
@@ -38,6 +40,8 @@ export type BookingTokenRecord = {
   createdAt?: string;
   updatedAt?: string;
   paymentProofCount?: number;
+  /** Calendar booking date (`YYYY-MM-DD`). */
+  bookingDate?: string;
   financeReviewStatus?: string;
   financeReviewAt?: string | null;
   financeReviewBy?: string | null;
@@ -65,6 +69,12 @@ export type BookingTokenDeal = {
   quoteId?: string;
   hubLeadId?: string;
   submittedAt: string;
+  /** Calendar booking date (`YYYY-MM-DD`). */
+  bookingDate?: string;
+  createdAt?: string;
+  designerName?: string | null;
+  cancelledByName?: string | null;
+  cancellationRequestedAt?: string | null;
   /** Live CRM lead assignee */
   assign?: string | null;
   assignee?: string | null;
@@ -75,6 +85,8 @@ export type BookingTokenDeal = {
   totalAmountReceived?: number | null;
   cancellationApprovalStatus?: string | null;
   cancellationRequestedByName?: string | null;
+  cancellationApprovedByName?: string | null;
+  cancellationApprovedAt?: string | null;
   canApproveCancellation?: boolean;
   paymentProofCount?: number;
   financeReviewStatus?: string;
@@ -131,6 +143,7 @@ export async function submitBookingDone(
       amountReceived: input.amountReceived,
       paymentKind: input.paymentKind,
       quoteVerifyUrl: input.quoteVerifyUrl,
+      bookingDate: input.bookingDate,
     }),
     cache: "no-store",
   });

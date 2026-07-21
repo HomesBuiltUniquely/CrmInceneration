@@ -182,13 +182,18 @@ function LeadRowAction({
   onOpenLead,
 }: LeadRowActionProps) {
   const critical = row.journey.status?.tone === "critical";
+  const lostQuote = Boolean(row.lostQuoteHighlight);
   const open = () => onOpenLead?.(row);
   return (
     <div
       onClick={open}
-      className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-4 py-3 transition-all hover:bg-[var(--crm-surface-subtle)] ${
-        selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
-      }`}
+      className={`${gridClass} cursor-pointer border-t px-4 py-3 transition-all ${
+        lostQuote
+          ? "border-red-200 bg-red-50 hover:bg-red-100/80"
+          : `border-[var(--crm-border)] hover:bg-[var(--crm-surface-subtle)] ${
+              selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
+            }`
+      } ${selected && lostQuote ? "ring-1 ring-inset ring-red-200" : ""}`}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
@@ -239,6 +244,9 @@ function LeadRowAction({
               </span>
             ) : null}
             {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
+            {row.lostQuoteHighlight ? (
+              <TinyTag chip={{ label: "Lost Quote Sent", tone: "rose" }} />
+            ) : null}
             {row.pipelineBadge === "presales" ? (
               <TinyTag chip={{ label: "Presales", tone: "amber" }} />
             ) : row.pipelineBadge === "sales" ? (
@@ -416,6 +424,11 @@ type LeadsTableProps = {
   onPageSizeChange?: (size: number) => void;
   selectedRowIds?: string[];
   onSelectedRowIdsChange?: (ids: string[]) => void;
+  /**
+   * When set (e.g. client-filtered insight view), header "select all" toggles
+   * every id in this list — not only the current page of `rows`.
+   */
+  selectAllRowIds?: string[];
   onDeleteRow?: (row: LeadRowModel) => void;
   onAssignRow?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
@@ -433,6 +446,7 @@ export default function LeadsTable({
   onPageSizeChange,
   selectedRowIds = [],
   onSelectedRowIdsChange,
+  selectAllRowIds,
   onDeleteRow,
   onAssignRow,
   leadsWorkspace: _leadsWorkspace = "sales",
@@ -482,7 +496,13 @@ export default function LeadsTable({
   const showActions = Boolean(onAssignRow || onDeleteRow);
   const showSelection = showActions && Boolean(onSelectedRowIdsChange);
   const gridClass = getLeadsTableGridClass(showActions);
-  const allSelected = rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
+  const selectAllTargets =
+    selectAllRowIds && selectAllRowIds.length > 0
+      ? selectAllRowIds
+      : rows.map((row) => row.id);
+  const allSelected =
+    selectAllTargets.length > 0 &&
+    selectAllTargets.every((id) => selectedRowIds.includes(id));
   const someSelected = selectedRowIds.length > 0 && !allSelected;
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
@@ -503,7 +523,7 @@ export default function LeadsTable({
                 checked={allSelected}
                 onChange={(event) =>
                   onSelectedRowIdsChange?.(
-                    event.target.checked ? rows.map((row) => row.id) : []
+                    event.target.checked ? [...selectAllTargets] : []
                   )
                 }
                 className="h-4 w-4 cursor-pointer accent-blue-600"

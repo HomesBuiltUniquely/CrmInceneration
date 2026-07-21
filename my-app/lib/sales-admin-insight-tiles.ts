@@ -1,4 +1,5 @@
 import type { ApiLead } from "@/lib/leads-filter";
+import { normalizeLeadSortFields } from "@/lib/leads-filter";
 import {
   computeFollowUpInsightCounts,
   normalizeInsightCountOpts,
@@ -13,9 +14,10 @@ import { isAdminRole } from "@/lib/roleUtils";
 /**
  * One row per customer phone for insight tiles (matches heatmap / hierarchy table totals).
  * Raw assignee-pool rows can inflate counts when the same customer has multiple lead ids.
+ * Also flattens Hub `quoteSentInfo` aliases for Quote Sent tile counts.
  */
 export function salesInsightCountLeads(leads: ApiLead[]): ApiLead[] {
-  return pickPrimarySourceRows(leads);
+  return pickPrimarySourceRows(leads.map((lead) => normalizeLeadSortFields(lead)));
 }
 
 /** Roles on Hub admin pool that show sales insight tiles (follow-up, overdue, lost segment). */

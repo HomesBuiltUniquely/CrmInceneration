@@ -62,6 +62,11 @@ export function buildDesignModuleConvertPayload(
     leadIdentifier: paymentHistory.leadIdentifier,
     customerName: paymentHistory.customerName,
     projectName: paymentHistory.customerName,
+    /** Business booking date from Booking Done (`YYYY-MM-DD`) — for Finance / Design Module. */
+    bookingDate:
+      paymentHistory.bookingDate?.trim() ||
+      (paymentHistory as { booking_date?: string | null }).booking_date?.trim() ||
+      null,
     quoteAmount: paymentHistory.quoteAmount,
     tenPercentAmount: paymentHistory.tenPercentAmount,
     amountReceived: paymentHistory.amountReceived,
@@ -92,6 +97,10 @@ export function buildDesignModuleConvertPayload(
       quoteAmount: paymentHistory.quoteAmount,
       tenPercentAmount: paymentHistory.tenPercentAmount,
       amountReceived: paymentHistory.amountReceived,
+      bookingDate:
+        paymentHistory.bookingDate?.trim() ||
+        (paymentHistory as { booking_date?: string | null }).booking_date?.trim() ||
+        null,
       paymentKind:
         (paymentHistory as { paymentKind?: string }).paymentKind ??
         completionEntry?.paymentKind ??

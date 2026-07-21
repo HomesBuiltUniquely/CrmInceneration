@@ -1319,6 +1319,12 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   } = useLeadDetailV2();
   const canInteract = !disabled;
   const quoteLinkValue = lead.quoteLink?.trim() || "";
+  const quoteSentCount = lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
+  const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
+  const quoteId =
+    lead.quoteId?.trim() ||
+    lead.quoteSentInfo?.quoteId?.trim() ||
+    "";
 
   return (
     <div className="grid gap-4">
@@ -1335,6 +1341,13 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
               <p className="mt-1 text-[18px] font-extrabold tracking-[-0.01em] text-[#1f2937]">
                 Quote &amp; Proposal Desk
               </p>
+              {quoteSent ? (
+                <p className="mt-1.5 text-[12px] font-semibold text-emerald-700">
+                  Quote Sent to Customer
+                  {quoteId ? ` · #${quoteId}` : ""}
+                  {quoteSentCount > 1 ? ` · Sent ${quoteSentCount} times` : ""}
+                </p>
+              ) : null}
             </div>
             {canShowGetQuote ? (
               <button

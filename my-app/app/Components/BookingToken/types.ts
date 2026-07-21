@@ -33,6 +33,12 @@ export type DealRow = {
   customer: string;
   /** Live CRM lead assignee (sales executive on the lead). */
   assign: string;
+  /** Designer on linked lead (from Hub deal payload). */
+  designerName: string;
+  /** Business booking date (`YYYY-MM-DD`). */
+  bookingDate?: string | null;
+  /** When Booking Done form was saved (prefer over submittedAt for display). */
+  createdAt?: string | null;
   asset: string;
   dealValue: string;
   dealValueAmount: number;
@@ -58,6 +64,9 @@ export type DealRow = {
   showConvert?: boolean;
   cancellationReason?: string | null;
   cancelledAt?: string | null;
+  /** Who finally cancelled (after approval or direct cancel). */
+  cancelledByName?: string | null;
+  cancellationRequestedAt?: string | null;
   /** Set when row came from Booking Done handoff. */
   fromBookingDone?: boolean;
   financeReviewStatus?: FinanceReviewStatus;
@@ -68,6 +77,9 @@ export type DealRow = {
   submittedByRole?: string | null;
   cancellationApprovalStatus?: CancellationApprovalStatus;
   cancellationRequestedByName?: string | null;
+  /** Who approved the cancellation (Hub may omit until approved). */
+  cancellationApprovedByName?: string | null;
+  cancellationApprovedAt?: string | null;
   canApproveCancellation?: boolean;
 };
 

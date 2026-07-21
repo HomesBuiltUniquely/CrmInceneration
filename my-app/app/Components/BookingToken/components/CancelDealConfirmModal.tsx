@@ -15,6 +15,8 @@ import {
 } from "@/lib/booking-payment-history-api";
 import type { BookingTokenCancelInput, BookingTokenCancelScope } from "@/lib/booking-done-api";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
+import { dealLevelLabel } from "@/lib/booking-token-listing-type";
 
 type Props = {
   open: boolean;
@@ -320,15 +322,23 @@ export default function CancelDealConfirmModal({
           </button>
         </div>
 
-        <div className="grid gap-3 border-b border-[#eef1f5] px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
-          <SummaryCard label="10% amount" value={formatQuoteAmount(summary.tenPercentAmount)} />
-          <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-          <SummaryCard
-            label="Remaining (10%)"
-            value={formatQuoteAmount(summary.remainingAmount)}
-            highlight={summary.remainingAmount > 0}
-          />
+        <div className="space-y-3 border-b border-[#eef1f5] px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <SummaryCard label="Level" value={dealLevelLabel(deal)} />
+            <SummaryCard label="Booking date" value={formatBookingDateDisplay(deal.bookingDate)} />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
+            <SummaryCard label="10% amount" value={formatQuoteAmount(summary.tenPercentAmount)} />
+            <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
+            {summary.remainingAmount > 0 ? (
+              <SummaryCard
+                label="Remaining (10%)"
+                value={formatQuoteAmount(summary.remainingAmount)}
+                highlight
+              />
+            ) : null}
+          </div>
         </div>
 
         <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1.05fr_0.95fr]">
