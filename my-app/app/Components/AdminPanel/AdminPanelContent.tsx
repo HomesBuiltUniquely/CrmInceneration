@@ -874,7 +874,9 @@ function AdminUserSection() {
               }
 
               let req: Promise<Record<string, unknown>>;
-              if (userForm.role === "SALES_MANAGER") {
+              if (userForm.role === "SALES_ADMIN") {
+                req = adminPanelApi.createSalesAdmin(payload);
+              } else if (userForm.role === "SALES_MANAGER") {
                 req = adminPanelApi.createManager(payload);
               } else if (userForm.role === "SALES_EXECUTIVE") {
                 req = adminPanelApi.createSalesExecutive(payload);
