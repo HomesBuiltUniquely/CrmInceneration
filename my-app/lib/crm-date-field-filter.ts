@@ -122,9 +122,36 @@ export function isToolbarDateFilterActive(input: CrmDateFilterInput): boolean {
   return selection !== "" && Boolean(from && to);
 }
 
-/** True when Hub already applied date filtering — BFF must not re-filter in memory. */
+/**
+ * True when Hub already applied date filtering for standard CRM lead types —
+ * BFF must not re-filter those in memory.
+ *
+ * WhatsApp / walk-in lists are unreliable on Hub (direct-list fallback omits
+ * date params; filter often ignores bounds) — always re-filter those locally.
+ */
 export function hubHandlesDateFilter(input: CrmDateFilterInput): boolean {
   return isToolbarDateFilterActive(input);
+}
+
+/** Inclusive local calendar-day range (`YYYY-MM-DD` from/to). Empty bounds = no filter. */
+export function rawInInclusiveDateRange(
+  raw: string | null | undefined,
+  from: string,
+  to: string,
+): boolean {
+  if (!from && !to) return true;
+  const ts = raw ? Date.parse(raw) : Number.NaN;
+  if (Number.isNaN(ts)) return false;
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (from) {
+    const fromTs = Date.parse(`${from}T00:00:00`);
+    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
+  }
+  if (to) {
+    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
+    if (!Number.isNaN(toTs) && ts > toTs) return false;
+  }
+  return true;
 }
 
 export function appendCrmDateFilters(

@@ -182,18 +182,19 @@ function LeadRowAction({
   onOpenLead,
 }: LeadRowActionProps) {
   const critical = row.journey.status?.tone === "critical";
+  const lostPath = Boolean(row.lostPathHighlight || row.lostQuoteHighlight);
   const lostQuote = Boolean(row.lostQuoteHighlight);
   const open = () => onOpenLead?.(row);
   return (
     <div
       onClick={open}
       className={`${gridClass} cursor-pointer border-t px-4 py-3 transition-all ${
-        lostQuote
+        lostPath
           ? "border-red-200 bg-red-50 hover:bg-red-100/80"
           : `border-[var(--crm-border)] hover:bg-[var(--crm-surface-subtle)] ${
               selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
             }`
-      } ${selected && lostQuote ? "ring-1 ring-inset ring-red-200" : ""}`}
+      } ${selected && lostPath ? "ring-1 ring-inset ring-red-200" : ""}`}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {

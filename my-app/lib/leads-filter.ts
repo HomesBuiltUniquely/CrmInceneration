@@ -157,7 +157,9 @@ export type LeadRowModel = {
   /** Parsed `additionalLeadSources` for re-inquiry tooltip. */
   reinquirySources?: string;
   callDelayed?: boolean;
-  /** Quote Sent insight: lost-path rows shown at end with red highlight. */
+  /** Any LOST-path row — light red row styling in the table. */
+  lostPathHighlight?: boolean;
+  /** Quote Sent insight: lost-path rows shown at end with red highlight + Lost Quote tag. */
   lostQuoteHighlight?: boolean;
   journey: {
     stage: string;

@@ -108,13 +108,22 @@ export function isLostPathLead(lead: ApiLead): boolean {
   return /\blost\b/.test(`${cat} ${stage}`.trim());
 }
 
+/**
+ * Lost-path leads stay hidden on the default inbox.
+ * Show them when the user is searching, on lost insight tiles, filtering a lost
+ * milestone, or applying any list filter (date / type / stage / assignee / etc.)
+ * so filtered totals match visible rows.
+ */
 export function shouldShowLostPathLeadsInTable(args: {
   searchActive: boolean;
   insightTableMode: string | null;
   milestoneStageCategory: string;
   milestoneSubStage: string;
+  /** Toolbar date, lead type, stage, assignee, reinquiry, etc. */
+  listFiltersActive?: boolean;
 }): boolean {
   if (args.searchActive) return true;
+  if (args.listFiltersActive) return true;
   if (args.insightTableMode === "lostQuoteSent" || args.insightTableMode === "quoteSent") {
     return true;
   }
