@@ -12,11 +12,15 @@ import { CRM_LEAD_TYPES, normalizeLeadSortFields } from "@/lib/leads-filter";
 import { emptyLeadSourceCounts } from "@/lib/primary-source-leads";
 import { LEAD_TYPE_TO_BASE } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import { readLeadCreatedAtRaw, readLeadDateRawForCrmDateField } from "@/lib/lead-follow-up-insights";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { filterLeadsForAdminWorkspacePool } from "@/lib/crm-workspace";
+import {
+  parseCrmDateField,
+  rawInInclusiveDateRange,
+} from "@/lib/crm-date-field-filter";
 
 export const WHATSAPP_CRM_LEAD_TYPE: CrmLeadType = "whatsapplead";
 
@@ -281,6 +285,33 @@ async function fetchWhatsappFromDirectList(
   return { leads: [], apiUnavailable: sawNoResource };
 }
 
+function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+  return rawInInclusiveDateRange(raw, from, to);
+}
+
+function dateFieldFromExtraParams(
+  extraParams: Array<{ key: string; value: string }>,
+): string {
+  return extraParams.find((p) => p.key === "dateField")?.value ?? "";
+}
+
+/** Hub WhatsApp list often ignores date bounds (esp. direct-list fallback) — enforce locally. */
+function filterWhatsappLeadsByDateRange(
+  leads: ApiLead[],
+  ctx: WhatsappFetchContext,
+): ApiLead[] {
+  const from = ctx.effDates.from;
+  const to = ctx.effDates.to;
+  if (!from && !to) return leads;
+  const field = parseCrmDateField(dateFieldFromExtraParams(ctx.extraParams));
+  return leads.filter((lead) => {
+    const raw = readLeadDateRawForCrmDateField(lead, field);
+    return rawInInclusiveDateRange(raw, from, to);
+  });
+}
+
 export async function fetchWhatsappLeadsForMerge(ctx: WhatsappFetchContext): Promise<{
   leads: ApiLead[];
   accessDenied: boolean;
@@ -289,13 +320,19 @@ export async function fetchWhatsappLeadsForMerge(ctx: WhatsappFetchContext): Pro
   for (const alias of WHATSAPP_FILTER_LEAD_TYPE_ALIASES) {
     const fromFilter = await fetchWhatsappFromFilterAlias(ctx, alias);
     if (fromFilter.length > 0) {
-      return { leads: fromFilter, accessDenied: false };
+      return {
+        leads: filterWhatsappLeadsByDateRange(fromFilter, ctx),
+        accessDenied: false,
+      };
     }
   }
 
   const direct = await fetchWhatsappFromDirectList(ctx);
   if (direct.leads.length > 0) {
-    return { leads: direct.leads, accessDenied: false };
+    return {
+      leads: filterWhatsappLeadsByDateRange(direct.leads, ctx),
+      accessDenied: false,
+    };
   }
 
   return {
@@ -339,24 +376,6 @@ export async function augmentLeadSourceCountsWithWhatsapp(
   } catch {
     return counts;
   }
-}
-
-function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
-  if (!from && !to) return true;
-  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
-  if (!raw) return false;
-  const ts = Date.parse(raw);
-  if (Number.isNaN(ts)) return false;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (from) {
-    const fromTs = Date.parse(`${from}T00:00:00`);
-    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
-  }
-  if (to) {
-    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
-    if (!Number.isNaN(toTs) && ts > toTs) return false;
-  }
-  return true;
 }
 
 export function computeWhatsappSourceCountsFromLeads(

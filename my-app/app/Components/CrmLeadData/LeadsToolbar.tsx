@@ -275,7 +275,7 @@ type LeadsToolbarProps = {
   /** Temporary override for right badge on Total Leads pill. */
   totalLeadsSecondaryOverride?: number;
   totalLeadsSecondaryTitle?: string;
-  /** SALES_ADMIN / SUPER_ADMIN: "X customers (Y rows)" on Total Leads pill. */
+  /** SALES_ADMIN / SUPER_ADMIN: "X (Y rows)" on Total Leads pill. */
   adminTotalLeadsDisplay?: { uniquePrimary: number; totalRows: number };
   /** SUPER_ADMIN search only: separate Sales / Presales pool match counts. */
   superAdminSearchPoolTotals?: { sales: number; presales: number };
@@ -514,7 +514,7 @@ export default function LeadsToolbar({
   const showAdminCustomersRowsPill =
     (isSuperAdmin || isSalesAdmin) && adminTotalLeadsDisplay !== undefined;
   const totalLeadsPillLabel = showAdminCustomersRowsPill
-    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} customers (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
+    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
     : undefined;
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";

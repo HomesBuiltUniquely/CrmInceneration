@@ -68,6 +68,46 @@ export function readLeadCreatedAtRaw(lead: ApiLead): string {
   return "";
 }
 
+export function readMeetingDateRaw(lead: ApiLead): string {
+  const r = lead as Record<string, unknown>;
+  const df =
+    lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+      ? (lead.dynamicFields as Record<string, unknown>)
+      : {};
+  const candidates = [
+    lead.meetingDate,
+    r.meetingDate,
+    r.meeting_date,
+    r.siteVisitDate,
+    r.site_visit_date,
+    df.meetingDate,
+    df.meeting_date,
+  ];
+  for (const value of candidates) {
+    const s = String(value ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+
+/**
+ * Date string used for BFF local range checks (WhatsApp / walk-in), matching Hub `dateField`.
+ * Defaults to created (with updatedAt fallback) when field is omitted / "created".
+ */
+export function readLeadDateRawForCrmDateField(
+  lead: ApiLead,
+  dateField: string | null | undefined,
+): string {
+  const field = (dateField ?? "").trim().toLowerCase();
+  if (field === "followup" || field === "follow_up") {
+    return readFollowUpDateRaw(lead);
+  }
+  if (field === "meeting") {
+    return readMeetingDateRaw(lead);
+  }
+  return readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+}
+
 export function isFirstCallDelayedLead(
   lead: ApiLead,
   nowMs = Date.now(),

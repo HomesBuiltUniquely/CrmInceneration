@@ -6,7 +6,10 @@ import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import {
+  readLeadCreatedAtRaw,
+  readLeadDateRawForCrmDateField,
+} from "@/lib/lead-follow-up-insights";
 import {
   augmentLeadSourceCountsWithWalkIn,
   fetchWalkInLeadsForMerge,
@@ -22,7 +25,11 @@ import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
-import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
+import {
+  hubHandlesDateFilter,
+  rawInInclusiveDateRange,
+  resolveEffectiveDateField,
+} from "@/lib/crm-date-field-filter";
 import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
@@ -145,19 +152,7 @@ function inDateRange(
   from: string,
   to: string
 ): boolean {
-  if (!from && !to) return true;
-  const ts = leadDateRaw ? Date.parse(leadDateRaw) : Number.NaN;
-  if (Number.isNaN(ts)) return false;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (from) {
-    const fromTs = Date.parse(`${from}T00:00:00`);
-    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
-  }
-  if (to) {
-    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
-    if (!Number.isNaN(toTs) && ts > toTs) return false;
-  }
-  return true;
+  return rawInInclusiveDateRange(leadDateRaw, from, to);
 }
 
 async function resolveViewerRole(req: NextRequest): Promise<string> {
@@ -499,15 +494,34 @@ function filterAndSortMergedLeads(
 
       const ltKey = normalizeLeadTypeKey(lead.leadType);
       const isExternalListRow = ltKey === "walkinlead" || ltKey === "whatsapplead";
-      if (!skipHubDateFilter && !isExternalListRow && (dateFrom || dateTo)) {
-        const dateFieldRaw = usePresalesMilestoneFilters
+      // Hub date bounds are unreliable for WhatsApp/walk-in — always filter those locally.
+      const mustLocalDateFilter =
+        Boolean(dateFrom || dateTo) && (isExternalListRow || !skipHubDateFilter);
+      if (mustLocalDateFilter) {
+        const dateFieldRaw = isExternalListRow
           ? (() => {
-              const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-              return assignedTs > 0
-                ? new Date(assignedTs).toISOString()
-                : readLeadCreatedAtRaw(lead);
+              const effField = resolveEffectiveDateField({
+                dateFrom,
+                dateTo,
+                dateField: url.searchParams.get("dateField"),
+                crmMonthWindow: url.searchParams.get("crmMonthWindow"),
+              });
+              if (effField === "assigned" || usePresalesMilestoneFilters) {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              }
+              return readLeadDateRawForCrmDateField(lead, effField || "created");
             })()
-          : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+          : usePresalesMilestoneFilters
+            ? (() => {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              })()
+            : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
         if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
       }
 
