@@ -10,11 +10,18 @@ import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
 import { emptyLeadSourceCounts } from "@/lib/primary-source-leads";
 import { LEAD_TYPE_TO_BASE } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import {
+  readLeadCreatedAtRaw,
+  readLeadDateRawForCrmDateField,
+} from "@/lib/lead-follow-up-insights";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { filterLeadsForAdminWorkspacePool } from "@/lib/crm-workspace";
+import {
+  parseCrmDateField,
+  rawInInclusiveDateRange,
+} from "@/lib/crm-date-field-filter";
 
 export const WALKIN_CRM_LEAD_TYPE: CrmLeadType = "walkinlead";
 
@@ -145,21 +152,40 @@ function resolveAuthHeaders(ctx: WalkInFetchContext): HeadersInit {
   return {};
 }
 
-/** WalkinLead list does not use CRM filter query keys — only page/size/sort/search. */
-const WALKIN_LIST_QUERY_KEYS = new Set(["search"]);
+/** Direct WalkinLead list: only search. Filter endpoint also gets CRM date/milestone keys. */
+const WALKIN_DIRECT_LIST_QUERY_KEYS = new Set(["search"]);
+const WALKIN_FILTER_QUERY_KEYS = new Set([
+  "search",
+  "verificationStatus",
+  "reinquiry",
+  "milestoneStage",
+  "milestoneStageCategory",
+  "milestoneSubStage",
+  "assignee",
+  "dateFrom",
+  "dateTo",
+  "dateField",
+]);
 
 function appendWalkInQueryParams(
   upstream: URL,
   ctx: WalkInFetchContext,
   pageNum: number,
+  mode: "filter" | "direct" = "direct",
 ): void {
   upstream.searchParams.set("page", String(pageNum));
   upstream.searchParams.set("size", String(ctx.perType));
   upstream.searchParams.set("sort", ctx.sort);
   if (ctx.search) upstream.searchParams.set("search", ctx.search);
+  const allowedKeys =
+    mode === "filter" ? WALKIN_FILTER_QUERY_KEYS : WALKIN_DIRECT_LIST_QUERY_KEYS;
   for (const { key, value } of ctx.extraParams) {
-    if (!value || !WALKIN_LIST_QUERY_KEYS.has(key)) continue;
+    if (!value || !allowedKeys.has(key)) continue;
     upstream.searchParams.set(key, value);
+  }
+  if (mode === "filter") {
+    if (ctx.effDates.from) upstream.searchParams.set("dateFrom", ctx.effDates.from);
+    if (ctx.effDates.to) upstream.searchParams.set("dateTo", ctx.effDates.to);
   }
 }
 
@@ -172,7 +198,7 @@ async function fetchWalkInFromFilterAlias(
     const upstream = new URL(`${BASE_URL}/v1/leads/filter`);
     upstream.searchParams.set("leadType", filterLeadType);
     upstream.searchParams.set("milestoneScope", "crm");
-    appendWalkInQueryParams(upstream, ctx, pageNum);
+    appendWalkInQueryParams(upstream, ctx, pageNum, "filter");
     const res = await fetch(upstream.toString(), {
       headers: resolveAuthHeaders(ctx),
       cache: "no-store",
@@ -196,7 +222,7 @@ async function fetchWalkInFromDirectList(
   let gotOk = false;
   for (let pageNum = 0; pageNum < ctx.maxPages; pageNum += 1) {
     const upstream = new URL(`${BASE_URL}${WALKIN_DIRECT_BASE_PATH}`);
-    appendWalkInQueryParams(upstream, ctx, pageNum);
+    appendWalkInQueryParams(upstream, ctx, pageNum, "direct");
     const res = await fetch(upstream.toString(), {
       headers: resolveAuthHeaders(ctx),
       cache: "no-store",
@@ -226,6 +252,33 @@ async function fetchWalkInFromDirectList(
   return { leads: [], apiUnavailable: false };
 }
 
+function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+  return rawInInclusiveDateRange(raw, from, to);
+}
+
+function dateFieldFromExtraParams(
+  extraParams: Array<{ key: string; value: string }>,
+): string {
+  return extraParams.find((p) => p.key === "dateField")?.value ?? "";
+}
+
+/** Hub WalkinLead list is not CRM-date-filtered — enforce toolbar bounds locally. */
+function filterWalkInLeadsByDateRange(
+  leads: ApiLead[],
+  ctx: WalkInFetchContext,
+): ApiLead[] {
+  const from = ctx.effDates.from;
+  const to = ctx.effDates.to;
+  if (!from && !to) return leads;
+  const field = parseCrmDateField(dateFieldFromExtraParams(ctx.extraParams));
+  return leads.filter((lead) => {
+    const raw = readLeadDateRawForCrmDateField(lead, field);
+    return rawInInclusiveDateRange(raw, from, to);
+  });
+}
+
 export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise<{
   leads: ApiLead[];
   accessDenied: boolean;
@@ -233,7 +286,10 @@ export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise
 }> {
   const direct = await fetchWalkInFromDirectList(ctx);
   if (direct.leads.length > 0) {
-    return { leads: direct.leads, accessDenied: false };
+    return {
+      leads: filterWalkInLeadsByDateRange(direct.leads, ctx),
+      accessDenied: false,
+    };
   }
   if (direct.apiUnavailable) {
     return { leads: [], accessDenied: false, apiUnavailable: true };
@@ -242,7 +298,10 @@ export async function fetchWalkInLeadsForMerge(ctx: WalkInFetchContext): Promise
   for (const alias of WALKIN_FILTER_LEAD_TYPE_ALIASES) {
     const fromFilter = await fetchWalkInFromFilterAlias(ctx, alias);
     if (fromFilter.length > 0) {
-      return { leads: fromFilter, accessDenied: false };
+      return {
+        leads: filterWalkInLeadsByDateRange(fromFilter, ctx),
+        accessDenied: false,
+      };
     }
   }
 
@@ -256,24 +315,6 @@ export function isWalkInLeadTypeKey(raw: string): boolean {
 export function countIncludesWalkInType(leadType: string): boolean {
   const norm = String(leadType ?? "").trim().toLowerCase();
   return CRM_LEAD_TYPES.includes(norm as CrmLeadType) || isWalkInLeadTypeKey(norm);
-}
-
-function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
-  if (!from && !to) return true;
-  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
-  if (!raw) return false;
-  const ts = Date.parse(raw);
-  if (Number.isNaN(ts)) return false;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (from) {
-    const fromTs = Date.parse(`${from}T00:00:00`);
-    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
-  }
-  if (to) {
-    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
-    if (!Number.isNaN(toTs) && ts > toTs) return false;
-  }
-  return true;
 }
 
 /** Hub admin pool often omits walk-in until byLeadType includes it — merge from filter/direct API. */

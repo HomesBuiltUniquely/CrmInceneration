@@ -114,7 +114,11 @@ import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helper
 import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
-import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
+import {
+  appendCrmDateFilters,
+  isToolbarDateFilterActive,
+  type CrmDateFieldSelection,
+} from "@/lib/crm-date-field-filter";
 import {
   appendIvrLeadSourceFilter,
   countIvrCallLeads,
@@ -2863,10 +2867,18 @@ export default function LeadsDataSection({
         const uniquePrimaryPool = Number(
           heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
         );
+        const milestoneToolbarActive = Boolean(
+          milestoneStage.trim() ||
+            milestoneStageCategory.trim() ||
+            milestoneSubStage.trim(),
+        );
+        // Full-pool heatmap must not overwrite Total Leads when stage/category/substage
+        // filter is on (milestone table effect owns that total — Super Admin + Sales Admin).
         if (
           (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") &&
           !salesHierarchyFilterActive &&
           activeAssigneeScope.length === 0 &&
+          !milestoneToolbarActive &&
           // Lead-type / IVR tile filters own table totals — do not reset to full pool.
           summaryLeadTypeRaw === "all"
         ) {
@@ -2877,11 +2889,6 @@ export default function LeadsDataSection({
             setVisibleFilteredTotal(customers);
           }
         }
-        const milestoneToolbarActive = Boolean(
-          milestoneStage.trim() ||
-            milestoneStageCategory.trim() ||
-            milestoneSubStage.trim(),
-        );
         const primaryTypes = heatmapData.leadTypeCountsPrimaryUnique;
         const allRowTypes = heatmapData.leadTypeCountsAllRows;
         setLeadTypeCountsPrimary(primaryTypes?.all > 0 ? primaryTypes : null);
@@ -3720,6 +3727,23 @@ export default function LeadsDataSection({
       insightTableMode,
       milestoneStageCategory,
       milestoneSubStage,
+      listFiltersActive: (() => {
+        const lt = leadType.trim().toLowerCase();
+        const leadTypeFilterOn =
+          Boolean(lt) && lt !== "all" && lt !== "verified";
+        return (
+          isToolbarDateFilterActive({ dateField, dateFrom, dateTo }) ||
+          Boolean((crmMonthWindowProp ?? "").trim()) ||
+          leadTypeFilterOn ||
+          Boolean(assignee.trim()) ||
+          Boolean(
+            milestoneStage.trim() ||
+              milestoneStageCategory.trim() ||
+              milestoneSubStage.trim(),
+          ) ||
+          Boolean(reinquiry.trim())
+        );
+      })(),
     }) || isIvrCallFilterKey(leadType);
   const tableContent = showLostPathLeadsInTable
     ? content
@@ -3772,10 +3796,12 @@ export default function LeadsDataSection({
     const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
     const quoteInsight =
       insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent";
+    const lostPath = isLostPathLead(lead);
     return {
       ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
       callDelayed: isFirstCallDelayedLead(lead),
-      lostQuoteHighlight: quoteInsight && isLostPathLead(lead),
+      lostPathHighlight: lostPath,
+      lostQuoteHighlight: quoteInsight && lostPath,
     };
   });
   const norm = (v: string) => v.trim().toLowerCase();
