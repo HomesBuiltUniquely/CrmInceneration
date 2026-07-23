@@ -71,6 +71,10 @@ import {
 } from "@/lib/configuration-scope-events";
 import {
   createAppointment,
+  deleteAppointment,
+  findAllAppointmentsForLead,
+  findLatestAppointmentForLead,
+  updateAppointment,
   type CreateAppointmentResponse,
   resolveAppointmentContextForLead,
 } from "@/lib/appointment-client";
@@ -79,6 +83,8 @@ import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
 import { resolveLeadPropertyGateField } from "@/lib/milestone-advance-gates";
 import {
+  isMeetingCancelledSubstage,
+  isMeetingRescheduledSubstage,
   isMeetingScheduleSubstage,
   normalizeMilestoneSubStageForApi,
 } from "@/lib/milestone-substage-map";
@@ -3089,6 +3095,11 @@ export default function LeadDetailsApiClient({
           ? ""
           : args.milestoneStageCategory;
 
+        const leadIdNum = Number(leadId);
+        const isCancelFlow = isMeetingCancelledSubstage(persistedSubstage);
+        let substageForSave = persistedSubstage;
+        let partialMeetingCancel = false;
+
         // For LOST-path leads and Closed-Won customer milestones (Booking Done / Token Done),
         // clear the follow-up date so these leads never appear as overdue.
         const noFollowUpNeeded = isNoFollowUpRequired({
@@ -3103,8 +3114,34 @@ export default function LeadDetailsApiClient({
         let designerName = lead.designerName;
         let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
 
+        if (isCancelFlow && args.cancelAppointmentIds?.length) {
+          for (const appointmentId of args.cancelAppointmentIds) {
+            await deleteAppointment(appointmentId);
+          }
+          if (Number.isFinite(leadIdNum)) {
+            const remaining = await findAllAppointmentsForLead(leadIdNum, {
+              designerName: lead.designerName,
+            });
+            if (remaining.length > 0) {
+              partialMeetingCancel = true;
+              const keepSubstage = normalizeMilestoneSubStageForApi(
+                lead.stageBlock?.milestoneSubStage?.trim() ||
+                  lead.status?.trim() ||
+                  "Meeting Scheduled",
+              );
+              substageForSave = keepSubstage;
+              const latestRemaining = remaining[0];
+              designerName = latestRemaining.designerName?.trim() || lead.designerName;
+              meetingType = latestRemaining.meetingType?.trim() || lead.meetingType;
+              if (latestRemaining.startTime?.trim()) {
+                followUpDate = latestRemaining.startTime;
+                meetingDate = latestRemaining.startTime;
+              }
+            }
+          }
+        }
+
         if (args.meetingAppointment) {
-          const leadIdNum = Number(leadId);
           const apptBody: import("@/lib/appointment-client").CreateAppointmentBody = {
             designerName: args.meetingAppointment.designerName,
             meetingType: args.meetingAppointment.meetingType,
@@ -3120,7 +3157,25 @@ export default function LeadDetailsApiClient({
             apptBody.date = args.meetingAppointment.date;
             apptBody.slotId = args.meetingAppointment.slotId;
           }
-          const appt = await createAppointment(apptBody);
+
+          // Meeting Rescheduled → update same Hub appointment (PUT). Others → create (POST).
+          let appt: CreateAppointmentResponse;
+          if (isMeetingRescheduledSubstage(persistedSubstage)) {
+            const existing = await findLatestAppointmentForLead(leadIdNum, {
+              designerName:
+                lead.designerName || args.meetingAppointment.designerName,
+            });
+            if (existing?.id != null) {
+              appt = await updateAppointment(existing.id, apptBody, {
+                rescheduleReason: args.note?.trim() || undefined,
+              });
+            } else {
+              // No prior meeting found — fall back to create so the flow still completes.
+              appt = await createAppointment(apptBody);
+            }
+          } else {
+            appt = await createAppointment(apptBody);
+          }
           if (typeof appt.meetingType === "string" && appt.meetingType.trim()) {
             meetingType = appt.meetingType.trim();
           }
@@ -3223,7 +3278,7 @@ export default function LeadDetailsApiClient({
         }
 
         if (
-          isMeetingScheduleSubstage(persistedSubstage) &&
+          isMeetingScheduleSubstage(substageForSave) &&
           followUpDate.trim()
         ) {
           meetingDate = followUpDate;
@@ -3232,9 +3287,9 @@ export default function LeadDetailsApiClient({
         const nextStage = {
           milestoneStage: args.milestoneStage,
           milestoneStageCategory: persistedCategory,
-          milestoneSubStage: persistedSubstage,
+          milestoneSubStage: substageForSave,
           stage: lead.stageBlock?.stage ?? "Initial Stage",
-          substage: { substage: persistedSubstage || null },
+          substage: { substage: substageForSave || null },
         };
         if (isClosedWonBookingDone(nextStage)) {
           if (!canClosedLeadHeader) {
@@ -3258,7 +3313,7 @@ export default function LeadDetailsApiClient({
           followUpDate,
           designerName,
           meetingType: meetingType ?? lead.meetingType,
-          status: persistedSubstage,
+          status: substageForSave,
           stageBlock: nextStage,
           budget: resolveLeadPropertyGateField(args.budget, lead.budget),
           propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
@@ -3274,9 +3329,14 @@ export default function LeadDetailsApiClient({
           body.followUpDate = null;
         }
         let updated = await putLeadDetail(lt, leadId, body);
+        if (partialMeetingCancel) {
+          notifyInfo(
+            "Selected meeting(s) cancelled. Lead remains Meeting Scheduled because other meetings are still booked.",
+          );
+        }
         if (followUpDate.trim() || meetingDate.trim() || noFollowUpNeeded) {
           const mirrorMeetingFromFollowUp =
-            isMeetingScheduleSubstage(persistedSubstage) ||
+            isMeetingScheduleSubstage(substageForSave) ||
             Boolean(args.meetingAppointment);
           try {
             updated = await putHubScheduleDates(lt, leadId, {

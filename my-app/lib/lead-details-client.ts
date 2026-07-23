@@ -15,6 +15,7 @@ import {
 } from "@/lib/floor-plan";
 import {
   QUOTE_NOT_READY_USER_MESSAGE,
+  quoteErrorMessagePriority,
   sanitizeErrorMessage,
   toFriendlyQuoteErrorMessage,
 } from "@/lib/friendly-api-error";
@@ -776,23 +777,33 @@ export async function resolveNewCrmQuoteInternalLink(args: {
     throw new Error("Lead ID is required to fetch quote.");
   }
 
-  let lastError: unknown;
+  let bestError: Error | null = null;
+  let bestErrorPriority = -1;
+  const rememberError = (error: unknown) => {
+    if (!(error instanceof Error)) return;
+    const priority = quoteErrorMessagePriority(error.message);
+    if (priority >= bestErrorPriority) {
+      bestError = error;
+      bestErrorPriority = priority;
+    }
+  };
+
   for (const id of ids) {
     try {
       const res = await getNewCrmQuoteInternalLinkByLead(id);
       if (quoteResponseHasLink(res)) return res;
     } catch (e) {
-      lastError = e;
+      rememberError(e);
     }
     try {
       const res = await getNewCrmQuoteInternalLinkByExternal(id);
       if (quoteResponseHasLink(res)) return res;
     } catch (e) {
-      lastError = e;
+      rememberError(e);
     }
   }
 
-  if (lastError instanceof Error) throw lastError;
+  if (bestError) throw bestError;
   throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
 }
 
