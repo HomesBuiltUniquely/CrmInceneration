@@ -26,7 +26,7 @@ import type { BookingTokenCancelInput } from "@/lib/booking-done-api";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { deleteBookingTokenForLead } from "@/lib/booking-token-delete";
 import { canSuperAdminDeleteBookingTokenDeal } from "@/lib/booking-token-cancellation";
-import { canShowCancellation } from "@/lib/booking-token-listing-type";
+import { resolveShowCancellationButton } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
 import { restoreBookingTokenCancellation } from "@/lib/cancellation-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -244,16 +244,7 @@ function renderDealCell(
         </div>
       );
     case "assign":
-      return (
-        <>
-          {tableTextCell(row.assign)}
-          {row.cancellationApprovalStatus === "PENDING" ? (
-            <span className="mt-0.5 inline-flex rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-amber-700">
-              Cancel pending
-            </span>
-          ) : null}
-        </>
-      );
+      return tableTextCell(row.assign);
     case "dealValue":
       return <span className="font-semibold">{row.dealValue}</span>;
     case "received":
@@ -522,7 +513,7 @@ function TrashIcon() {
 function applyCancellationWindow(rows: DealRow[], nowMs: number): DealRow[] {
   return rows.map((row) => ({
     ...row,
-    showCancellation: canShowCancellation(row.listingType, row.submittedAt, nowMs),
+    showCancellation: resolveShowCancellationButton(row, nowMs),
   }));
 }
 

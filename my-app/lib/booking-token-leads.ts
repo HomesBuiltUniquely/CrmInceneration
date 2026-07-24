@@ -12,11 +12,11 @@ import {
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount, resolveQuoteVerifyUrl, type LeadQuoteOption } from "@/lib/crm-quote-links";
 import {
-  canShowCancellation,
   canShowConvert,
   canShowPay,
   isCancelListingType,
   resolveListingType,
+  resolveShowCancellationButton,
 } from "@/lib/booking-token-listing-type";
 import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
 import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status";
@@ -268,13 +268,15 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     submittedAt: deal.submittedAt,
     isCancelled,
     listingType,
-    showCancellation:
-      canShowCancellation(
+    showCancellation: resolveShowCancellationButton(
+      {
         listingType,
-        readOptionalDealString(deal, "createdAt", "created_at") ?? deal.submittedAt,
-      ) &&
-      !isPendingCancellation &&
-      cancellationApprovalStatus !== "REJECTED",
+        submittedAt:
+          readOptionalDealString(deal, "createdAt", "created_at") ?? deal.submittedAt,
+        bookingStatus: deal.bookingStatus,
+        cancellationApprovalStatus: deal.cancellationApprovalStatus,
+      },
+    ),
     showPay: canShowPay(listingType, remaining) && !isPendingCancellation,
     showConvert:
       canShowConvert(listingType, remaining, bufferFields.canConvertToBooking) &&

@@ -119,6 +119,35 @@ export function canShowCancellation(
   return listingType === "token" || listingType === "booking";
 }
 
+export function isPendingBookingCancellation(deal: {
+  bookingStatus?: string | null;
+  cancellationApprovalStatus?: string | null;
+}): boolean {
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+  const status = deal.bookingStatus?.trim().toLowerCase() ?? "";
+  return approval === "PENDING" || status === "pending_cancellation";
+}
+
+/** Hide Cancellation once a request is pending; allow only within 24h window before that. */
+export function resolveShowCancellationButton(
+  deal: {
+    listingType?: BookingListingType | string | null;
+    submittedAt?: string | null;
+    bookingStatus?: string | null;
+    cancellationApprovalStatus?: string | null;
+  },
+  nowMs = Date.now(),
+): boolean {
+  const listingType = (deal.listingType ?? "token") as BookingListingType;
+  const submittedAt = deal.submittedAt?.trim() ?? "";
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+
+  if (isPendingBookingCancellation(deal)) return false;
+  if (approval === "REJECTED" || approval === "APPROVED") return false;
+
+  return canShowCancellation(listingType, submittedAt, nowMs);
+}
+
 /** Token bucket — show Pay while remaining toward 10% is due. */
 export function canShowPay(
   listingType: BookingListingType,
