@@ -149,12 +149,6 @@ export default function BookingTokenClient() {
             </header>
 
             <div className="space-y-6">
-              {fromBookingDone && (tab === "all" || tab === "token") ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-                  Lead from Booking Done is now listed in active deals below.
-                </div>
-              ) : null}
-
               <KpiCards
                 refreshSignal={kpiRefresh}
                 dateFilter={dateFilter}
