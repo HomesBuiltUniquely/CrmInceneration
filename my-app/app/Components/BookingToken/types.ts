@@ -11,7 +11,10 @@ export type FinanceReviewStatus =
 export type TokenStatus = "issued" | "minting" | "pending";
 export type BookingStatus = "confirmed" | "in_progress" | "cancelled" | "pending_cancellation";
 
-export type CancellationApprovalStatus = "NONE" | "PENDING" | "REJECTED";
+export type CancellationApprovalStatus = "NONE" | "PENDING" | "REJECTED" | "APPROVED";
+
+/** Minimum paid to convert: full 10% or 9.9% buffer threshold met. */
+export type BookingApprovalMode = "FULL_10" | "BUFFER_9_9" | "PENDING";
 
 export type KpiCard = {
   id: string;
@@ -43,7 +46,12 @@ export type DealRow = {
   dealValue: string;
   dealValueAmount: number;
   preBooking: string;
+  /** Cumulative paid toward 10% target. */
   paidAmount: number;
+  /** Amount above 10% target — routed to Finance (Hub). */
+  extraAmountReceived?: number;
+  /** Total customer paid (10% + extra). */
+  totalAmountReceived?: number;
   tenPercentTarget: string;
   tenPercentAmount: number;
   remaining: string;
@@ -62,6 +70,13 @@ export type DealRow = {
   /** Pay — token bucket only. */
   showPay?: boolean;
   showConvert?: boolean;
+  /** Hub: enable Convert when FULL_10 or BUFFER_9_9 threshold met. */
+  canConvertToBooking?: boolean;
+  bookingApprovalMode?: BookingApprovalMode;
+  bufferThresholdAmount?: number;
+  bufferApplied?: boolean;
+  shortfallAmount?: number;
+  financeBufferNote?: string | null;
   cancellationReason?: string | null;
   cancelledAt?: string | null;
   /** Who finally cancelled (after approval or direct cancel). */
@@ -80,7 +95,14 @@ export type DealRow = {
   /** Who approved the cancellation (Hub may omit until approved). */
   cancellationApprovedByName?: string | null;
   cancellationApprovedAt?: string | null;
+  cancellationRejectReason?: string | null;
+  cancellationAttemptCount?: number | null;
+  cancellationLastRejectAt?: string | null;
+  previousListingType?: string | null;
+  previousMilestoneSubstage?: string | null;
   canApproveCancellation?: boolean;
+  canRestoreBookingTokenCancellation?: boolean;
+  canResubmitBookingTokenCancellation?: boolean;
 };
 
 export type LedgerItem = {

@@ -57,6 +57,12 @@ const typeConfig: Record<
     dotClass: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
     labelClass: "text-emerald-300",
   },
+  booking_token: {
+    label: "Booking & Token",
+    icon: "🏷️",
+    dotClass: "border-orange-400/30 bg-orange-500/10 text-orange-300",
+    labelClass: "text-orange-300",
+  },
 };
 
 type ActivityFilter = "all" | ActivityType;
@@ -68,6 +74,7 @@ const FILTER_ORDER: ActivityFilter[] = [
   "assignment",
   "status",
   "update",
+  "booking_token",
   "design_qa_invite",
   "design_qa_submitted",
   "quote_sent_to_customer",
@@ -80,6 +87,7 @@ const FILTER_LABELS: Record<ActivityFilter, string> = {
   assignment: "Assignments",
   status: "Status",
   update: "Updates",
+  booking_token: "Booking & Token",
   design_qa_invite: "Design QA",
   design_qa_submitted: "QA Submit",
   quote_sent_to_customer: "Quote Sent",

@@ -108,6 +108,20 @@ export function isClosedWonCustomerSubstage(subStageName: string): boolean {
   );
 }
 
+/** Closed → Closed Lost → Project Cancelled After Token/Booking (Hub `LeadMilestones.java`). */
+export function isClosureCancelledAfterSubstage(subStageName: string): boolean {
+  const s = normSubstageLabel(pipelineSubStageLabel(subStageName));
+  return (
+    s === "PROJECT CANCELLED AFTER TOKEN" ||
+    s === "PROJECT CANCELLED AFTER BOOKING" ||
+    s.includes("PROJECT CANCELLED AFTER")
+  );
+}
+
+export function isRefundProcessedSubstage(subStageName: string): boolean {
+  return normSubstageLabel(pipelineSubStageLabel(subStageName)) === "REFUND PROCESSED";
+}
+
 export function isClosedWonPathCategory(stageCategory: string): boolean {
   const c = stageCategory.trim().toLowerCase();
   return c === "closed won" || /\bclosed\s+won\b/.test(c);

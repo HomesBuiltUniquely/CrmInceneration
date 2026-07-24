@@ -20,13 +20,15 @@ import {
   cancelBookingTokenDeal,
   convertBookingTokenDeal,
   rejectBookingTokenCancellation,
+  resubmitBookingTokenCancellation,
 } from "@/lib/booking-done-api";
 import type { BookingTokenCancelInput } from "@/lib/booking-done-api";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { deleteBookingTokenForLead } from "@/lib/booking-token-delete";
-import { isAfterCancellationWindow } from "@/lib/booking-token-cancellation";
+import { canSuperAdminDeleteBookingTokenDeal } from "@/lib/booking-token-cancellation";
 import { canShowCancellation } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
+import { restoreBookingTokenCancellation } from "@/lib/cancellation-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isSuperAdminRole } from "@/lib/roleUtils";
@@ -154,6 +156,8 @@ const ACTION_BTN_CANCEL = "bt-btn bt-btn-action bt-btn-action-danger";
 const ACTION_BTN_DELETE = "bt-btn bt-btn-action bt-btn-action-danger";
 const ACTION_BTN_APPROVE = "bt-btn bt-btn-action bt-btn-action-convert";
 const ACTION_BTN_REJECT = "bt-btn bt-btn-action bt-btn-action-danger";
+const ACTION_BTN_RESTORE = "bt-btn bt-btn-action bt-btn-action-convert";
+const ACTION_BTN_RESUBMIT = "bt-btn bt-btn-action bt-btn-action-pay";
 
 function ActionButtonStack({ children }: { children: ReactNode }) {
   return (
@@ -197,6 +201,9 @@ function renderDealCell(
     onDelete: (row: DealRow) => void;
     onApproveCancellation: (row: DealRow) => void;
     onRejectCancellation: (row: DealRow) => void;
+    onRestore: (row: DealRow) => void;
+    onResubmit: (row: DealRow) => void;
+    actionBusyId: string | null;
   },
 ): ReactNode {
   switch (columnId) {
@@ -227,10 +234,6 @@ function renderDealCell(
               ) : row.listingType === "booking" ? (
                 <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
                   Booking
-                </span>
-              ) : row.fromBookingDone ? (
-                <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-700">
-                  Done
                 </span>
               ) : null}
             </div>
@@ -284,8 +287,11 @@ function renderDealCell(
           onDelete={opts.onDelete}
           onApproveCancellation={opts.onApproveCancellation}
           onRejectCancellation={opts.onRejectCancellation}
-          showDelete={opts.isSuperAdmin && isAfterCancellationWindow(row.submittedAt, opts.nowMs)}
-          showCancel={!opts.approveSubmitting}
+          onRestore={opts.onRestore}
+          onResubmit={opts.onResubmit}
+          actionBusyId={opts.actionBusyId}
+          showDelete={opts.isSuperAdmin && canSuperAdminDeleteBookingTokenDeal(row, opts.nowMs)}
+          showCancel={!opts.approveSubmitting && !opts.actionBusyId}
         />
       );
     default:
@@ -391,6 +397,9 @@ function DealRowActions({
   onDelete,
   onApproveCancellation,
   onRejectCancellation,
+  onRestore,
+  onResubmit,
+  actionBusyId,
   showDelete,
   showCancel,
 }: {
@@ -402,9 +411,13 @@ function DealRowActions({
   onDelete: (row: DealRow) => void;
   onApproveCancellation: (row: DealRow) => void;
   onRejectCancellation: (row: DealRow) => void;
+  onRestore: (row: DealRow) => void;
+  onResubmit: (row: DealRow) => void;
+  actionBusyId: string | null;
   showDelete: boolean;
   showCancel: boolean;
 }) {
+  const busy = actionBusyId === row.id;
   return (
     <ActionButtonStack>
       <button type="button" onClick={() => onView(row)} className={ACTION_BTN_VIEW}>
@@ -428,6 +441,28 @@ function DealRowActions({
             Reject
           </button>
         </>
+      ) : null}
+
+      {row.canRestoreBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRestore(row)}
+          className={ACTION_BTN_RESTORE}
+        >
+          {busy ? "Restoring…" : "Restore"}
+        </button>
+      ) : null}
+
+      {row.canResubmitBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onResubmit(row)}
+          className={ACTION_BTN_RESUBMIT}
+        >
+          {busy ? "Sending…" : "Send again"}
+        </button>
       ) : null}
 
       {showDelete ? (
@@ -525,6 +560,7 @@ export default function DealsTable({
   const [rejectTarget, setRejectTarget] = useState<DealRow | null>(null);
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [approvalError, setApprovalError] = useState("");
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [viewerRole, setViewerRole] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [allTabCounts, setAllTabCounts] = useState<{ token: number; booking: number } | null>(
@@ -642,13 +678,14 @@ export default function DealsTable({
       setCancelError("");
       try {
         const result = await cancelBookingTokenDeal(cancelTarget.id, input);
-        setCancelTarget(null);
-        await loadDeals();
-        onDealsChanged?.();
         const movedToCancel =
           input.scope === "deal" &&
           (result.listingType === "cancel" ||
-            result.bookingStatus?.trim().toLowerCase() === "cancelled");
+            result.bookingStatus?.trim().toLowerCase() === "cancelled" ||
+            result.bookingStatus?.trim().toLowerCase() === "pending_cancellation");
+        setCancelTarget(null);
+        await loadDeals();
+        onDealsChanged?.();
         if (movedToCancel) {
           onDealCancelled?.();
         }
@@ -742,6 +779,44 @@ export default function DealsTable({
       }
     },
     [rejectTarget, loadDeals, onDealsChanged],
+  );
+
+  const handleRestoreDeal = useCallback(
+    async (row: DealRow) => {
+      if (!isCrmLeadType(row.leadType)) return;
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await restoreBookingTokenCancellation(
+          row.leadType as CrmLeadType,
+          String(row.leadId),
+        );
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to restore deal.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
+  );
+
+  const handleResubmitDeal = useCallback(
+    async (row: DealRow) => {
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await resubmitBookingTokenCancellation(row.id);
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to send again.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
   );
 
   const tabLabel =
@@ -914,6 +989,9 @@ export default function DealsTable({
                   onDelete: setDeleteTarget,
                   onApproveCancellation: (dealRow: DealRow) => void handleApproveCancellation(dealRow),
                   onRejectCancellation: setRejectTarget,
+                  onRestore: (dealRow: DealRow) => void handleRestoreDeal(dealRow),
+                  onResubmit: (dealRow: DealRow) => void handleResubmitDeal(dealRow),
+                  actionBusyId,
                 };
                 return (
                   <tr

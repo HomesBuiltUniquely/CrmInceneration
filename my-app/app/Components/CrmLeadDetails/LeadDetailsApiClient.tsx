@@ -24,7 +24,7 @@ import {
 } from "@/lib/friendly-api-error";
 import {
   detailJsonToLead,
-  mapActivitiesJson,
+  mapLeadActivitiesJson,
   mergeLeadIntoDetail,
   applyCustomerNameToDetail,
   pickCustomerNameFromDetail,
@@ -59,6 +59,7 @@ import Tabs, { type TabId } from "./Tabs";
 import LeadInfoTab from "./LeadInfoTab";
 import AssignmentsTab from "./AssignmentsTab";
 import ActivityTimeline from "./ActivityTimeline";
+import BookingTokenCancellationBar from "./BookingTokenCancellationBar";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
@@ -1127,7 +1128,7 @@ export default function LeadDetailsApiClient({
       setLoading(false);
       void getLeadActivities(lt, leadId)
         .then((actJson) => {
-          const activities = mapActivitiesJson(actJson);
+          const activities = mapLeadActivitiesJson(actJson, lt, leadId);
           setLead((prev) => ({ ...prev, activities }));
           return loadCreatedTimeline(detailJson, actJson);
         })
@@ -1929,7 +1930,10 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     try {
       const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
+      setLead((prev) => ({
+        ...prev,
+        activities: mapLeadActivitiesJson(actJson, lt, leadId),
+      }));
     } catch {
       /* ignore */
     }
@@ -3737,6 +3741,15 @@ export default function LeadDetailsApiClient({
             window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
           }}
         />
+        {validLeadType ? (
+          <BookingTokenCancellationBar
+            leadType={leadTypeParam as CrmLeadType}
+            leadId={leadId}
+            lead={lead}
+            onLeadReload={() => void load()}
+            onActivitiesRefresh={refreshActivities}
+          />
+        ) : null}
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} viewerRole={viewerRoleKey} />
         <Tabs active={activeTab} onChange={setActiveTab} />
