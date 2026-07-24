@@ -37,6 +37,9 @@ import {
   parsePaymentAmountInput,
   validatePaymentProofFile,
 } from "@/lib/booking-done-payment-storage";
+import {
+  splitPaymentTowardTenAndExtra,
+} from "@/lib/booking-payment-overpay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { isSuperAdminRole } from "@/lib/roleUtils";
@@ -321,10 +324,6 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       setError("Enter the payment amount to record.");
       return;
     }
-    if (amount > summary.remainingAmount) {
-      setError(`Amount cannot exceed remaining ${formatQuoteAmount(summary.remainingAmount)}.`);
-      return;
-    }
     if (draftProofs.length === 0) {
       setError("Upload at least one payment proof screenshot.");
       return;
@@ -390,6 +389,12 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             ? "Token details"
             : "Deal details";
   const canPay = summary.remainingAmount > 0;
+
+  const parsedPayAmount = parsePaymentAmountInput(amountInput);
+  const paySplit =
+    parsedPayAmount != null && parsedPayAmount > 0
+      ? splitPaymentTowardTenAndExtra(parsedPayAmount, summary.remainingAmount)
+      : null;
 
   const paymentHistoryBlock = (
     <div className="overflow-hidden rounded-xl border border-[#e5e7eb] bg-[#fafbfc]">
@@ -565,12 +570,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-                  {summary.remainingAmount > 0 ? (
-                    <SummaryCard
-                      label="Remaining (10%)"
-                      value={formatQuoteAmount(summary.remainingAmount)}
-                    />
-                  ) : null}
+          {summary.remainingAmount > 0 ? (
+            <SummaryCard
+              label="Remaining (10%)"
+              value={formatQuoteAmount(summary.remainingAmount)}
+            />
+          ) : null}
+          {(summary.extraAmountReceived ?? 0) > 0 ? (
+            <SummaryCard
+              label="Extra (Finance)"
+              value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
+              highlight
+            />
+          ) : null}
                   {deal && shouldShowFinanceReview(deal.financeReviewStatus ?? "NOT_READY", deal.remainingAmount) ? (
                     <SummaryCard
                       label="Finance review"
@@ -579,6 +591,12 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                     />
                   ) : null}
                 </div>
+                {deal && (deal.bufferApplied || deal.bookingApprovalMode === "BUFFER_9_9") ? (
+                  <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] leading-relaxed text-sky-950">
+                    {deal.financeBufferNote?.trim() ||
+                      "Booking via 9.9% buffer. Remaining toward 10% is expected until Finance collects the shortfall."}
+                  </div>
+                ) : null}
               </section>
 
               {paymentHistoryBlock}
@@ -603,7 +621,22 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
               highlight
             />
           ) : null}
+          {(summary.extraAmountReceived ?? 0) > 0 ? (
+            <SummaryCard
+              label="Extra (Finance)"
+              value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
+              highlight
+            />
+          ) : null}
         </div>
+        {deal && (deal.bufferApplied || deal.bookingApprovalMode === "BUFFER_9_9") ? (
+          <div className="border-b border-[#eef1f5] px-5 py-3">
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] leading-relaxed text-sky-950">
+              {deal.financeBufferNote?.trim() ||
+                "Booking via 9.9% buffer. Remaining toward 10% is expected until Finance collects the shortfall."}
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1.05fr_0.95fr]">
           <div className="min-h-0 overflow-hidden border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
@@ -638,6 +671,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                         <div>
                           <p className="text-[12px] font-bold text-[#111827]">
                             Payment {entry.sequence} · {formatQuoteAmount(entry.amount)}
+                            {(entry.extraAmount ?? 0) > 0 ? (
+                              <span className="ml-1 font-semibold text-violet-700">
+                                · Extra {formatQuoteAmount(entry.extraAmount ?? 0)}
+                              </span>
+                            ) : null}
                             {entry.paymentKind ? (
                               <span className="ml-1 font-semibold text-[#059669]">
                                 · {formatPaymentKind(entry.paymentKind)}
@@ -675,6 +713,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   draftProofs={draftProofs}
                   dragActive={dragActive}
                   remainingAmount={summary.remainingAmount}
+                  paySplit={paySplit}
                   fileInputRef={fileInputRef}
                   onAmountChange={setAmountInput}
                   onNotesChange={setNotes}
@@ -765,11 +804,12 @@ function buildSummaryFromDeal(deal: DealRow): PaymentHistoryResponse {
     leadId: deal.leadId,
     leadIdentifier: deal.leadIdentifier,
     customerName: deal.customer,
-    assign: deal.assign === "—" ? null : deal.assign,
     quoteAmount: deal.dealValueAmount,
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: deal.paidAmount,
     remainingAmount: deal.remainingAmount,
+    extraAmountReceived: deal.extraAmountReceived,
+    totalAmountReceived: deal.totalAmountReceived,
     history: [],
   };
 }
@@ -994,6 +1034,7 @@ function PayFormSection({
   draftProofs,
   dragActive,
   remainingAmount,
+  paySplit,
   fileInputRef,
   onAmountChange,
   onNotesChange,
@@ -1011,6 +1052,7 @@ function PayFormSection({
   draftProofs: DraftProof[];
   dragActive: boolean;
   remainingAmount: number;
+  paySplit: { towardTen: number; extraToFinance: number } | null;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   onAmountChange: (value: string) => void;
   onNotesChange: (value: string) => void;
@@ -1023,13 +1065,19 @@ function PayFormSection({
   onRemoveProof: (id: string) => void;
   onPreviewProof: (proof: DraftProof) => void;
 }) {
+  const showExtraPreview = paySplit != null && paySplit.extraToFinance > 0;
+
   return (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Next payment</p>
 
       <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#6b7280]">
-        Enter amount to complete 10%
+        Payment amount
       </label>
+      <p className="mt-0.5 text-[11px] leading-relaxed text-[#9ca3af]">
+        Up to {formatQuoteAmount(remainingAmount)} completes the 10% target. Any amount above that is
+        recorded as extra and sent to Finance.
+      </p>
       <div className="mt-1.5 flex items-center gap-2">
         <span className="text-sm font-semibold text-[#374151]">₹</span>
         <input
@@ -1048,6 +1096,22 @@ function PayFormSection({
       >
         Use full remaining ({formatQuoteAmount(remainingAmount)})
       </button>
+
+      {showExtraPreview && paySplit ? (
+        <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-[12px] leading-relaxed text-violet-950">
+          <p>
+            <span className="font-semibold">{formatQuoteAmount(paySplit.towardTen)}</span> toward
+            10% target
+            {paySplit.extraToFinance > 0 ? (
+              <>
+                {" "}
+                · <span className="font-semibold">{formatQuoteAmount(paySplit.extraToFinance)}</span>{" "}
+                extra to Finance
+              </>
+            ) : null}
+          </p>
+        </div>
+      ) : null}
 
       <label className="mt-4 block text-[11px] font-semibold uppercase tracking-wide text-[#6b7280]">
         Notes (optional)

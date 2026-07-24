@@ -11,7 +11,9 @@ export type ActivityType =
   /** Backend `DesignQA_Link` — invitation email / persisted quiz URL. */
   | "design_qa_invite"
   /** Backend `DESIGN_QA_SUBMITTED` — customer submitted external Design QA form. */
-  | "design_qa_submitted";
+  | "design_qa_submitted"
+  /** Booking & Token handoff, cancel, restore, refund audit events. */
+  | "booking_token";
 
 export interface ActivityItem {
   id: string;

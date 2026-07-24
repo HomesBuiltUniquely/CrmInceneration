@@ -20,6 +20,32 @@ export function isAfterCancellationWindow(submittedAt: string, nowMs = Date.now(
   return nowMs - submittedMs >= BOOKING_CANCELLATION_WINDOW_MS;
 }
 
+export function isCancelledBookingTokenDeal(deal: {
+  isCancelled?: boolean;
+  listingType?: string | null;
+  bookingStatus?: string | null;
+}): boolean {
+  return (
+    deal.isCancelled === true ||
+    deal.listingType === "cancel" ||
+    isCancelledBookingStatus(String(deal.bookingStatus ?? ""))
+  );
+}
+
+/** Super admin may delete cancelled deals anytime; others only after the 24h handoff window. */
+export function canSuperAdminDeleteBookingTokenDeal(
+  deal: {
+    isCancelled?: boolean;
+    listingType?: string | null;
+    bookingStatus?: string | null;
+    submittedAt: string;
+  },
+  nowMs = Date.now(),
+): boolean {
+  if (isCancelledBookingTokenDeal(deal)) return true;
+  return isAfterCancellationWindow(deal.submittedAt, nowMs);
+}
+
 export function cancellationWindowClosesAt(submittedAt: string): Date | null {
   const submittedMs = parseSubmittedAtMs(submittedAt);
   if (submittedMs == null) return null;

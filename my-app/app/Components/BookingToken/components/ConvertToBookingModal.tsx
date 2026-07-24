@@ -18,7 +18,7 @@ import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { getLeadDetail } from "@/lib/lead-details-client";
 import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 import type { CrmLeadType } from "@/lib/leads-filter";
-import { isTokenReadyForBookingConvert } from "@/lib/booking-token-listing-type";
+import { resolveCanConvertToBooking } from "@/lib/booking-token-buffer";
 import {
   getConfigurationScopeRequirements,
   putConfigurationScopeRequirements,
@@ -29,6 +29,7 @@ import BookingCelebrationOverlay from "./BookingCelebrationOverlay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
 import { dealLevelLabel } from "@/lib/booking-token-listing-type";
+import { resolveCustomerPaymentBreakdown } from "@/lib/booking-payment-overpay";
 
 type Props = {
   open: boolean;
@@ -92,6 +93,8 @@ function buildSummaryFromDeal(deal: DealRow): PaymentHistoryResponse {
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: deal.paidAmount,
     remainingAmount: deal.remainingAmount,
+    extraAmountReceived: deal.extraAmountReceived,
+    totalAmountReceived: deal.totalAmountReceived,
     history: [],
   };
 }
@@ -156,12 +159,29 @@ export default function ConvertToBookingModal({
 
   const readyToConvert =
     deal != null &&
-    isTokenReadyForBookingConvert(
-      deal.listingType,
-      deal.remainingAmount,
-      deal.tenPercentAmount,
-      deal.paidAmount,
-    );
+    resolveCanConvertToBooking({
+      listingType: deal.listingType,
+      remainingAmount: deal.remainingAmount,
+      canConvertToBooking: deal.canConvertToBooking ?? null,
+      bookingApprovalMode: deal.bookingApprovalMode,
+      bufferApplied: deal.bufferApplied,
+      bufferThresholdAmount: deal.bufferThresholdAmount,
+      tenPercentAmount: deal.tenPercentAmount,
+      quoteAmount: deal.dealValueAmount,
+      paidAmount: deal.paidAmount,
+    });
+
+  const bufferConvert = deal?.bufferApplied || deal?.bookingApprovalMode === "BUFFER_9_9";
+
+  const paymentBreakdown = summary
+    ? resolveCustomerPaymentBreakdown({
+        tenPercentAmount: summary.tenPercentAmount,
+        amountReceived: summary.amountReceived,
+        remainingAmount: summary.remainingAmount,
+        extraAmountReceived: summary.extraAmountReceived,
+        totalAmountReceived: summary.totalAmountReceived,
+      })
+    : null;
 
   const loadHistory = useCallback(async () => {
     if (!deal) return;
@@ -378,7 +398,13 @@ export default function ConvertToBookingModal({
         <BookingCelebrationOverlay
           title="Booking Confirmed!"
           subtitle={`${deal.customer} is now in the Booking bucket.`}
-          detail="Full 10% received · Booking complete"
+          detail={
+            bufferConvert
+              ? `9.9% buffer applied · ${formatQuoteAmount(summary.remainingAmount)} still due toward 10%`
+              : (paymentBreakdown?.extraToFinance ?? 0) > 0
+                ? `Full 10% received · ${formatQuoteAmount(paymentBreakdown!.extraToFinance)} extra sent to Finance`
+                : "Full 10% received · Booking complete"
+          }
           onDone={handleCelebrationDone}
         />
       ) : null}
@@ -462,11 +488,28 @@ export default function ConvertToBookingModal({
                 <InfoCard label="Level" value={dealLevelLabel(deal)} />
                 <InfoCard label="Booking date" value={formatBookingDateDisplay(deal.bookingDate)} />
                 <InfoCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
-                <InfoCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                 <InfoCard
-                  label="Amount paid"
-                  value={formatQuoteAmount(summary.amountReceived)}
+                  label="10% required"
+                  value={formatQuoteAmount(paymentBreakdown?.tenPercentTarget ?? summary.tenPercentAmount)}
+                />
+                <InfoCard
+                  label="Paid toward 10%"
+                  value={formatQuoteAmount(paymentBreakdown?.towardTen ?? summary.amountReceived)}
                   tone="success"
+                />
+                {(paymentBreakdown?.extraToFinance ?? 0) > 0 ? (
+                  <InfoCard
+                    label="Extra (Finance)"
+                    value={formatQuoteAmount(paymentBreakdown!.extraToFinance)}
+                    tone="extra"
+                  />
+                ) : null}
+                <InfoCard
+                  label="Customer paid (total)"
+                  value={formatQuoteAmount(
+                    paymentBreakdown?.totalCustomerPaid ?? summary.amountReceived,
+                  )}
+                  tone={(paymentBreakdown?.extraToFinance ?? 0) > 0 ? "extra" : "default"}
                 />
                 {summary.remainingAmount > 0 ? (
                   <InfoCard
@@ -476,6 +519,13 @@ export default function ConvertToBookingModal({
                   />
                 ) : null}
               </div>
+              {(paymentBreakdown?.extraToFinance ?? 0) > 0 ? (
+                <p className="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2.5 text-[12px] leading-relaxed text-violet-950">
+                  Customer paid {formatQuoteAmount(paymentBreakdown!.totalCustomerPaid)} in total —
+                  {formatQuoteAmount(paymentBreakdown!.tenPercentTarget)} was required for 10%, and{" "}
+                  {formatQuoteAmount(paymentBreakdown!.extraToFinance)} is extra for Finance.
+                </p>
+              ) : null}
             </section>
             <section>
               <div className="flex items-center justify-between">
@@ -565,8 +615,13 @@ export default function ConvertToBookingModal({
 
             {!readyToConvert ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                Full 10% must be received before converting. Remaining:{" "}
-                {formatQuoteAmount(summary.remainingAmount)}.
+                Customer must reach at least 9.9% of the quote before converting. Remaining toward
+                10%: {formatQuoteAmount(summary.remainingAmount)}.
+              </div>
+            ) : bufferConvert ? (
+              <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm leading-relaxed text-sky-950">
+                {deal.financeBufferNote?.trim() ||
+                  `9.9% buffer applies. ${formatQuoteAmount(summary.remainingAmount)} still shows as remaining toward the 10% target for Finance.`}
               </div>
             ) : (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-relaxed text-emerald-900">
@@ -613,6 +668,11 @@ export default function ConvertToBookingModal({
                               <div className="min-w-0">
                                 <p className="text-[13px] font-bold text-[#111827]">
                                   Payment {entry.sequence} · {formatQuoteAmount(entry.amount)}
+                                  {(entry.extraAmount ?? 0) > 0 ? (
+                                    <span className="ml-1 font-semibold text-violet-700">
+                                      · Extra {formatQuoteAmount(entry.extraAmount ?? 0)}
+                                    </span>
+                                  ) : null}
                                 </p>
                                 <p className="mt-1 text-[11px] text-[#6b7280]">
                                   Paid {formatQuoteAmount(entry.cumulativeReceived)}
@@ -698,14 +758,16 @@ function InfoCard({
 }: {
   label: string;
   value: string;
-  tone?: "default" | "success" | "warning";
+  tone?: "default" | "success" | "warning" | "extra";
 }) {
   const toneClass =
     tone === "success"
       ? "border-[#bbf7d0] bg-[#ecfdf5]"
       : tone === "warning"
         ? "border-amber-200 bg-amber-50"
-        : "border-[#e5e7eb] bg-white";
+        : tone === "extra"
+          ? "border-violet-200 bg-violet-50"
+          : "border-[#e5e7eb] bg-white";
 
   return (
     <div
@@ -737,6 +799,11 @@ function PaymentDetailSection({
       </p>
       <p className="mt-2 text-[14px] font-bold text-[#111827]">
         {formatQuoteAmount(entry.amount)} received
+        {(entry.extraAmount ?? 0) > 0 ? (
+          <span className="ml-1 text-[12px] font-semibold text-violet-700">
+            · Extra {formatQuoteAmount(entry.extraAmount ?? 0)} to Finance
+          </span>
+        ) : null}
         {entry.paymentKind ? (
           <span className="ml-1 text-[12px] font-semibold text-[#059669]">
             · {formatPaymentKind(entry.paymentKind)}

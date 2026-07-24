@@ -27,8 +27,8 @@ export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
 };
 
-type ActivityKind = "note" | "update" | "call";
-type FilterId = "all" | "calls" | "notes" | "updates";
+type ActivityKind = "note" | "update" | "call" | "booking_token";
+type FilterId = "all" | "calls" | "notes" | "updates" | "booking_token";
 
 type DisplayActivityItem = {
   id: string;
@@ -82,11 +82,13 @@ const MOCK_FILTER_COUNTS = {
   calls: 1,
   notes: 3,
   updates: 25,
+  booking_token: 0,
 };
 
 function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
   if (type === "note") return "note";
   if (type === "call") return "call";
+  if (type === "booking_token") return "booking_token";
   return "update";
 }
 
@@ -259,9 +261,10 @@ const ActivityHistoryWithConnector = forwardRef<
               if (item.kind === "call") acc.calls += 1;
               if (item.kind === "note") acc.notes += 1;
               if (item.kind === "update") acc.updates += 1;
+              if (item.kind === "booking_token") acc.booking_token += 1;
               return acc;
             },
-            { all: 0, calls: 0, notes: 0, updates: 0 },
+            { all: 0, calls: 0, notes: 0, updates: 0, booking_token: 0 },
           )
         : MOCK_FILTER_COUNTS,
     [displayActivities, hasApiActivities],
@@ -292,6 +295,7 @@ const ActivityHistoryWithConnector = forwardRef<
         if (filter === "all") return true;
         if (filter === "calls") return item.kind === "call";
         if (filter === "notes") return item.kind === "note";
+        if (filter === "booking_token") return item.kind === "booking_token";
         return item.kind === "update";
       }),
     [displayActivities, filter],
@@ -504,6 +508,14 @@ const ActivityHistoryWithConnector = forwardRef<
                   label={`Updates ${filterCounts.updates}`}
                   icon="🔄"
                 />
+                {filterCounts.booking_token > 0 ? (
+                  <FilterPill
+                    active={filter === "booking_token"}
+                    onClick={() => setFilter("booking_token")}
+                    label={`Booking & Token ${filterCounts.booking_token}`}
+                    icon="🏷️"
+                  />
+                ) : null}
               </div>
 
               <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">

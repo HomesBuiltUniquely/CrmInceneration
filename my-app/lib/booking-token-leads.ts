@@ -12,17 +12,29 @@ import {
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount, resolveQuoteVerifyUrl, type LeadQuoteOption } from "@/lib/crm-quote-links";
 import {
-  canShowCancellation,
   canShowConvert,
   canShowPay,
   isCancelListingType,
   resolveListingType,
+  resolveShowCancellationButton,
 } from "@/lib/booking-token-listing-type";
 import { isCancelledBookingStatus } from "@/lib/booking-token-cancellation";
 import { normalizeFinanceReviewStatus } from "@/lib/booking-token-finance-status";
+import {
+  isBufferAppliedDeal,
+  readOptionalDealBoolean,
+  readOptionalDealNumber,
+  resolveBookingBufferFields,
+} from "@/lib/booking-token-buffer";
 import type { BookingTokenDeal } from "@/lib/booking-done-api";
 import type { PaymentHistoryEntry } from "@/lib/booking-payment-history-api";
-import type { BookingStatus, DealRow, LedgerItem, TokenStatus, CancellationApprovalStatus } from "@/app/Components/BookingToken/types";
+import type {
+  BookingStatus,
+  DealRow,
+  LedgerItem,
+  TokenStatus,
+  CancellationApprovalStatus,
+} from "@/app/Components/BookingToken/types";
 import { displayDash } from "@/lib/booking-token-display-format";
 
 export const RECENT_LEDGER_ITEM_LIMIT = 5;
@@ -98,6 +110,7 @@ function normalizeCancellationApprovalStatus(
   const normalized = String(value ?? "").trim().toUpperCase();
   if (normalized === "PENDING") return "PENDING";
   if (normalized === "REJECTED") return "REJECTED";
+  if (normalized === "APPROVED") return "APPROVED";
   return "NONE";
 }
 
@@ -187,6 +200,26 @@ function resolveBookingDate(deal: BookingTokenDeal): string | null {
   );
 }
 
+function resolveBookingBufferFieldsFromDeal(deal: BookingTokenDeal) {
+  const raw = deal as BookingTokenDeal & Record<string, unknown>;
+  return resolveBookingBufferFields({
+    listingType: resolveListingType(deal),
+    remainingAmount: resolveRemainingAmount(deal),
+    canConvertToBooking:
+      readOptionalDealBoolean(raw, "canConvertToBooking", "can_convert_to_booking") ?? null,
+    bookingApprovalMode:
+      (raw.bookingApprovalMode ?? raw.booking_approval_mode) as string | null | undefined,
+    bufferApplied: readOptionalDealBoolean(raw, "bufferApplied", "buffer_applied") ?? null,
+    bufferThresholdAmount:
+      readOptionalDealNumber(raw, "bufferThresholdAmount", "buffer_threshold_amount") ?? null,
+    shortfallAmount: readOptionalDealNumber(raw, "shortfallAmount", "shortfall_amount") ?? null,
+    financeBufferNote: readOptionalDealString(deal, "financeBufferNote", "finance_buffer_note"),
+    tenPercentAmount: deal.tenPercentAmount ?? null,
+    quoteAmount: deal.dealValue,
+    preBookingAmount: deal.preBookingAmount,
+  });
+}
+
 export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
   const paymentKind = String(deal.paymentKind ?? "").toUpperCase();
   const assetParts = [
@@ -202,6 +235,7 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
   const isPendingCancellation =
     cancellationApprovalStatus === "PENDING" ||
     mapHubBookingStatus(deal.bookingStatus) === "pending_cancellation";
+  const bufferFields = resolveBookingBufferFieldsFromDeal(deal);
 
   return {
     id: deal.id,
@@ -220,6 +254,10 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     dealValueAmount: deal.dealValue,
     preBooking: formatQuoteAmount(deal.preBookingAmount),
     paidAmount: deal.preBookingAmount,
+    extraAmountReceived:
+      readOptionalDealNumber(deal, "extraAmountReceived", "extra_amount_received") ?? undefined,
+    totalAmountReceived:
+      readOptionalDealNumber(deal, "totalAmountReceived", "total_amount_received") ?? undefined,
     tenPercentTarget: formatQuoteAmount(deal.tenPercentAmount),
     tenPercentAmount: deal.tenPercentAmount ?? Math.round(deal.dealValue * 0.1),
     remaining: formatQuoteAmount(remaining),
@@ -230,10 +268,25 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     submittedAt: deal.submittedAt,
     isCancelled,
     listingType,
-    showCancellation:
-      canShowCancellation(listingType, deal.submittedAt) && !isPendingCancellation,
+    showCancellation: resolveShowCancellationButton(
+      {
+        listingType,
+        submittedAt:
+          readOptionalDealString(deal, "createdAt", "created_at") ?? deal.submittedAt,
+        bookingStatus: deal.bookingStatus,
+        cancellationApprovalStatus: deal.cancellationApprovalStatus,
+      },
+    ),
     showPay: canShowPay(listingType, remaining) && !isPendingCancellation,
-    showConvert: canShowConvert(listingType, remaining) && !isPendingCancellation,
+    showConvert:
+      canShowConvert(listingType, remaining, bufferFields.canConvertToBooking) &&
+      !isPendingCancellation,
+    canConvertToBooking: bufferFields.canConvertToBooking,
+    bookingApprovalMode: bufferFields.bookingApprovalMode,
+    bufferThresholdAmount: bufferFields.bufferThresholdAmount,
+    bufferApplied: bufferFields.bufferApplied,
+    shortfallAmount: bufferFields.shortfallAmount,
+    financeBufferNote: bufferFields.financeBufferNote,
     cancellationReason: deal.cancellationReason ?? null,
     cancelledAt: deal.cancelledAt ?? null,
     cancelledByName:
@@ -278,7 +331,34 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
         "approvedAt",
         "approved_at",
       ) ?? deal.cancellationApprovedAt ?? null,
+    cancellationRejectReason:
+      readOptionalDealString(
+        deal,
+        "cancellationRejectReason",
+        "cancellation_reject_reason",
+      ) ?? deal.cancellationRejectReason ?? null,
+    cancellationAttemptCount:
+      readOptionalDealNumber(deal, "cancellationAttemptCount", "cancellation_attempt_count") ??
+      undefined,
+    cancellationLastRejectAt:
+      readOptionalDealString(
+        deal,
+        "cancellationLastRejectAt",
+        "cancellation_last_reject_at",
+      ) ?? deal.cancellationLastRejectAt ?? null,
+    previousListingType:
+      readOptionalDealString(deal, "previousListingType", "previous_listing_type") ??
+      deal.previousListingType ??
+      null,
+    previousMilestoneSubstage:
+      readOptionalDealString(
+        deal,
+        "previousMilestoneSubstage",
+        "previous_milestone_substage",
+      ) ?? deal.previousMilestoneSubstage ?? null,
     canApproveCancellation: Boolean(deal.canApproveCancellation),
+    canRestoreBookingTokenCancellation: Boolean(deal.canRestoreBookingTokenCancellation),
+    canResubmitBookingTokenCancellation: Boolean(deal.canResubmitBookingTokenCancellation),
   };
 }
 
@@ -318,6 +398,14 @@ function ledgerTitleForEntry(entry: PaymentHistoryEntry): string {
   if (source === "booking_done") return "Booking Done handoff";
   if (source === "pay_action") return "Payment recorded";
   if (source === "admin_adjustment") return "Payment adjusted";
+  if (
+    source === "buffer_convert" ||
+    source === "convert_to_booking" ||
+    source === "booking_convert"
+  ) {
+    return "Converted to booking (9.9% buffer)";
+  }
+  if (source.includes("convert")) return "Converted to booking";
   return entry.sequence <= 1 ? "Booking Done handoff" : "Payment recorded";
 }
 
@@ -346,6 +434,32 @@ function paymentHistoryEntryToLedgerItem(
     time: formatRelativeTime(entry.createdAt),
     tone: ledgerToneForEntry(entry),
     occurredAt: entry.createdAt,
+  };
+}
+
+function bufferConvertToLedgerItem(deal: BookingTokenDeal): LedgerItemDraft | null {
+  const listingType = resolveListingType(deal);
+  if (listingType !== "booking") return null;
+  if (!isBufferAppliedDeal(deal)) return null;
+
+  const remaining = resolveRemainingAmount(deal);
+  const raw = deal as BookingTokenDeal & Record<string, unknown>;
+  const note =
+    readOptionalDealString(deal, "financeBufferNote", "finance_buffer_note") ??
+    (remaining > 0
+      ? `Booking via 9.9% buffer; ${formatQuoteAmount(remaining)} still pending toward 10%`
+      : "Booking via 9.9% buffer");
+  const occurredAt =
+    readOptionalDealString(deal, "updatedAt", "updated_at") ??
+    deal.submittedAt;
+
+  return {
+    id: `ledger-buffer-convert-${deal.id}-${occurredAt}`,
+    title: "Converted to booking (9.9% buffer)",
+    detail: `${deal.customerName} — ${note}`,
+    time: formatRelativeTime(occurredAt),
+    tone: "info",
+    occurredAt,
   };
 }
 
@@ -388,6 +502,15 @@ export function buildRecentLedgerItems(
 
     const cancelItem = cancellationToLedgerItem(deal);
     if (cancelItem) drafts.push(cancelItem);
+
+    const bufferConvertItem = bufferConvertToLedgerItem(deal);
+    if (bufferConvertItem) {
+      const hasConvertHistory = entries?.some((entry) => {
+        const source = (entry.source ?? "").toLowerCase();
+        return source.includes("convert");
+      });
+      if (!hasConvertHistory) drafts.push(bufferConvertItem);
+    }
   }
 
   return drafts

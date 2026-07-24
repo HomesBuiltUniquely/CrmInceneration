@@ -1110,7 +1110,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase().replace(/\s+/g, "_");
   if (u.includes("QUOTE_SENT_TO_CUSTOMER") || u === "QUOTE_SENT") return "quote_sent_to_customer";
-  if (u.includes("BOOKING_TOKEN")) return "status";
+  if (u.includes("BOOKING_TOKEN")) return "booking_token";
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";
@@ -1175,4 +1175,13 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
     const at = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
     return bt - at;
   });
+}
+
+/** Hub activities for lead detail (B&T events use activityType BOOKING_TOKEN_*). */
+export function mapLeadActivitiesJson(
+  rows: unknown,
+  _leadType?: import("@/lib/leads-filter").CrmLeadType,
+  _leadId?: string,
+): ActivityItem[] {
+  return mapActivitiesJson(rows);
 }

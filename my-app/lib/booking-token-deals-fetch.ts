@@ -8,6 +8,7 @@ import {
 import {
   bookingDealFilterQueryParams,
   filterDealRowsByAssigneeScope,
+  filterDealRowsByBufferScope,
   type BookingDealFilterState,
   DEFAULT_BOOKING_DEAL_FILTERS,
 } from "@/lib/booking-token-deal-filters";
@@ -69,6 +70,20 @@ export function filterDealRowsForTab(rows: DealRow[], tab: BookingTokenTab): Dea
     default:
       return rows;
   }
+}
+
+function applyClientDealFilters(
+  rows: DealRow[],
+  dealFilters: BookingDealFilterState,
+): DealRow[] {
+  let next = rows;
+  if (dealFilters.teamAssigneeScopes.length > 0) {
+    next = filterDealRowsByAssigneeScope(next, dealFilters.teamAssigneeScopes);
+  }
+  if (dealFilters.bufferDealsOnly) {
+    next = filterDealRowsByBufferScope(next);
+  }
+  return next;
 }
 
 export function filterApiDealsByDate(
@@ -141,10 +156,7 @@ export async function fetchDashboardDealRows(
     size: opts.size ?? BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
   });
   const rows = deals.map(bookingTokenDealToDealRow);
-  if (dealFilters.teamAssigneeScopes.length > 0) {
-    return filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
-  }
-  return rows;
+  return applyClientDealFilters(rows, dealFilters);
 }
 
 /** Paginated deals for the dashboard table (10 per page by default). */
@@ -157,14 +169,15 @@ export async function fetchDashboardDealsPage(
   const apiParams = bookingDealFilterQueryParams(dealFilters);
   const managerOnlyClientFilter =
     dealFilters.teamAssigneeScopes.length > 0 && !apiParams.assignee;
+  const clientSidePagination = managerOnlyClientFilter || dealFilters.bufferDealsOnly;
 
-  if (managerOnlyClientFilter) {
+  if (clientSidePagination) {
     const deals = await fetchDashboardBookingTokenDeals({
       ...opts,
       size: BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
     });
     let rows = deals.map(bookingTokenDealToDealRow);
-    rows = filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
+    rows = applyClientDealFilters(rows, dealFilters);
     const totalElements = rows.length;
     const totalPages = Math.max(1, Math.ceil(totalElements / size));
     const safePage = Math.min(page, totalPages - 1);
@@ -189,9 +202,7 @@ export async function fetchDashboardDealsPage(
   let deals = filterApiDealsByDate(response.deals, opts.dateFilter);
   deals = filterApiDealsForTab(deals, opts.tab);
   let rows = deals.map(bookingTokenDealToDealRow);
-  if (dealFilters.teamAssigneeScopes.length > 0) {
-    rows = filterDealRowsByAssigneeScope(rows, dealFilters.teamAssigneeScopes);
-  }
+  rows = applyClientDealFilters(rows, dealFilters);
 
   return {
     rows,

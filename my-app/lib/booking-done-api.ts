@@ -87,12 +87,29 @@ export type BookingTokenDeal = {
   cancellationRequestedByName?: string | null;
   cancellationApprovedByName?: string | null;
   cancellationApprovedAt?: string | null;
+  cancellationRejectReason?: string | null;
+  cancellationReviewedAt?: string | null;
+  cancellationReviewedByName?: string | null;
+  cancellationAttemptCount?: number | null;
+  cancellationLastRejectAt?: string | null;
+  previousListingType?: string | null;
+  previousMilestoneSubstage?: string | null;
+  cancellationPayload?: string | null;
   canApproveCancellation?: boolean;
+  canRestoreBookingTokenCancellation?: boolean;
+  canResubmitBookingTokenCancellation?: boolean;
   paymentProofCount?: number;
   financeReviewStatus?: string;
   financeReviewAt?: string | null;
   financeReviewBy?: string | null;
   financeRejectReason?: string | null;
+  /** 9.9% of quote — minimum cumulative paid to convert. */
+  bufferThresholdAmount?: number | null;
+  bookingApprovalMode?: "FULL_10" | "BUFFER_9_9" | "PENDING" | string | null;
+  bufferApplied?: boolean | null;
+  shortfallAmount?: number | null;
+  canConvertToBooking?: boolean | null;
+  financeBufferNote?: string | null;
 };
 
 export type BookingTokenDealsResponse = {
@@ -281,6 +298,12 @@ export type BookingTokenCancelResponse = {
   cancelledAt?: string | null;
   /** Partial cancel — ids that were voided */
   cancelledPaymentEntryIds?: string[];
+  /** Hub lead sync — use for immediate UI refresh after cancel */
+  leadType?: string | null;
+  leadId?: number | null;
+  milestoneStage?: string | null;
+  milestoneStageCategory?: string | null;
+  milestoneSubStage?: string | null;
 };
 
 export async function cancelBookingTokenDeal(
@@ -317,6 +340,9 @@ export type BookingTokenConvertResponse = {
   bookingStatus?: string;
   designLeadId?: number | null;
   designSyncError?: string | null;
+  bookingApprovalMode?: "FULL_10" | "BUFFER_9_9" | "PENDING" | string;
+  bufferApplied?: boolean;
+  financeBufferNote?: string | null;
 };
 
 export async function convertBookingTokenDeal(
@@ -389,6 +415,26 @@ export async function rejectBookingTokenCancellation(
   const text = await res.text();
   if (!res.ok) {
     throw new Error(parseApiError(text, "Unable to reject cancellation."));
+  }
+  return JSON.parse(text) as BookingTokenCancelApprovalResponse;
+}
+
+export async function resubmitBookingTokenCancellation(
+  recordId: string,
+): Promise<BookingTokenCancelApprovalResponse> {
+  const res = await fetch(
+    `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/cancel/resubmit`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+      body: "{}",
+      cache: "no-store",
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to resubmit cancellation."));
   }
   return JSON.parse(text) as BookingTokenCancelApprovalResponse;
 }
