@@ -300,3 +300,196 @@ export async function syncConvertBookingToDesignModule(
     `${lastError}. Restart Design Module backend (DesignModulephase1/backend npm run dev) on ${DESIGN_MODULE_URL}.`,
   );
 }
+
+export type DesignModuleRefundSyncOptions = {
+  cancellationReason?: string | null;
+  cancelledAt?: string | null;
+  cancellationApprovedAt?: string | null;
+  cancellationApprovedBy?: string | null;
+  refundScope?: "deal" | "payments";
+  cancelledPaymentEntryIds?: string[];
+};
+
+export type DesignModuleRefundSyncResult = {
+  refundId?: string;
+  refundAmount?: number;
+  designLeadId?: number;
+  bookingTokenRecordId?: string;
+};
+
+function mapPaymentHistoryPayload(
+  paymentHistory: PaymentHistoryResponse,
+  recordId: string,
+) {
+  return paymentHistory.history.map((entry) => ({
+    id: entry.id,
+    sequence: entry.sequence,
+    amount: entry.amount,
+    extraAmount: entry.extraAmount ?? 0,
+    cumulativeReceived: entry.cumulativeReceived,
+    remainingAfter: entry.remainingAfter,
+    paymentKind: entry.paymentKind,
+    source: entry.source,
+    notes: entry.notes,
+    createdAt: entry.createdAt,
+    financeReviewStatus: entry.financeReviewStatus,
+    proofs: (entry.proofs ?? []).map((proof) => ({
+      id: proof.id,
+      originalFileName: proof.originalFileName,
+      mimeType: proof.mimeType,
+      sizeBytes: proof.sizeBytes,
+      uploadedAt: proof.uploadedAt,
+      contentPath:
+        proof.viewUrl?.trim() ||
+        hubProofContentPath(recordId, proof.id),
+    })),
+  }));
+}
+
+function readRefundTotals(paymentHistory: PaymentHistoryResponse) {
+  const amountReceived = Math.max(0, paymentHistory.amountReceived ?? 0);
+  const tenPercentAmount = Math.max(0, paymentHistory.tenPercentAmount ?? 0);
+  const extraAmountReceived = Math.max(
+    0,
+    paymentHistory.extraAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "extra_amount_received") ??
+      Math.max(0, amountReceived - tenPercentAmount),
+  );
+  const totalCustomerPaid = Math.max(
+    0,
+    paymentHistory.totalAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "total_amount_received") ??
+      amountReceived + extraAmountReceived,
+  );
+  const amountTowardTen = Math.min(amountReceived, tenPercentAmount);
+
+  return {
+    amountReceived,
+    tenPercentAmount,
+    extraAmountReceived,
+    totalAmountReceived: totalCustomerPaid,
+    amountTowardTen,
+    extraAmountRefund: extraAmountReceived,
+  };
+}
+
+export function buildDesignModuleRefundPayload(
+  paymentHistory: PaymentHistoryResponse,
+  recordId: string,
+  options: DesignModuleRefundSyncOptions = {},
+): Record<string, unknown> {
+  const syncEligibility = resolveFinanceSyncEligibility(paymentHistory);
+  const base = buildDesignModuleConvertPayload(paymentHistory, recordId, syncEligibility);
+  const totals = readRefundTotals(paymentHistory);
+  const refundScope = options.refundScope ?? "deal";
+  const cancelledEntryIds = options.cancelledPaymentEntryIds ?? [];
+
+  let refundAmount = totals.totalAmountReceived;
+  if (refundScope === "payments" && cancelledEntryIds.length > 0) {
+    refundAmount = paymentHistory.history
+      .filter((entry) => cancelledEntryIds.includes(entry.id))
+      .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
+  return {
+    ...base,
+    eventType: "refund_processed",
+    refundScope,
+    cancelledPaymentEntryIds: cancelledEntryIds,
+    cancellationReason:
+      options.cancellationReason?.trim() ||
+      paymentHistory.cancellationReason?.trim() ||
+      null,
+    cancelledAt:
+      options.cancelledAt?.trim() ||
+      paymentHistory.cancelledAt?.trim() ||
+      null,
+    cancellationRequestedAt: paymentHistory.cancellationRequestedAt?.trim() || null,
+    cancellationApprovedAt:
+      options.cancellationApprovedAt?.trim() ||
+      paymentHistory.cancellationApprovedAt?.trim() ||
+      new Date().toISOString(),
+    cancellationApprovedBy:
+      options.cancellationApprovedBy?.trim() ||
+      paymentHistory.cancellationApprovedByName?.trim() ||
+      null,
+    refundAmount,
+    amountTowardTenRefund: Math.min(refundAmount, totals.amountTowardTen),
+    extraAmountRefund: totals.extraAmountRefund,
+    paymentHistory: mapPaymentHistoryPayload(paymentHistory, recordId),
+  };
+}
+
+async function postDesignModuleSync(
+  endpoints: string[],
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  let lastError = "";
+  for (const path of endpoints) {
+    const url = `${DESIGN_MODULE_URL}${path}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": HUB_SYNC_API_KEY,
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    const text = await res.text();
+    if (res.ok) {
+      try {
+        return JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    }
+    lastError = `Design Module sync failed (${res.status}) via ${path}${text ? `: ${text.slice(0, 200)}` : ""}`;
+    if (res.status !== 404) {
+      throw new Error(lastError);
+    }
+  }
+  throw new Error(
+    `${lastError}. Ensure Design Module exposes refund sync on ${DESIGN_MODULE_URL}.`,
+  );
+}
+
+/** Manager approve cancel → refund sync to Design Module Finance. */
+export async function syncRefundToDesignModule(
+  recordId: string,
+  authHeaders: AuthHeaders,
+  appOrigin?: string,
+  options: DesignModuleRefundSyncOptions = {},
+): Promise<DesignModuleRefundSyncResult> {
+  const paymentHistory = await fetchDealPaymentHistory(recordId, authHeaders, appOrigin);
+  if (!paymentHistory.leadType || !paymentHistory.leadId) {
+    throw new Error("Payment history missing leadType or leadId.");
+  }
+
+  const totals = readRefundTotals(paymentHistory);
+  if (totals.totalAmountReceived <= 0 && totals.amountReceived <= 0) {
+    throw new Error("No customer payments to refund for this deal.");
+  }
+
+  const payload = buildDesignModuleRefundPayload(paymentHistory, recordId, options);
+  const body = await postDesignModuleSync(
+    [
+      "/api/hub/booking-token/finance-refund-sync",
+      "/api/hub/crm-lead/refund-booking",
+    ],
+    payload,
+  );
+
+  return {
+    refundId: typeof body.refundId === "string" ? body.refundId : undefined,
+    refundAmount:
+      typeof body.refundAmount === "number"
+        ? body.refundAmount
+        : typeof payload.refundAmount === "number"
+          ? payload.refundAmount
+          : undefined,
+    designLeadId: typeof body.designLeadId === "number" ? body.designLeadId : undefined,
+    bookingTokenRecordId:
+      typeof body.bookingTokenRecordId === "string" ? body.bookingTokenRecordId : recordId,
+  };
+}
