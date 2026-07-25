@@ -275,7 +275,7 @@ type LeadsToolbarProps = {
   /** Temporary override for right badge on Total Leads pill. */
   totalLeadsSecondaryOverride?: number;
   totalLeadsSecondaryTitle?: string;
-  /** SALES_ADMIN / SUPER_ADMIN: "X customers (Y rows)" on Total Leads pill. */
+  /** SALES_ADMIN / SUPER_ADMIN: "X (Y rows)" on Total Leads pill. */
   adminTotalLeadsDisplay?: { uniquePrimary: number; totalRows: number };
   /** SUPER_ADMIN search only: separate Sales / Presales pool match counts. */
   superAdminSearchPoolTotals?: { sales: number; presales: number };
@@ -514,7 +514,7 @@ export default function LeadsToolbar({
   const showAdminCustomersRowsPill =
     (isSuperAdmin || isSalesAdmin) && adminTotalLeadsDisplay !== undefined;
   const totalLeadsPillLabel = showAdminCustomersRowsPill
-    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} customers (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
+    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
     : undefined;
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";
@@ -940,7 +940,9 @@ export default function LeadsToolbar({
                   (insightKey && onInsightNavigate) || leadTypeTileInteractive,
                 );
                 const isActive = Boolean(
-                  (insightKey && insightActive === insightKey) ||
+                  (insightKey &&
+                    (insightActive === insightKey ||
+                      (insightKey === "quoteSent" && insightActive === "lostQuoteSent"))) ||
                     (leadTypeTileInteractive && leadType === leadTypeFilterKey),
                 );
                 const tileClass = `rounded-xl border px-3 py-4 text-center transition-colors ${
@@ -948,12 +950,29 @@ export default function LeadsToolbar({
                     ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
                     : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
                 } ${interactive ? "cursor-pointer hover:bg-[var(--crm-surface)] w-full" : ""}`;
-                const inner = (
-                  <>
-                    <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
-                    <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{tileLabel}</div>
-                  </>
-                );
+                const quoteSentTotal = Number(leadTypeCounts.quoteSent ?? value ?? 0);
+                const quoteSentLost = Number(leadTypeCounts.lostQuoteSent ?? 0);
+                const quoteSentWon = Math.max(0, quoteSentTotal - quoteSentLost);
+                const inner =
+                  tileLabel === "Quote Sent" && isActive ? (
+                    <>
+                      <div className="text-2xl font-extrabold leading-none text-[var(--crm-accent)]">
+                        {quoteSentTotal}
+                      </div>
+                      <div className="mt-1.5 space-y-0.5 text-[10px] font-semibold leading-tight">
+                        <div className="text-emerald-700">Won {quoteSentWon}</div>
+                        <div className="text-red-600">Lost {quoteSentLost}</div>
+                      </div>
+                      <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">
+                        Quote Sent
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-2xl font-extrabold text-[var(--crm-accent)]">{String(value)}</div>
+                      <div className="mt-1 text-[12px] font-semibold text-[var(--crm-text-secondary)]">{tileLabel}</div>
+                    </>
+                  );
                 if (interactive && insightKey) {
                   return (
                     <button

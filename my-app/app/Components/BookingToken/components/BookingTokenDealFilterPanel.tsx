@@ -25,6 +25,7 @@ const EMPTY_DRAFT: BookingDealFilterDraft = {
   salesManagerId: null,
   salesExecutiveId: null,
   pendingCancellationsOnly: false,
+  bufferDealsOnly: false,
 };
 
 export default function BookingTokenDealFilterPanel({
@@ -50,6 +51,7 @@ export default function BookingTokenDealFilterPanel({
         salesManagerId: value.salesManagerId,
         salesExecutiveId: value.salesExecutiveId,
         pendingCancellationsOnly: value.pendingCancellationsOnly,
+        bufferDealsOnly: value.bufferDealsOnly,
       });
     }
   }, [open, value]);
@@ -255,6 +257,28 @@ export default function BookingTokenDealFilterPanel({
                 </label>
               </>
             ) : null}
+
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[var(--bt-border)] px-3 py-2.5 hover:bg-slate-50">
+              <input
+                type="checkbox"
+                checked={draft.bufferDealsOnly}
+                onChange={(event) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    bufferDealsOnly: event.target.checked,
+                  }))
+                }
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-[12px] font-semibold text-[var(--bt-text)]">
+                  9.9% buffer only
+                </span>
+                <span className="text-[11px] text-[var(--bt-muted)]">
+                  Finance — booking allowed below exact 10% target
+                </span>
+              </span>
+            </label>
 
             <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[var(--bt-border)] px-3 py-2.5 hover:bg-slate-50">
               <input

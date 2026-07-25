@@ -7,10 +7,9 @@ import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
 import { getEffectiveNewCrmEndDate, getEffectiveNewCrmStartDate } from "@/lib/new-crm-cutoff";
-import { appendCrmDateFilters, hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
+import { appendCrmDateFilters } from "@/lib/crm-date-field-filter";
 import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
 import { fetchWhatsappLeadsForMerge } from "@/lib/crm-whatsapp-leads";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 
 type SourceCountsResponse = Record<"all" | (typeof CRM_LEAD_TYPES)[number], number>;
 
@@ -81,24 +80,6 @@ function buildUpstreamUrl(
   return upstream;
 }
 
-function leadInCreatedDateRange(lead: ApiLead, from: string, to: string): boolean {
-  if (!from && !to) return true;
-  const raw = readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
-  if (!raw) return false;
-  const ts = Date.parse(raw);
-  if (Number.isNaN(ts)) return false;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (from) {
-    const fromTs = Date.parse(`${from}T00:00:00`);
-    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
-  }
-  if (to) {
-    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
-    if (!Number.isNaN(toTs) && ts > toTs) return false;
-  }
-  return true;
-}
-
 async function countLeadType(
   req: NextRequest,
   reqUrl: URL,
@@ -132,17 +113,11 @@ async function countLeadType(
       perType: 500,
       maxPages: 100,
     };
+    // fetchWalkInLeadsForMerge already enforces date bounds locally (Hub ignores them).
     const { leads } = await fetchWalkInLeadsForMerge(fetchCtx);
-    const skipLocalDateFilter = hubHandlesDateFilter({
-      dateFrom: effDates.from,
-      dateTo: effDates.to,
-      dateField: reqUrl.searchParams.get("dateField"),
-      crmMonthWindow: reqUrl.searchParams.get("crmMonthWindow"),
-    });
     const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
     const ids = new Set<string>();
     for (const lead of leads) {
-      if (!skipLocalDateFilter && !leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
       if (assigneeNorms.length > 0) {
         const assigneeText =
           typeof lead.assignee === "string"
@@ -195,17 +170,11 @@ async function countLeadType(
       perType: 500,
       maxPages: 100,
     };
+    // fetchWhatsappLeadsForMerge already enforces date bounds locally (Hub often ignores them).
     const { leads } = await fetchWhatsappLeadsForMerge(fetchCtx);
-    const skipLocalDateFilter = hubHandlesDateFilter({
-      dateFrom: effDates.from,
-      dateTo: effDates.to,
-      dateField: reqUrl.searchParams.get("dateField"),
-      crmMonthWindow: reqUrl.searchParams.get("crmMonthWindow"),
-    });
     const assigneeNorms = assigneeScopes.map((a) => a.trim().toLowerCase()).filter(Boolean);
     const ids = new Set<string>();
     for (const lead of leads) {
-      if (!skipLocalDateFilter && !leadInCreatedDateRange(lead, effDates.from, effDates.to)) continue;
       if (assigneeNorms.length > 0) {
         const assigneeText =
           typeof lead.assignee === "string"

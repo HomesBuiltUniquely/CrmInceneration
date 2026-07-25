@@ -24,7 +24,7 @@ import {
 } from "@/lib/friendly-api-error";
 import {
   detailJsonToLead,
-  mapActivitiesJson,
+  mapLeadActivitiesJson,
   mergeLeadIntoDetail,
   applyCustomerNameToDetail,
   pickCustomerNameFromDetail,
@@ -59,6 +59,7 @@ import Tabs, { type TabId } from "./Tabs";
 import LeadInfoTab from "./LeadInfoTab";
 import AssignmentsTab from "./AssignmentsTab";
 import ActivityTimeline from "./ActivityTimeline";
+import BookingTokenCancellationBar from "./BookingTokenCancellationBar";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
@@ -159,6 +160,9 @@ import {
 import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
 import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
+import QuoteSentCelebrationOverlay from "@/app/Components/CrmLeadDetailsV2/QuoteSentCelebrationOverlay";
+import { pickRandomQuoteSentMotivateLine } from "@/lib/quote-sent-motivate";
+import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
 import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
@@ -315,6 +319,14 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   additionalLeadSourcesList: [],
   lostReason: "",
   quoteLink: "",
+  quoteSentInfo: null,
+  quoteSentToCustomer: false,
+  quoteSentAt: null,
+  quoteSentBy: null,
+  quoteSentCount: 0,
+  lastQuoteSentAt: null,
+  lastQuoteSentBy: null,
+  quoteId: null,
   designerEmail: "",
 });
 
@@ -970,6 +982,8 @@ export default function LeadDetailsApiClient({
   const [rollbackSubStage, setRollbackSubStage] = useState("");
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
+  const [quoteCelebrateOpen, setQuoteCelebrateOpen] = useState(false);
+  const [quoteCelebrateLine, setQuoteCelebrateLine] = useState("");
   const [quoteFetching, setQuoteFetching] = useState(false);
   const [getQuoteUnlockedSticky, setGetQuoteUnlockedSticky] = useState(false);
   const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
@@ -1114,7 +1128,7 @@ export default function LeadDetailsApiClient({
       setLoading(false);
       void getLeadActivities(lt, leadId)
         .then((actJson) => {
-          const activities = mapActivitiesJson(actJson);
+          const activities = mapLeadActivitiesJson(actJson, lt, leadId);
           setLead((prev) => ({ ...prev, activities }));
           return loadCreatedTimeline(detailJson, actJson);
         })
@@ -1916,7 +1930,10 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     try {
       const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
+      setLead((prev) => ({
+        ...prev,
+        activities: mapLeadActivitiesJson(actJson, lt, leadId),
+      }));
     } catch {
       /* ignore */
     }
@@ -2358,18 +2375,52 @@ export default function LeadDetailsApiClient({
     }
     setQuoteSending(true);
     try {
-      const payload = buildEmailRequest(lead, "Quote Sent", true);
-      if (payload) {
-        payload.quoteLink = link;
-        const res = await sendEmailNotification(payload);
-        if (res.success) {
-          notifySuccess(res.message || "Quote sent.");
-        } else {
-          notifyError(res.message || "Quote send failed");
-        }
-      } else {
-        notifyError("Failed to build email payload.");
+      const quoteId =
+        lead.quoteId?.trim() ||
+        extractQuoteIdFromUrl(link) ||
+        "";
+
+      // POST /v1/quote/send — Hub updates quote_sent_info only when leadId + leadType are set.
+      const formData = new FormData();
+      formData.append("leadId", String(leadId));
+      formData.append("leadType", String(leadTypeParam));
+      formData.append("toEmail", lead.email.trim());
+      formData.append("quoteLink", link);
+      formData.append("subject", quoteSubject.trim() || "Your Hub Interior Quote");
+      formData.append("body", quoteBody.trim() || "Please find your quote in the link below.");
+      if (quoteId) formData.append("quoteId", quoteId);
+
+      await postQuoteSend(formData);
+      notifySuccess("Quote sent.");
+
+      // Reconcile from Hub (quoteSentCount / quoteSentInfo / timeline QUOTE_SENT_TO_CUSTOMER).
+      try {
+        const refreshed = await getLeadDetail(lt, leadId);
+        setBaseDetail(withStickyQuoteInDetail(refreshed, link));
+        const refreshedLead = detailJsonToLead(refreshed, lt);
+        setLead((prev) => ({
+          ...refreshedLead,
+          id: leadId,
+          quoteLink: link,
+          activities: prev.activities,
+          bookingType: prev.bookingType,
+          salesManagerName: prev.salesManagerName,
+        }));
+      } catch {
+        // Do not bump quoteSentCount locally — Hub owns send count (2 sends = same lead, count 2 on detail only).
+        patchLead({
+          quoteSentToCustomer: true,
+        });
+        setBaseDetail((prev) => ({
+          ...prev,
+          quoteSentToCustomer: true,
+        }));
       }
+
+      await refreshActivities().catch(() => undefined);
+      setQuoteCelebrateLine(pickRandomQuoteSentMotivateLine());
+      setQuoteCelebrateOpen(true);
+      dispatchCrmLeadsInvalidate();
     } catch (e) {
       notifyError(
         e instanceof Error
@@ -2385,7 +2436,10 @@ export default function LeadDetailsApiClient({
     lead.email,
     lead.externalReferenceId,
     lead.leadId,
+    lead.quoteId,
     lead.quoteLink,
+    lead.quoteSentAt,
+    lead.quoteSentCount,
     leadId,
     leadTypeParam,
     notifyError,
@@ -2393,6 +2447,7 @@ export default function LeadDetailsApiClient({
     patchLead,
     quoteBody,
     quoteSubject,
+    refreshActivities,
     validLeadType,
   ]);
 
@@ -3315,6 +3370,17 @@ export default function LeadDetailsApiClient({
 
         const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
         if (emailPayload) {
+          // Hub quote_sent_info (and other lead-bound emails) need numeric DB id + leadType.
+          emailPayload.leadId = String(leadId);
+          emailPayload.leadType = String(leadTypeParam);
+          if (emailPayload.subStage === "Quote Sent") {
+            const qLink = leadForSave.quoteLink?.trim() || "";
+            if (qLink) emailPayload.quoteLink = qLink;
+            const qid =
+              leadForSave.quoteId?.trim() ||
+              (qLink ? extractQuoteIdFromUrl(qLink) : "");
+            if (qid) emailPayload.quoteId = qid;
+          }
           void sendEmailNotification(emailPayload).then((emailResult) => {
             if (!emailResult.success) {
               notifyError(`Email warning: ${emailResult.message}`);
@@ -3474,6 +3540,11 @@ export default function LeadDetailsApiClient({
         <LeadDetailV2Provider value={v2Context}>
           <NewLeadDetailPage leadType={leadType} leadId={leadId} />
         </LeadDetailV2Provider>
+        <QuoteSentCelebrationOverlay
+          open={quoteCelebrateOpen}
+          motivateLine={quoteCelebrateLine}
+          onDone={() => setQuoteCelebrateOpen(false)}
+        />
         <CompleteTaskModal
           lead={lead}
           open={completeTaskOpen}
@@ -3623,6 +3694,11 @@ export default function LeadDetailsApiClient({
 
   return (
     <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-6 md:px-6 lg:px-8">
+      <QuoteSentCelebrationOverlay
+        open={quoteCelebrateOpen}
+        motivateLine={quoteCelebrateLine}
+        onDone={() => setQuoteCelebrateOpen(false)}
+      />
       <div className="mx-auto max-w-[1440px]">
         <TopBar
           designQaOpen={designQaOpen}
@@ -3665,6 +3741,15 @@ export default function LeadDetailsApiClient({
             window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
           }}
         />
+        {validLeadType ? (
+          <BookingTokenCancellationBar
+            leadType={leadTypeParam as CrmLeadType}
+            leadId={leadId}
+            lead={lead}
+            onLeadReload={() => void load()}
+            onActivitiesRefresh={refreshActivities}
+          />
+        ) : null}
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} viewerRole={viewerRoleKey} />
         <Tabs active={activeTab} onChange={setActiveTab} />
