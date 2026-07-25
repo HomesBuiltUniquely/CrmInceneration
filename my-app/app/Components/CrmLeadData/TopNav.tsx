@@ -15,6 +15,39 @@ import Notify, {
   type NotificationItem,
 } from "@/app/Components/Notification/Notify";
 
+// ── Read-state persistence ────────────────────────────────────────────────────
+// Store a Set of notification IDs the user has already read in localStorage
+// so that page reloads don't reset them back to "unread".
+
+const READ_IDS_KEY = "crm_read_notification_ids";
+
+function getReadIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(READ_IDS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReadIds(ids: Set<string>): void {
+  try {
+    window.localStorage.setItem(READ_IDS_KEY, JSON.stringify([...ids]));
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+/** Merge server items with persisted read state */
+function applyReadState(items: NotificationItem[]): NotificationItem[] {
+  const readIds = getReadIds();
+  if (readIds.size === 0) return items;
+  return items.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function SearchIcon() {
   return (
     <svg
@@ -54,13 +87,13 @@ export default function TopNav({
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  // Fetch live notifications once on mount
+  // Fetch live notifications once on mount, then rehydrate read state
   useEffect(() => {
     const token    = readStoredCrmToken();
     const username = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
 
     loadNotifications(token, role, username).then((items) => {
-      setNotifications(items);
+      setNotifications(applyReadState(items));
     });
   }, [role]);
 
@@ -72,13 +105,25 @@ export default function TopNav({
   };
 
   const handleMarkAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    setNotifications((prev) => {
+      const updated = prev.map((n) => ({ ...n, read: true }));
+      // Persist every ID as read
+      const readIds = getReadIds();
+      updated.forEach((n) => readIds.add(n.id));
+      saveReadIds(readIds);
+      return updated;
+    });
   };
 
   const handleNotificationClick = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, read: true } : n)),
-    );
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
+      // Persist this ID as read
+      const readIds = getReadIds();
+      readIds.add(id);
+      saveReadIds(readIds);
+      return updated;
+    });
   };
 
   return (

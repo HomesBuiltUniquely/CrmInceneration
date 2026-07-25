@@ -10,14 +10,14 @@ const LOG_PREFIX = "[NotifyProxy]";
  * Resolved from (in priority order):
  *   1. NOTIFY_API_URL  — set in .env.local or production env
  *   2. NEXT_PUBLIC_NOTIFY_API_URL — client-accessible variant
- *   3. "http://localhost:8083" — local dev fallback (set by next.config.ts)
  */
-function notifyBaseUrl(): string {
+function notifyBaseUrl(): string | null {
   const url =
     process.env.NOTIFY_API_URL ??
     process.env.NEXT_PUBLIC_NOTIFY_API_URL ??
-    "http://localhost:8083";
+    null;
   console.log(`${LOG_PREFIX} notifyBaseUrl: url=${url}`);
+  if (!url) return null;
   const cleanUrl = url.replace(/\/$/, "");
   console.log(`${LOG_PREFIX} notifyBaseUrl: returning ${cleanUrl}`);
   return cleanUrl;
@@ -41,6 +41,15 @@ export async function proxyNotifyGet(
   path: string,
 ): Promise<NextResponse> {
   const base = notifyBaseUrl();
+
+  if (!base) {
+    const message = "NOTIFY_API_URL is not configured. Set it in .env.local.";
+    console.error(`${LOG_PREFIX} ${message}`);
+    return NextResponse.json(
+      { success: false, userMessage: message, error: message },
+      { status: 502 },
+    );
+  }
 
   // Forward query params from the CRM request to the Go server unchanged.
   const incomingSearch = req.nextUrl.searchParams.toString();

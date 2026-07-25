@@ -70,12 +70,23 @@ interface RawMeetingItem {
   meetingType?: string;
   meeting_type?: string;
   milestone?: string;
-  // Timestamps
+  // Timestamps — arrival time (when the record was inserted into notify_db)
+  // The Go server may use any of these field names. We try all variants.
   timestamp?: string;
   createdAt?: string;
   created_at?: string;
   scheduledAt?: string;
   scheduled_at?: string;
+  notifiedAt?: string;
+  notified_at?: string;
+  insertedAt?: string;
+  inserted_at?: string;
+  arrivedAt?: string;
+  arrived_at?: string;
+  notifyTime?: string;
+  notify_time?: string;
+  eventTime?: string;
+  event_time?: string;
 }
 
 type MeetingTag = "SCHEDULED" | "RESCHEDULED" | "CANCELLATION" | "SUCCESS";
@@ -105,10 +116,10 @@ function tagLabel(tag: MeetingTag): string {
 
 function defaultTitle(tag: MeetingTag): string {
   switch (tag) {
-    case "SCHEDULED":    return "Meeting Scheduled";
-    case "RESCHEDULED":  return "Meeting Rescheduled";
+    case "SCHEDULED": return "Meeting Scheduled";
+    case "RESCHEDULED": return "Meeting Rescheduled";
     case "CANCELLATION": return "Meeting Cancelled";
-    case "SUCCESS":      return "Meeting Completed";
+    case "SUCCESS": return "Meeting Completed";
   }
 }
 
@@ -136,12 +147,35 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   const description =
     raw.description ?? raw.message ?? (parts.length ? parts.join(" · ") : undefined);
 
-  const timestamp =
-    raw.timestamp ??
-    raw.createdAt ??
+  // ── Arrival timestamp (when this notification entered notify_db) ──────────
+  // Priority: any "created/inserted/notified/arrived" field → fallback to
+  // meeting_date (the scheduled date) → current time as last resort.
+  // We deliberately do NOT use meeting_date as the primary because it is a
+  // future-scheduled date, not when the notification was created.
+  const arrivalTimestamp =
     raw.created_at ??
-    raw.scheduledAt ??
+    raw.createdAt ??
+    raw.inserted_at ??
+    raw.insertedAt ??
+    raw.notified_at ??
+    raw.notifiedAt ??
+    raw.arrived_at ??
+    raw.arrivedAt ??
+    raw.notify_time ??
+    raw.notifyTime ??
+    raw.event_time ??
+    raw.eventTime ??
+    raw.timestamp ??
     raw.scheduled_at ??
+    raw.scheduledAt ??
+    null;
+
+  // If no arrival time found, fall back to meeting_date so we at least show
+  // something meaningful instead of "just now" (current time).
+  const timestamp =
+    arrivalTimestamp ??
+    raw.meetingDate ??
+    raw.meeting_date ??
     new Date().toISOString();
 
   return {
@@ -230,6 +264,16 @@ async function fetchRawEndpointItems(
 
   const items = extractItems(payload);
   console.log(`${LOG_PREFIX} [${tag}] extracted ${items.length} items`);
+  // Log the first raw item so we can see exactly which timestamp fields the Go server sends
+  if (items.length > 0) {
+    const sample = items[0] as Record<string, unknown>;
+    const tsFields = Object.fromEntries(
+      Object.entries(sample).filter(([k]) =>
+        /time|date|at|stamp/i.test(k)
+      )
+    );
+    console.log(`${LOG_PREFIX} [${tag}] sample timestamp fields:`, tsFields);
+  }
   return items;
 }
 
@@ -266,10 +310,10 @@ export async function loadNotifications(
 
   // ── Step 1: Fetch raw items from all 4 endpoints in parallel ──────────────
   const rawResults = await Promise.allSettled([
-    fetchRawEndpointItems("/api/crm/meetings/scheduled",    "SCHEDULED",    role, loginUsername, authHeader),
-    fetchRawEndpointItems("/api/crm/meetings/rescheduled",  "RESCHEDULED",  role, loginUsername, authHeader),
+    fetchRawEndpointItems("/api/crm/meetings/scheduled", "SCHEDULED", role, loginUsername, authHeader),
+    fetchRawEndpointItems("/api/crm/meetings/rescheduled", "RESCHEDULED", role, loginUsername, authHeader),
     fetchRawEndpointItems("/api/crm/meetings/cancellation", "CANCELLATION", role, loginUsername, authHeader),
-    fetchRawEndpointItems("/api/crm/meetings/success",      "SUCCESS",      role, loginUsername, authHeader),
+    fetchRawEndpointItems("/api/crm/meetings/success", "SUCCESS", role, loginUsername, authHeader),
   ]);
 
   // Each endpoint returns { tag, items } so we can re-associate after filtering
