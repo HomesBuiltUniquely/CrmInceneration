@@ -7,8 +7,10 @@ import { BASE_URL } from "@/lib/base-url";
 import {
   CRM_DESIGNER_ID_STORAGE_KEY,
   CRM_DESIGNER_NAME_STORAGE_KEY,
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
+  CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   getDesignerIdFromUser,
   getDesignerNameFromUser,
@@ -44,6 +46,9 @@ export default function LoginPage() {
     try {
       const { token, user } = await login(username, password);
       localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
+      // Store the login credential — used for Go backend scope filtering
+      // (leadDetails.assigned_to stores the username, not the display name).
+      localStorage.setItem(CRM_LOGIN_USERNAME_KEY, username);
       let sessionUser: Record<string, unknown> = user;
       try {
         const me = await getMe(token);
@@ -62,6 +67,14 @@ export default function LoginPage() {
         localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
       } else {
         localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      }
+      // Store numeric user ID — used for ID-based RBAC checks (e.g. notification filtering).
+      const rawUserId = sessionUser.id ?? sessionUser.userId;
+      const numericUserId = rawUserId != null ? Number(rawUserId) : NaN;
+      if (Number.isFinite(numericUserId) && numericUserId > 0) {
+        localStorage.setItem(CRM_USER_ID_STORAGE_KEY, String(numericUserId));
+      } else {
+        localStorage.removeItem(CRM_USER_ID_STORAGE_KEY);
       }
       const designerName = getDesignerNameFromUser(sessionUser);
       const designerId = getDesignerIdFromUser(sessionUser);

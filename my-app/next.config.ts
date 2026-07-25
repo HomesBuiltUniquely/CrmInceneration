@@ -14,6 +14,12 @@ const nextConfig: NextConfig = {
   /** Expose `BASE_URL` to client bundles (same name as `.env.local`). */
   env: {
     BASE_URL: process.env.BASE_URL ?? "http://localhost:8081",
+    /**
+     * Go NotifyProject server — server-side only (no NEXT_PUBLIC_ prefix).
+     * Fallback keeps local dev working even if .env.local is missing.
+     * Override in production via the NOTIFY_API_URL environment variable.
+     */
+    NOTIFY_API_URL: process.env.NOTIFY_API_URL ?? "http://localhost:8083",
   },
 };
 
