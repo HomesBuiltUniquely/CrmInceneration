@@ -376,6 +376,10 @@ export type BookingTokenCancelApprovalResponse = {
   listingType?: string;
   bookingStatus?: string;
   cancellationApprovalStatus?: string;
+  refundId?: string | null;
+  refundAmount?: number | null;
+  designLeadId?: number | null;
+  designSyncError?: string | null;
 };
 
 export async function approveBookingTokenCancellation(
@@ -395,7 +399,13 @@ export async function approveBookingTokenCancellation(
   if (!res.ok) {
     throw new Error(parseApiError(text, "Unable to approve cancellation."));
   }
-  return JSON.parse(text) as BookingTokenCancelApprovalResponse;
+  const parsed = JSON.parse(text) as BookingTokenCancelApprovalResponse;
+  if (parsed.designSyncError?.trim()) {
+    throw new Error(
+      `Cancellation approved in CRM, but Design Module refund sync failed: ${parsed.designSyncError.trim()}`,
+    );
+  }
+  return parsed;
 }
 
 export async function rejectBookingTokenCancellation(

@@ -289,7 +289,7 @@ POST /api/hub/booking-token/finance-refund-sync
 | A (preferred) | **Hub** on `cancel/approve` — same pattern as milestone update |
 | B | **CRM BFF** after approve proxy succeeds — mirror convert sync in `design-module-hub-sync.ts` |
 
-Today: **neither A nor B is wired** → refund process incomplete.
+**Today:** CRM BFF calls Design Module on approve (Option B). Hub may also call (Option A) — avoid double refund with idempotency on `bookingTokenRecordId`.
 
 ---
 
@@ -299,7 +299,8 @@ Today: **neither A nor B is wired** → refund process incomplete.
 |------|------|--------|
 | Allow 9.9% buffer sync (not only full 10%) | `lib/design-module-hub-sync.ts` | ✅ Done — `resolveFinanceSyncEligibility()` |
 | Buffer + extra fields in payload | `buildDesignModuleConvertPayload()` | ✅ Done |
-| Refund sync helper | `lib/design-module-hub-sync.ts` | ⏳ Pending — needs Design Module refund API |
+| Refund sync on cancel approve | `lib/design-module-hub-sync.ts` → `syncRefundToDesignModule()` | ✅ CRM wired — Design Module API required |
+| Refund sync helper | `app/api/crm/booking-token/deals/[recordId]/cancel/approve/route.ts` | Calls Design Module after Hub approve |
 | Convert modal error | `lib/booking-done-api.ts` | Surfaces `designSyncError` from BFF |
 
 **Deploy CRM (Vercel/local) after pull** — old BFF still blocked with “Full 10% must be received” before this change.
