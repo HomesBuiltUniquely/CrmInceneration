@@ -199,12 +199,7 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
 function scopeForRole(role: string): "all" | "team" | "own" {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") return "all";
-  if (
-    r === "SALES_MANAGER" ||
-    r === "PRESALES_MANAGER" ||
-    r === "DESIGN_MANAGER" ||
-    r === "TERRITORY_DESIGN_MANAGER"
-  ) return "team";
+  if (r === "SALES_MANAGER" || r === "PRESALES_MANAGER") return "team";
   return "own";
 }
 

@@ -269,7 +269,16 @@ async function salesManagerAllowedSet(token: string): Promise<Set<string>> {
 async function presalesManagerAllowedSet(): Promise<Set<string>> {
   const set = new Set<string>();
   try {
-    const names = await fetchPresalesExecutiveNamesForManager(0);
+    // Read the manager's own numeric user ID from localStorage so we only fetch
+    // executives whose managerId matches this manager — not all presales execs.
+    let currentUserId = 0;
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY)?.trim();
+      const parsed = stored ? Number(stored) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) currentUserId = parsed;
+    }
+    console.log(`${LOG} presalesManagerAllowedSet: currentUserId=${currentUserId}`);
+    const names = await fetchPresalesExecutiveNamesForManager(currentUserId);
     for (const name of names) set.add(name.toLowerCase());
     console.log(`${LOG} presales manager team: ${set.size} names`);
   } catch (err) {
@@ -423,17 +432,28 @@ export async function applyNotificationRbacFilter<T extends FilterableNotificati
   console.log(`${LOG} assigneeMap.size=${assigneeMap.size}, designerMap.size=${designerMap.size}`);
 
   // If Spring returned no leads for this user the assigneeMap will be empty.
-  // For SALES_MANAGER only: Go's scope=team already pre-filtered correctly —
+  // For team-scoped managers: Go's scope=team already pre-filtered correctly —
   // trust it rather than hiding the entire team's notifications.
-  // SALES_EXECUTIVE does NOT get this bypass: Go's scope=own is exactly what's
-  // suspect when execs see others' data. An empty map → filterByName(strict)
-  // → show nothing, which is the safer default until the map is populated.
-  if (assigneeMap.size === 0 && r === "SALES_MANAGER") {
+  // Individual-scope roles (SALES_EXECUTIVE, PRESALES_EXECUTIVE) do NOT get
+  // this bypass: an empty map → strict filter → show nothing, which is the
+  // safer default until the map is populated.
+  if (assigneeMap.size === 0 && (r === "SALES_MANAGER" || r === "PRESALES_MANAGER")) {
     console.warn(`${LOG} role=${r} — assigneeMap empty, trusting Go scope result`);
     return items;
   }
 
-  // ── 3. Route by role ─────────────────────────────────────────────────────
+  // ── 3. Route by role — hierarchy rules ──────────────────────────────────
+  //
+  //  SALES hierarchy:
+  //    SALES_EXECUTIVE  → sees only their own notifications (leads assigned to them)
+  //    SALES_MANAGER    → sees all notifications for executives in their team
+  //                       (backend already JWT-scopes /api/auth/users-by-role to manager)
+  //
+  //  PRESALES hierarchy:
+  //    PRESALES_EXECUTIVE → sees only their own notifications
+  //    PRESALES_MANAGER   → sees all notifications for presales executives
+  //                         whose managerId === this manager's user ID
+  // ─────────────────────────────────────────────────────────────────────────
 
   if (r === "SALES_EXECUTIVE") {
     const allowedSet = ownAliasSet(loginCred);
@@ -441,19 +461,40 @@ export async function applyNotificationRbacFilter<T extends FilterableNotificati
   }
 
   if (r === "SALES_MANAGER") {
+    // Team set: all sales executives under this manager (JWT-scoped by backend)
     const allowedSet = await salesManagerAllowedSet(token);
-    // Include manager's own credential so their self-assigned leads appear.
+    // Also include the manager's own credential so self-assigned leads appear
     for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
+    return filterByName(items, assigneeMap, allowedSet, r, loginCred);
+  }
+
+  if (r === "PRESALES_EXECUTIVE") {
+    // Only their own leads — fail-closed (strict)
+    const allowedSet = ownAliasSet(loginCred);
     return filterByName(items, assigneeMap, allowedSet, r, loginCred);
   }
 
   if (r === "PRESALES_MANAGER") {
+    // Team set: presales executives whose managerId === this manager's user ID
     const allowedSet = await presalesManagerAllowedSet();
+    // Also include the manager's own credential so self-assigned leads appear
     for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
     return filterByName(items, assigneeMap, allowedSet, r, loginCred);
   }
 
- 
-  // PRESALES_EXECUTIVE and everything else
+  if (r === "DESIGN_MANAGER" || r === "TERRITORY_DESIGN_MANAGER") {
+    // Notifications not yet supported for design manager roles
+    console.log(`${LOG} role=${r} → notifications disabled for this role`);
+    return [];
+  }
+
+  if (r === "DESIGNER") {
+    // Designer's display name (from localStorage) may differ from login credential,
+    // so we use the dedicated set that checks both.
+    const allowedSet = designerOwnNameSet(loginCred);
+    return filterByName(items, designerMap, allowedSet, r, loginCred);
+  }
+
+  // PRESALES_EXECUTIVE and everything else — own credential only
   return filterByName(items, assigneeMap, ownAliasSet(loginCred), r, loginCred);
 }
