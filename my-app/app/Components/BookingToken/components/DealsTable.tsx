@@ -20,18 +20,21 @@ import {
   cancelBookingTokenDeal,
   convertBookingTokenDeal,
   rejectBookingTokenCancellation,
+  resubmitBookingTokenCancellation,
 } from "@/lib/booking-done-api";
 import type { BookingTokenCancelInput } from "@/lib/booking-done-api";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { deleteBookingTokenForLead } from "@/lib/booking-token-delete";
-import { isAfterCancellationWindow } from "@/lib/booking-token-cancellation";
-import { canShowCancellation } from "@/lib/booking-token-listing-type";
+import { canSuperAdminDeleteBookingTokenDeal } from "@/lib/booking-token-cancellation";
+import { resolveShowCancellationButton } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
+import { restoreBookingTokenCancellation } from "@/lib/cancellation-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isSuperAdminRole } from "@/lib/roleUtils";
 import {
   BOOKING_TOKEN_DEALS_PAGE_SIZE,
+  fetchDashboardDealRows,
   fetchDashboardDealsPage,
   filterDealRowsForTab,
 } from "@/lib/booking-token-deals-fetch";
@@ -62,6 +65,12 @@ type TableColumn = {
 
 function buildTableColumns(showRemaining: boolean): TableColumn[] {
   const cols: TableColumn[] = [
+    {
+      id: "serialNo",
+      header: "No.",
+      width: "44px",
+      headClassName: `${HEAD_CELL} text-center`,
+    },
     {
       id: "customer",
       header: "Customer",
@@ -123,12 +132,6 @@ function buildTableColumns(showRemaining: boolean): TableColumn[] {
       headClassName: STATUS_HEAD,
     },
     {
-      id: "expClose",
-      header: "Exp. Close",
-      width: "96px",
-      headClassName: `${MONEY_HEAD} text-center`,
-    },
-    {
       id: "action",
       header: "Action",
       width: `${ACTION_COL_WIDTH}px`,
@@ -153,6 +156,8 @@ const ACTION_BTN_CANCEL = "bt-btn bt-btn-action bt-btn-action-danger";
 const ACTION_BTN_DELETE = "bt-btn bt-btn-action bt-btn-action-danger";
 const ACTION_BTN_APPROVE = "bt-btn bt-btn-action bt-btn-action-convert";
 const ACTION_BTN_REJECT = "bt-btn bt-btn-action bt-btn-action-danger";
+const ACTION_BTN_RESTORE = "bt-btn bt-btn-action bt-btn-action-convert";
+const ACTION_BTN_RESUBMIT = "bt-btn bt-btn-action bt-btn-action-pay";
 
 function ActionButtonStack({ children }: { children: ReactNode }) {
   return (
@@ -163,6 +168,144 @@ function ActionButtonStack({ children }: { children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+function tableTextCell(value: string, muted = false): ReactNode {
+  return (
+    <span
+      className={`block truncate text-xs whitespace-nowrap ${
+        muted ? "text-[var(--bt-muted)]" : "text-[var(--bt-text)]"
+      }`}
+      title={value === "—" ? undefined : value}
+    >
+      {value}
+    </span>
+  );
+}
+
+function renderDealCell(
+  row: DealRow,
+  columnId: string,
+  opts: {
+    showRemainingColumn: boolean;
+    stickyBg: string;
+    highlighted: boolean;
+    nowMs: number;
+    isSuperAdmin: boolean;
+    approveSubmitting: boolean;
+    rowIndex: number;
+    onView: (row: DealRow) => void;
+    onPay: (row: DealRow) => void;
+    onCancel: (row: DealRow) => void;
+    onConvert: (row: DealRow) => void;
+    onDelete: (row: DealRow) => void;
+    onApproveCancellation: (row: DealRow) => void;
+    onRejectCancellation: (row: DealRow) => void;
+    onRestore: (row: DealRow) => void;
+    onResubmit: (row: DealRow) => void;
+    actionBusyId: string | null;
+  },
+): ReactNode {
+  switch (columnId) {
+    case "serialNo":
+      return (
+        <span className="block text-center text-[11px] font-semibold tabular-nums text-[var(--bt-muted)]">
+          {opts.rowIndex}
+        </span>
+      );
+    case "customer":
+      return (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-600">
+            {row.initials}
+          </div>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="truncate text-xs font-semibold text-[var(--bt-text)]"
+                title={row.customer}
+              >
+                {row.customer}
+              </span>
+              {row.listingType === "cancel" ? (
+                <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-red-700">
+                  Cancel
+                </span>
+              ) : row.listingType === "booking" ? (
+                <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
+                  Booking
+                </span>
+              ) : null}
+            </div>
+            <div className="truncate text-[10px] text-[var(--bt-muted)]" title={row.asset}>
+              {row.asset}
+            </div>
+          </div>
+        </div>
+      );
+    case "assign":
+      return tableTextCell(row.assign);
+    case "dealValue":
+      return <span className="font-semibold">{row.dealValue}</span>;
+    case "received":
+      return row.preBooking;
+    case "tenPercent":
+      return <span className="text-[var(--bt-muted)]">{row.tenPercentTarget}</span>;
+    case "remaining":
+      return opts.showRemainingColumn ? (
+        <span className="font-semibold">{row.remaining}</span>
+      ) : null;
+    case "token":
+      return <TokenBadge status={row.tokenStatus} />;
+    case "booking":
+      return <BookingStatusText status={row.bookingStatus} />;
+    case "finance":
+      return (
+        <FinanceReviewBadge
+          status={row.financeReviewStatus}
+          remainingAmount={row.remainingAmount}
+          rejectReason={row.financeRejectReason}
+        />
+      );
+    case "action":
+      return (
+        <DealRowActions
+          row={row}
+          onView={opts.onView}
+          onPay={opts.onPay}
+          onCancel={opts.onCancel}
+          onConvert={opts.onConvert}
+          onDelete={opts.onDelete}
+          onApproveCancellation={opts.onApproveCancellation}
+          onRejectCancellation={opts.onRejectCancellation}
+          onRestore={opts.onRestore}
+          onResubmit={opts.onResubmit}
+          actionBusyId={opts.actionBusyId}
+          showDelete={opts.isSuperAdmin && canSuperAdminDeleteBookingTokenDeal(row, opts.nowMs)}
+          showCancel={!opts.approveSubmitting && !opts.actionBusyId}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+function dealCellClassName(columnId: string, stickyBg: string, highlighted: boolean): string {
+  if (columnId === "action") {
+    return `${STICKY_ACTION_CELL} ${stickyBg} ${highlighted ? "group-hover:bg-emerald-50/80" : ""}`;
+  }
+  if (columnId === "serialNo") {
+    return `${BODY_CELL} text-center`;
+  }
+  if (columnId === "dealValue" || columnId === "received" || columnId === "tenPercent" || columnId === "remaining") {
+    return `${MONEY_CELL}${columnId === "dealValue" || columnId === "remaining" ? " font-semibold" : ""}${
+      columnId === "tenPercent" ? " text-[var(--bt-muted)]" : ""
+    }`;
+  }
+  if (columnId === "token" || columnId === "booking" || columnId === "finance") {
+    return STATUS_CELL;
+  }
+  return BODY_CELL;
 }
 
 type Props = {
@@ -245,6 +388,9 @@ function DealRowActions({
   onDelete,
   onApproveCancellation,
   onRejectCancellation,
+  onRestore,
+  onResubmit,
+  actionBusyId,
   showDelete,
   showCancel,
 }: {
@@ -256,9 +402,13 @@ function DealRowActions({
   onDelete: (row: DealRow) => void;
   onApproveCancellation: (row: DealRow) => void;
   onRejectCancellation: (row: DealRow) => void;
+  onRestore: (row: DealRow) => void;
+  onResubmit: (row: DealRow) => void;
+  actionBusyId: string | null;
   showDelete: boolean;
   showCancel: boolean;
 }) {
+  const busy = actionBusyId === row.id;
   return (
     <ActionButtonStack>
       <button type="button" onClick={() => onView(row)} className={ACTION_BTN_VIEW}>
@@ -282,6 +432,28 @@ function DealRowActions({
             Reject
           </button>
         </>
+      ) : null}
+
+      {row.canRestoreBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRestore(row)}
+          className={ACTION_BTN_RESTORE}
+        >
+          {busy ? "Restoring…" : "Restore"}
+        </button>
+      ) : null}
+
+      {row.canResubmitBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onResubmit(row)}
+          className={ACTION_BTN_RESUBMIT}
+        >
+          {busy ? "Sending…" : "Send again"}
+        </button>
       ) : null}
 
       {showDelete ? (
@@ -341,7 +513,7 @@ function TrashIcon() {
 function applyCancellationWindow(rows: DealRow[], nowMs: number): DealRow[] {
   return rows.map((row) => ({
     ...row,
-    showCancellation: canShowCancellation(row.listingType, row.submittedAt, nowMs),
+    showCancellation: resolveShowCancellationButton(row, nowMs),
   }));
 }
 
@@ -379,8 +551,12 @@ export default function DealsTable({
   const [rejectTarget, setRejectTarget] = useState<DealRow | null>(null);
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [approvalError, setApprovalError] = useState("");
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [viewerRole, setViewerRole] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [allTabCounts, setAllTabCounts] = useState<{ token: number; booking: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -399,11 +575,11 @@ export default function DealsTable({
     [displayRows],
   );
 
-  const columnCount = showRemainingColumn ? 11 : 10;
   const tableColumns = useMemo(
     () => buildTableColumns(showRemainingColumn),
     [showRemainingColumn],
   );
+  const columnCount = tableColumns.length;
   const minTableWidth = useMemo(() => tableMinWidth(tableColumns), [tableColumns]);
 
   const openPanel = useCallback((row: DealRow, mode: BookingPaymentPanelMode) => {
@@ -454,6 +630,34 @@ export default function DealsTable({
   }, [loadDeals, fromBookingDone, highlightId]);
 
   useEffect(() => {
+    if (tab !== "all") {
+      setAllTabCounts(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        /** Same date + deal filters + Hub role visibility as table/KPIs. */
+        const rows = await fetchDashboardDealRows({
+          tab: "all",
+          dateFilter,
+          dealFilters,
+        });
+        if (cancelled) return;
+        setAllTabCounts({
+          token: rows.filter((row) => row.listingType === "token").length,
+          booking: rows.filter((row) => row.listingType === "booking").length,
+        });
+      } catch {
+        if (!cancelled) setAllTabCounts(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, dateFilter, dealFilters, fromBookingDone, highlightId, totalElements]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -465,13 +669,14 @@ export default function DealsTable({
       setCancelError("");
       try {
         const result = await cancelBookingTokenDeal(cancelTarget.id, input);
-        setCancelTarget(null);
-        await loadDeals();
-        onDealsChanged?.();
         const movedToCancel =
           input.scope === "deal" &&
           (result.listingType === "cancel" ||
-            result.bookingStatus?.trim().toLowerCase() === "cancelled");
+            result.bookingStatus?.trim().toLowerCase() === "cancelled" ||
+            result.bookingStatus?.trim().toLowerCase() === "pending_cancellation");
+        setCancelTarget(null);
+        await loadDeals();
+        onDealsChanged?.();
         if (movedToCancel) {
           onDealCancelled?.();
         }
@@ -565,6 +770,44 @@ export default function DealsTable({
       }
     },
     [rejectTarget, loadDeals, onDealsChanged],
+  );
+
+  const handleRestoreDeal = useCallback(
+    async (row: DealRow) => {
+      if (!isCrmLeadType(row.leadType)) return;
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await restoreBookingTokenCancellation(
+          row.leadType as CrmLeadType,
+          String(row.leadId),
+        );
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to restore deal.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
+  );
+
+  const handleResubmitDeal = useCallback(
+    async (row: DealRow) => {
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await resubmitBookingTokenCancellation(row.id);
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to send again.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
   );
 
   const tabLabel =
@@ -664,6 +907,26 @@ export default function DealsTable({
             {loadError || approvalError}
           </div>
         ) : null}
+        {tab === "all" && allTabCounts ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--bt-border)] bg-slate-50/70 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--bt-muted)]">
+            <span>
+              Token{" "}
+              <span className="tabular-nums text-amber-700">{allTabCounts.token}</span>
+            </span>
+            <span className="text-[var(--bt-border)]">·</span>
+            <span>
+              Booking{" "}
+              <span className="tabular-nums text-blue-700">{allTabCounts.booking}</span>
+            </span>
+            <span className="text-[var(--bt-border)]">·</span>
+            <span>
+              All{" "}
+              <span className="tabular-nums text-[var(--bt-text)]">
+                {allTabCounts.token + allTabCounts.booking}
+              </span>
+            </span>
+          </div>
+        ) : null}
         <div className="overflow-x-auto">
           <table
             className="w-full text-left text-sm"
@@ -699,9 +962,28 @@ export default function DealsTable({
                   </td>
                 </tr>
               ) : null}
-              {displayRows.map((row) => {
+              {displayRows.map((row, index) => {
                 const highlighted = highlightId && row.id === highlightId;
                 const stickyBg = highlighted ? "bg-emerald-50/80" : "bg-[var(--bt-surface)]";
+                const cellOpts = {
+                  showRemainingColumn,
+                  stickyBg,
+                  highlighted: Boolean(highlighted),
+                  nowMs,
+                  isSuperAdmin,
+                  approveSubmitting,
+                  rowIndex: page * BOOKING_TOKEN_DEALS_PAGE_SIZE + index + 1,
+                  onView: (dealRow: DealRow) => openPanel(dealRow, "view"),
+                  onPay: (dealRow: DealRow) => openPanel(dealRow, "pay"),
+                  onCancel: setCancelTarget,
+                  onConvert: setConvertTarget,
+                  onDelete: setDeleteTarget,
+                  onApproveCancellation: (dealRow: DealRow) => void handleApproveCancellation(dealRow),
+                  onRejectCancellation: setRejectTarget,
+                  onRestore: (dealRow: DealRow) => void handleRestoreDeal(dealRow),
+                  onResubmit: (dealRow: DealRow) => void handleResubmitDeal(dealRow),
+                  actionBusyId,
+                };
                 return (
                   <tr
                     key={row.id}
@@ -710,92 +992,15 @@ export default function DealsTable({
                       highlighted ? "bg-emerald-50/80 ring-1 ring-inset ring-emerald-200" : ""
                     }`}
                   >
-                    <td className={BODY_CELL}>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-600">
-                          {row.initials}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <span
-                              className="truncate text-xs font-semibold text-[var(--bt-text)]"
-                              title={row.customer}
-                            >
-                              {row.customer}
-                            </span>
-                            {row.listingType === "cancel" ? (
-                              <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-red-700">
-                                Cancel
-                              </span>
-                            ) : row.listingType === "booking" ? (
-                              <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
-                                Booking
-                              </span>
-                            ) : row.fromBookingDone ? (
-                              <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-700">
-                                Done
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="truncate text-[10px] text-[var(--bt-muted)]" title={row.asset}>
-                            {row.asset}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className={BODY_CELL}>
-                      <span
-                        className="block truncate text-xs text-[var(--bt-text)]"
-                        title={row.assign}
-                      >
-                        {row.assign}
-                      </span>
-                      {row.cancellationApprovalStatus === "PENDING" ? (
-                        <span className="mt-0.5 inline-flex rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-amber-700">
-                          Cancel pending
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className={`${MONEY_CELL} font-semibold`}>{row.dealValue}</td>
-                    <td className={MONEY_CELL}>{row.preBooking}</td>
-                    <td className={`${MONEY_CELL} text-[var(--bt-muted)]`}>{row.tenPercentTarget}</td>
-                    {showRemainingColumn ? (
-                      <td className={`${MONEY_CELL} font-semibold`}>{row.remaining}</td>
-                    ) : null}
-                    <td className={STATUS_CELL}>
-                      <TokenBadge status={row.tokenStatus} />
-                    </td>
-                    <td className={STATUS_CELL}>
-                      <BookingStatusText status={row.bookingStatus} />
-                    </td>
-                    <td className={STATUS_CELL}>
-                      <FinanceReviewBadge
-                        status={row.financeReviewStatus}
-                        remainingAmount={row.remainingAmount}
-                        rejectReason={row.financeRejectReason}
-                      />
-                    </td>
-                    <td className={`${MONEY_CELL} text-center text-[10px] text-[var(--bt-muted)] whitespace-nowrap`}>
-                      {row.expClosing}
-                    </td>
-                    <td
-                      className={`${STICKY_ACTION_CELL} ${stickyBg} ${highlighted ? "group-hover:bg-emerald-50/80" : ""}`}
-                    >
-                      <DealRowActions
-                        row={row}
-                        onView={(dealRow) => openPanel(dealRow, "view")}
-                        onPay={(dealRow) => openPanel(dealRow, "pay")}
-                        onCancel={setCancelTarget}
-                        onConvert={setConvertTarget}
-                        onDelete={setDeleteTarget}
-                        onApproveCancellation={(dealRow) => void handleApproveCancellation(dealRow)}
-                        onRejectCancellation={setRejectTarget}
-                        showDelete={
-                          isSuperAdmin && isAfterCancellationWindow(row.submittedAt, nowMs)
-                        }
-                        showCancel={!approveSubmitting}
-                      />
-                    </td>
+                    {tableColumns.map((col) => {
+                      const content = renderDealCell(row, col.id, cellOpts);
+                      if (col.id === "remaining" && !showRemainingColumn) return null;
+                      return (
+                        <td key={col.id} className={dealCellClassName(col.id, stickyBg, Boolean(highlighted))}>
+                          {content}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}

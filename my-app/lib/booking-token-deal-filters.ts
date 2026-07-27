@@ -7,6 +7,8 @@ export type BookingDealFilterDraft = {
   salesManagerId: number | null;
   salesExecutiveId: number | null;
   pendingCancellationsOnly: boolean;
+  /** Finance: deals converted or eligible via 9.9% buffer. */
+  bufferDealsOnly: boolean;
 };
 
 export type BookingDealFilterState = BookingDealFilterDraft & {
@@ -23,13 +25,15 @@ export const DEFAULT_BOOKING_DEAL_FILTERS: BookingDealFilterState = {
   salesExecutiveName: "",
   teamAssigneeScopes: [],
   pendingCancellationsOnly: false,
+  bufferDealsOnly: false,
 };
 
 export function isBookingDealFilterActive(filter: BookingDealFilterState): boolean {
   return (
     filter.salesManagerId != null ||
     filter.salesExecutiveId != null ||
-    filter.pendingCancellationsOnly
+    filter.pendingCancellationsOnly ||
+    filter.bufferDealsOnly
   );
 }
 
@@ -42,6 +46,9 @@ export function bookingDealFilterSummary(filter: BookingDealFilterState): string
   }
   if (filter.pendingCancellationsOnly) {
     parts.push("Pending cancel");
+  }
+  if (filter.bufferDealsOnly) {
+    parts.push("9.9% buffer");
   }
   return parts.length > 0 ? parts.join(" · ") : "All deals";
 }
@@ -114,6 +121,7 @@ export function buildAppliedBookingDealFilters(
     return {
       ...DEFAULT_BOOKING_DEAL_FILTERS,
       pendingCancellationsOnly: draft.pendingCancellationsOnly,
+      bufferDealsOnly: draft.bufferDealsOnly,
     };
   }
 
@@ -144,7 +152,16 @@ export function buildAppliedBookingDealFilters(
     salesExecutiveName,
     teamAssigneeScopes,
     pendingCancellationsOnly: draft.pendingCancellationsOnly,
+    bufferDealsOnly: draft.bufferDealsOnly,
   };
+}
+
+export function filterDealRowsByBufferScope(
+  rows: import("@/app/Components/BookingToken/types").DealRow[],
+): import("@/app/Components/BookingToken/types").DealRow[] {
+  return rows.filter(
+    (row) => row.bufferApplied || row.bookingApprovalMode === "BUFFER_9_9",
+  );
 }
 
 export function dealAssignMatchesScope(assign: string, scopes: string[]): boolean {

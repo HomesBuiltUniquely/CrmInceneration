@@ -11,6 +11,7 @@ import {
   pipelineSubStageLabel,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
+import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-substages";
 import {
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
@@ -670,6 +671,9 @@ export default function CompleteTaskModal({
       const stageCategory = m.stageCategory.trim();
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
+      if (!presalesMode && subStageName && !isManualCompleteTaskSubstage(subStageName)) {
+        continue;
+      }
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();

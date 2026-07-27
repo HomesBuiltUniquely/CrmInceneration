@@ -2,6 +2,7 @@ import {
   isCancelledBookingStatus,
   isWithinCancellationWindow,
 } from "@/lib/booking-token-cancellation";
+import { resolveCanConvertToBooking } from "@/lib/booking-token-buffer";
 import type { BookingTokenTab } from "@/app/Components/BookingToken/types";
 
 /** Hub column + dashboard tab bucket: token | booking | cancel */
@@ -62,6 +63,51 @@ export function listingTypeLabel(type: BookingListingType): string {
   return "Token";
 }
 
+/** Human label for deal-summary “Level” (Token / Booking / Cancel). */
+export function dealLevelLabel(deal: {
+  listingType?: string | null;
+  bookingStatus?: string | null;
+  isCancelled?: boolean | null;
+  cancellationApprovalStatus?: string | null;
+}): string {
+  const listing = deal.listingType?.trim().toLowerCase();
+  const status = deal.bookingStatus?.trim().toLowerCase() ?? "";
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+
+  if (
+    listing === "cancel" ||
+    deal.isCancelled ||
+    status === "cancelled" ||
+    status === "pending_cancellation" ||
+    approval === "PENDING"
+  ) {
+    if (status === "pending_cancellation" || approval === "PENDING") {
+      return "Cancel (pending)";
+    }
+    return "Cancel";
+  }
+
+  if (listing === "booking" || status === "confirmed") {
+    return "Booking";
+  }
+
+  return "Token";
+}
+
+export type DealLevelTone = "token" | "booking" | "cancel";
+
+export function dealLevelTone(deal: {
+  listingType?: string | null;
+  bookingStatus?: string | null;
+  isCancelled?: boolean | null;
+  cancellationApprovalStatus?: string | null;
+}): DealLevelTone {
+  const label = dealLevelLabel(deal);
+  if (label.startsWith("Cancel")) return "cancel";
+  if (label === "Booking") return "booking";
+  return "token";
+}
+
 /** Cancel within 24h of handoff — token (partial) or booking (after convert). */
 export function canShowCancellation(
   listingType: BookingListingType,
@@ -73,6 +119,36 @@ export function canShowCancellation(
   return listingType === "token" || listingType === "booking";
 }
 
+export function isPendingBookingCancellation(deal: {
+  bookingStatus?: string | null;
+  cancellationApprovalStatus?: string | null;
+}): boolean {
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+  const status = deal.bookingStatus?.trim().toLowerCase() ?? "";
+  return approval === "PENDING" || status === "pending_cancellation";
+}
+
+/** Hide Cancellation once a request is pending; allow only within 24h window before that. */
+export function resolveShowCancellationButton(
+  deal: {
+    listingType?: BookingListingType | string | null;
+    submittedAt?: string | null;
+    bookingStatus?: string | null;
+    cancellationApprovalStatus?: string | null;
+  },
+  nowMs = Date.now(),
+): boolean {
+  const listingType = (deal.listingType ?? "token") as BookingListingType;
+  const submittedAt = deal.submittedAt?.trim() ?? "";
+  const approval = deal.cancellationApprovalStatus?.trim().toUpperCase() ?? "";
+
+  if (isPendingBookingCancellation(deal)) return false;
+  if (approval === "REJECTED" || approval === "APPROVED") return false;
+
+  return canShowCancellation(listingType, submittedAt, nowMs);
+}
+
+/** Token bucket — show Pay while remaining toward 10% is due. */
 export function canShowPay(
   listingType: BookingListingType,
   remainingAmount = 0,
@@ -80,12 +156,15 @@ export function canShowPay(
   return listingType === "token" && remainingAmount > 0;
 }
 
-/** Full 10% paid in token bucket — manual promote to booking tab. */
+/** Token bucket — show Convert when Hub allows (full 10% or 9.9% buffer). */
 export function canShowConvert(
   listingType: BookingListingType,
   remainingAmount = 0,
+  canConvertToBooking?: boolean,
 ): boolean {
-  return listingType === "token" && remainingAmount <= 0;
+  if (listingType !== "token") return false;
+  if (typeof canConvertToBooking === "boolean") return canConvertToBooking;
+  return remainingAmount <= 0;
 }
 
 export function isTokenReadyForBookingConvert(
@@ -93,10 +172,19 @@ export function isTokenReadyForBookingConvert(
   remainingAmount: number,
   tenPercentAmount: number,
   paidAmount: number,
+  canConvertToBooking?: boolean,
+  quoteAmount?: number,
+  bufferThresholdAmount?: number,
 ): boolean {
-  if (listingType !== "token" || remainingAmount > 0) return false;
-  if (tenPercentAmount <= 0) return paidAmount > 0;
-  return paidAmount >= tenPercentAmount;
+  return resolveCanConvertToBooking({
+    listingType,
+    remainingAmount,
+    canConvertToBooking: canConvertToBooking ?? null,
+    tenPercentAmount,
+    quoteAmount,
+    paidAmount,
+    bufferThresholdAmount,
+  });
 }
 
 export function isCancelListingType(listingType: BookingListingType): boolean {

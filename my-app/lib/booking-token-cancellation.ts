@@ -20,6 +20,31 @@ export function isAfterCancellationWindow(submittedAt: string, nowMs = Date.now(
   return nowMs - submittedMs >= BOOKING_CANCELLATION_WINDOW_MS;
 }
 
+export function isCancelledBookingTokenDeal(deal: {
+  isCancelled?: boolean;
+  listingType?: string | null;
+  bookingStatus?: string | null;
+}): boolean {
+  return (
+    deal.isCancelled === true ||
+    deal.listingType === "cancel" ||
+    isCancelledBookingStatus(String(deal.bookingStatus ?? ""))
+  );
+}
+
+/** Super admin may remove any deal from the Booking & Token dashboard. */
+export function canSuperAdminDeleteBookingTokenDeal(
+  _deal?: {
+    isCancelled?: boolean;
+    listingType?: string | null;
+    bookingStatus?: string | null;
+    submittedAt?: string;
+  },
+  _nowMs = Date.now(),
+): boolean {
+  return true;
+}
+
 export function cancellationWindowClosesAt(submittedAt: string): Date | null {
   const submittedMs = parseSubmittedAtMs(submittedAt);
   if (submittedMs == null) return null;
