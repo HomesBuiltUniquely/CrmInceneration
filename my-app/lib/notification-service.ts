@@ -91,6 +91,72 @@ interface RawMeetingItem {
 
 type MeetingTag = "SCHEDULED" | "RESCHEDULED" | "CANCELLATION" | "SUCCESS";
 
+// ─── Booking raw item shape (matches Spring booking_token_record + proto Booking) ─
+
+/**
+ * Raw booking/token item as returned by Spring GET /v1/booking-token/deals
+ * (the source of truth — reads directly from booking_token_record table).
+ *
+ * Also accepts the proto Booking camelCase/snake_case fields as fallback
+ * in case the Go notify server is also consulted.
+ */
+interface RawBookingItem {
+  // ── Spring booking_token_record fields (camelCase from Spring JSON) ────────
+  id?: string;                               // UUID primary key
+  bookingStatus?: string;                    // in_progress | confirmed | cancelled …
+  cancellationApprovalStatus?: string;       // NONE | PENDING | REJECTED
+  cancellationReason?: string;
+  cancellationRequestedByName?: string;
+  cancelledAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  customerName?: string;
+  customerPhone?: string;
+  extraAmountReceived?: number;
+  hubLeadId?: string;
+  leadId?: number | string;
+  leadIdentifier?: string;
+  leadType?: string;
+  listingType?: "booking" | "cancel" | "token" | string;
+  paymentKind?: string;
+  quoteAmount?: number;
+  quoteId?: string;
+  quoteVersionLabel?: string;
+  remainingAmount?: number;
+  submittedByName?: string;
+  submittedByUserId?: number | string;
+  tenPercentAmount?: number;
+  tokenStatus?: string;
+  amountReceived?: number;
+  bookingDate?: string;
+  submittedAt?: string;
+  cumulativeReceived?: number;      // total cumulative paid — primary source for "paid" display
+  // ── snake_case Spring fallbacks ───────────────────────────────────────────
+  payment_kind?: string;
+  ten_percent_amount?: number;
+  amount_received?: number;
+  cumulative_received?: number;     // snake_case variant
+  // ── Proto Booking camelCase (Go notify server fallback) ───────────────────
+  bookingId?: number;
+  leadName?: string;
+  paymentType?: string;                      // TOKEN | BOOKING
+  paidAmount?: number;
+  paymentDate?: string;
+  paymentStatus?: string;                    // PENDING | SUCCESS | FAILED
+  remarks?: string;
+  // ── snake_case fallbacks ─────────────────────────────────────────────────
+  booking_id?: number;
+  lead_identifier?: string;
+  lead_name?: string;
+  payment_type?: string;
+  paid_amount?: number;
+  remaining_amount?: number;
+  payment_date?: string;
+  payment_status?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractItems(payload: unknown): RawMeetingItem[] {
@@ -188,6 +254,205 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   };
 }
 
+// ─── Lead raw item shape (matches proto Lead message) ────────────────────────
+
+/**
+ * Raw lead notification item from Go NotifyProject server.
+ * Matches the proto `Lead` message exactly.
+ *
+ *   LeadListResponse.data → Lead[]
+ *
+ * Proto fields:
+ *   lead_identifier string → leadIdentifier
+ *   lead_name       string → leadName
+ *   lead_type       string → leadType
+ *   assigned_to     string → assignedTo
+ *   created_at      string → createdAt
+ */
+interface RawLeadItem {
+  // camelCase (Go JSON default)
+  leadIdentifier?: string;
+  leadName?: string;
+  leadType?: string;
+  assignedTo?: string;
+  createdAt?: string;
+  // snake_case fallback
+  lead_identifier?: string;
+  lead_name?: string;
+  lead_type?: string;
+  assigned_to?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Counts response shape from Go NotifyProject server.
+ * Matches the proto `CountsResponse` message.
+ *
+ * Proto fields (all int32):
+ *   total_leads, total_scheduled, total_rescheduled,
+ *   total_cancelled, total_success, total_bookings
+ */
+export interface NotificationCounts {
+  totalLeads:       number;
+  totalScheduled:   number;
+  totalRescheduled: number;
+  totalCancelled:   number;
+  totalSuccess:     number;
+  totalBookings:    number;
+}
+
+// ─── Booking helpers ──────────────────────────────────────────────────────────
+
+function extractBookingItems(payload: unknown): RawBookingItem[] {
+  if (!payload || typeof payload !== "object") return [];
+  const asRecord = payload as Record<string, unknown>;
+  // Spring returns { deals: [...] }
+  if (Array.isArray(asRecord.deals))  return asRecord.deals as RawBookingItem[];
+  // Go notify returns { data: [...] }
+  if (Array.isArray(asRecord.data))   return asRecord.data as RawBookingItem[];
+  if (Array.isArray(asRecord.items))  return asRecord.items as RawBookingItem[];
+  if (Array.isArray(payload))         return payload as RawBookingItem[];
+  return [];
+}
+
+function bookingTitle(raw: RawBookingItem): string {
+  const lt = (raw.listingType ?? "").toString().toLowerCase();
+  if (lt === "cancel" || (raw.bookingStatus ?? "").toLowerCase().includes("cancel")) {
+    return "Booking Cancellation";
+  }
+  if (lt === "booking" || (raw.bookingStatus ?? "").toLowerCase() === "confirmed") {
+    return "Booking Done";
+  }
+
+  // Token — check if full 10% is received via paymentKind or numeric comparison
+  const kind = (
+    raw.paymentKind    ??   // Spring camelCase
+    raw.payment_kind   ??   // Spring snake_case fallback
+    raw.paymentType    ??   // Go proto
+    raw.payment_type   ??   // Go proto snake_case
+    ""
+  ).toString().trim();
+
+  console.log(`${LOG_PREFIX} [BOOKING] bookingTitle — kind="${kind}", paid=${Number(raw.amountReceived ?? raw.paidAmount ?? raw.paid_amount ?? 0)}, target=${Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0)}, listingType="${raw.listingType}", bookingStatus="${raw.bookingStatus}"`);
+
+  const paid   = Number(raw.amountReceived ?? raw.amount_received ?? raw.paidAmount ?? raw.paid_amount ?? 0);
+  const target = Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
+
+  const isFullTenPercent =
+    /full[\s_]*10/i.test(kind) ||               // "FULL 10%", "full_10", "full10", etc.
+    kind.toUpperCase() === "BOOKING" ||          // payment_kind = BOOKING
+    (target > 0 && paid >= target);             // numeric: paid >= 10% target
+
+  if (isFullTenPercent) return "Booking Done";
+  return "Token Received";
+}
+
+function fmt(n: number | string | undefined): string | undefined {
+  if (n == null || n === "") return undefined;
+  const num = Number(n);
+  if (Number.isNaN(num)) return undefined;
+  return `₹${num.toLocaleString("en-IN")}`;
+}
+
+function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem {
+  const id    = String(raw.id ?? raw.bookingId ?? raw.booking_id ?? `booking-${index}`);
+  const title = bookingTitle(raw);
+
+  const parts: string[] = [];
+
+  // Customer name — always show first
+  const customerName = raw.customerName ?? "";
+  if (customerName) parts.push(customerName);
+
+  // Shared paid amount resolver — tries all known field names
+  const resolvePaid = () =>
+    Number(raw.cumulativeReceived ?? raw.cumulative_received ?? 0) ||
+    Number(raw.amountReceived     ?? raw.amount_received     ?? 0) ||
+    Number(raw.paidAmount         ?? raw.paid_amount         ?? 0) ||
+    (Number(raw.quoteAmount ?? raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0) -
+     Number(raw.remainingAmount   ?? raw.remaining_amount    ?? 0));
+
+  if (title === "Booking Done") {
+    const paid = resolvePaid() || Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
+    const fmtPaid = fmt(paid);
+    if (fmtPaid && paid > 0) parts.push(`Paid: ${fmtPaid}`);
+  } else if (title === "Token Received") {
+    // show kind, cumulative paid so far and what's remaining
+    const kind = raw.paymentKind ?? raw.payment_kind ?? raw.paymentType ?? raw.payment_type;
+    if (kind) parts.push(kind.replace(/_/g, " "));
+    const paid      = resolvePaid();
+    const remaining = Number(raw.remainingAmount ?? raw.remaining_amount ?? 0);
+    const fmtPaid   = fmt(paid > 0 ? paid : undefined);
+    const fmtRem    = fmt(remaining);
+    if (fmtPaid)                   parts.push(`Paid: ${fmtPaid}`);
+    if (fmtRem && remaining > 0)   parts.push(`Remaining: ${fmtRem}`);
+  } else if (title === "Booking Cancellation" && raw.cancellationReason) {
+    parts.push(`Reason: ${raw.cancellationReason}`);
+  }
+
+  const description = parts.length ? parts.join(" · ") : undefined;
+
+  const timestamp =
+    raw.createdAt   ??
+    raw.created_at  ??
+    raw.bookingDate ??
+    raw.submittedAt ??
+    raw.cancelledAt ??
+    new Date().toISOString();
+
+  return {
+    id:          `booking-${id}`,
+    title,
+    description,
+    timestamp,
+    read:        false,
+    tag:         "Booking",
+  };
+}
+
+// ─── Lead helpers ─────────────────────────────────────────────────────────────
+
+function extractLeadItems(payload: unknown): RawLeadItem[] {
+  if (!payload || typeof payload !== "object") return [];
+  const asRecord = payload as Record<string, unknown>;
+  if (Array.isArray(asRecord.data))  return asRecord.data as RawLeadItem[];
+  if (Array.isArray(asRecord.items)) return asRecord.items as RawLeadItem[];
+  if (Array.isArray(payload))        return payload as RawLeadItem[];
+  return [];
+}
+
+function leadTypeLabel(leadType: string): string {
+  // e.g. GOOGLE_ADS → "Google Ads", WALK_IN_LEAD → "Walk In Lead"
+  return leadType
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
+  const leadId   = raw.leadIdentifier ?? raw.lead_identifier ?? `lead-${index}`;
+  const leadName = raw.leadName       ?? raw.lead_name       ?? "";
+  const leadType = raw.leadType       ?? raw.lead_type       ?? "";
+  const assignedTo = raw.assignedTo   ?? raw.assigned_to     ?? "";
+  const timestamp  = raw.createdAt    ?? raw.created_at      ?? new Date().toISOString();
+
+  const parts: string[] = [];
+  if (leadName)   parts.push(leadName);
+  if (leadId)     parts.push(`#${leadId}`);
+  if (leadType)   parts.push(leadTypeLabel(leadType));
+  if (assignedTo) parts.push(`Assigned: ${assignedTo}`);
+
+  return {
+    id:          `lead-${leadId}`,
+    title:       "New Lead",
+    description: parts.length ? parts.join(" · ") : undefined,
+    timestamp,
+    read:        false,
+    tag:         "Lead",
+  };
+}
+
 // ─── Scope resolution (preserves existing RBAC passed to Go server) ───────────
 
 /**
@@ -272,6 +537,133 @@ async function fetchRawEndpointItems(
   return items;
 }
 
+// ─── Booking endpoint fetch ───────────────────────────────────────────────────
+
+/**
+ * Fetch booking/token records from Spring GET /v1/booking-token/deals
+ * (proxied via /api/crm/booking-token/deals).
+ *
+ * This is the source of truth — reads directly from booking_token_record table.
+ * All roles see all booking notifications (no scope filtering needed here).
+ */
+async function fetchRawBookingItems(
+  authHeader: string,
+): Promise<RawBookingItem[]> {
+  // Fetch all listing types in one call (no listingType filter = all deals)
+  const url = "/api/crm/booking-token/deals";
+  console.log(`${LOG_PREFIX} [BOOKING] fetching from Spring: ${url}`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} [BOOKING] fetch failed:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+  if (!res.ok) { console.warn(`${LOG_PREFIX} [BOOKING] upstream ${res.status}`); return []; }
+
+  let payload: unknown;
+  try { payload = await res.json(); } catch { return []; }
+
+  const items = extractBookingItems(payload);
+  console.log(`${LOG_PREFIX} [BOOKING] extracted ${items.length} items`);
+  // Log first item fields to verify Spring response shape
+  if (items.length > 0) {
+    const s = items[0] as Record<string, unknown>;
+    console.log(`${LOG_PREFIX} [BOOKING] sample fields:`, {
+      id: s.id,
+      customerName: s.customerName,
+      leadName: s.leadName,
+      leadIdentifier: s.leadIdentifier,
+      paymentKind: s.paymentKind,
+      payment_kind: s.payment_kind,
+      amountReceived: s.amountReceived,
+      amount_received: s.amount_received,
+      cumulativeReceived: s.cumulativeReceived,
+      cumulative_received: s.cumulative_received,
+      tenPercentAmount: s.tenPercentAmount,
+      ten_percent_amount: s.ten_percent_amount,
+      remainingAmount: s.remainingAmount,
+      listingType: s.listingType,
+      bookingStatus: s.bookingStatus,
+    });
+  }
+  return items;
+}
+
+// ─── Lead endpoint fetch ──────────────────────────────────────────────────────
+
+/**
+ * Fetch raw lead notification items from Go /v1/leads.
+ * All roles see new-lead notifications — no scope filtering.
+ */
+async function fetchRawLeadItems(
+  authHeader: string,
+): Promise<RawLeadItem[]> {
+  const url = "/api/crm/notifications/leads";
+  console.log(`${LOG_PREFIX} [LEAD] fetching: ${url}`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
+    return [];
+  }
+  if (!res.ok) { console.warn(`${LOG_PREFIX} [LEAD] upstream ${res.status}`); return []; }
+
+  let payload: unknown;
+  try { payload = await res.json(); } catch { return []; }
+
+  const items = extractLeadItems(payload);
+  console.log(`${LOG_PREFIX} [LEAD] extracted ${items.length} items`);
+  return items;
+}
+
+// ─── Counts fetch ─────────────────────────────────────────────────────────────
+
+/**
+ * Fetch global notification counts from Go /v1/counts.
+ * Returns a zeroed object on any failure so callers never throw.
+ */
+async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
+  const zero: NotificationCounts = {
+    totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
+    totalCancelled: 0, totalSuccess: 0, totalBookings: 0,
+  };
+
+  const url = "/api/crm/notifications/counts";
+  console.log(`${LOG_PREFIX} [COUNTS] fetching: ${url}`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
+  } catch (err) {
+    console.warn(`${LOG_PREFIX} [COUNTS] fetch failed:`, err instanceof Error ? err.message : err);
+    return zero;
+  }
+  if (!res.ok) { console.warn(`${LOG_PREFIX} [COUNTS] upstream ${res.status}`); return zero; }
+
+  let raw: Record<string, unknown>;
+  try { raw = (await res.json()) as Record<string, unknown>; } catch { return zero; }
+
+  // Accept both camelCase and snake_case from grpc-gateway
+  const n = (key: string, alt: string) =>
+    Number(raw[key] ?? raw[alt] ?? 0);
+
+  const counts: NotificationCounts = {
+    totalLeads:       n("totalLeads",       "total_leads"),
+    totalScheduled:   n("totalScheduled",   "total_scheduled"),
+    totalRescheduled: n("totalRescheduled", "total_rescheduled"),
+    totalCancelled:   n("totalCancelled",   "total_cancelled"),
+    totalSuccess:     n("totalSuccess",     "total_success"),
+    totalBookings:    n("totalBookings",    "total_bookings"),
+  };
+
+  console.log(`${LOG_PREFIX} [COUNTS]`, counts);
+  return counts;
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
@@ -303,12 +695,19 @@ export async function loadNotifications(
       ? window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim()
       : null) || username;
 
-  // ── Step 1: Fetch raw items from all 4 endpoints in parallel ──────────────
-  const rawResults = await Promise.allSettled([
-    fetchRawEndpointItems("/api/crm/meetings/scheduled", "SCHEDULED", role, loginUsername, authHeader),
-    fetchRawEndpointItems("/api/crm/meetings/rescheduled", "RESCHEDULED", role, loginUsername, authHeader),
-    fetchRawEndpointItems("/api/crm/meetings/cancellation", "CANCELLATION", role, loginUsername, authHeader),
-    fetchRawEndpointItems("/api/crm/meetings/success", "SUCCESS", role, loginUsername, authHeader),
+  // ── Step 1: Fetch from all endpoints in parallel ──────────────────────────
+  // Meetings: role/username/scope-scoped  →  RBAC-filtered below
+  // Bookings: all roles see all           →  bypass RBAC
+  // Leads:    all roles see all           →  bypass RBAC
+  const [rawResults, rawBookings, rawLeads] = await Promise.all([
+    Promise.allSettled([
+      fetchRawEndpointItems("/api/crm/meetings/scheduled",   "SCHEDULED",    role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/rescheduled", "RESCHEDULED",  role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/cancellation","CANCELLATION", role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/success",     "SUCCESS",      role, loginUsername, authHeader),
+    ]),
+    fetchRawBookingItems(authHeader),
+    fetchRawLeadItems(authHeader),
   ]);
 
   // Each endpoint returns { tag, items } so we can re-associate after filtering
@@ -375,6 +774,15 @@ export async function loadNotifications(
     return mapRawItem(item as RawMeetingItem, tag, i);
   });
 
+  // ── Step 4b: Booking + Lead items → NotificationItem (all roles, no RBAC) ──
+  const bookingNotifications = rawBookings.map((item, i) => mapRawBookingItem(item, i));
+  const leadNotifications    = rawLeads.map((item, i)    => mapRawLeadItem(item, i));
+
+  all.push(...bookingNotifications, ...leadNotifications);
+  console.log(
+    `${LOG_PREFIX} booking: ${bookingNotifications.length}, leads: ${leadNotifications.length}`,
+  );
+
   // ── Step 5: Deduplicate by id (guard against same item from multiple sources)
   const seen = new Set<string>();
   const deduped = all.filter((n) => {
@@ -393,4 +801,24 @@ export async function loadNotifications(
 
   console.log(`${LOG_PREFIX} total notifications after filter + dedup: ${deduped.length}`);
   return deduped;
+}
+
+/**
+ * Fetch global notification counts from the Go notify server.
+ * Returns zeroed counts on any failure — safe to call without try/catch.
+ *
+ * Proto: CountsResponse
+ *   total_leads, total_scheduled, total_rescheduled,
+ *   total_cancelled, total_success, total_bookings
+ */
+export async function loadNotificationCounts(
+  token: string | null,
+): Promise<NotificationCounts> {
+  const zero: NotificationCounts = {
+    totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
+    totalCancelled: 0, totalSuccess: 0, totalBookings: 0,
+  };
+  if (!token) return zero;
+  const authHeader = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  return fetchRawCounts(authHeader);
 }
