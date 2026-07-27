@@ -525,7 +525,8 @@ GET /v1/crm/insights/filter-options
 |------------|---------------|
 | Header filters | Query params + `/filter-options` |
 | Total Leads / Pipeline / Closed Won / Conversion cards | `kpis.*` |
-| Sales Funnel Efficiency | `salesFunnel` |
+| Sales Funnel Efficiency (Active / Won) | `salesFunnel` |
+| Sales Funnel Efficiency (Lost Funnel) | `lostFunnel` — see [CRM_INSIGHTS_LOST_FUNNEL_BACKEND_HANDOFF.md](./CRM_INSIGHTS_LOST_FUNNEL_BACKEND_HANDOFF.md) |
 | Revenue Distribution | `revenueDistribution` |
 | Drop Reason Analysis | `dropReasons` |
 | Stage Velocity | `stageVelocity` |

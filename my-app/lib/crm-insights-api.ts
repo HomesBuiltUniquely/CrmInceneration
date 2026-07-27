@@ -25,6 +25,13 @@ export type InsightsFunnelStage = {
   conversionPercent: number;
 };
 
+export type InsightsLostFunnelStage = {
+  stageKey: string;
+  stageLabel: string;
+  count: number;
+  dropPercent: number;
+};
+
 export type InsightsRevenuePhase = {
   phaseKey: string;
   phaseLabel: string;
@@ -80,6 +87,10 @@ export type InsightsDashboard = {
     conversionPercent: InsightsKpiMetric;
   };
   salesFunnel: InsightsFunnelStage[];
+  lostFunnel?: {
+    total: number;
+    stages: InsightsLostFunnelStage[];
+  };
   revenueDistribution: {
     phases: InsightsRevenuePhase[];
     observation?: string | null;
@@ -149,16 +160,11 @@ export function formatInsightsInrCompact(amount: number | null | undefined): str
   const sign = n < 0 ? "-" : "";
   if (abs >= 10_000_000) {
     const cr = abs / 10_000_000;
-    return `${sign}₹${cr >= 10 ? cr.toFixed(1) : cr.toFixed(2).replace(/\.?0+$/, "")}Cr`;
+    return `${sign}₹${cr.toFixed(2).replace(/\.?0+$/, "")}Cr`;
   }
   if (abs >= 100_000) {
     const lakh = abs / 100_000;
-    /** UI mock used ₹84.2M style for large pipeline; keep M for ≥1e6 */
-    if (abs >= 1_000_000) {
-      const m = abs / 1_000_000;
-      return `${sign}₹${m.toFixed(1).replace(/\.0$/, "")}M`;
-    }
-    return `${sign}₹${lakh.toFixed(1).replace(/\.0$/, "")}L`;
+    return `${sign}₹${lakh.toFixed(2).replace(/\.?0+$/, "")}L`;
   }
   if (abs >= 1_000) {
     return `${sign}₹${(abs / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
@@ -313,6 +319,22 @@ function normalizeKpi(raw: unknown): InsightsKpiMetric {
   };
 }
 
+function normalizeLostFunnel(
+  raw: unknown,
+): InsightsDashboard["lostFunnel"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const stages = asArray<Record<string, unknown>>(o.stages).map((s) => ({
+    stageKey: asStr(s.stageKey),
+    stageLabel: asStr(s.stageLabel, asStr(s.stageKey)),
+    count: asNum(s.count),
+    dropPercent: asNum(s.dropPercent),
+  }));
+  if (stages.length === 0) return undefined;
+  const total = asNum(o.total, stages.reduce((sum, s) => sum + s.count, 0));
+  return { total, stages };
+}
+
 /** Normalize Hub payload so UI can rely on a stable shape. */
 export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -361,6 +383,7 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       value: asNum(s.value),
       conversionPercent: asNum(s.conversionPercent),
     })),
+    lostFunnel: normalizeLostFunnel(r.lostFunnel),
     revenueDistribution: {
       phases: asArray<Record<string, unknown>>(revenue.phases).map((p) => ({
         phaseKey: asStr(p.phaseKey),
