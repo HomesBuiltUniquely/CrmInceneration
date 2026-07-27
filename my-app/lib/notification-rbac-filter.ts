@@ -3,51 +3,36 @@
 /**
  * notification-rbac-filter.ts
  *
- * Pure client-side RBAC filtering for raw meeting notification items.
+ * Client-side RBAC filter for meeting notification items.
  *
- * Strategy
- * ─────────
- * 1. Roles that see everything (SUPER_ADMIN, ADMIN, SALES_ADMIN) → pass through.
+ * WHO SEES WHAT
+ * ─────────────
+ *  SUPER_ADMIN / ADMIN / SALES_ADMIN   → all notifications (pass-through)
+ *  SALES_MANAGER                        → only notifications for leads owned
+ *                                         by their direct team executives
+ *  PRESALES_MANAGER                     → only notifications for leads owned
+ *                                         by their direct presales executives
+ *  DESIGN_MANAGER / TERRITORY_DM        → only notifications for leads assigned
+ *                                         to active designers in their org
+ *  SALES_EXECUTIVE                      → only their own leads (fail-closed)
+ *  PRESALES_EXECUTIVE                   → only their own leads (fail-closed)
+ *  DESIGNER                             → only their own designs (fail-closed)
  *
- * 2. For all other roles we need two things:
+ * FAIL POLICY
+ * ───────────
+ * ALL roles are now fail-CLOSED:
+ *   - No leadIdentifier on a notification → HIDE
+ *   - Lead not in Spring map → HIDE
+ *   - Assignee blank on lead row → HIDE
+ *   - Owner not in allowedSet → HIDE
  *
- *    a. Lead ownership map — built in ONE fetch from /api/crm/leads (mergeAll=1).
+ * This is the only safe default. The previous fail-OPEN for managers was the
+ * root cause of everyone seeing every notification.
  *
- *         assigneeMap:  leadKey → assignee username (lowercase string)
- *
- *       The Spring API returns `assignee: "prerana"` — a plain username string,
- *       NOT a numeric ID.  Name-based matching is the only reliable approach
- *       for this backend.
- *
- *         designerMap:  leadKey → designerName (lowercase string)
- *
- *    b. Allowed-name set — who this viewer may see:
- *         SALES_MANAGER:            all SALES_EXECUTIVEs reporting to this
- *                                   manager (fetchSalesExecutivesForManager,
- *                                   JWT-scoped by backend).
- *         SALES_EXECUTIVE:          own login credential (crm_login_username).
- *         PRESALES_MANAGER:         presales executive names under this manager.
- *         DESIGN_MANAGER /
- *         TERRITORY_DESIGN_MANAGER: all active designer display names.
- *         DESIGNER:                 own designer display name from localStorage.
- *         PRESALES_EXECUTIVE /
- *         every other role:         own login credential + aliases.
- *
- * 3. Visibility rules depend on role scope:
- *
- *    INDIVIDUAL_SCOPE_ROLES (SALES_EXECUTIVE, DESIGNER, PRESALES_EXECUTIVE):
- *      Fail-CLOSED — a data gap (missing leadIdentifier, lead not in map,
- *      blank assignee) means HIDE, not show. These roles should only ever see
- *      their own notifications; leaking others' data is worse than hiding some.
- *
- *    Team/all scope roles (SALES_MANAGER, PRESALES_MANAGER, DESIGN_MANAGER, etc.):
- *      Fail-OPEN — data gaps mean SHOW. Over-hiding for managers is a bigger
- *      UX problem than a small data leak at the team level.
- *
- * The Go backend already pre-filters via scope=own/team/all using the login
- * credential against leadDetails.assigned_to.  This frontend filter is a
- * second pass using the Spring leads API as the source of truth for ownership.
- * Both layers must agree for a notification to be shown to an individual-scope role.
+ * EXCEPTION: If the Spring /api/crm/leads fetch itself fails (network error,
+ * non-2xx), we return all items for manager roles rather than silently hiding
+ * the entire notification panel — this is clearly a fetch failure, not a
+ * legitimate access denial.
  */
 
 import {
@@ -71,31 +56,15 @@ const LOG = "[notification-rbac-filter]";
 
 const ALL_ROLES = new Set(["SUPER_ADMIN", "ADMIN", "SALES_ADMIN"]);
 
-/**
- * Roles with individual scope — each user should only see their OWN notifications.
- * The filter is fail-CLOSED for these: a data gap (no leadIdentifier, lead not in
- * map, blank assignee) means HIDE rather than show.  Leaking another exec's data
- * is worse than briefly hiding a notification while the lead map is loading.
- */
-const INDIVIDUAL_SCOPE_ROLES = new Set([
-  "SALES_EXECUTIVE",
-  "DESIGNER",
-  "PRESALES_EXECUTIVE",
-]);
-
 // ─── Lead ownership maps ──────────────────────────────────────────────────────
 
 type LeadOwnershipMaps = {
-  /** leadKey (lowercase) → assignee username (lowercase) from Spring leads API. */
-  assigneeMap: Map<string, string>;
-  /** leadKey (lowercase) → designerName (lowercase). */
-  designerMap: Map<string, string>;
+  assigneeMap: Map<string, string>; // leadKey → assignee username (lowercase)
+  designerMap: Map<string, string>; // leadKey → designerName (lowercase)
+  /** true if the fetch succeeded but returned 0 leads; false if fetch itself failed */
+  fetchSucceeded: boolean;
 };
 
-/**
- * Stable lead key — prefers the business ID (leadId / uniqueId) which is what
- * the Go notification server stores in lead_identifier.
- */
 function leadKey(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
   const k = String(
@@ -110,28 +79,15 @@ function leadKey(lead: ApiLead): string {
   return lead.id != null ? String(lead.id).toLowerCase() : "";
 }
 
-/**
- * Extract the assignee username from a lead row.
- * The Spring API returns `assignee: "prerana"` — a plain username string.
- */
 function pickAssigneeName(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
-
   for (const key of [
-    "assignee",
-    "salesExecutive",
-    "assignedTo",
-    "salesOwnerName",
-    "ownerName",
-    "executiveName",
-    "assignedToName",
-    "rmName",
-    "relationshipManager",
+    "assignee", "salesExecutive", "assignedTo", "salesOwnerName",
+    "ownerName", "executiveName", "assignedToName", "rmName", "relationshipManager",
   ]) {
     const v = row[key];
     if (typeof v === "string" && v.trim()) return v.trim().toLowerCase();
   }
-
   for (const key of ["assignee", "salesOwner", "owner", "assignedTo", "assignedUser"]) {
     const v = row[key];
     if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -140,23 +96,14 @@ function pickAssigneeName(lead: ApiLead): string {
       if (n) return n.toLowerCase();
     }
   }
-
   return "";
 }
 
-/**
- * Extract the designer name from a lead row.
- */
 function pickDesignerName(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
-
   for (const key of [
-    "designerName",
-    "designer",
-    "interiorDesignerName",
-    "interiorDesigner",
-    "designConsultant",
-    "designConsultantName",
+    "designerName", "designer", "interiorDesignerName",
+    "interiorDesigner", "designConsultant", "designConsultantName",
   ]) {
     const v = row[key];
     if (typeof v === "string" && v.trim()) return v.trim().toLowerCase();
@@ -166,14 +113,9 @@ function pickDesignerName(lead: ApiLead): string {
       if (n) return n.toLowerCase();
     }
   }
-
   return "";
 }
 
-/**
- * ONE fetch to /api/crm/leads builds both ownership maps in a single pass.
- * On any failure returns empty maps so the filter fails open (shows all).
- */
 async function buildOwnershipMaps(authHeader: string): Promise<LeadOwnershipMaps> {
   const assigneeMap = new Map<string, string>();
   const designerMap = new Map<string, string>();
@@ -182,17 +124,17 @@ async function buildOwnershipMaps(authHeader: string): Promise<LeadOwnershipMaps
     const qs = new URLSearchParams({
       mergeAll: "1",
       leadType: "all",
-      page:     "0",
-      size:     "2000",
-      sort:     "updatedAt,desc",
+      page: "0",
+      size: "2000",
+      sort: "updatedAt,desc",
     });
     const res = await fetch(`/api/crm/leads?${qs}`, {
       headers: { Authorization: authHeader },
-      cache:   "no-store",
+      cache: "no-store",
     });
     if (!res.ok) {
-      console.warn(`${LOG} lead fetch failed: HTTP ${res.status}`);
-      return { assigneeMap, designerMap };
+      console.warn(`${LOG} lead fetch failed: HTTP ${res.status} — failing open for managers`);
+      return { assigneeMap, designerMap, fetchSucceeded: false };
     }
 
     const json = (await res.json().catch(() => null)) as unknown;
@@ -211,43 +153,31 @@ async function buildOwnershipMaps(authHeader: string): Promise<LeadOwnershipMaps
       if (designer) designerMap.set(k, designer);
     }
 
-    console.log(
-      `${LOG} maps built — assignee: ${assigneeMap.size}, designer: ${designerMap.size}`,
-    );
+    console.log(`${LOG} maps built — assignee: ${assigneeMap.size}, designer: ${designerMap.size}`);
+    return { assigneeMap, designerMap, fetchSucceeded: true };
   } catch (err) {
     console.warn(`${LOG} buildOwnershipMaps error:`, err);
+    return { assigneeMap, designerMap, fetchSucceeded: false };
   }
-
-  return { assigneeMap, designerMap };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Read the login credential from localStorage.
- * crm_login_username is the value typed at the login form — it matches
- * both leadDetails.assigned_to (Go) and the `assignee` field (Spring).
- */
 function readLoginCredential(fallback: string): string {
   if (typeof window === "undefined") return fallback;
   const stored = window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim();
   return stored || fallback;
 }
 
-/** All lowercase name variants for a username. */
 function ownAliasSet(username: string): Set<string> {
   const aliases = collectHierarchyUserAssigneeAliases({
     username,
-    name:     username,
+    name: username,
     fullName: username,
   });
   return new Set(aliases.map((a) => a.toLowerCase()));
 }
 
-/**
- * SALES_MANAGER — all usernames of executives reporting to this manager.
- * JWT-scoped by the backend so no extra client-side filtering needed.
- */
 async function salesManagerAllowedSet(token: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
@@ -265,19 +195,15 @@ async function salesManagerAllowedSet(token: string): Promise<Set<string>> {
   return set;
 }
 
-/** PRESALES_MANAGER — presales executive names under this manager. */
 async function presalesManagerAllowedSet(): Promise<Set<string>> {
   const set = new Set<string>();
   try {
-    // Read the manager's own numeric user ID from localStorage so we only fetch
-    // executives whose managerId matches this manager — not all presales execs.
     let currentUserId = 0;
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY)?.trim();
       const parsed = stored ? Number(stored) : NaN;
       if (Number.isFinite(parsed) && parsed > 0) currentUserId = parsed;
     }
-    console.log(`${LOG} presalesManagerAllowedSet: currentUserId=${currentUserId}`);
     const names = await fetchPresalesExecutiveNamesForManager(currentUserId);
     for (const name of names) set.add(name.toLowerCase());
     console.log(`${LOG} presales manager team: ${set.size} names`);
@@ -287,7 +213,6 @@ async function presalesManagerAllowedSet(): Promise<Set<string>> {
   return set;
 }
 
-/** DESIGN_MANAGER / TERRITORY_DESIGN_MANAGER — all active designer names. */
 async function designManagerAllowedSet(): Promise<Set<string>> {
   const set = new Set<string>();
   try {
@@ -302,7 +227,6 @@ async function designManagerAllowedSet(): Promise<Set<string>> {
   return set;
 }
 
-/** DESIGNER — own designer display name from localStorage. */
 function designerOwnNameSet(loginCred: string): Set<string> {
   const set = new Set<string>();
   if (typeof window !== "undefined") {
@@ -313,32 +237,22 @@ function designerOwnNameSet(loginCred: string): Set<string> {
   return set;
 }
 
+// ─── Core filter (fail-CLOSED for all roles) ──────────────────────────────────
+
 /**
- * Core name-based filter — matches each notification's leadIdentifier
- * against the nameMap, then checks if the owner is in allowedSet.
- *
- * Fail behaviour depends on role scope:
- *   Individual-scope roles (INDIVIDUAL_SCOPE_ROLES): fail-CLOSED.
- *     Data gaps (missing identifier, lead not in map, blank owner) → HIDE.
- *   Team/all-scope roles: fail-OPEN.
- *     Data gaps → SHOW (over-hiding managers is a worse UX problem).
- *
- * For SALES_EXECUTIVE, if name-based matching fails we fall back to a numeric
- * user-ID check against __assignedId (populated by notification-service.ts from
- * the Go payload's assignedToId / sales_executive_id fields).  This provides a
- * stronger identity signal when the Spring field name doesn't match.
+ * Matches each item's leadIdentifier against nameMap, then checks allowedSet.
+ * Every data gap (no identifier, not in map, blank owner) → HIDE.
+ * Only SALES_EXECUTIVE gets an extra numeric-ID fallback when the Spring
+ * name-based map match fails.
  */
 function filterByName<T extends FilterableNotificationItem>(
   items: T[],
   nameMap: Map<string, string>,
   allowedSet: Set<string>,
   role: string,
-  loginCred: string,
 ): T[] {
   const r = normalizeRole(role);
-  const strict = INDIVIDUAL_SCOPE_ROLES.has(r);
 
-  // Numeric user ID for the SALES_EXECUTIVE fallback path.
   let ownNumericId: number | null = null;
   if (r === "SALES_EXECUTIVE" && typeof window !== "undefined") {
     const stored = window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY);
@@ -346,51 +260,36 @@ function filterByName<T extends FilterableNotificationItem>(
     if (Number.isFinite(parsed) && parsed > 0) ownNumericId = parsed;
   }
 
-  console.log(
-    `${LOG} role=${role} cred=${loginCred} strict=${strict} ownNumericId=${ownNumericId} — ` +
-    `allowedSet: ${allowedSet.size}, nameMap: ${nameMap.size} entries`,
-  );
-
   return items.filter((item) => {
     const key = (item.leadIdentifier ?? "").trim().toLowerCase();
 
+    // No lead identifier → can't verify ownership → HIDE
     if (!key) {
-      // No identifier to match on. For individual-scope roles this must NOT
-      // default to visible — that's exactly how execs were seeing everyone's
-      // notifications. Try numeric ID fallback for SALES_EXECUTIVE.
-      if (strict) {
-        if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
-          const assignedId = item.__assignedId as number | null | undefined;
-          return typeof assignedId === "number" && assignedId === ownNumericId;
-        }
-        return false;
+      if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
+        const assignedId = item.__assignedId as number | null | undefined;
+        return typeof assignedId === "number" && assignedId === ownNumericId;
       }
-      return true;
+      return false;
     }
 
+    // Lead not in Spring ownership map → HIDE
     if (!nameMap.has(key)) {
-      // Lead not in Spring map — data gap.
-      if (strict) {
-        if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
-          const assignedId = item.__assignedId as number | null | undefined;
-          return typeof assignedId === "number" && assignedId === ownNumericId;
-        }
-        return false;
+      if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
+        const assignedId = item.__assignedId as number | null | undefined;
+        return typeof assignedId === "number" && assignedId === ownNumericId;
       }
-      return true;
+      return false;
     }
 
     const owner = nameMap.get(key) ?? "";
+
+    // Lead in map but assignee blank → HIDE
     if (!owner) {
-      // Assignee field blank on the lead row — data gap.
-      if (strict) {
-        if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
-          const assignedId = item.__assignedId as number | null | undefined;
-          return typeof assignedId === "number" && assignedId === ownNumericId;
-        }
-        return false;
+      if (r === "SALES_EXECUTIVE" && ownNumericId !== null) {
+        const assignedId = item.__assignedId as number | null | undefined;
+        return typeof assignedId === "number" && assignedId === ownNumericId;
       }
-      return true;
+      return false;
     }
 
     return allowedSet.has(owner);
@@ -415,86 +314,80 @@ export async function applyNotificationRbacFilter<T extends FilterableNotificati
   if (items.length === 0) return items;
 
   const r = normalizeRole(role);
-  console.log(`${LOG} applyNotificationRbacFilter called: role=${r}, username=${username}, items=${items.length}`);
+  console.log(`${LOG} role=${r} username=${username} items=${items.length}`);
 
-  // ── 1. All-access roles ──────────────────────────────────────────────────
+  // ── 1. Admin roles see everything ────────────────────────────────────────
   if (ALL_ROLES.has(r)) {
-    console.log(`${LOG} role=${r} → pass-through (${items.length} items)`);
+    console.log(`${LOG} role=${r} → pass-through (admin)`);
     return items;
   }
 
   const authHeader = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-  const loginCred  = readLoginCredential(username);
-  console.log(`${LOG} loginCred=${loginCred}`);
+  const loginCred = readLoginCredential(username);
 
-  // ── 2. ONE lead fetch — builds assigneeMap and designerMap ───────────────
-  const { assigneeMap, designerMap } = await buildOwnershipMaps(authHeader);
-  console.log(`${LOG} assigneeMap.size=${assigneeMap.size}, designerMap.size=${designerMap.size}`);
+  // ── 2. Build lead ownership maps from Spring API ─────────────────────────
+  const { assigneeMap, designerMap, fetchSucceeded } =
+    await buildOwnershipMaps(authHeader);
 
-  // If Spring returned no leads for this user the assigneeMap will be empty.
-  // For team-scoped managers: Go's scope=team already pre-filtered correctly —
-  // trust it rather than hiding the entire team's notifications.
-  // Individual-scope roles (SALES_EXECUTIVE, PRESALES_EXECUTIVE) do NOT get
-  // this bypass: an empty map → strict filter → show nothing, which is the
-  // safer default until the map is populated.
-  if (assigneeMap.size === 0 && (r === "SALES_MANAGER" || r === "PRESALES_MANAGER")) {
-    console.warn(`${LOG} role=${r} — assigneeMap empty, trusting Go scope result`);
-    return items;
-  }
-
-  // ── 3. Route by role — hierarchy rules ──────────────────────────────────
-  //
-  //  SALES hierarchy:
-  //    SALES_EXECUTIVE  → sees only their own notifications (leads assigned to them)
-  //    SALES_MANAGER    → sees all notifications for executives in their team
-  //                       (backend already JWT-scopes /api/auth/users-by-role to manager)
-  //
-  //  PRESALES hierarchy:
-  //    PRESALES_EXECUTIVE → sees only their own notifications
-  //    PRESALES_MANAGER   → sees all notifications for presales executives
-  //                         whose managerId === this manager's user ID
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (r === "SALES_EXECUTIVE") {
-    const allowedSet = ownAliasSet(loginCred);
-    return filterByName(items, assigneeMap, allowedSet, r, loginCred);
-  }
-
-  if (r === "SALES_MANAGER") {
-    // Team set: all sales executives under this manager (JWT-scoped by backend)
-    const allowedSet = await salesManagerAllowedSet(token);
-    // Also include the manager's own credential so self-assigned leads appear
-    for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
-    return filterByName(items, assigneeMap, allowedSet, r, loginCred);
-  }
-
-  if (r === "PRESALES_EXECUTIVE") {
-    // Only their own leads — fail-closed (strict)
-    const allowedSet = ownAliasSet(loginCred);
-    return filterByName(items, assigneeMap, allowedSet, r, loginCred);
-  }
-
-  if (r === "PRESALES_MANAGER") {
-    // Team set: presales executives whose managerId === this manager's user ID
-    const allowedSet = await presalesManagerAllowedSet();
-    // Also include the manager's own credential so self-assigned leads appear
-    for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
-    return filterByName(items, assigneeMap, allowedSet, r, loginCred);
-  }
-
-  if (r === "DESIGN_MANAGER" || r === "TERRITORY_DESIGN_MANAGER") {
-    // Notifications not yet supported for design manager roles
-    console.log(`${LOG} role=${r} → notifications disabled for this role`);
+  // If the Spring API itself failed (network/server error), fail open ONLY for
+  // manager roles — their notification panel would be completely blank otherwise.
+  // Individual-scope roles remain fail-closed even on fetch failure.
+  if (!fetchSucceeded) {
+    if (r === "SALES_MANAGER" || r === "PRESALES_MANAGER" ||
+      r === "DESIGN_MANAGER" || r === "TERRITORY_DESIGN_MANAGER") {
+      console.warn(`${LOG} lead fetch failed — failing open for manager role ${r}`);
+      return items;
+    }
+    // For individual-scope roles: fetch failure → show nothing (safest default)
+    console.warn(`${LOG} lead fetch failed — hiding all for individual-scope role ${r}`);
     return [];
   }
 
-  if (r === "DESIGNER") {
-    // Designer's display name (from localStorage) may differ from login credential,
-    // so we use the dedicated set that checks both.
-    const allowedSet = designerOwnNameSet(loginCred);
-    return filterByName(items, designerMap, allowedSet, r, loginCred);
+  // ── 3. Route by role and apply filter ───────────────────────────────────
+
+  if (r === "SALES_EXECUTIVE") {
+    const allowedSet = ownAliasSet(loginCred);
+    console.log(`${LOG} [SALES_EXECUTIVE] own aliases: ${allowedSet.size}`);
+    return filterByName(items, assigneeMap, allowedSet, r);
   }
 
-  // PRESALES_EXECUTIVE and everything else — own credential only
-  return filterByName(items, assigneeMap, ownAliasSet(loginCred), r, loginCred);
+  if (r === "SALES_MANAGER") {
+    // All executives under this manager (JWT-scoped by backend)
+    const allowedSet = await salesManagerAllowedSet(token);
+    // Include manager's own credential for self-assigned leads
+    for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
+    console.log(`${LOG} [SALES_MANAGER] allowedSet: ${allowedSet.size} aliases`);
+    return filterByName(items, assigneeMap, allowedSet, r);
+  }
+
+  if (r === "PRESALES_EXECUTIVE") {
+    const allowedSet = ownAliasSet(loginCred);
+    console.log(`${LOG} [PRESALES_EXECUTIVE] own aliases: ${allowedSet.size}`);
+    return filterByName(items, assigneeMap, allowedSet, r);
+  }
+
+  if (r === "PRESALES_MANAGER") {
+    const allowedSet = await presalesManagerAllowedSet();
+    for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
+    console.log(`${LOG} [PRESALES_MANAGER] allowedSet: ${allowedSet.size} names`);
+    return filterByName(items, assigneeMap, allowedSet, r);
+  }
+
+  if (r === "DESIGN_MANAGER" || r === "TERRITORY_DESIGN_MANAGER") {
+    const allowedSet = await designManagerAllowedSet();
+    for (const alias of ownAliasSet(loginCred)) allowedSet.add(alias);
+    console.log(`${LOG} [${r}] allowedSet: ${allowedSet.size} designer names`);
+    return filterByName(items, designerMap, allowedSet, r);
+  }
+
+  if (r === "DESIGNER") {
+    const allowedSet = designerOwnNameSet(loginCred);
+    console.log(`${LOG} [DESIGNER] allowedSet: ${allowedSet.size}`);
+    return filterByName(items, designerMap, allowedSet, r);
+  }
+
+  // Everything else — own credential only
+  const allowedSet = ownAliasSet(loginCred);
+  console.log(`${LOG} [${r}] default own-only filter: ${allowedSet.size} aliases`);
+  return filterByName(items, assigneeMap, allowedSet, r);
 }

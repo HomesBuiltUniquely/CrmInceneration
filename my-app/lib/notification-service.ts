@@ -180,27 +180,34 @@ function tagLabel(tag: MeetingTag): string {
   return tag.charAt(0) + tag.slice(1).toLowerCase(); // "Scheduled", "Cancellation" …
 }
 
-function defaultTitle(tag: MeetingTag): string {
+function defaultTitle(tag: MeetingTag, leadName?: string): string {
   switch (tag) {
     case "SCHEDULED": return "Meeting Scheduled";
     case "RESCHEDULED": return "Meeting Rescheduled";
     case "CANCELLATION": return "Meeting Cancelled";
-    case "SUCCESS": return "Meeting Completed";
+    case "SUCCESS": return leadName ? `Meeting Successful with ${leadName}` : "Meeting Successful";
   }
 }
 
 function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): NotificationItem {
   const id = String(raw.id ?? raw.meeting_id ?? `${tag.toLowerCase()}-${index}`);
 
-  const title = raw.title ?? defaultTitle(tag);
+  const leadName = raw.leadName ?? raw.lead_name ?? "";
+
+  // For SUCCESS, name is baked into the title — no need to repeat in title prefix
+  const title = raw.title ?? defaultTitle(tag, leadName || undefined);
+
+  // For non-SUCCESS tags, append lead name to title if present
+  const displayTitle =
+    tag !== "SUCCESS" && leadName && !raw.title
+      ? `${title} - ${leadName}`
+      : title;
 
   // Build description from available meeting metadata
-  const leadName = raw.leadName ?? raw.lead_name;
   const meetingDate = raw.meetingDate ?? raw.meeting_date;
   const meetingType = raw.meetingType ?? raw.meeting_type;
   const slot = raw.slot;
   const parts: string[] = [];
-  if (leadName) parts.push(leadName);
   if (meetingDate) {
     try {
       parts.push(new Date(meetingDate).toLocaleString("en-IN", { dateStyle: "medium" }));
@@ -246,7 +253,7 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
 
   return {
     id: `${tag.toLowerCase()}-${id}`,
-    title,
+    title: displayTitle,
     description,
     timestamp,
     read: false,
@@ -294,12 +301,12 @@ interface RawLeadItem {
  *   total_cancelled, total_success, total_bookings
  */
 export interface NotificationCounts {
-  totalLeads:       number;
-  totalScheduled:   number;
+  totalLeads: number;
+  totalScheduled: number;
   totalRescheduled: number;
-  totalCancelled:   number;
-  totalSuccess:     number;
-  totalBookings:    number;
+  totalCancelled: number;
+  totalSuccess: number;
+  totalBookings: number;
 }
 
 // ─── Booking helpers ──────────────────────────────────────────────────────────
@@ -308,11 +315,11 @@ function extractBookingItems(payload: unknown): RawBookingItem[] {
   if (!payload || typeof payload !== "object") return [];
   const asRecord = payload as Record<string, unknown>;
   // Spring returns { deals: [...] }
-  if (Array.isArray(asRecord.deals))  return asRecord.deals as RawBookingItem[];
+  if (Array.isArray(asRecord.deals)) return asRecord.deals as RawBookingItem[];
   // Go notify returns { data: [...] }
-  if (Array.isArray(asRecord.data))   return asRecord.data as RawBookingItem[];
-  if (Array.isArray(asRecord.items))  return asRecord.items as RawBookingItem[];
-  if (Array.isArray(payload))         return payload as RawBookingItem[];
+  if (Array.isArray(asRecord.data)) return asRecord.data as RawBookingItem[];
+  if (Array.isArray(asRecord.items)) return asRecord.items as RawBookingItem[];
+  if (Array.isArray(payload)) return payload as RawBookingItem[];
   return [];
 }
 
@@ -327,16 +334,16 @@ function bookingTitle(raw: RawBookingItem): string {
 
   // Token — check if full 10% is received via paymentKind or numeric comparison
   const kind = (
-    raw.paymentKind    ??   // Spring camelCase
-    raw.payment_kind   ??   // Spring snake_case fallback
-    raw.paymentType    ??   // Go proto
-    raw.payment_type   ??   // Go proto snake_case
+    raw.paymentKind ??   // Spring camelCase
+    raw.payment_kind ??   // Spring snake_case fallback
+    raw.paymentType ??   // Go proto
+    raw.payment_type ??   // Go proto snake_case
     ""
   ).toString().trim();
 
   console.log(`${LOG_PREFIX} [BOOKING] bookingTitle — kind="${kind}", paid=${Number(raw.amountReceived ?? raw.paidAmount ?? raw.paid_amount ?? 0)}, target=${Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0)}, listingType="${raw.listingType}", bookingStatus="${raw.bookingStatus}"`);
 
-  const paid   = Number(raw.amountReceived ?? raw.amount_received ?? raw.paidAmount ?? raw.paid_amount ?? 0);
+  const paid = Number(raw.amountReceived ?? raw.amount_received ?? raw.paidAmount ?? raw.paid_amount ?? 0);
   const target = Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
 
   const isFullTenPercent =
@@ -356,7 +363,7 @@ function fmt(n: number | string | undefined): string | undefined {
 }
 
 function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem {
-  const id    = String(raw.id ?? raw.bookingId ?? raw.booking_id ?? `booking-${index}`);
+  const id = String(raw.id ?? raw.bookingId ?? raw.booking_id ?? `booking-${index}`);
   const title = bookingTitle(raw);
 
   const parts: string[] = [];
@@ -368,10 +375,10 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
   // Shared paid amount resolver — tries all known field names
   const resolvePaid = () =>
     Number(raw.cumulativeReceived ?? raw.cumulative_received ?? 0) ||
-    Number(raw.amountReceived     ?? raw.amount_received     ?? 0) ||
-    Number(raw.paidAmount         ?? raw.paid_amount         ?? 0) ||
+    Number(raw.amountReceived ?? raw.amount_received ?? 0) ||
+    Number(raw.paidAmount ?? raw.paid_amount ?? 0) ||
     (Number(raw.quoteAmount ?? raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0) -
-     Number(raw.remainingAmount   ?? raw.remaining_amount    ?? 0));
+      Number(raw.remainingAmount ?? raw.remaining_amount ?? 0));
 
   if (title === "Booking Done") {
     const paid = resolvePaid() || Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
@@ -381,12 +388,12 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     // show kind, cumulative paid so far and what's remaining
     const kind = raw.paymentKind ?? raw.payment_kind ?? raw.paymentType ?? raw.payment_type;
     if (kind) parts.push(kind.replace(/_/g, " "));
-    const paid      = resolvePaid();
+    const paid = resolvePaid();
     const remaining = Number(raw.remainingAmount ?? raw.remaining_amount ?? 0);
-    const fmtPaid   = fmt(paid > 0 ? paid : undefined);
-    const fmtRem    = fmt(remaining);
-    if (fmtPaid)                   parts.push(`Paid: ${fmtPaid}`);
-    if (fmtRem && remaining > 0)   parts.push(`Remaining: ${fmtRem}`);
+    const fmtPaid = fmt(paid > 0 ? paid : undefined);
+    const fmtRem = fmt(remaining);
+    if (fmtPaid) parts.push(`Paid: ${fmtPaid}`);
+    if (fmtRem && remaining > 0) parts.push(`Remaining: ${fmtRem}`);
   } else if (title === "Booking Cancellation" && raw.cancellationReason) {
     parts.push(`Reason: ${raw.cancellationReason}`);
   }
@@ -394,20 +401,20 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
   const description = parts.length ? parts.join(" · ") : undefined;
 
   const timestamp =
-    raw.createdAt   ??
-    raw.created_at  ??
+    raw.createdAt ??
+    raw.created_at ??
     raw.bookingDate ??
     raw.submittedAt ??
     raw.cancelledAt ??
     new Date().toISOString();
 
   return {
-    id:          `booking-${id}`,
+    id: `booking-${id}`,
     title,
     description,
     timestamp,
-    read:        false,
-    tag:         "Booking",
+    read: false,
+    tag: "Booking",
   };
 }
 
@@ -416,9 +423,9 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
 function extractLeadItems(payload: unknown): RawLeadItem[] {
   if (!payload || typeof payload !== "object") return [];
   const asRecord = payload as Record<string, unknown>;
-  if (Array.isArray(asRecord.data))  return asRecord.data as RawLeadItem[];
+  if (Array.isArray(asRecord.data)) return asRecord.data as RawLeadItem[];
   if (Array.isArray(asRecord.items)) return asRecord.items as RawLeadItem[];
-  if (Array.isArray(payload))        return payload as RawLeadItem[];
+  if (Array.isArray(payload)) return payload as RawLeadItem[];
   return [];
 }
 
@@ -431,25 +438,25 @@ function leadTypeLabel(leadType: string): string {
 }
 
 function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
-  const leadId   = raw.leadIdentifier ?? raw.lead_identifier ?? `lead-${index}`;
-  const leadName = raw.leadName       ?? raw.lead_name       ?? "";
-  const leadType = raw.leadType       ?? raw.lead_type       ?? "";
-  const assignedTo = raw.assignedTo   ?? raw.assigned_to     ?? "";
-  const timestamp  = raw.createdAt    ?? raw.created_at      ?? new Date().toISOString();
+  const leadId = raw.leadIdentifier ?? raw.lead_identifier ?? `lead-${index}`;
+  const leadName = raw.leadName ?? raw.lead_name ?? "";
+  const leadType = raw.leadType ?? raw.lead_type ?? "";
+  const assignedTo = raw.assignedTo ?? raw.assigned_to ?? "";
+  const timestamp = raw.createdAt ?? raw.created_at ?? new Date().toISOString();
 
+  // Description: name · type · assigned — leadIdentifier NOT shown to user
   const parts: string[] = [];
-  if (leadName)   parts.push(leadName);
-  if (leadId)     parts.push(`#${leadId}`);
-  if (leadType)   parts.push(leadTypeLabel(leadType));
+  if (leadName) parts.push(leadName);
+  if (leadType) parts.push(leadTypeLabel(leadType));
   if (assignedTo) parts.push(`Assigned: ${assignedTo}`);
 
   return {
-    id:          `lead-${leadId}`,
-    title:       "New Lead",
+    id: `lead-${leadId}`,
+    title: leadName ? `New Lead - ${leadName}` : "New Lead",
     description: parts.length ? parts.join(" · ") : undefined,
     timestamp,
-    read:        false,
-    tag:         "Lead",
+    read: false,
+    tag: "Lead",
   };
 }
 
@@ -595,28 +602,51 @@ async function fetchRawBookingItems(
 
 /**
  * Fetch raw lead notification items from Go /v1/leads.
- * All roles see new-lead notifications — no scope filtering.
+ * Returns all leads from notify DB, but RBAC filtering will be applied
+ * by the caller to ensure users only see leads they have access to.
  */
 async function fetchRawLeadItems(
   authHeader: string,
 ): Promise<RawLeadItem[]> {
   const url = "/api/crm/notifications/leads";
-  console.log(`${LOG_PREFIX} [LEAD] fetching: ${url}`);
+  console.log(`${LOG_PREFIX} 🔍 [LEAD] fetching from Go notify server: ${url}`);
 
   let res: Response;
   try {
     res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
   } catch (err) {
-    console.warn(`${LOG_PREFIX} [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
+    console.error(`${LOG_PREFIX} ❌ [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
     return [];
   }
-  if (!res.ok) { console.warn(`${LOG_PREFIX} [LEAD] upstream ${res.status}`); return []; }
+
+  console.log(`${LOG_PREFIX} 📡 [LEAD] response status: ${res.status}`);
+
+  if (!res.ok) {
+    console.warn(`${LOG_PREFIX} ⚠️ [LEAD] upstream ${res.status}`);
+    return [];
+  }
 
   let payload: unknown;
-  try { payload = await res.json(); } catch { return []; }
+  try { payload = await res.json(); } catch {
+    console.warn(`${LOG_PREFIX} ⚠️ [LEAD] empty or invalid JSON response`);
+    return [];
+  }
 
   const items = extractLeadItems(payload);
-  console.log(`${LOG_PREFIX} [LEAD] extracted ${items.length} items`);
+  console.log(`${LOG_PREFIX} ✅ [LEAD] extracted ${items.length} lead notification items`);
+
+  // Log details of each lead notification
+  if (items.length > 0) {
+    console.log(`${LOG_PREFIX} 📋 [LEAD] All lead notifications:`, items.map((item, i) => ({
+      index: i,
+      leadIdentifier: item.leadIdentifier ?? item.lead_identifier,
+      leadName: item.leadName ?? item.lead_name,
+      leadType: item.leadType ?? item.lead_type,
+      assignedTo: item.assignedTo ?? item.assigned_to,
+      createdAt: item.createdAt ?? item.created_at,
+    })));
+  }
+
   return items;
 }
 
@@ -652,12 +682,12 @@ async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
     Number(raw[key] ?? raw[alt] ?? 0);
 
   const counts: NotificationCounts = {
-    totalLeads:       n("totalLeads",       "total_leads"),
-    totalScheduled:   n("totalScheduled",   "total_scheduled"),
+    totalLeads: n("totalLeads", "total_leads"),
+    totalScheduled: n("totalScheduled", "total_scheduled"),
     totalRescheduled: n("totalRescheduled", "total_rescheduled"),
-    totalCancelled:   n("totalCancelled",   "total_cancelled"),
-    totalSuccess:     n("totalSuccess",     "total_success"),
-    totalBookings:    n("totalBookings",    "total_bookings"),
+    totalCancelled: n("totalCancelled", "total_cancelled"),
+    totalSuccess: n("totalSuccess", "total_success"),
+    totalBookings: n("totalBookings", "total_bookings"),
   };
 
   console.log(`${LOG_PREFIX} [COUNTS]`, counts);
@@ -680,8 +710,13 @@ export async function loadNotifications(
   role: string,
   username: string,
 ): Promise<NotificationItem[]> {
+  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
+  console.log(`${LOG_PREFIX} 🚀 loadNotifications START`);
+  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
+  console.log(`${LOG_PREFIX} 📋 Parameters: role=${role}, username=${username}, hasToken=${!!token}`);
+
   if (!token) {
-    console.log(`${LOG_PREFIX} no token — skipping fetch`);
+    console.log(`${LOG_PREFIX} ❌ no token — skipping fetch`);
     return [];
   }
 
@@ -695,20 +730,29 @@ export async function loadNotifications(
       ? window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim()
       : null) || username;
 
+  console.log(`${LOG_PREFIX} 🔑 Login username: "${loginUsername}" (credential for Go backend matching)`);
+
   // ── Step 1: Fetch from all endpoints in parallel ──────────────────────────
   // Meetings: role/username/scope-scoped  →  RBAC-filtered below
   // Bookings: all roles see all           →  bypass RBAC
   // Leads:    all roles see all           →  bypass RBAC
+
+  console.log(`${LOG_PREFIX} 📡 Fetching from 6 endpoints in parallel...`);
+  const fetchStart = Date.now();
+
   const [rawResults, rawBookings, rawLeads] = await Promise.all([
     Promise.allSettled([
-      fetchRawEndpointItems("/api/crm/meetings/scheduled",   "SCHEDULED",    role, loginUsername, authHeader),
-      fetchRawEndpointItems("/api/crm/meetings/rescheduled", "RESCHEDULED",  role, loginUsername, authHeader),
-      fetchRawEndpointItems("/api/crm/meetings/cancellation","CANCELLATION", role, loginUsername, authHeader),
-      fetchRawEndpointItems("/api/crm/meetings/success",     "SUCCESS",      role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/scheduled", "SCHEDULED", role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/rescheduled", "RESCHEDULED", role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/cancellation", "CANCELLATION", role, loginUsername, authHeader),
+      fetchRawEndpointItems("/api/crm/meetings/success", "SUCCESS", role, loginUsername, authHeader),
     ]),
     fetchRawBookingItems(authHeader),
     fetchRawLeadItems(authHeader),
   ]);
+
+  const fetchDuration = Date.now() - fetchStart;
+  console.log(`${LOG_PREFIX} ✅ All fetches completed in ${fetchDuration}ms`);
 
   // Each endpoint returns { tag, items } so we can re-associate after filtering
   type TaggedRaw = { tag: MeetingTag; items: RawMeetingItem[] };
@@ -726,8 +770,13 @@ export async function loadNotifications(
     items.map((item) => ({ ...item, __notifyTag: tag })),
   );
 
-  console.log(`${LOG_PREFIX} raw items before RBAC filter: ${allRaw.length}`);
-  console.log(`${LOG_PREFIX} role=${role}, username=${username}, loginUsername=${loginUsername}`);
+  console.log(`${LOG_PREFIX} 📊 Raw items breakdown:`);
+  console.log(`${LOG_PREFIX}   - Meetings (all tags): ${allRaw.length} items`);
+  console.log(`${LOG_PREFIX}   - Bookings: ${rawBookings.length} items`);
+  console.log(`${LOG_PREFIX}   - Leads: ${rawLeads.length} items`);
+  console.log(`${LOG_PREFIX}   - TOTAL before RBAC: ${allRaw.length + rawBookings.length + rawLeads.length}`);
+  console.log(`${LOG_PREFIX} 🔒 Applying RBAC filter to ${allRaw.length} meeting items...`);
+  console.log(`${LOG_PREFIX} 📋 role=${role}, username=${username}, loginUsername=${loginUsername}`);
 
   // ── Step 3: Apply RBAC filter on raw items (lead_identifier still present) ─
   // applyNotificationRbacFilter expects FilterableNotificationItem which only
@@ -751,22 +800,26 @@ export async function loadNotifications(
 
   // Log sample items for debugging
   if (normalizedRaw.length > 0) {
-    console.log(`${LOG_PREFIX} sample raw items:`, normalizedRaw.slice(0, 3).map((item) => ({
+    console.log(`${LOG_PREFIX} 📋 Sample normalized raw items (first 3):`, normalizedRaw.slice(0, 3).map((item) => ({
       id: item.id,
       leadIdentifier: item.leadIdentifier,
       __assignedId: item.__assignedId,
+      __notifyTag: item.__notifyTag,
       title: item.title,
     })));
   }
 
+  const rbacStart = Date.now();
   const filteredRaw = await applyNotificationRbacFilter(
     normalizedRaw,
     token,
     role,
     username,
   );
+  const rbacDuration = Date.now() - rbacStart;
 
-  console.log(`${LOG_PREFIX} raw items after RBAC filter: ${filteredRaw.length}`);
+  console.log(`${LOG_PREFIX} ✅ RBAC filter completed in ${rbacDuration}ms`);
+  console.log(`${LOG_PREFIX} 📊 RBAC Result: ${allRaw.length} → ${filteredRaw.length} meeting items (${allRaw.length - filteredRaw.length} filtered out)`);
 
   // ── Step 4: Map filtered raw items → NotificationItem ─────────────────────
   const all: NotificationItem[] = filteredRaw.map((item, i) => {
@@ -774,13 +827,32 @@ export async function loadNotifications(
     return mapRawItem(item as RawMeetingItem, tag, i);
   });
 
-  // ── Step 4b: Booking + Lead items → NotificationItem (all roles, no RBAC) ──
+  // ── Step 4b: Apply RBAC filtering to LEAD notifications ────────────────────
+  // Normalize lead items to include leadIdentifier for filtering
+  const normalizedLeads = rawLeads.map((item) => ({
+    ...item,
+    leadIdentifier: (item.leadIdentifier ?? item.lead_identifier ?? "").trim(),
+  }));
+
+  console.log(`${LOG_PREFIX} 🔒 Applying RBAC filter to ${normalizedLeads.length} lead items...`);
+  const rbacLeadsStart = Date.now();
+  const filteredLeads = await applyNotificationRbacFilter(
+    normalizedLeads,
+    token,
+    role,
+    username,
+  );
+  const rbacLeadsDuration = Date.now() - rbacLeadsStart;
+  console.log(`${LOG_PREFIX} ✅ Lead RBAC filter completed in ${rbacLeadsDuration}ms`);
+  console.log(`${LOG_PREFIX} 📊 Lead RBAC Result: ${normalizedLeads.length} → ${filteredLeads.length} lead items (${normalizedLeads.length - filteredLeads.length} filtered out)`);
+
+  // ── Step 4c: Booking items → NotificationItem (no RBAC - all roles see all) ──
   const bookingNotifications = rawBookings.map((item, i) => mapRawBookingItem(item, i));
-  const leadNotifications    = rawLeads.map((item, i)    => mapRawLeadItem(item, i));
+  const leadNotifications = filteredLeads.map((item, i) => mapRawLeadItem(item as RawLeadItem, i));
 
   all.push(...bookingNotifications, ...leadNotifications);
   console.log(
-    `${LOG_PREFIX} booking: ${bookingNotifications.length}, leads: ${leadNotifications.length}`,
+    `${LOG_PREFIX} 📊 Added booking: ${bookingNotifications.length}, leads: ${leadNotifications.length} (after RBAC)`,
   );
 
   // ── Step 5: Deduplicate by id (guard against same item from multiple sources)
@@ -791,6 +863,10 @@ export async function loadNotifications(
     return true;
   });
 
+  if (all.length !== deduped.length) {
+    console.log(`${LOG_PREFIX} ℹ️ Deduplicated: ${all.length} → ${deduped.length} (${all.length - deduped.length} duplicates removed)`);
+  }
+
   // ── Step 6: Sort newest-first ─────────────────────────────────────────────
   deduped.sort((a, b) => {
     const tA = new Date(a.timestamp).getTime();
@@ -799,7 +875,12 @@ export async function loadNotifications(
     return tB - tA;
   });
 
-  console.log(`${LOG_PREFIX} total notifications after filter + dedup: ${deduped.length}`);
+  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
+  console.log(`${LOG_PREFIX} 🎯 loadNotifications COMPLETE`);
+  console.log(`${LOG_PREFIX} 📊 Final result: ${deduped.length} total notifications`);
+  console.log(`${LOG_PREFIX} ⏱️ Total time: ${Date.now() - (fetchStart - fetchDuration)}ms (fetch: ${fetchDuration}ms, rbac: ${rbacDuration}ms)`);
+  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
+
   return deduped;
 }
 

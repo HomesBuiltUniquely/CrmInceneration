@@ -77,21 +77,17 @@ function relativeTime(iso: string): string {
   });
 }
 
-/** Unread items first (newest → oldest), then read items (newest → oldest) */
+/** Sort by read status first (unread on top), then by timestamp newest first */
 function sortNotifications(items: NotificationItem[]): NotificationItem[] {
-  const unread = items
-    .filter((n) => !n.read)
-    .sort(
-      (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-    );
-  const read = items
-    .filter((n) => n.read)
-    .sort(
-      (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-    );
-  return [...unread, ...read];
+  return items.slice().sort((a, b) => {
+    // Unread items come first
+    if (a.read !== b.read) return a.read ? 1 : -1;
+
+    // Within same read status, sort by timestamp newest first
+    const timeA = new Date(a.timestamp).getTime();
+    const timeB = new Date(b.timestamp).getTime();
+    return timeB - timeA;
+  });
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
