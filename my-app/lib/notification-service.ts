@@ -444,11 +444,10 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
   const assignedTo = raw.assignedTo ?? raw.assigned_to ?? "";
   const timestamp = raw.createdAt ?? raw.created_at ?? new Date().toISOString();
 
-  // Description: name · type · assigned — leadIdentifier NOT shown to user
+  // Description: type · assigned — name already in title, leadIdentifier NOT shown to user
   const parts: string[] = [];
-  if (leadName) parts.push(leadName);
   if (leadType) parts.push(leadTypeLabel(leadType));
-  if (assignedTo) parts.push(`Assigned: ${assignedTo}`);
+  if (assignedTo) parts.push(`Assigned to: ${assignedTo}`);
 
   return {
     id: `lead-${leadId}`,

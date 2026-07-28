@@ -21,9 +21,10 @@ import Notify, {
 
 const READ_IDS_KEY = "crm_read_notification_ids";
 
-function getReadIds(): Set<string> {
+function getReadIds(username: string): Set<string> {
   try {
-    const raw = window.localStorage.getItem(READ_IDS_KEY);
+    const key = `${READ_IDS_KEY}_${username}`;
+    const raw = window.localStorage.getItem(key);
     if (!raw) return new Set();
     return new Set(JSON.parse(raw) as string[]);
   } catch {
@@ -31,17 +32,18 @@ function getReadIds(): Set<string> {
   }
 }
 
-function saveReadIds(ids: Set<string>): void {
+function saveReadIds(ids: Set<string>, username: string): void {
   try {
-    window.localStorage.setItem(READ_IDS_KEY, JSON.stringify([...ids]));
-  } catch {
-    // localStorage full or unavailable — silently ignore
-  }
+    const key = `${READ_IDS_KEY}_${username}`;
+    window.localStorage.setItem(key, JSON.stringify([...ids]));
+  } catch {}
 }
 
-/** Merge server items with persisted read state */
-function applyReadState(items: NotificationItem[]): NotificationItem[] {
-  const readIds = getReadIds();
+function applyReadState(
+  items: NotificationItem[],
+  username: string,
+): NotificationItem[] {
+  const readIds = getReadIds(username);
   if (readIds.size === 0) return items;
   return items.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
 }
@@ -85,17 +87,20 @@ export default function TopNav({
     return window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
   });
 
+  const [username] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
+  });
+
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
-  // Fetch live notifications once on mount, then rehydrate read state
   useEffect(() => {
-    const token    = readStoredCrmToken();
-    const username = window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
+    const token = readStoredCrmToken();
 
     loadNotifications(token, role, username).then((items) => {
-      setNotifications(applyReadState(items));
+      setNotifications(applyReadState(items, username));
     });
-  }, [role]);
+  }, [role, username]);
 
   const searchActive = search.trim().length > 0;
 
@@ -107,10 +112,9 @@ export default function TopNav({
   const handleMarkAllRead = () => {
     setNotifications((prev) => {
       const updated = prev.map((n) => ({ ...n, read: true }));
-      // Persist every ID as read
-      const readIds = getReadIds();
+      const readIds = getReadIds(username);
       updated.forEach((n) => readIds.add(n.id));
-      saveReadIds(readIds);
+      saveReadIds(readIds, username);
       return updated;
     });
   };
@@ -118,10 +122,9 @@ export default function TopNav({
   const handleNotificationClick = (id: string) => {
     setNotifications((prev) => {
       const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
-      // Persist this ID as read
-      const readIds = getReadIds();
+      const readIds = getReadIds(username);
       readIds.add(id);
-      saveReadIds(readIds);
+      saveReadIds(readIds, username);
       return updated;
     });
   };
@@ -129,13 +132,10 @@ export default function TopNav({
   return (
     <div className="relative z-50 w-full border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)]">
       <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-3">
-
         {/* Left Side */}
         <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 py-3">
-
           {/* Left Side */}
           <div className="flex items-center gap-4">
-
             <div className="flex items-center gap-2">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--crm-sidebar-active)] shadow-[var(--crm-shadow-sm)]">
                 <Image
@@ -152,7 +152,6 @@ export default function TopNav({
             </div>
 
             <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--crm-text-muted)]">
-
               {hasDashboardByRole(role) && (
                 <>
                   <button
@@ -169,14 +168,11 @@ export default function TopNav({
               <span className="rounded-full bg-[var(--crm-accent-soft)] px-3 py-1 text-[12px] font-semibold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]">
                 Lead Management
               </span>
-
             </div>
-
           </div>
 
           {/* Right Side */}
           <div className="ml-auto flex items-center gap-4">
-
             <div
               className={`flex w-[420px] items-center gap-2 rounded-xl px-3 py-2 transition-colors ${
                 searchActive
@@ -216,9 +212,7 @@ export default function TopNav({
                 onNotificationClick={handleNotificationClick}
               />
             </div>
-
           </div>
-
         </div>
       </div>
     </div>
