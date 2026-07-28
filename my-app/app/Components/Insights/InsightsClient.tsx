@@ -28,6 +28,9 @@ import {
 import { buildLeadBudgetInvestmentMapSync, enrichInvestmentMapWithQuotes, stableLeadKey } from "@/lib/insights-lead-investment";
 import { computeFunnelStageInvestmentTotals, computeFreshLeadInvestmentTotal } from "@/lib/insights-sales-funnel-investment";
 import { fetchInsightsRevenueForecastTarget } from "@/lib/insights-revenue-forecast-target";
+import { salesTargetsApi } from "@/lib/sales-targets-api";
+import { currentSalesTargetMonth } from "@/lib/sales-targets";
+import { type InsightsTeamMember } from "@/lib/crm-insights-api";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
 import InsightSect3 from "./InsightsSect3";
 import InsightsSect4 from "./InsightsSect4";
@@ -85,6 +88,9 @@ export default function InsightsClient1() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Per-user monthly incentive targets (from sales-targets API)
+  const [incentiveTargets, setIncentiveTargets] = useState<Record<number, number>>({});
 
   const loadFilters = useCallback(async (selectedBranch: string) => {
     try {
@@ -186,6 +192,26 @@ export default function InsightsClient1() {
   useEffect(() => {
     void loadTokenMetrics();
   }, [loadTokenMetrics]);
+
+  // Load per-user monthly targets from sales-targets API whenever team data changes
+  useEffect(() => {
+    let cancelled = false;
+    const month = currentSalesTargetMonth();
+    void (async () => {
+      try {
+        const rows = await salesTargetsApi.listUsers(month);
+        if (cancelled) return;
+        const map: Record<number, number> = {};
+        for (const row of rows) {
+          map[row.userId] = row.monthlyTargetInr;
+        }
+        setIncentiveTargets(map);
+      } catch {
+        // silently ignore — columns will show — when target unavailable
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [dashboard.teamPerformance]);
 
   const executiveOptions = useMemo(() => {
     if (filterOptions.salesManagers.some((m) => (m.executives?.length ?? 0) > 0)) {
@@ -529,7 +555,14 @@ export default function InsightsClient1() {
         stageVelocity={dashboard.stageVelocity}
       />
       <InsightsSect5
-        team={dashboard.teamPerformance}
+        team={dashboard.teamPerformance.map((m): InsightsTeamMember => ({
+          ...m,
+          targetIncentive:
+            typeof m.userId === "number" && incentiveTargets[m.userId] != null
+              ? incentiveTargets[m.userId]
+              : undefined,
+          achievedIncentive: m.closedValue,
+        }))}
         teamPeriod={teamPeriod}
         onTeamPeriodChange={setTeamPeriod}
       />

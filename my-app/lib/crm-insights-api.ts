@@ -62,6 +62,8 @@ export type InsightsTeamMember = {
   closed: number;
   closedValue: number;
   conversionPercent: number;
+  targetIncentive?: number;
+  achievedIncentive?: number;
 };
 
 export type InsightsChartPoint = {
@@ -419,6 +421,8 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
         closed: asNum(m.closed),
         closedValue: asNum(m.closedValue),
         conversionPercent: asNum(m.conversionPercent),
+        targetIncentive: m.targetIncentive != null ? asNum(m.targetIncentive) : undefined,
+        achievedIncentive: m.achievedIncentive != null ? asNum(m.achievedIncentive) : undefined,
       }),
     ),
     leadsOverTime: {
