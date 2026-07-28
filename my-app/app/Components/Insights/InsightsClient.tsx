@@ -25,8 +25,9 @@ import {
   listQuoteSentWonLeads,
   resolveInsightsAssigneeAliases,
 } from "@/lib/insights-quote-sent-metrics";
-import { buildLeadInvestmentMap, stableLeadKey } from "@/lib/insights-lead-investment";
+import { buildLeadBudgetInvestmentMapSync, enrichInvestmentMapWithQuotes, stableLeadKey } from "@/lib/insights-lead-investment";
 import { computeFunnelStageInvestmentTotals, computeFreshLeadInvestmentTotal } from "@/lib/insights-sales-funnel-investment";
+import { fetchInsightsRevenueForecastTarget } from "@/lib/insights-revenue-forecast-target";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
 import InsightSect3 from "./InsightsSect3";
 import InsightsSect4 from "./InsightsSect4";
@@ -266,16 +267,43 @@ export default function InsightsClient1() {
     count: number;
     totalValue: number | null;
     loading: boolean;
-  }>({ count: 0, totalValue: null, loading: true });
+  }>({ count: 0, totalValue: null, loading: false });
 
   const [funnelStageValues, setFunnelStageValues] = useState<Record<string, number> | null>(null);
-  const [funnelMetricsLoading, setFunnelMetricsLoading] = useState(true);
+  const [funnelMetricsLoading, setFunnelMetricsLoading] = useState(false);
+
+  const salesFunnelStageCount = dashboard.salesFunnel.length;
+
+  const applyInvestmentMetrics = useCallback(
+    (
+      scopedLeads: Parameters<typeof filterInsightsQuoteSentScopeLeads>[0],
+      investments: Map<string, number>,
+      salesFunnel: InsightsDashboard["salesFunnel"],
+      opts: ReturnType<typeof buildInsightsQuoteSentCountOpts>,
+    ) => {
+      const count = computeQuoteSentWonCount(scopedLeads, opts);
+      const funnelTotals = computeFunnelStageInvestmentTotals(
+        scopedLeads,
+        investments,
+        salesFunnel,
+      );
+      funnelTotals.fresh_lead = computeFreshLeadInvestmentTotal(scopedLeads, investments);
+      setFunnelStageValues(funnelTotals);
+
+      let totalValue = 0;
+      for (const lead of listQuoteSentWonLeads(scopedLeads, opts)) {
+        totalValue += investments.get(stableLeadKey(lead)) ?? 0;
+      }
+      setQuoteSentWonMetrics({ count, totalValue, loading: false });
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setQuoteSentWonMetrics((prev) => ({ ...prev, loading: true }));
-      setFunnelMetricsLoading(true);
+      if (salesFunnelStageCount === 0) return;
+
       try {
         const range = resolveBookingDateRange(dateFilter);
         const assigneeAliasSet = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
@@ -289,32 +317,26 @@ export default function InsightsClient1() {
           getCrmAuthHeaders(),
         );
         if (cancelled) return;
+
         const scopedLeads = filterInsightsQuoteSentScopeLeads(data.primaryRows, {
           branchId,
           filterOptions,
         });
         const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
-        const count = computeQuoteSentWonCount(scopedLeads, opts);
-        setQuoteSentWonMetrics({ count, totalValue: null, loading: true });
+        const salesFunnel = dashboard.salesFunnel;
 
-        const investments = await buildLeadInvestmentMap(scopedLeads);
+        const budgetMap = buildLeadBudgetInvestmentMapSync(scopedLeads);
         if (cancelled) return;
-
-        const funnelTotals = computeFunnelStageInvestmentTotals(
-          scopedLeads,
-          investments,
-          dashboard.salesFunnel,
-        );
-        funnelTotals.fresh_lead = computeFreshLeadInvestmentTotal(scopedLeads, investments);
-        setFunnelStageValues(funnelTotals);
+        applyInvestmentMetrics(scopedLeads, budgetMap, salesFunnel, opts);
         setFunnelMetricsLoading(false);
 
-        let totalValue = 0;
-        for (const lead of listQuoteSentWonLeads(scopedLeads, opts)) {
-          totalValue += investments.get(stableLeadKey(lead)) ?? 0;
-        }
+        const enriched = await enrichInvestmentMapWithQuotes(scopedLeads, budgetMap, {
+          deadlineMs: 2000,
+          concurrency: 16,
+          maxQuoteIds: 120,
+        });
         if (cancelled) return;
-        setQuoteSentWonMetrics({ count, totalValue, loading: false });
+        applyInvestmentMetrics(scopedLeads, enriched, salesFunnel, opts);
       } catch {
         if (!cancelled) {
           setQuoteSentWonMetrics({ count: 0, totalValue: 0, loading: false });
@@ -326,7 +348,48 @@ export default function InsightsClient1() {
     return () => {
       cancelled = true;
     };
-  }, [branchId, dateFilter, filterOptions, salesPeople, dashboard.salesFunnel]);
+  }, [
+    applyInvestmentMetrics,
+    branchId,
+    dateFilter,
+    dashboard.salesFunnel,
+    filterOptions,
+    salesPeople,
+    salesFunnelStageCount,
+  ]);
+
+  const [forecastTargetInr, setForecastTargetInr] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const target = await fetchInsightsRevenueForecastTarget({
+          dateFilter,
+          branchId,
+          salesPeople,
+          filterOptions,
+        });
+        if (!cancelled) setForecastTargetInr(target > 0 ? target : null);
+      } catch {
+        if (!cancelled) setForecastTargetInr(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, dateFilter, filterOptions, salesPeople]);
+
+  const revenueForecastForUi = useMemo(
+    () => ({
+      ...dashboard.revenueForecast,
+      target:
+        forecastTargetInr != null && forecastTargetInr > 0
+          ? forecastTargetInr
+          : dashboard.revenueForecast.target,
+    }),
+    [dashboard.revenueForecast, forecastTargetInr],
+  );
 
   return (
     <>
@@ -473,7 +536,7 @@ export default function InsightsClient1() {
       <InsightsSect6
         leadsOverTime={dashboard.leadsOverTime}
         conversionTrend={dashboard.conversionTrend}
-        revenueForecast={dashboard.revenueForecast}
+        revenueForecast={revenueForecastForUi}
       />
     </>
   );

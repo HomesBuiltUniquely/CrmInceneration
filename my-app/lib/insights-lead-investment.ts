@@ -4,13 +4,12 @@ import { resolveQuoteAmount } from "@/lib/lead-quote-options";
 import { quoteSentIdOf } from "@/lib/quote-sent-info";
 import {
   extractProlanceQuoteTotalAmount,
-  fetchProlanceQuoteRevisions,
   fetchProlanceQuoteShare,
 } from "@/lib/prolance-quote-api";
 
 const quoteAmountCache = new Map<string, number>();
 
-function resolveAnchorQuoteId(lead: ApiLead): string {
+export function resolveAnchorQuoteId(lead: ApiLead): string {
   const fromInfo = quoteSentIdOf(lead);
   if (fromInfo) return fromInfo;
   const link = String(lead.quoteLink ?? "").trim();
@@ -34,7 +33,7 @@ function readLeadBudgetRaw(lead: ApiLead): string {
   ).trim();
 }
 
-/** Parse CRM budget label (e.g. "4.0 Lakhs Onwards") to INR — same basis as Financial Guardrails budget fallback. */
+/** Parse CRM budget label (e.g. "4.0 Lakhs Onwards") to INR. */
 export function parseBudgetLabelToInr(raw: string | null | undefined): number {
   const text = String(raw ?? "").trim();
   if (!text) return 0;
@@ -53,85 +52,130 @@ export function parseBudgetLabelToInr(raw: string | null | undefined): number {
   return Math.round(num * 100_000);
 }
 
-async function fetchCurrentQuoteTotalInvestment(anchorId: string): Promise<number> {
-  const cached = quoteAmountCache.get(anchorId);
+export function syncLeadInvestmentAmount(lead: ApiLead): number {
+  const anchorId = resolveAnchorQuoteId(lead);
+  if (anchorId) {
+    const cached = quoteAmountCache.get(anchorId);
+    if (cached != null && cached > 0) return cached;
+  }
+  return parseBudgetLabelToInr(readLeadBudgetRaw(lead));
+}
+
+/** Instant map — budget (+ cached quote amounts). No network. */
+export function buildLeadBudgetInvestmentMapSync(leads: ApiLead[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const lead of leads) {
+    map.set(stableLeadKey(lead), syncLeadInvestmentAmount(lead));
+  }
+  return map;
+}
+
+async function fetchQuoteTotalFast(quoteId: string): Promise<number> {
+  const id = quoteId.trim();
+  if (!id) return 0;
+  const cached = quoteAmountCache.get(id);
   if (cached != null) return cached;
 
   try {
-    const revisions = await fetchProlanceQuoteRevisions(anchorId);
-    let share: Record<string, unknown>;
-    if (revisions.length === 0) {
-      share = await fetchProlanceQuoteShare(anchorId);
-    } else {
-      const latest = [...revisions].sort(
-        (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
-      ).at(-1);
-      if (!latest) {
-        quoteAmountCache.set(anchorId, 0);
-        return 0;
-      }
-      share = await fetchProlanceQuoteShare(latest.quoteId);
-    }
+    const share = await fetchProlanceQuoteShare(id);
     const amount = resolveQuoteAmount(extractProlanceQuoteTotalAmount(share)) ?? 0;
-    quoteAmountCache.set(anchorId, amount);
+    quoteAmountCache.set(id, amount);
     return amount;
   } catch {
-    quoteAmountCache.set(anchorId, 0);
+    quoteAmountCache.set(id, 0);
     return 0;
   }
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  fn: (item: T) => Promise<void>,
+  concurrency: number,
+): Promise<void> {
+  if (items.length === 0) return;
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const current = index;
+      index += 1;
+      await fn(items[current]!);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()),
+  );
+}
+
+export type EnrichInvestmentOptions = {
+  /** Stop starting new quote fetches after this many ms (default 2000). */
+  deadlineMs?: number;
+  concurrency?: number;
+  /** Cap distinct quote ids per pass (quote-sent / late funnel first). */
+  maxQuoteIds?: number;
+};
+
 /**
- * Total Investment Range for a lead — current quote version amount when a quote exists,
- * otherwise parsed budget (matches Configuration Scope Financial Guardrails).
+ * Upgrade budget map with live quote totals (one share call per quote id, deduped).
+ * Respects deadline — returns partial upgrades within ~2s.
  */
+export async function enrichInvestmentMapWithQuotes(
+  leads: ApiLead[],
+  map: Map<string, number>,
+  options: EnrichInvestmentOptions = {},
+): Promise<Map<string, number>> {
+  const deadlineMs = options.deadlineMs ?? 2000;
+  const concurrency = options.concurrency ?? 16;
+  const maxQuoteIds = options.maxQuoteIds ?? 120;
+  const deadline = Date.now() + deadlineMs;
+
+  const quoteIdToKeys = new Map<string, string[]>();
+  for (const lead of leads) {
+    const quoteId = resolveAnchorQuoteId(lead);
+    if (!quoteId) continue;
+    const key = stableLeadKey(lead);
+    const keys = quoteIdToKeys.get(quoteId) ?? [];
+    keys.push(key);
+    quoteIdToKeys.set(quoteId, keys);
+  }
+
+  const quoteIds = [...quoteIdToKeys.keys()].slice(0, maxQuoteIds);
+
+  await runWithConcurrency(
+    quoteIds,
+    async (quoteId) => {
+      if (Date.now() > deadline) return;
+      const amount = await fetchQuoteTotalFast(quoteId);
+      if (amount <= 0) return;
+      for (const leadKey of quoteIdToKeys.get(quoteId) ?? []) {
+        map.set(leadKey, amount);
+      }
+    },
+    concurrency,
+  );
+
+  return map;
+}
+
+/** @deprecated Prefer sync map + enrichInvestmentMapWithQuotes */
 export async function fetchLeadTotalInvestmentAmount(lead: ApiLead): Promise<number> {
   const anchorId = resolveAnchorQuoteId(lead);
   if (anchorId) {
-    const fromQuote = await fetchCurrentQuoteTotalInvestment(anchorId);
+    const fromQuote = await fetchQuoteTotalFast(anchorId);
     if (fromQuote > 0) return fromQuote;
   }
   return parseBudgetLabelToInr(readLeadBudgetRaw(lead));
 }
 
-export async function sumWithConcurrency<T>(
-  items: T[],
-  fn: (item: T) => Promise<number>,
-  concurrency: number,
-): Promise<number> {
-  if (items.length === 0) return 0;
-  let index = 0;
-  let total = 0;
-
-  async function worker() {
-    while (index < items.length) {
-      const current = index;
-      index += 1;
-      total += await fn(items[current]!);
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, () => worker()),
-  );
-  return total;
-}
-
 export async function buildLeadInvestmentMap(
   leads: ApiLead[],
-  concurrency = 6,
+  concurrency = 16,
 ): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  await sumWithConcurrency(
-    leads,
-    async (lead) => {
-      const amount = await fetchLeadTotalInvestmentAmount(lead);
-      map.set(stableLeadKey(lead), amount);
-      return amount;
-    },
+  const map = buildLeadBudgetInvestmentMapSync(leads);
+  return enrichInvestmentMapWithQuotes(leads, map, {
+    deadlineMs: 2000,
     concurrency,
-  );
-  return map;
+    maxQuoteIds: 120,
+  });
 }
 
 export function stableLeadKey(lead: ApiLead): string {

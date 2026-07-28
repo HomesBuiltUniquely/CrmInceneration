@@ -14,7 +14,7 @@ import type { InsightCountOpts } from "@/lib/lead-follow-up-insights";
 import type { InsightsFilterOptions } from "@/lib/crm-insights-api";
 import {
   fetchLeadTotalInvestmentAmount,
-  sumWithConcurrency,
+  stableLeadKey,
 } from "@/lib/insights-lead-investment";
 
 export type QuoteSentWonMetrics = {
@@ -130,10 +130,17 @@ export function computeQuoteSentWonCount(leads: ApiLead[], opts: InsightCountOpt
 export async function computeQuoteSentWonTotalValue(
   leads: ApiLead[],
   opts: InsightCountOpts,
-  concurrency = 4,
+  investments?: Map<string, number>,
 ): Promise<number> {
   const wonLeads = listQuoteSentWonLeads(leads, opts);
-  return sumWithConcurrency(wonLeads, fetchLeadTotalInvestmentAmount, concurrency);
+  if (investments) {
+    return wonLeads.reduce((sum, lead) => sum + (investments.get(stableLeadKey(lead)) ?? 0), 0);
+  }
+  let total = 0;
+  for (const lead of wonLeads) {
+    total += await fetchLeadTotalInvestmentAmount(lead);
+  }
+  return total;
 }
 
 export async function loadQuoteSentWonMetrics(args: {
