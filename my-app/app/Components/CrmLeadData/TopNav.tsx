@@ -44,6 +44,10 @@ function applyReadState(
   username: string,
 ): NotificationItem[] {
   const readIds = getReadIds(username);
+  console.log(
+    `[applyReadState] User: ${username}, Read IDs from localStorage:`,
+    Array.from(readIds),
+  );
   if (readIds.size === 0) return items;
   return items.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
 }
@@ -97,8 +101,18 @@ export default function TopNav({
   useEffect(() => {
     const token = readStoredCrmToken();
 
+    console.log(`[TopNav] Loading notifications for user: ${username}`);
+
     loadNotifications(token, role, username).then((items) => {
-      setNotifications(applyReadState(items, username));
+      console.log(
+        `[TopNav] Received ${items.length} notifications from server`,
+      );
+      const withReadState = applyReadState(items, username);
+      const readCount = withReadState.filter((n) => n.read).length;
+      console.log(
+        `[TopNav] After applying read state: ${readCount} read, ${items.length - readCount} unread`,
+      );
+      setNotifications(withReadState);
     });
   }, [role, username]);
 
@@ -120,13 +134,66 @@ export default function TopNav({
   };
 
   const handleNotificationClick = (id: string) => {
+    console.log(
+      `[TopNav] Marking notification ${id} as read for user: ${username}`,
+    );
     setNotifications((prev) => {
       const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
       const readIds = getReadIds(username);
       readIds.add(id);
       saveReadIds(readIds, username);
+      console.log(
+        `[TopNav] Saved read IDs to localStorage:`,
+        Array.from(readIds),
+      );
       return updated;
     });
+  };
+
+  const handleClearAll = (
+    tabType: "all" | "leads" | "meetings" | "bookings",
+  ) => {
+    const tabName =
+      tabType === "all"
+        ? "all"
+        : tabType === "leads"
+          ? "lead"
+          : tabType === "meetings"
+            ? "meeting"
+            : "booking";
+    if (
+      confirm(
+        `Are you sure you want to clear all ${tabName} notifications? This cannot be undone.`,
+      )
+    ) {
+      setNotifications((prev) => {
+        if (tabType === "all") {
+          const key = `${READ_IDS_KEY}_${username}`;
+          window.localStorage.removeItem(key);
+          return [];
+        }
+
+        const idsToRemove = new Set<string>();
+
+        prev.forEach((n) => {
+          const tag = (n.tag || "").toLowerCase();
+          const shouldRemove =
+            (tabType === "meetings" && tag !== "booking" && tag !== "lead") ||
+            (tabType === "bookings" && tag === "booking") ||
+            (tabType === "leads" && tag === "lead");
+
+          if (shouldRemove) {
+            idsToRemove.add(n.id);
+          }
+        });
+
+        const readIds = getReadIds(username);
+        idsToRemove.forEach((id) => readIds.delete(id));
+        saveReadIds(readIds, username);
+
+        return prev.filter((n) => !idsToRemove.has(n.id));
+      });
+    }
   };
 
   return (
@@ -210,6 +277,7 @@ export default function TopNav({
                 notifications={notifications}
                 onMarkAllRead={handleMarkAllRead}
                 onNotificationClick={handleNotificationClick}
+                onClearAll={handleClearAll}
               />
             </div>
           </div>
