@@ -91,14 +91,19 @@ interface RawMeetingItem {
 
 type MeetingTag = "SCHEDULED" | "RESCHEDULED" | "CANCELLATION" | "SUCCESS";
 
-// ─── Booking raw item shape (matches Spring booking_token_record + proto Booking) ─
+// ─── Booking raw item shape (matches proto Booking message from Go notify server) ─
 
 /**
- * Raw booking/token item as returned by Spring GET /v1/booking-token/deals
- * (the source of truth — reads directly from booking_token_record table).
- *
- * Also accepts the proto Booking camelCase/snake_case fields as fallback
- * in case the Go notify server is also consulted.
+ * Raw booking/token item as returned by Go NotifyProject server GET /v1/bookings.
+ * 
+ * The Go server emits the proto `Booking` message via grpc-gateway, which 
+ * translates snake_case proto fields → camelCase JSON by default.
+ * 
+ * We accept both camelCase and snake_case here for resilience across 
+ * grpc-gateway versions and any manual snake_case config.
+ * 
+ * Also retains Spring booking_token_record field names as fallback in case
+ * any legacy Spring data is still in the pipeline during migration.
  */
 interface RawBookingItem {
   // ── Spring booking_token_record fields (camelCase from Spring JSON) ────────
@@ -314,10 +319,10 @@ export interface NotificationCounts {
 function extractBookingItems(payload: unknown): RawBookingItem[] {
   if (!payload || typeof payload !== "object") return [];
   const asRecord = payload as Record<string, unknown>;
-  // Spring returns { deals: [...] }
-  if (Array.isArray(asRecord.deals)) return asRecord.deals as RawBookingItem[];
-  // Go notify returns { data: [...] }
+  // Go notify returns { data: [...] }  ← primary source now
   if (Array.isArray(asRecord.data)) return asRecord.data as RawBookingItem[];
+  // Legacy: Spring returns { deals: [...] }
+  if (Array.isArray(asRecord.deals)) return asRecord.deals as RawBookingItem[];
   if (Array.isArray(asRecord.items)) return asRecord.items as RawBookingItem[];
   if (Array.isArray(payload)) return payload as RawBookingItem[];
   return [];
@@ -546,18 +551,17 @@ async function fetchRawEndpointItems(
 // ─── Booking endpoint fetch ───────────────────────────────────────────────────
 
 /**
- * Fetch booking/token records from Spring GET /v1/booking-token/deals
- * (proxied via /api/crm/booking-token/deals).
+ * Fetch booking/token records from Go NotifyProject server GET /v1/bookings
+ * (proxied via /api/crm/notifications/bookings).
  *
- * This is the source of truth — reads directly from booking_token_record table.
+ * Returns booking notifications from the notify DB.
  * All roles see all booking notifications (no scope filtering needed here).
  */
 async function fetchRawBookingItems(
   authHeader: string,
 ): Promise<RawBookingItem[]> {
-  // Fetch all listing types in one call (no listingType filter = all deals)
-  const url = "/api/crm/booking-token/deals";
-  console.log(`${LOG_PREFIX} [BOOKING] fetching from Spring: ${url}`);
+  const url = "/api/crm/notifications/bookings";
+  console.log(`${LOG_PREFIX} [BOOKING] fetching from Go notify server: ${url}`);
 
   let res: Response;
   try {
@@ -566,32 +570,48 @@ async function fetchRawBookingItems(
     console.warn(`${LOG_PREFIX} [BOOKING] fetch failed:`, err instanceof Error ? err.message : err);
     return [];
   }
-  if (!res.ok) { console.warn(`${LOG_PREFIX} [BOOKING] upstream ${res.status}`); return []; }
+  
+  console.log(`${LOG_PREFIX} [BOOKING] response status: ${res.status}`);
+  
+  if (!res.ok) { 
+    console.warn(`${LOG_PREFIX} [BOOKING] upstream ${res.status}`); 
+    return []; 
+  }
 
   let payload: unknown;
-  try { payload = await res.json(); } catch { return []; }
+  try { 
+    payload = await res.json(); 
+  } catch { 
+    console.warn(`${LOG_PREFIX} [BOOKING] empty or invalid JSON response`);
+    return []; 
+  }
 
   const items = extractBookingItems(payload);
-  console.log(`${LOG_PREFIX} [BOOKING] extracted ${items.length} items`);
-  // Log first item fields to verify Spring response shape
+  console.log(`${LOG_PREFIX} [BOOKING] extracted ${items.length} items from Go notify server`);
+  
+  // Log first item fields to verify Go response shape
   if (items.length > 0) {
     const s = items[0] as Record<string, unknown>;
-    console.log(`${LOG_PREFIX} [BOOKING] sample fields:`, {
-      id: s.id,
+    console.log(`${LOG_PREFIX} [BOOKING] sample fields from Go notify:`, {
+      id: s.id ?? s.bookingId ?? s.booking_id,
       customerName: s.customerName,
-      leadName: s.leadName,
-      leadIdentifier: s.leadIdentifier,
+      leadName: s.leadName ?? s.lead_name,
+      leadIdentifier: s.leadIdentifier ?? s.lead_identifier,
       paymentKind: s.paymentKind,
       payment_kind: s.payment_kind,
+      paymentType: s.paymentType ?? s.payment_type,
       amountReceived: s.amountReceived,
       amount_received: s.amount_received,
+      paidAmount: s.paidAmount ?? s.paid_amount,
       cumulativeReceived: s.cumulativeReceived,
       cumulative_received: s.cumulative_received,
       tenPercentAmount: s.tenPercentAmount,
       ten_percent_amount: s.ten_percent_amount,
-      remainingAmount: s.remainingAmount,
+      remainingAmount: s.remainingAmount ?? s.remaining_amount,
       listingType: s.listingType,
       bookingStatus: s.bookingStatus,
+      paymentStatus: s.paymentStatus ?? s.payment_status,
+      createdAt: s.createdAt ?? s.created_at,
     });
   }
   return items;
