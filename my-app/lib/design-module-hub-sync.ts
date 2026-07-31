@@ -1,5 +1,12 @@
 import type { PaymentHistoryResponse } from "@/lib/booking-payment-history-api";
 import { bookingPaymentHistoryUpstreamUrl } from "@/lib/booking-payment-upstream";
+import {
+  BOOKING_BUFFER_RATE,
+  calculateBufferThresholdAmount,
+  defaultFinanceBufferNote,
+  normalizeBookingApprovalMode,
+} from "@/lib/booking-token-buffer";
+import type { BookingApprovalMode } from "@/app/Components/BookingToken/types";
 
 export const DESIGN_MODULE_URL = (
   process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
@@ -23,9 +30,87 @@ function hubProofContentPath(recordId: string, proofId: string): string {
   return `/v1/booking-token/deals/${encodeURIComponent(recordId)}/payment-proofs/${encodeURIComponent(proofId)}/content`;
 }
 
+function readPaymentHistoryField<T>(
+  paymentHistory: PaymentHistoryResponse,
+  ...keys: string[]
+): T | undefined {
+  const row = paymentHistory as PaymentHistoryResponse & Record<string, unknown>;
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null) return value as T;
+  }
+  return undefined;
+}
+
+export type FinanceSyncEligibility = {
+  allowed: boolean;
+  bookingApprovalMode: BookingApprovalMode;
+  bufferApplied: boolean;
+  bufferThresholdAmount: number;
+  shortfallAmount: number;
+  message?: string;
+};
+
+/** Allow Design Module sync on full 10% or 9.9% buffer (matches convert rules). */
+export function resolveFinanceSyncEligibility(
+  paymentHistory: PaymentHistoryResponse,
+): FinanceSyncEligibility {
+  const quoteAmount = Math.max(0, paymentHistory.quoteAmount ?? 0);
+  const tenPercentAmount = Math.max(0, paymentHistory.tenPercentAmount ?? 0);
+  const amountReceived = Math.max(0, paymentHistory.amountReceived ?? 0);
+  const remainingAmount = Math.max(0, paymentHistory.remainingAmount ?? 0);
+  const hubThreshold = readPaymentHistoryField<number>(
+    paymentHistory,
+    "bufferThresholdAmount",
+    "buffer_threshold_amount",
+  );
+  const bufferThresholdAmount =
+    hubThreshold != null && Number.isFinite(hubThreshold) && hubThreshold > 0
+      ? hubThreshold
+      : calculateBufferThresholdAmount(quoteAmount);
+
+  const hubMode = normalizeBookingApprovalMode(
+    readPaymentHistoryField<string>(
+      paymentHistory,
+      "bookingApprovalMode",
+      "booking_approval_mode",
+    ),
+  );
+
+  if (remainingAmount <= 0 || (tenPercentAmount > 0 && amountReceived >= tenPercentAmount)) {
+    return {
+      allowed: true,
+      bookingApprovalMode: hubMode === "BUFFER_9_9" ? "BUFFER_9_9" : "FULL_10",
+      bufferApplied: false,
+      bufferThresholdAmount,
+      shortfallAmount: 0,
+    };
+  }
+
+  if (bufferThresholdAmount > 0 && amountReceived >= bufferThresholdAmount) {
+    return {
+      allowed: true,
+      bookingApprovalMode: "BUFFER_9_9",
+      bufferApplied: true,
+      bufferThresholdAmount,
+      shortfallAmount: remainingAmount,
+    };
+  }
+
+  return {
+    allowed: false,
+    bookingApprovalMode: "PENDING",
+    bufferApplied: false,
+    bufferThresholdAmount,
+    shortfallAmount: remainingAmount,
+    message: `Paid amount must reach at least 9.9% of quote (${bufferThresholdAmount}) before finance sync.`,
+  };
+}
+
 export function buildDesignModuleConvertPayload(
   paymentHistory: PaymentHistoryResponse,
   recordId: string,
+  syncEligibility: FinanceSyncEligibility,
 ): Record<string, unknown> {
   const completionEntry =
     paymentHistory.history.find((entry) => Number(entry.remainingAfter) === 0) ??
@@ -35,6 +120,7 @@ export function buildDesignModuleConvertPayload(
     id: entry.id,
     sequence: entry.sequence,
     amount: entry.amount,
+    extraAmount: entry.extraAmount ?? 0,
     cumulativeReceived: entry.cumulativeReceived,
     remainingAfter: entry.remainingAfter,
     paymentKind: entry.paymentKind,
@@ -54,6 +140,25 @@ export function buildDesignModuleConvertPayload(
     })),
   }));
 
+  const remainingAmount = Math.max(0, paymentHistory.remainingAmount ?? 0);
+  const extraAmountReceived = Math.max(
+    0,
+    paymentHistory.extraAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "extra_amount_received") ??
+      Math.max(0, (paymentHistory.amountReceived ?? 0) - (paymentHistory.tenPercentAmount ?? 0)),
+  );
+  const totalAmountReceived = Math.max(
+    0,
+    paymentHistory.totalAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "total_amount_received") ??
+      (paymentHistory.amountReceived ?? 0),
+  );
+  const financeBufferNote =
+    readPaymentHistoryField<string>(paymentHistory, "financeBufferNote", "finance_buffer_note") ??
+    (syncEligibility.bufferApplied && remainingAmount > 0
+      ? defaultFinanceBufferNote(remainingAmount, syncEligibility.bufferThresholdAmount)
+      : null);
+
   return {
     bookingTokenRecordId: recordId,
     paymentHistoryId: completionEntry?.id ?? paymentHistory.financePaymentHistoryId ?? null,
@@ -62,14 +167,66 @@ export function buildDesignModuleConvertPayload(
     leadIdentifier: paymentHistory.leadIdentifier,
     customerName: paymentHistory.customerName,
     projectName: paymentHistory.customerName,
+    /** Business booking date from Booking Done (`YYYY-MM-DD`) — for Finance / Design Module. */
+    bookingDate:
+      paymentHistory.bookingDate?.trim() ||
+      (paymentHistory as { booking_date?: string | null }).booking_date?.trim() ||
+      null,
     quoteAmount: paymentHistory.quoteAmount,
     tenPercentAmount: paymentHistory.tenPercentAmount,
     amountReceived: paymentHistory.amountReceived,
+    remainingAmount,
+    extraAmountReceived,
+    totalAmountReceived,
+    bookingApprovalMode: syncEligibility.bookingApprovalMode,
+    bufferApplied: syncEligibility.bufferApplied,
+    bufferThresholdAmount: syncEligibility.bufferThresholdAmount,
+    bufferRate: BOOKING_BUFFER_RATE,
+    shortfallAmount: syncEligibility.shortfallAmount,
+    financeBufferNote,
     paymentKind:
       (paymentHistory as { paymentKind?: string }).paymentKind ??
       completionEntry?.paymentKind,
     paymentHistory: paymentHistoryPayload,
     hubProofBaseUrl: HUB_PROOF_BASE_URL,
+    experience: {
+      quoteId:
+        (paymentHistory as { quoteId?: string | number }).quoteId ?? null,
+      quoteLink:
+        (paymentHistory as { quoteLink?: string }).quoteLink ??
+        (paymentHistory as { quoteUrl?: string }).quoteUrl ??
+        null,
+      quoteVersionLabel:
+        (paymentHistory as { quoteVersionLabel?: string }).quoteVersionLabel ?? null,
+    },
+    decision: {
+      finalBudget: paymentHistory.quoteAmount ?? null,
+      expectedTimeline:
+        (paymentHistory as { expectedTimeline?: string }).expectedTimeline ?? null,
+      decisionMaker:
+        (paymentHistory as { decisionMaker?: string }).decisionMaker ?? null,
+    },
+    bookingDone: {
+      quoteId: (paymentHistory as { quoteId?: string | number }).quoteId ?? null,
+      quoteAmount: paymentHistory.quoteAmount,
+      tenPercentAmount: paymentHistory.tenPercentAmount,
+      amountReceived: paymentHistory.amountReceived,
+      remainingAmount,
+      extraAmountReceived,
+      totalAmountReceived,
+      bookingApprovalMode: syncEligibility.bookingApprovalMode,
+      bufferApplied: syncEligibility.bufferApplied,
+      bufferThresholdAmount: syncEligibility.bufferThresholdAmount,
+      shortfallAmount: syncEligibility.shortfallAmount,
+      bookingDate:
+        paymentHistory.bookingDate?.trim() ||
+        (paymentHistory as { booking_date?: string | null }).booking_date?.trim() ||
+        null,
+      paymentKind:
+        (paymentHistory as { paymentKind?: string }).paymentKind ??
+        completionEntry?.paymentKind ??
+        null,
+    },
   };
 }
 
@@ -101,11 +258,13 @@ export async function syncConvertBookingToDesignModule(
   if (!paymentHistory.leadType || !paymentHistory.leadId) {
     throw new Error("Payment history missing leadType or leadId.");
   }
-  if ((paymentHistory.remainingAmount ?? 0) > 0) {
-    throw new Error("Full 10% must be received before finance sync.");
+
+  const syncEligibility = resolveFinanceSyncEligibility(paymentHistory);
+  if (!syncEligibility.allowed) {
+    throw new Error(syncEligibility.message ?? "Finance sync not allowed for this payment state.");
   }
 
-  const payload = buildDesignModuleConvertPayload(paymentHistory, recordId);
+  const payload = buildDesignModuleConvertPayload(paymentHistory, recordId, syncEligibility);
   const endpoints = [
     "/api/hub/crm-lead/convert-booking",
     "/api/hub/booking-token/finance-10p-sync",
@@ -140,4 +299,197 @@ export async function syncConvertBookingToDesignModule(
   throw new Error(
     `${lastError}. Restart Design Module backend (DesignModulephase1/backend npm run dev) on ${DESIGN_MODULE_URL}.`,
   );
+}
+
+export type DesignModuleRefundSyncOptions = {
+  cancellationReason?: string | null;
+  cancelledAt?: string | null;
+  cancellationApprovedAt?: string | null;
+  cancellationApprovedBy?: string | null;
+  refundScope?: "deal" | "payments";
+  cancelledPaymentEntryIds?: string[];
+};
+
+export type DesignModuleRefundSyncResult = {
+  refundId?: string;
+  refundAmount?: number;
+  designLeadId?: number;
+  bookingTokenRecordId?: string;
+};
+
+function mapPaymentHistoryPayload(
+  paymentHistory: PaymentHistoryResponse,
+  recordId: string,
+) {
+  return paymentHistory.history.map((entry) => ({
+    id: entry.id,
+    sequence: entry.sequence,
+    amount: entry.amount,
+    extraAmount: entry.extraAmount ?? 0,
+    cumulativeReceived: entry.cumulativeReceived,
+    remainingAfter: entry.remainingAfter,
+    paymentKind: entry.paymentKind,
+    source: entry.source,
+    notes: entry.notes,
+    createdAt: entry.createdAt,
+    financeReviewStatus: entry.financeReviewStatus,
+    proofs: (entry.proofs ?? []).map((proof) => ({
+      id: proof.id,
+      originalFileName: proof.originalFileName,
+      mimeType: proof.mimeType,
+      sizeBytes: proof.sizeBytes,
+      uploadedAt: proof.uploadedAt,
+      contentPath:
+        proof.viewUrl?.trim() ||
+        hubProofContentPath(recordId, proof.id),
+    })),
+  }));
+}
+
+function readRefundTotals(paymentHistory: PaymentHistoryResponse) {
+  const amountReceived = Math.max(0, paymentHistory.amountReceived ?? 0);
+  const tenPercentAmount = Math.max(0, paymentHistory.tenPercentAmount ?? 0);
+  const extraAmountReceived = Math.max(
+    0,
+    paymentHistory.extraAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "extra_amount_received") ??
+      Math.max(0, amountReceived - tenPercentAmount),
+  );
+  const totalCustomerPaid = Math.max(
+    0,
+    paymentHistory.totalAmountReceived ??
+      readPaymentHistoryField<number>(paymentHistory, "total_amount_received") ??
+      amountReceived + extraAmountReceived,
+  );
+  const amountTowardTen = Math.min(amountReceived, tenPercentAmount);
+
+  return {
+    amountReceived,
+    tenPercentAmount,
+    extraAmountReceived,
+    totalAmountReceived: totalCustomerPaid,
+    amountTowardTen,
+    extraAmountRefund: extraAmountReceived,
+  };
+}
+
+export function buildDesignModuleRefundPayload(
+  paymentHistory: PaymentHistoryResponse,
+  recordId: string,
+  options: DesignModuleRefundSyncOptions = {},
+): Record<string, unknown> {
+  const syncEligibility = resolveFinanceSyncEligibility(paymentHistory);
+  const base = buildDesignModuleConvertPayload(paymentHistory, recordId, syncEligibility);
+  const totals = readRefundTotals(paymentHistory);
+  const refundScope = options.refundScope ?? "deal";
+  const cancelledEntryIds = options.cancelledPaymentEntryIds ?? [];
+
+  let refundAmount = totals.totalAmountReceived;
+  if (refundScope === "payments" && cancelledEntryIds.length > 0) {
+    refundAmount = paymentHistory.history
+      .filter((entry) => cancelledEntryIds.includes(entry.id))
+      .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
+  return {
+    ...base,
+    eventType: "refund_processed",
+    refundScope,
+    cancelledPaymentEntryIds: cancelledEntryIds,
+    cancellationReason:
+      options.cancellationReason?.trim() ||
+      paymentHistory.cancellationReason?.trim() ||
+      null,
+    cancelledAt:
+      options.cancelledAt?.trim() ||
+      paymentHistory.cancelledAt?.trim() ||
+      null,
+    cancellationRequestedAt: paymentHistory.cancellationRequestedAt?.trim() || null,
+    cancellationApprovedAt:
+      options.cancellationApprovedAt?.trim() ||
+      paymentHistory.cancellationApprovedAt?.trim() ||
+      new Date().toISOString(),
+    cancellationApprovedBy:
+      options.cancellationApprovedBy?.trim() ||
+      paymentHistory.cancellationApprovedByName?.trim() ||
+      null,
+    refundAmount,
+    amountTowardTenRefund: Math.min(refundAmount, totals.amountTowardTen),
+    extraAmountRefund: totals.extraAmountRefund,
+    paymentHistory: mapPaymentHistoryPayload(paymentHistory, recordId),
+  };
+}
+
+async function postDesignModuleSync(
+  endpoints: string[],
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  let lastError = "";
+  for (const path of endpoints) {
+    const url = `${DESIGN_MODULE_URL}${path}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": HUB_SYNC_API_KEY,
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    });
+    const text = await res.text();
+    if (res.ok) {
+      try {
+        return JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    }
+    lastError = `Design Module sync failed (${res.status}) via ${path}${text ? `: ${text.slice(0, 200)}` : ""}`;
+    if (res.status !== 404) {
+      throw new Error(lastError);
+    }
+  }
+  throw new Error(
+    `${lastError}. Ensure Design Module exposes refund sync on ${DESIGN_MODULE_URL}.`,
+  );
+}
+
+/** Manager approve cancel → refund sync to Design Module Finance. */
+export async function syncRefundToDesignModule(
+  recordId: string,
+  authHeaders: AuthHeaders,
+  appOrigin?: string,
+  options: DesignModuleRefundSyncOptions = {},
+): Promise<DesignModuleRefundSyncResult> {
+  const paymentHistory = await fetchDealPaymentHistory(recordId, authHeaders, appOrigin);
+  if (!paymentHistory.leadType || !paymentHistory.leadId) {
+    throw new Error("Payment history missing leadType or leadId.");
+  }
+
+  const totals = readRefundTotals(paymentHistory);
+  if (totals.totalAmountReceived <= 0 && totals.amountReceived <= 0) {
+    throw new Error("No customer payments to refund for this deal.");
+  }
+
+  const payload = buildDesignModuleRefundPayload(paymentHistory, recordId, options);
+  const body = await postDesignModuleSync(
+    [
+      "/api/hub/booking-token/finance-refund-sync",
+      "/api/hub/crm-lead/refund-booking",
+    ],
+    payload,
+  );
+
+  return {
+    refundId: typeof body.refundId === "string" ? body.refundId : undefined,
+    refundAmount:
+      typeof body.refundAmount === "number"
+        ? body.refundAmount
+        : typeof payload.refundAmount === "number"
+          ? payload.refundAmount
+          : undefined,
+    designLeadId: typeof body.designLeadId === "number" ? body.designLeadId : undefined,
+    bookingTokenRecordId:
+      typeof body.bookingTokenRecordId === "string" ? body.bookingTokenRecordId : recordId,
+  };
 }

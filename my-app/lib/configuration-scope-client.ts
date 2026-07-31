@@ -13,7 +13,8 @@ export type ScopeSelectedRoom = {
   iconLabel?: string;
   sortOrder?: number;
   units: ScopeRoomUnit[];
-  falseCeilingRequired?: boolean;
+  /** Per-room false ceiling requirement — persisted with requirements PUT. */
+  falseCeilingRequired: boolean;
   notes?: string;
 };
 
@@ -50,7 +51,11 @@ export const TIMELINE_EXPECTATION_OPTIONS = [
 
 const PROJECT_UNDERSTANDING_SEP = "\n---\n";
 
-/** Split Hub `projectUnderstanding` into property + family fields for §1 UI. */
+/**
+ * Split Hub `projectUnderstanding` for §1 UI.
+ * Property name lives in `propertyName`; without a separator the whole string is family details.
+ * Legacy rows may still use `property\\n---\\nfamily`.
+ */
 export function splitProjectUnderstanding(value: string | null | undefined): {
   propertyNameSite: string;
   familySizeDetails: string;
@@ -58,7 +63,7 @@ export function splitProjectUnderstanding(value: string | null | undefined): {
   const raw = (value ?? "").trim();
   if (!raw) return { propertyNameSite: "", familySizeDetails: "" };
   const idx = raw.indexOf(PROJECT_UNDERSTANDING_SEP);
-  if (idx === -1) return { propertyNameSite: raw, familySizeDetails: "" };
+  if (idx === -1) return { propertyNameSite: "", familySizeDetails: raw };
   return {
     propertyNameSite: raw.slice(0, idx).trim(),
     familySizeDetails: raw.slice(idx + PROJECT_UNDERSTANDING_SEP.length).trim(),
@@ -73,7 +78,7 @@ export function joinProjectUnderstanding(
   const property = propertyNameSite.trim();
   const family = familySizeDetails.trim();
   if (!property && !family) return null;
-  if (!family) return property;
+  if (!family) return property || null;
   if (!property) return family;
   return `${property}${PROJECT_UNDERSTANDING_SEP}${family}`;
 }
@@ -128,7 +133,7 @@ function filterHiddenCatalogRooms(catalog: string[]): string[] {
 }
 
 /** Pre-selected on first open when nothing is saved yet. */
-export const DEFAULT_SELECTED_ROOM_NAMES = ["Living Room", "Modular Kitchen"] as const;
+export const DEFAULT_SELECTED_ROOM_NAMES = ["Modular Kitchen"] as const;
 
 const DEFAULT_UNIT_BY_ROOM: Record<string, string> = {
   "living room": "TV Unit",
@@ -201,7 +206,86 @@ function readNullableString(
 
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
+  return value
+    .map((v) => {
+      if (typeof v === "string") return v.trim();
+      if (v && typeof v === "object") {
+        const row = v as Record<string, unknown>;
+        const label = row.label ?? row.name ?? row.value;
+        return typeof label === "string" ? label.trim() : "";
+      }
+      return "";
+    })
+    .filter(Boolean);
+}
+
+export function normalizeStringList(value: unknown): string[] {
+  return readStringArray(value);
+}
+
+export function normalizeMiscAddOns(value: unknown): string[] {
+  return normalizeStringList(value);
+}
+
+function asSelectedRooms(value: unknown): ScopeSelectedRoom[] {
+  return Array.isArray(value) ? (value as ScopeSelectedRoom[]) : [];
+}
+
+function readFalseCeilingRequired(item: Record<string, unknown>): boolean {
+  if ("falseCeilingRequired" in item) return Boolean(item.falseCeilingRequired);
+  if ("false_ceiling_required" in item) return Boolean(item.false_ceiling_required);
+  if ("falseCeiling" in item) return Boolean(item.falseCeiling);
+  if ("false_ceiling" in item) return Boolean(item.false_ceiling);
+  return false;
+}
+
+function normalizeRoomForPut(room: ScopeSelectedRoom): ScopeSelectedRoom {
+  return {
+    id: room.id,
+    roomName: room.roomName,
+    iconLabel: room.iconLabel,
+    sortOrder: typeof room.sortOrder === "number" ? room.sortOrder : 0,
+    units: (room.units ?? [])
+      .map((unit) => ({
+        label: String(unit.label ?? "").trim(),
+        selected: unit.selected !== false,
+      }))
+      .filter((unit) => unit.label),
+    // Always send an explicit boolean so Hub persists it with room data.
+    falseCeilingRequired: Boolean(room.falseCeilingRequired),
+    notes: typeof room.notes === "string" ? room.notes : "",
+  };
+}
+
+function mergeSentRoomFlags(
+  saved: ConfigurationScopeRequirements,
+  sentRooms: ScopeSelectedRoom[],
+): ConfigurationScopeRequirements {
+  const rooms = asSelectedRooms(saved.selectedRooms);
+  const byId = new Map(sentRooms.map((room) => [room.id, room]));
+  const byName = new Map(
+    sentRooms.map((room) => [room.roomName.trim().toLowerCase(), room]),
+  );
+  return {
+    ...saved,
+    selectedRooms: rooms.map((room) => {
+      const sent =
+        byId.get(room.id) ?? byName.get(room.roomName.trim().toLowerCase());
+      if (!sent) {
+        return {
+          ...room,
+          units: Array.isArray(room.units) ? room.units : [],
+          falseCeilingRequired: Boolean(room.falseCeilingRequired),
+        };
+      }
+      return {
+        ...room,
+        units: Array.isArray(room.units) ? room.units : [],
+        falseCeilingRequired: Boolean(sent.falseCeilingRequired),
+        notes: typeof sent.notes === "string" ? sent.notes : room.notes,
+      };
+    }),
+  };
 }
 
 function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
@@ -231,7 +315,7 @@ function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
               : defaultRoomIcon(roomName),
         sortOrder: typeof item.sortOrder === "number" ? item.sortOrder : index,
         units,
-        falseCeilingRequired: Boolean(item.falseCeilingRequired ?? item.false_ceiling_required),
+        falseCeilingRequired: readFalseCeilingRequired(item),
         notes: typeof item.notes === "string" ? item.notes : "",
       };
     })
@@ -240,14 +324,16 @@ function normalizeSelectedRooms(value: unknown): ScopeSelectedRoom[] {
 
 function missingDefaultRooms(data: ConfigurationScopeRequirements): boolean {
   const selected = new Set(
-    data.selectedRooms.map((room) => room.roomName.trim().toLowerCase()),
+    asSelectedRooms(data.selectedRooms).map((room) =>
+      room.roomName.trim().toLowerCase(),
+    ),
   );
   return DEFAULT_SELECTED_ROOM_NAMES.some(
     (name) => !selected.has(name.toLowerCase()),
   );
 }
 
-/** Add Living Room / Modular Kitchen when absent (e.g. partial version-0 row). */
+/** Add Modular Kitchen when absent (e.g. partial version-0 row). */
 export function ensureDefaultSelectedRooms(
   selectedRooms: ScopeSelectedRoom[],
 ): { rooms: ScopeSelectedRoom[]; changed: boolean } {
@@ -288,7 +374,7 @@ export function isFreshRequirementScope(
 ): boolean {
   return (
     (data.version ?? 0) === 0 &&
-    data.selectedRooms.length === 0 &&
+    asSelectedRooms(data.selectedRooms).length === 0 &&
     !data.updatedAt
   );
 }
@@ -297,15 +383,16 @@ export function isFreshRequirementScope(
 export function mergeRequirementDefaults(
   data: ConfigurationScopeRequirements,
 ): { requirements: ConfigurationScopeRequirements; needsPersist: boolean } {
+  const catalogSource = normalizeStringList(data.availableRoomCatalog);
   const catalog = filterHiddenCatalogRooms(
-    data.availableRoomCatalog.length > 0
-      ? [...data.availableRoomCatalog]
+    catalogSource.length > 0
+      ? catalogSource
       : isFreshRequirementScope(data)
         ? [...DEFAULT_ROOM_CATALOG]
         : [],
   );
 
-  let selectedRooms = data.selectedRooms;
+  let selectedRooms = asSelectedRooms(data.selectedRooms);
   let needsPersist = false;
 
   if (isFreshRequirementScope(data)) {
@@ -317,8 +404,14 @@ export function mergeRequirementDefaults(
   selectedRooms = selectedRooms.map((room) => {
     const key = room.roomName.trim().toLowerCase();
     const isDefault = DEFAULT_SELECTED_ROOM_NAMES.some((name) => name.toLowerCase() === key);
-    if (!isDefault || room.units.length > 0) return room;
-    return { ...room, units: defaultUnitsForRoom(room.roomName) };
+    const units = Array.isArray(room.units) ? room.units : [];
+    const withFlag = {
+      ...room,
+      units,
+      falseCeilingRequired: Boolean(room.falseCeilingRequired),
+    };
+    if (!isDefault || withFlag.units.length > 0) return withFlag;
+    return { ...withFlag, units: defaultUnitsForRoom(room.roomName) };
   });
 
   return {
@@ -326,6 +419,7 @@ export function mergeRequirementDefaults(
       ...data,
       availableRoomCatalog: catalog,
       selectedRooms,
+      miscAddOns: normalizeMiscAddOns(data.miscAddOns),
     },
     needsPersist,
   };
@@ -336,9 +430,14 @@ export function toPutRequirementsBody(
 ): PutConfigurationScopeRequirementsBody {
   return {
     version: req.version,
-    availableRoomCatalog: req.availableRoomCatalog,
-    selectedRooms: req.selectedRooms,
-    miscAddOns: req.miscAddOns,
+    availableRoomCatalog: Array.isArray(req.availableRoomCatalog)
+      ? req.availableRoomCatalog.map((x) => String(x).trim()).filter(Boolean)
+      : [],
+    selectedRooms: (Array.isArray(req.selectedRooms) ? req.selectedRooms : []).map(
+      normalizeRoomForPut,
+    ),
+    // Always send a clean string[] so Hub stores add-ons with the same requirements API.
+    miscAddOns: normalizeMiscAddOns(req.miscAddOns),
     kitchenLayout: req.kitchenLayout,
     materialFinish: req.materialFinish,
     familyContactName: req.familyContactName,
@@ -482,10 +581,9 @@ function normalizeRequirements(
     leadType: typeof data.leadType === "string" ? data.leadType : undefined,
     availableRoomCatalog: catalog,
     selectedRooms: normalizeSelectedRooms(selectedRaw),
-    miscAddOns:
-      readStringArray(data.miscAddOns).length > 0
-        ? readStringArray(data.miscAddOns)
-        : readStringArray(data.misc_addons),
+    miscAddOns: normalizeMiscAddOns(
+      (data.miscAddOns ?? data.misc_addons ?? data.miscAddons) as unknown,
+    ),
     kitchenLayout:
       typeof data.kitchenLayout === "string"
         ? data.kitchenLayout
@@ -546,8 +644,13 @@ function normalizeReferences(
   };
 }
 
-export function miscAddOnOptions(catalog: string[], selected: string[]): string[] {
-  const merged = new Set([...DEFAULT_MISC_ADD_ONS, ...catalog, ...selected]);
+export function miscAddOnOptions(
+  catalog: string[] | null | undefined,
+  selected: string[] | null | undefined,
+): string[] {
+  const safeCatalog = normalizeMiscAddOns(catalog);
+  const safeSelected = normalizeMiscAddOns(selected);
+  const merged = new Set([...DEFAULT_MISC_ADD_ONS, ...safeCatalog, ...safeSelected]);
   return Array.from(merged);
 }
 
@@ -645,11 +748,16 @@ export async function putConfigurationScopeRequirements(
     err.status = res.status;
     throw err;
   }
-  return hydrateFamilyContactRelationship(
+  const normalized = hydrateFamilyContactRelationship(
     mergeRequirementDefaults(normalizeRequirements(data)).requirements,
     leadType,
     id,
   );
+  // Prefer values we just sent — Hub sometimes omits miscAddOns / falseCeilingRequired.
+  return {
+    ...mergeSentRoomFlags(normalized, body.selectedRooms),
+    miscAddOns: normalizeMiscAddOns(body.miscAddOns),
+  };
 }
 
 export async function getConfigurationScopeReferences(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
@@ -11,6 +11,7 @@ import {
   pipelineSubStageLabel,
   requiresResoneField,
 } from "@/lib/milestone-substage-map";
+import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-substages";
 import {
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
@@ -38,8 +39,19 @@ import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
+import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import { getConfigurationScopeRequirements, createDefaultRequirements } from "@/lib/configuration-scope-client";
+import { notifyOpenConfigurationScope, RESUME_MEETING_SCHEDULE_EVENT, type ResumeMeetingScheduleDetail } from "@/lib/configuration-scope-events";
+import {
+  configurationScopeValidationSummary,
+  hasLeadFloorPlan,
+  validateConfigurationScopeForMeeting,
+} from "@/lib/configuration-scope-validation";
+import { REQUIRED_FIELD_HINTS } from "@/lib/required-field-hints";
+import type { CrmLeadType } from "@/lib/leads-filter";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -125,8 +137,18 @@ function getTodayStartDateTimeLocal(): string {
 export type PresalesVerifyFromCompleteTaskPayload = {
   pincode: string;
   salesExecutiveId?: number;
+  /** Display name of selected sales executive (for activity history). */
+  salesExecutiveName?: string;
   note: string;
 };
+
+function verifyHandoffButtonTitle(lead: Lead): string {
+  if (lead.leadType === "whatsapplead") return "Verify WhatsApp Lead";
+  if (lead.leadType === "addlead" && isIvrCallLeadSource(lead.leadSource)) {
+    return "Verify IVR Lead";
+  }
+  return "Verify & hand off to sales";
+}
 
 export type PresalesCompleteTaskApiPayload = {
   presalesMilestoneStage: string;
@@ -190,6 +212,10 @@ export default function CompleteTaskModal({
   salesExecutivesError = null,
   salesExecutiveLabel = (u: PresalesSalesExecutiveOption) =>
     (u.fullName ?? u.username ?? `User ${u.id}`).trim(),
+  leadType,
+  leadId,
+  resumeMeetingSchedule = null,
+  onResumeMeetingConsumed,
 }: {
   lead: Lead;
   open: boolean;
@@ -213,6 +239,12 @@ export default function CompleteTaskModal({
   salesExecutivesLoading?: boolean;
   salesExecutivesError?: string | null;
   salesExecutiveLabel?: (u: PresalesSalesExecutiveOption) => string;
+  /** Needed to validate Configuration Scope before Meeting Scheduled. */
+  leadType?: string;
+  leadId?: string;
+  /** After returning from Configuration Scope (meeting gate), reopen Schedule Hub Meeting. */
+  resumeMeetingSchedule?: { meetingFeedback?: string } | null;
+  onResumeMeetingConsumed?: () => void;
 }) {
   const presalesMode = Boolean(onPresalesApiComplete);
   const presalesLeadVerified =
@@ -238,6 +270,7 @@ export default function CompleteTaskModal({
   const [hubMeetingOpen, setHubMeetingOpen] = useState(false);
   const [hubMeetingBusy, setHubMeetingBusy] = useState(false);
   const [hubMeetingError, setHubMeetingError] = useState("");
+  const [configScopeGateBusy, setConfigScopeGateBusy] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
@@ -248,6 +281,8 @@ export default function CompleteTaskModal({
   const [modalBookingType, setModalBookingType] = useState(lead.bookingType ?? "");
   const [modalPossessionDate, setModalPossessionDate] = useState(lead.possessionDate ?? "");
   const minNextCallDate = getTodayStartDateTimeLocal();
+  /** Sticky until Complete Task closes so open-reset remounts still reopen Schedule Hub Meeting. */
+  const resumeMeetingSessionRef = useRef<{ meetingFeedback?: string } | null>(null);
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -272,21 +307,49 @@ export default function CompleteTaskModal({
   );
 
   useEffect(() => {
+    if (resumeMeetingSchedule) {
+      resumeMeetingSessionRef.current = resumeMeetingSchedule;
+      onResumeMeetingConsumed?.();
+    }
+  }, [onResumeMeetingConsumed, resumeMeetingSchedule]);
+
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
     if (!open) {
+      wasOpenRef.current = false;
+      resumeMeetingSessionRef.current = null;
       setGatePopupMessage("");
       return;
     }
 
+    // Only reset form when Complete Task newly opens — not while it stays open under Configuration Scope.
+    const justOpened = !wasOpenRef.current;
+    wasOpenRef.current = true;
+    if (!justOpened) return;
+
+    const pendingResume =
+      onApiComplete && !presalesMode ? resumeMeetingSessionRef.current : null;
+
+    const resumeFeedback = pendingResume?.meetingFeedback?.trim();
+    const nextFeedback =
+      resumeFeedback && isMeetingScheduleSubstage(resumeFeedback)
+        ? resumeFeedback
+        : pendingResume
+          ? "Meeting Scheduled"
+          : lead.status;
+
     setNextCallDate(defaultNextCallDate);
-    setFeedback(lead.status);
+    setFeedback(nextFeedback);
     setStatus("");
     setPath("");
     setNote("");
     setFeedbackMappings([]);
     setShowErrors(false);
-    setHubMeetingOpen(false);
+    setHubMeetingOpen(Boolean(pendingResume));
     setHubMeetingBusy(false);
     setHubMeetingError("");
+    setConfigScopeGateBusy(false);
     setCancelConfirmed(false);
     setApiError("");
     setGatePopupMessage("");
@@ -308,7 +371,51 @@ export default function CompleteTaskModal({
     lead.pincode,
     lead.propertyNotes,
     lead.status,
+    onApiComplete,
     open,
+    presalesMode,
+  ]);
+
+  // After Configuration Scope save from a meeting gate: reopen Schedule Hub Meeting only.
+  useEffect(() => {
+    if (!open) return;
+
+    const applyResume = (meetingFeedback?: string) => {
+      if (!onApiComplete || presalesMode) return;
+      const nextFeedback =
+        meetingFeedback?.trim() && isMeetingScheduleSubstage(meetingFeedback)
+          ? meetingFeedback.trim()
+          : "Meeting Scheduled";
+      resumeMeetingSessionRef.current = { meetingFeedback: nextFeedback };
+      setFeedback(nextFeedback);
+      setHubMeetingOpen(true);
+      setHubMeetingError("");
+      setApiError("");
+      onResumeMeetingConsumed?.();
+    };
+
+    if (resumeMeetingSchedule) {
+      applyResume(resumeMeetingSchedule.meetingFeedback);
+    }
+
+    const onResumeMeeting = (event: Event) => {
+      const detail = (event as CustomEvent<ResumeMeetingScheduleDetail>).detail;
+      if (!detail) return;
+      const expectedLeadId = (leadId ?? lead.id ?? "").trim();
+      if (detail.leadId && expectedLeadId && detail.leadId !== expectedLeadId) return;
+      applyResume(detail.meetingFeedback);
+    };
+
+    window.addEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+    return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+  }, [
+    lead.id,
+    leadId,
+    onApiComplete,
+    onResumeMeetingConsumed,
+    open,
+    presalesMode,
+    resumeMeetingSchedule,
   ]);
 
   useEffect(() => {
@@ -564,6 +671,9 @@ export default function CompleteTaskModal({
       const stageCategory = m.stageCategory.trim();
       const subStageName = m.subStageName.trim();
       if (!stage) continue;
+      if (!presalesMode && subStageName && !isManualCompleteTaskSubstage(subStageName)) {
+        continue;
+      }
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();
@@ -697,11 +807,84 @@ export default function CompleteTaskModal({
 
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
 
-  const handleFeedbackSelect = (value: string) => {
+  const resolvedConfigLeadType = useMemo((): CrmLeadType | null => {
+    if (leadType && isCrmLeadType(leadType)) return leadType;
+    return null;
+  }, [leadType]);
+
+  const resolvedConfigLeadId = (leadId ?? lead.id ?? "").trim();
+
+  /** Returns true when ready to schedule; otherwise opens Configuration Scope with highlights. */
+  const ensureConfigScopeReadyForMeeting = async (options?: {
+    setError?: (message: string) => void;
+    meetingFeedback?: string;
+  }): Promise<boolean> => {
+    if (!resolvedConfigLeadType || !resolvedConfigLeadId) {
+      options?.setError?.(
+        "Unable to validate Configuration Scope for this lead. Open Configuration Scope and complete required fields.",
+      );
+      return false;
+    }
+
+    setConfigScopeGateBusy(true);
+    try {
+      let requirements;
+      try {
+        requirements = await getConfigurationScopeRequirements(
+          resolvedConfigLeadType,
+          resolvedConfigLeadId,
+        );
+      } catch {
+        requirements = null;
+      }
+
+      const issues = validateConfigurationScopeForMeeting({
+        requirements: requirements ?? createDefaultRequirements(),
+        configuration: modalConfiguration || lead.configuration,
+        bookingType: modalBookingType || lead.bookingType || requirements?.bookingType,
+        hasFloorPlan: hasLeadFloorPlan(lead),
+      });
+
+      if (issues.length === 0) return true;
+
+      const summary = configurationScopeValidationSummary(issues);
+      options?.setError?.(summary);
+      const meetingFeedback =
+        options?.meetingFeedback?.trim() ||
+        (isMeetingScheduleSubstage(feedback) ? feedback : undefined);
+      notifyOpenConfigurationScope({
+        leadType: resolvedConfigLeadType,
+        leadId: resolvedConfigLeadId,
+        highlightMissing: true,
+        reason: "meeting-scheduled",
+        meetingFeedback,
+      });
+      // Keep Complete Task open under Configuration Scope so Schedule Hub Meeting
+      // can reopen immediately after scope is saved.
+      if (meetingFeedback && isMeetingScheduleSubstage(meetingFeedback)) {
+        setFeedback(meetingFeedback);
+      }
+      setHubMeetingOpen(false);
+      return false;
+    } finally {
+      setConfigScopeGateBusy(false);
+    }
+  };
+
+  const handleFeedbackSelect = async (value: string) => {
     setFeedback(value);
     if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
+      const ready = await ensureConfigScopeReadyForMeeting({
+        setError: (message) => setApiError(message),
+        meetingFeedback: value,
+      });
+      if (!ready) {
+        setHubMeetingOpen(false);
+        return;
+      }
       setHubMeetingOpen(true);
       setHubMeetingError("");
+      setApiError("");
     } else {
       setHubMeetingOpen(false);
     }
@@ -718,6 +901,12 @@ export default function CompleteTaskModal({
     if (!onApiComplete) return;
 
     if (!presalesMode) {
+      const configReady = await ensureConfigScopeReadyForMeeting({
+        setError: (message) => setHubMeetingError(message),
+        meetingFeedback: feedback,
+      });
+      if (!configReady) return;
+
       const effectivelyMissingFields = missingLeadPropertyGateFields(
         resolveModalGateFields(lead, {
           budget: modalBudget,
@@ -827,6 +1016,11 @@ export default function CompleteTaskModal({
     // show a non-blocking warning below (see UI render).
 
     if (scheduleMode) {
+      const ready = await ensureConfigScopeReadyForMeeting({
+        setError: (message) => setApiError(message),
+        meetingFeedback: feedback,
+      });
+      if (!ready) return;
       setHubMeetingOpen(true);
       setApiError("Use Schedule Hub Meeting to book the appointment.");
       return;
@@ -882,12 +1076,18 @@ export default function CompleteTaskModal({
       setApiError("");
       try {
         const salesExecutiveId = Number(verifySalesExecutiveId);
+        const selectedExec = salesExecutiveOptions.find(
+          (u) => Number(u.id) === salesExecutiveId,
+        );
         await onPresalesVerify({
           pincode: verifyPincode.trim(),
           salesExecutiveId:
             Number.isFinite(salesExecutiveId) && salesExecutiveId > 0
               ? salesExecutiveId
               : undefined,
+          salesExecutiveName: selectedExec
+            ? salesExecutiveLabel(selectedExec)
+            : undefined,
           note: note.trim(),
         });
         onClose();
@@ -1247,11 +1447,7 @@ export default function CompleteTaskModal({
 
               {verifyHandoffMode ? (
                 <PresalesVerifyPanel
-                  title={
-                    lead.leadType === "whatsapplead"
-                      ? "Verify WhatsApp Lead"
-                      : "Verify & hand off to sales"
-                  }
+                  title={verifyHandoffButtonTitle(lead)}
                   handoffLabel={
                     feedback.trim() ||
                     "Data Conversion → Won → Assigned"
@@ -1316,7 +1512,9 @@ export default function CompleteTaskModal({
                   
                   <div className="grid grid-cols-2 gap-3.5">
                     <div>
-                      <FieldLabel required>Budget</FieldLabel>
+                      <FieldLabel required requiredHint={REQUIRED_FIELD_HINTS.budget}>
+                        Budget
+                      </FieldLabel>
                       <Select
                         value={modalBudget}
                         onChange={(e) => setModalBudget(e.target.value)}
@@ -1332,7 +1530,9 @@ export default function CompleteTaskModal({
                       </Select>
                     </div>
                     <div>
-                      <FieldLabel required>Configuration</FieldLabel>
+                      <FieldLabel required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
+                        Configuration
+                      </FieldLabel>
                       <Select
                         value={modalConfiguration}
                         onChange={(e) => setModalConfiguration(e.target.value)}
@@ -1351,7 +1551,9 @@ export default function CompleteTaskModal({
                   
                   <div className="grid grid-cols-2 gap-3.5">
                     <div>
-                      <FieldLabel required>Booking Type</FieldLabel>
+                      <FieldLabel required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
+                        Booking Type
+                      </FieldLabel>
                       <Select
                         value={modalBookingType}
                         onChange={(e) => setModalBookingType(e.target.value)}
@@ -1368,7 +1570,9 @@ export default function CompleteTaskModal({
                   </div>
 
                   <div>
-                    <FieldLabel required>Property Notes</FieldLabel>
+                    <FieldLabel required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
+                      Property Notes
+                    </FieldLabel>
                     <Textarea
                       value={modalPropertyNotes}
                       onChange={(e) => setModalPropertyNotes(e.target.value)}
@@ -1391,12 +1595,24 @@ export default function CompleteTaskModal({
                   <Button
                     type="button"
                     variant="success"
+                    disabled={configScopeGateBusy}
                     onClick={() => {
-                      setHubMeetingOpen(true);
-                      setHubMeetingError("");
+                      void (async () => {
+                        const ready = await ensureConfigScopeReadyForMeeting({
+                          setError: (message) => setHubMeetingError(message),
+                          meetingFeedback: feedback,
+                        });
+                        if (!ready) return;
+                        setHubMeetingOpen(true);
+                        setHubMeetingError("");
+                      })();
                     }}
                   >
-                    {hubMeetingOpen ? "Reopen Schedule Hub Meeting" : "Schedule Hub Meeting"}
+                    {configScopeGateBusy
+                      ? "Checking Configuration Scope…"
+                      : hubMeetingOpen
+                        ? "Reopen Schedule Hub Meeting"
+                        : "Schedule Hub Meeting"}
                   </Button>
                 </div>
               ) : null}
@@ -1528,9 +1744,7 @@ export default function CompleteTaskModal({
                   ? "Verifying..."
                   : "Saving..."
                 : verifyHandoffMode
-                  ? lead.leadType === "whatsapplead"
-                    ? "Verify WhatsApp Lead"
-                    : "Verify & hand off to sales"
+                  ? verifyHandoffButtonTitle(lead)
                   : "Save note"}
             </Button>
           </div>

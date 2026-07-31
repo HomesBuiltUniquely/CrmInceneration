@@ -1,15 +1,17 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
+import NewConfigurationScopePage from "./NewConfigurationScopePage";
+import CrmFullscreenOverlayModal from "@/app/Components/Shared/CrmFullscreenOverlayModal";
 import ActivityHistoryWithConnector, {
   type ActivityHistoryHandle,
 } from "./ActivityHistoryWithConnector";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
+import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
 import {
   V2_BTN_AMBER,
   V2_BTN_DONE,
@@ -25,6 +27,15 @@ import {
   V2_LINK_TEXT,
 } from "./lead-detail-v2-motion";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
+import { RequiredAsterisk, REQUIRED_FIELD_HINTS } from "./RequiredFieldHint";
+import {
+  discoveryFieldLabels,
+  registerLeadDetailPendingFlush,
+} from "@/lib/lead-detail-pending-flush";
+import {
+  isEmptySpaceDoubleClickTarget,
+  requestLeadDetailOverlayClose,
+} from "@/lib/lead-detail-overlay-close";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import {
   createDefaultRequirements,
@@ -34,6 +45,12 @@ import {
   toPutRequirementsBody,
   type ConfigurationScopeRequirements,
 } from "@/lib/configuration-scope-client";
+import {
+  OPEN_CONFIGURATION_SCOPE_EVENT,
+  notifyResumeMeetingSchedule,
+  type OpenConfigurationScopeDetail,
+  type ResumeMeetingScheduleDetail,
+} from "@/lib/configuration-scope-events";
 import {
   buildDecisionMakerOptions,
   DECISION_MAKER_SELF_VALUE,
@@ -257,42 +274,42 @@ function LeadDetailHeader() {
   }, [hasLeadPhone, notifyError, onWhatsAppMessage]);
 
   return (
-    <div className="py-4 lg:py-5">
+    <div
+      className="py-4 lg:py-5"
+      onDoubleClick={(event) => {
+        if (!isEmptySpaceDoubleClickTarget(event.target)) return;
+        event.preventDefault();
+        requestLeadDetailOverlayClose();
+      }}
+      title="Double-click empty space to close"
+    >
       <div className="grid gap-4 lg:grid-cols-[1fr_440px] lg:items-start">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center justify-center rounded-[4px] border border-[#f4a525] bg-[#fff9ef] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.09em] text-[#f4a525]">
-              Priority Lead
-            </span>
-            <LeadSourceBadge
-              primary={formatLeadSourceLabel(lead.leadSource)}
-              extras={lead.additionalLeadSourcesList}
-            />
-          </div>
+          <div data-no-dblclick-close className="max-w-[560px]">
+            <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
+              Lead Information
+            </p>
 
-          <p className="mt-1 text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
-            Lead Information
-          </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <CreatedMetaChip createdAt={lead.createdAt} />
+              <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
+                Lead came {leadComeCount} times
+              </span>
+            </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <CreatedMetaChip createdAt={lead.createdAt} />
-            <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
-              Lead came {leadComeCount} times
-            </span>
-          </div>
+            <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
+              <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
+              <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
+              <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
+            </div>
 
-          <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
-            <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
-            <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
-            <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
-          </div>
-
-          <div className="mt-3 max-w-[560px]">
-            <DataCompletenessMeter />
+            <div className="mt-3 max-w-[560px]">
+              <DataCompletenessMeter />
+            </div>
           </div>
         </div>
 
-        <div className="w-full lg:mb-8">
+        <div data-no-dblclick-close className="w-full lg:mb-8">
           <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
             {canStageRollback ? (
               <button
@@ -483,15 +500,6 @@ function LeadDetailHeader() {
   );
 }
 
-function LeadSourceBadge({ primary, extras }: { primary: string; extras?: string[] }) {
-  const label = primary || extras?.[0] || "External Lead";
-  return (
-    <span className="inline-flex items-center rounded-full border border-[#bfdbfe] bg-[#eff6ff] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.06em] text-[#1d4ed8]">
-      {label}
-    </span>
-  );
-}
-
 function CreatedMetaChip({ createdAt }: { createdAt: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-[#bae6fd] bg-[#f0f9ff] px-2.5 py-1 text-[11px] font-semibold text-[#0369a1]">
@@ -630,6 +638,52 @@ function FamilyContactCard() {
     if (editSnapshot) setDraft(editSnapshot);
     exitEditing();
   };
+
+  useEffect(() => {
+    if (!editing || !isDirty) return;
+    return registerLeadDetailPendingFlush(async () => {
+      if (!validLeadType || !requirements || !editSnapshot) return [];
+      if (familyContactDraftsEqual(draft, editSnapshot)) {
+        exitEditing();
+        return [];
+      }
+      const labels = discoveryFieldLabels(
+        {
+          familyContactName: editSnapshot.name,
+          familyContactRelationship: editSnapshot.role,
+          familyContactPhone: editSnapshot.phone,
+        },
+        {
+          familyContactName: draft.name,
+          familyContactRelationship: draft.role,
+          familyContactPhone: draft.phone,
+        },
+      );
+      setSaving(true);
+      try {
+        const nextRequirements: ConfigurationScopeRequirements = {
+          ...requirements,
+          familyContactName: draft.name.trim() || null,
+          familyContactRelationship: draft.role.trim() || null,
+          familyContactPhone: draft.phone.trim() || null,
+        };
+        const saved = await putConfigurationScopeRequirements(
+          validLeadType,
+          leadId,
+          toPutRequirementsBody(nextRequirements),
+        );
+        setRequirements(saved);
+        patchConfigurationScopeFrontendPrefs(validLeadType, leadId, {
+          familyContactRelationship: draft.role.trim() || null,
+        });
+        persistFamilyContactRole(leadId, draft.role);
+        exitEditing();
+        return labels;
+      } finally {
+        setSaving(false);
+      }
+    });
+  }, [draft, editSnapshot, editing, isDirty, leadId, requirements, validLeadType]);
 
   const handleSave = async () => {
     if (!validLeadType || !requirements) {
@@ -1046,6 +1100,30 @@ function LeadProfileCard() {
     setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
   };
 
+  const contactDirty =
+    editingContact &&
+    (contactDraft.phone.trim() !== (lead.phone ?? "").trim() ||
+      contactDraft.email.trim() !== (lead.email ?? "").trim());
+
+  useEffect(() => {
+    if (!contactDirty) return;
+    return registerLeadDetailPendingFlush(async () => {
+      const before = { phone: lead.phone ?? "", email: lead.email ?? "" };
+      const patch = {
+        phone: contactDraft.phone.trim(),
+        email: contactDraft.email.trim(),
+      };
+      const labels = discoveryFieldLabels(before, patch);
+      if (labels.length === 0) {
+        setEditingContact(false);
+        return [];
+      }
+      await onLeadContactSave(patch, { silent: true });
+      setEditingContact(false);
+      return labels;
+    });
+  }, [contactDirty, contactDraft.email, contactDraft.phone, lead.email, lead.phone, onLeadContactSave]);
+
   const saveContactEdit = async () => {
     const patch = {
       phone: contactDraft.phone.trim(),
@@ -1241,6 +1319,12 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   } = useLeadDetailV2();
   const canInteract = !disabled;
   const quoteLinkValue = lead.quoteLink?.trim() || "";
+  const quoteSentCount = lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
+  const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
+  const quoteId =
+    lead.quoteId?.trim() ||
+    lead.quoteSentInfo?.quoteId?.trim() ||
+    "";
 
   return (
     <div className="grid gap-4">
@@ -1257,6 +1341,13 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
               <p className="mt-1 text-[18px] font-extrabold tracking-[-0.01em] text-[#1f2937]">
                 Quote &amp; Proposal Desk
               </p>
+              {quoteSent ? (
+                <p className="mt-1.5 text-[12px] font-semibold text-emerald-700">
+                  Quote Sent to Customer
+                  {quoteId ? ` · #${quoteId}` : ""}
+                  {quoteSentCount > 1 ? ` · Sent ${quoteSentCount} times` : ""}
+                </p>
+              ) : null}
             </div>
             {canShowGetQuote ? (
               <button
@@ -1492,6 +1583,21 @@ function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) 
     exitEditing();
   };
 
+  useEffect(() => {
+    if (!editing || !isDirty || !editSnapshot) return;
+    return registerLeadDetailPendingFlush(async () => {
+      const draft = readDiscoveryPhaseDraft(lead);
+      const labels = discoveryFieldLabels(editSnapshot, draft);
+      if (labels.length === 0) {
+        exitEditing();
+        return [];
+      }
+      await onConnectionPhaseSave(draft, { silent: true });
+      exitEditing();
+      return labels;
+    });
+  }, [editSnapshot, editing, isDirty, lead, onConnectionPhaseSave]);
+
   const handleSave = async () => {
     if (!isDirty) {
       exitEditing();
@@ -1603,174 +1709,176 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
   const isAdsLead = lead.leadType === "glead" || lead.leadType === "mlead";
 
   return (
-    <div className="grid gap-x-10 gap-y-5 lg:grid-cols-2">
-      <div className="space-y-5">
-        <div>
-          <PhaseFieldLabel>Property Name</PhaseFieldLabel>
-          {editing ? (
-            <Input
-              placeholder="Property name / site"
-              value={lead.propertyLocation ?? ""}
-              onChange={(e) => onLeadPatch({ propertyLocation: e.target.value })}
-              className={V2_INPUT}
-            />
-          ) : (
-            <ValuePill
-              icon={
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M3 21h18" />
-                  <path d="M5 21V7l8-4v18" />
-                  <path d="M19 21V11l-6-4" />
-                </svg>
-              }
-            >
-              {lead.propertyLocation || "—"}
-            </ValuePill>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel>Budget Range</PhaseFieldLabel>
-          {editing ? (
-            <Select
-              value={lead.budget ?? ""}
-              onChange={(e) => onLeadPatch({ budget: e.target.value })}
-              className={V2_INPUT}
-            >
-              <option value="">Select Budget</option>
-              {budgetOptions.map((budget) => (
-                <option key={budget} value={budget}>
-                  {budget}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel>Language Preferred</PhaseFieldLabel>
-          {editing ? (
-            <Select
-              value={lead.language ?? ""}
-              onChange={(e) => onLeadPatch({ language: e.target.value })}
-              className={V2_INPUT}
-            >
-              {LANGUAGE_OPTIONS.map((language) => (
-                <option key={language} value={language}>
-                  {language}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <ValuePill
-              icon={
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M2 12h20" />
-                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                </svg>
-              }
-            >
-              {lead.language || "—"}
-            </ValuePill>
-          )}
-        </div>
+    <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0">Property Name</PhaseFieldLabel>
+        {editing ? (
+          <Input
+            placeholder="Property name / site"
+            value={lead.propertyLocation ?? ""}
+            onChange={(e) => onLeadPatch({ propertyLocation: e.target.value })}
+            className={V2_INPUT}
+          />
+        ) : (
+          <ValuePill
+            icon={
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 21h18" />
+                <path d="M5 21V7l8-4v18" />
+                <path d="M19 21V11l-6-4" />
+              </svg>
+            }
+          >
+            {lead.propertyLocation || "—"}
+          </ValuePill>
+        )}
       </div>
 
-      <div className="space-y-5">
-        <div>
-          <PhaseFieldLabel>Configuration</PhaseFieldLabel>
-          {editing ? (
-            <>
-              <Select
-                value={lead.configuration ?? ""}
-                onChange={(e) => onLeadPatch({ configuration: e.target.value })}
-                className={V2_INPUT}
-              >
-                <option value="">Select Configuration</option>
-                {configurationOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </Select>
-              {isAdsLead && !(lead.configuration ?? "").trim() ? (
-                <p className="mt-1.5 text-[11px] text-[#9ca3af]">
-                  Not provided by the ad form — enter configuration and click Done to save.
-                </p>
-              ) : null}
-            </>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <ValuePill>{lead.configuration || "—"}</ValuePill>
-            </div>
-          )}
-        </div>
-
-        <div>
-          <PhaseFieldLabel>Type</PhaseFieldLabel>
-          {editing ? (
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
+          Configuration
+        </PhaseFieldLabel>
+        {editing ? (
+          <>
             <Select
-              value={lead.bookingType ?? ""}
-              onChange={(e) => onLeadPatch({ bookingType: e.target.value })}
+              value={lead.configuration ?? ""}
+              onChange={(e) => onLeadPatch({ configuration: e.target.value })}
               className={V2_INPUT}
             >
-              <option value="">Select Type</option>
-              {BOOKING_TYPE_OPTIONS.map((option) => (
+              <option value="">Select Configuration</option>
+              {configurationOptions.map((option) => (
                 <option key={option} value={option}>
-                  {bookingTypeDisplay(option)}
+                  {option}
                 </option>
               ))}
             </Select>
-          ) : (
-            <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
-          )}
-        </div>
+            {isAdsLead && !(lead.configuration ?? "").trim() ? (
+              <p className="text-[11px] text-[#9ca3af]">
+                Not provided by the ad form — enter configuration and click Done to save.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <ValuePill>{lead.configuration || "—"}</ValuePill>
+        )}
+      </div>
 
-        <div>
-          <PhaseFieldLabel>Property Notes</PhaseFieldLabel>
-          {editing ? (
-            <Textarea
-              placeholder="Add extra property notes..."
-              value={lead.propertyNotes ?? ""}
-              onChange={(e) => onLeadPatch({ propertyNotes: e.target.value })}
-              className={V2_INPUT}
-            />
-          ) : (
-            <ValuePill
-              icon={
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                </svg>
-              }
-            >
-              {lead.propertyNotes || "—"}
-            </ValuePill>
-          )}
-        </div>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.budget}>
+          Budget Range
+        </PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.budget ?? ""}
+            onChange={(e) => onLeadPatch({ budget: e.target.value })}
+            className={V2_INPUT}
+          >
+            <option value="">Select Budget</option>
+            {budgetOptions.map((budget) => (
+              <option key={budget} value={budget}>
+                {budget}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill variant="green">{lead.budget || "—"}</ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
+          Type
+        </PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.bookingType ?? ""}
+            onChange={(e) => onLeadPatch({ bookingType: e.target.value })}
+            className={V2_INPUT}
+          >
+            <option value="">Select Type</option>
+            {BOOKING_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {bookingTypeDisplay(option)}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill>{bookingTypeDisplay(lead.bookingType ?? "")}</ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0">Language Preferred</PhaseFieldLabel>
+        {editing ? (
+          <Select
+            value={lead.language ?? ""}
+            onChange={(e) => onLeadPatch({ language: e.target.value })}
+            className={V2_INPUT}
+          >
+            {LANGUAGE_OPTIONS.map((language) => (
+              <option key={language} value={language}>
+                {language}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <ValuePill
+            icon={
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M2 12h20" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+            }
+          >
+            {lead.language || "—"}
+          </ValuePill>
+        )}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
+          Property Notes
+        </PhaseFieldLabel>
+        {editing ? (
+          <Textarea
+            placeholder="Add extra property notes..."
+            value={lead.propertyNotes ?? ""}
+            onChange={(e) => onLeadPatch({ propertyNotes: e.target.value })}
+            className={V2_INPUT}
+          />
+        ) : (
+          <ValuePill
+            icon={
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            }
+          >
+            {lead.propertyNotes || "—"}
+          </ValuePill>
+        )}
       </div>
     </div>
   );
@@ -1818,6 +1926,77 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const designQaValue = apiDesignQaLink || designQaLink || "";
   const [appointmentMeetingType, setAppointmentMeetingType] = useState("");
   const appointmentMeetingTypeRef = useRef("");
+  const [configScopeOpen, setConfigScopeOpen] = useState(false);
+  const [configScopeHighlightMissing, setConfigScopeHighlightMissing] = useState(false);
+  const pendingResumeMeetingRef = useRef<ResumeMeetingScheduleDetail | null>(null);
+  const pendingResumeStorageKey = `crm:pending-meeting-resume:${leadType}:${leadId}`;
+
+  const readPendingResume = (): ResumeMeetingScheduleDetail | null => {
+    if (pendingResumeMeetingRef.current) return pendingResumeMeetingRef.current;
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.sessionStorage.getItem(pendingResumeStorageKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as ResumeMeetingScheduleDetail;
+      if (!parsed?.leadId) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const writePendingResume = (detail: ResumeMeetingScheduleDetail | null) => {
+    pendingResumeMeetingRef.current = detail;
+    if (typeof window === "undefined") return;
+    try {
+      if (detail) {
+        window.sessionStorage.setItem(pendingResumeStorageKey, JSON.stringify(detail));
+      } else {
+        window.sessionStorage.removeItem(pendingResumeStorageKey);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  useEffect(() => {
+    const onOpenScope = (event: Event) => {
+      const detail = (event as CustomEvent<OpenConfigurationScopeDetail>).detail;
+      if (!detail?.leadId || detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      if (detail.reason === "meeting-scheduled") {
+        writePendingResume({
+          leadType: detail.leadType || leadType,
+          leadId: detail.leadId,
+          meetingFeedback: detail.meetingFeedback,
+        });
+      } else {
+        writePendingResume(null);
+      }
+      setConfigScopeHighlightMissing(Boolean(detail.highlightMissing));
+      setConfigScopeOpen(true);
+    };
+    window.addEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
+    return () => window.removeEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
+  }, [leadId, leadType, pendingResumeStorageKey]);
+
+  const closeConfigScopeWithoutResume = () => {
+    writePendingResume(null);
+    setConfigScopeOpen(false);
+    setConfigScopeHighlightMissing(false);
+  };
+
+  const closeConfigScopeAndResumeMeeting = () => {
+    const pending = readPendingResume();
+    writePendingResume(null);
+    setConfigScopeOpen(false);
+    setConfigScopeHighlightMissing(false);
+    // Only return to Schedule Hub Meeting when scope was opened from that meeting flow.
+    if (!pending) return;
+    window.setTimeout(() => {
+      notifyResumeMeetingSchedule(pending);
+    }, 50);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1881,7 +2060,13 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
         <div id="deal-connection-floor-plan" className="scroll-mt-24">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <PhaseFieldLabel className="mb-0">Floor Plan</PhaseFieldLabel>
+            <PhaseFieldLabel
+              className="mb-0"
+              required
+              requiredHint={REQUIRED_FIELD_HINTS.floorPlan}
+            >
+              Floor Plan
+            </PhaseFieldLabel>
             <div className="flex flex-wrap gap-1">
               <FloorPlanFileTypeBadge label="PDF" />
               <FloorPlanFileTypeBadge label="JPG" />
@@ -1906,39 +2091,36 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
           <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
             Scope of Work
           </p>
-          <div id="deal-scope-of-work" className="scroll-mt-24">
-            <Link
-              href={`/Leads/${leadType}/${leadId}/configuration-scope`}
-              className={`group flex h-[116px] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#8ee2b4] bg-white text-[12px] font-bold uppercase tracking-wide text-[#2c7a53] ${V2_CARD_LINK} ${
-                !canInteract ? "pointer-events-none opacity-60" : ""
-              }`}
-            >
-              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#d3f0df] bg-[#f4fff9] text-[#2c7a53] transition-all duration-200 group-hover:scale-105">
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-5 w-5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
-                </svg>
-              </span>
-              <span>Configure Scope</span>
-              <span className="text-[10px] font-semibold normal-case tracking-normal text-[#5f8d73]">
-                Open and update requirement details
-              </span>
-            </Link>
-          </div>
+          <ScopeOfWorkCompletenessCard
+            canInteract={canInteract}
+            onOpen={(highlightMissing) => {
+              setConfigScopeHighlightMissing(highlightMissing);
+              setConfigScopeOpen(true);
+            }}
+          />
         </div>
         <div className="mt-4 rounded-lg border border-[#e4e8ef] bg-white p-3">
           <DesignPreferencesWithModal leadId={designQaLeadId} />
         </div>
       </section>
+
+      <CrmFullscreenOverlayModal
+        open={configScopeOpen}
+        onClose={closeConfigScopeWithoutResume}
+        title="Configuration Scope"
+        hideHeader
+        zOverlay={100}
+        zPanel={105}
+      >
+        <NewConfigurationScopePage
+          leadType={leadType}
+          leadId={leadId}
+          embedded
+          highlightMissing={configScopeHighlightMissing}
+          onClose={closeConfigScopeWithoutResume}
+          onSavedAndClose={closeConfigScopeAndResumeMeeting}
+        />
+      </CrmFullscreenOverlayModal>
 
       <section className="flex flex-col rounded-xl border border-[#e8ecf1] border-l-[3px] border-l-[#1ed760] bg-[#f8fafc] p-4">
         <p className="mb-4 text-[11px] font-bold uppercase tracking-[0.12em] text-[#8b97a8]">
@@ -2035,16 +2217,21 @@ function DesignQaLinkField({
 function PhaseFieldLabel({
   children,
   className = "",
+  required = false,
+  requiredHint,
 }: {
   children: ReactNode;
   className?: string;
+  required?: boolean;
+  requiredHint?: string;
 }) {
   const margin = className.includes("mb-") ? "" : "mb-1.5";
   return (
     <p
-      className={`${margin} text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
+      className={`${margin} flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
     >
       {children}
+      {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
     </p>
   );
 }
@@ -2068,7 +2255,7 @@ function ValuePill({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
+      className={`inline-flex w-fit max-w-full items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
         variant === "green"
           ? "bg-[#e8fbf0] text-[#0f8f3d]"
           : "bg-[#f0f3f7]"

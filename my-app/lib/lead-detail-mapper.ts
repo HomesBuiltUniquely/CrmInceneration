@@ -22,6 +22,7 @@ import {
   configurationDbColumnForLeadType,
   readPropertyNotesFromRawPropertyDetails,
 } from "@/lib/lead-field-persistence";
+import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -589,6 +590,19 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     salesManagerName: pickSalesManagerDisplay(detail) || undefined,
     lostReason: readLostReasonFromDetail(detail) || "",
     quoteLink: pickStr(detail, "quoteLink", "quoteURL", "proposalLink") || "",
+    ...(() => {
+      const qs = extractQuoteSentFields(detail);
+      return {
+        quoteSentInfo: qs.quoteSentInfo,
+        quoteSentToCustomer: qs.quoteSentToCustomer,
+        quoteSentAt: qs.quoteSentAt,
+        quoteSentBy: qs.quoteSentBy,
+        quoteSentCount: qs.quoteSentCount,
+        lastQuoteSentAt: qs.lastQuoteSentAt,
+        lastQuoteSentBy: qs.lastQuoteSentBy,
+        quoteId: qs.quoteId,
+      };
+    })(),
     designQaLink:
       pickStr(detail, "designQaLink", "design_qa_quiz_url", "designQaQuizUrl") || undefined,
     leadSource: getLeadDisplaySource({ ...detail, leadType }),
@@ -927,6 +941,30 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   if (lead.quoteLink !== undefined) {
     next.quoteLink = lead.quoteLink;
   }
+  if (lead.quoteSentInfo !== undefined) {
+    next.quoteSentInfo = lead.quoteSentInfo;
+  }
+  if (lead.quoteSentToCustomer !== undefined) {
+    next.quoteSentToCustomer = lead.quoteSentToCustomer;
+  }
+  if (lead.quoteSentAt !== undefined) {
+    next.quoteSentAt = lead.quoteSentAt;
+  }
+  if (lead.quoteSentBy !== undefined) {
+    next.quoteSentBy = lead.quoteSentBy;
+  }
+  if (lead.quoteSentCount !== undefined) {
+    next.quoteSentCount = lead.quoteSentCount;
+  }
+  if (lead.lastQuoteSentAt !== undefined) {
+    next.lastQuoteSentAt = lead.lastQuoteSentAt;
+  }
+  if (lead.lastQuoteSentBy !== undefined) {
+    next.lastQuoteSentBy = lead.lastQuoteSentBy;
+  }
+  if (lead.quoteId !== undefined) {
+    next.quoteId = lead.quoteId;
+  }
   applyLostReasonToDetailPayload(next, lead.lostReason);
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
@@ -1011,6 +1049,30 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (lead.quoteLink !== undefined) {
     next.quoteLink = lead.quoteLink;
   }
+  if (lead.quoteSentInfo !== undefined) {
+    next.quoteSentInfo = lead.quoteSentInfo;
+  }
+  if (lead.quoteSentToCustomer !== undefined) {
+    next.quoteSentToCustomer = lead.quoteSentToCustomer;
+  }
+  if (lead.quoteSentAt !== undefined) {
+    next.quoteSentAt = lead.quoteSentAt;
+  }
+  if (lead.quoteSentBy !== undefined) {
+    next.quoteSentBy = lead.quoteSentBy;
+  }
+  if (lead.quoteSentCount !== undefined) {
+    next.quoteSentCount = lead.quoteSentCount;
+  }
+  if (lead.lastQuoteSentAt !== undefined) {
+    next.lastQuoteSentAt = lead.lastQuoteSentAt;
+  }
+  if (lead.lastQuoteSentBy !== undefined) {
+    next.lastQuoteSentBy = lead.lastQuoteSentBy;
+  }
+  if (lead.quoteId !== undefined) {
+    next.quoteId = lead.quoteId;
+  }
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
@@ -1047,11 +1109,12 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 
 function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase().replace(/\s+/g, "_");
-  if (u.includes("BOOKING_TOKEN")) return "status";
+  if (u.includes("QUOTE_SENT_TO_CUSTOMER") || u === "QUOTE_SENT") return "quote_sent_to_customer";
+  if (u.includes("BOOKING_TOKEN")) return "booking_token";
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";
-  if (u.includes("ASSIGN")) return "assignment";
+  if (u.includes("ASSIGN") || u.includes("VERIF")) return "assignment";
   if (u.includes("NOTE")) return "note";
   if (u.includes("CALL")) return "call";
   if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD")) return "status";
@@ -1112,4 +1175,13 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
     const at = a.createdAtIso ? new Date(a.createdAtIso).getTime() : 0;
     return bt - at;
   });
+}
+
+/** Hub activities for lead detail (B&T events use activityType BOOKING_TOKEN_*). */
+export function mapLeadActivitiesJson(
+  rows: unknown,
+  _leadType?: import("@/lib/leads-filter").CrmLeadType,
+  _leadId?: string,
+): ActivityItem[] {
+  return mapActivitiesJson(rows);
 }

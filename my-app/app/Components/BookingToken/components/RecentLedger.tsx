@@ -10,6 +10,7 @@ import {
 } from "@/lib/booking-token-leads";
 import { fetchDashboardBookingTokenDeals } from "@/lib/booking-token-deals-fetch";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
 
 function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
   const bg =
@@ -28,10 +29,16 @@ function LedgerIcon({ tone }: { tone: "success" | "warning" | "info" }) {
 type Props = {
   refreshSignal?: number;
   dateFilter: BookingDateFilterState;
+  dealFilters?: BookingDealFilterState;
   tab: "all" | "token" | "booking";
 };
 
-export default function RecentLedger({ refreshSignal = 0, dateFilter, tab }: Props) {
+export default function RecentLedger({
+  refreshSignal = 0,
+  dateFilter,
+  dealFilters,
+  tab,
+}: Props) {
   const [items, setItems] = useState<LedgerItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +48,7 @@ export default function RecentLedger({ refreshSignal = 0, dateFilter, tab }: Pro
     async function loadLedger() {
       setLoading(true);
       try {
-        const deals = await fetchDashboardBookingTokenDeals({ tab, dateFilter });
+        const deals = await fetchDashboardBookingTokenDeals({ tab, dateFilter, dealFilters });
         const histories = new Map<
           string,
           Awaited<ReturnType<typeof fetchPaymentHistory>>["history"]
@@ -72,7 +79,7 @@ export default function RecentLedger({ refreshSignal = 0, dateFilter, tab }: Pro
     return () => {
       cancelled = true;
     };
-  }, [refreshSignal, dateFilter, tab]);
+  }, [refreshSignal, dateFilter, dealFilters, tab]);
 
   return (
     <section className="rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] p-5 shadow-sm">

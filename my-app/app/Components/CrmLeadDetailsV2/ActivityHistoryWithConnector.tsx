@@ -5,10 +5,11 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ActivityItem } from "@/lib/data";
 import { formatCrmDateTime } from "@/lib/date-time-format";
 import {
@@ -17,13 +18,17 @@ import {
   V2_BTN_GHOST_ICON,
   V2_BTN_LIST_ITEM,
 } from "./lead-detail-v2-motion";
+import {
+  isQuoteSentActivityText,
+  pickQuoteSentMotivateLine,
+} from "@/lib/quote-sent-motivate";
 
 export type ActivityHistoryHandle = {
-  openPanel: () => void;
+  openPanel: (activityId?: string) => void;
 };
 
-type ActivityKind = "note" | "update" | "call";
-type FilterId = "all" | "calls" | "notes" | "updates";
+type ActivityKind = "note" | "update" | "call" | "booking_token";
+type FilterId = "all" | "calls" | "notes" | "updates" | "booking_token";
 
 type DisplayActivityItem = {
   id: string;
@@ -32,13 +37,9 @@ type DisplayActivityItem = {
   timestamp: string;
   author: string;
   detail: string;
+  isQuoteSent?: boolean;
+  motivateLine?: string;
 };
-
-const MOCK_SUMMARY_ITEMS = [
-  { id: "mock-1", title: "Lead Created", time: "Oct 12, 09:15 AM", icon: "user-plus" as const },
-  { id: "mock-2", title: "Meeting Scheduled", time: "Nov 15, 02:30 PM", icon: "calendar" as const },
-  { id: "mock-3", title: "Call Logged", time: "Nov 22, 10:30 AM", icon: "phone" as const },
-];
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
   {
@@ -81,12 +82,23 @@ const MOCK_FILTER_COUNTS = {
   calls: 1,
   notes: 3,
   updates: 25,
+  booking_token: 0,
 };
 
 function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
   if (type === "note") return "note";
   if (type === "call") return "call";
+  if (type === "booking_token") return "booking_token";
   return "update";
+}
+
+function extractQuoteIdFromActivityText(...parts: Array<string | null | undefined>): string {
+  const text = parts.map((p) => String(p ?? "")).join(" ");
+  const fromPath = text.match(/\/quote\/(\d+)/i);
+  if (fromPath?.[1]) return fromPath[1];
+  const fromHash = text.match(/#(\d{3,})/);
+  if (fromHash?.[1]) return fromHash[1];
+  return "";
 }
 
 function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
@@ -95,13 +107,33 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
     (activity.change
       ? `${activity.change.old || "—"} → ${activity.change.new || "—"}`
       : activity.description);
+  const isQuoteSent =
+    activity.type === "quote_sent_to_customer" ||
+    isQuoteSentActivityText(
+      activity.type,
+      activity.description,
+      detail,
+      activity.change?.new,
+    );
+  const quoteId = extractQuoteIdFromActivityText(
+    activity.description,
+    detail,
+    activity.change?.new,
+  );
+  const title = isQuoteSent
+    ? quoteId
+      ? `Quote Sent to Customer ⭐ · #${quoteId}`
+      : "Quote Sent to Customer ⭐"
+    : formatActivitySummaryTitle(activity.description);
   return {
     id: activity.id,
     kind: mapApiTypeToKind(activity.type),
-    title: formatActivitySummaryTitle(activity.description),
+    title,
     timestamp: formatActivityDisplayTime(activity.timestamp),
     author: activity.by,
     detail: formatActivityDetailText(detail),
+    isQuoteSent,
+    motivateLine: isQuoteSent ? pickQuoteSentMotivateLine(activity.id) : undefined,
   };
 }
 
@@ -110,15 +142,39 @@ function formatActivitySummaryTitle(raw: string): string {
   const text = raw.trim();
   if (!text) return "Activity";
 
-  const quoteMatch = text.match(/quote\s*link\s*set\s*to:\s*(https?:\/\/\S+)/i);
-  if (quoteMatch) {
-    try {
-      const url = new URL(quoteMatch[1]);
-      const quoteId = url.pathname.split("/").filter(Boolean).pop();
-      return quoteId ? `Quote link set · #${quoteId}` : "Quote link set";
-    } catch {
-      return "Quote link set";
-    }
+  const verifyAssignMatch = text.match(
+    /^Lead verified by\s+(.+?)(?:\s*\(Presales\))?\.\s*Assigned to\s+(.+)\.?$/i,
+  );
+  if (verifyAssignMatch) {
+    const by = verifyAssignMatch[1].trim();
+    const to = verifyAssignMatch[2].replace(/\.$/, "").trim();
+    return `Verified by ${by} · Assigned to ${to}`;
+  }
+
+  const verifyOnlyMatch = text.match(
+    /^Lead verified by\s+(.+?)(?:\s*\(Presales\))?\.\s*No sales executive assigned\.?$/i,
+  );
+  if (verifyOnlyMatch) {
+    return `Verified by ${verifyOnlyMatch[1].trim()} · No assignment`;
+  }
+
+  // Legacy audit only — not Quote Sent tile signal.
+  const quoteLinkMatch = text.match(
+    /quote\s*link\s*(?:set|changed)(?:\s*to)?[:\s]*(https?:\/\/\S+)?/i,
+  );
+  if (quoteLinkMatch) {
+    const qid = extractQuoteIdFromActivityText(text, quoteLinkMatch[1]);
+    return qid ? `Quote link set · #${qid}` : "Quote link saved";
+  }
+
+  if (/^quote\s*sent\s*to\s*customer/i.test(text)) {
+    const qid = extractQuoteIdFromActivityText(text);
+    return qid ? `Quote Sent to Customer ⭐ · #${qid}` : "Quote Sent to Customer ⭐";
+  }
+
+  if (/\bquote\s*sent\b/i.test(text) && !/status\s*changed/i.test(text) && !/quote\s*link\s*set/i.test(text)) {
+    const qid = extractQuoteIdFromActivityText(text);
+    return qid ? `Quote Sent to Customer ⭐ · #${qid}` : "Quote Sent to Customer ⭐";
   }
 
   const followUpMatch = text.match(
@@ -150,12 +206,6 @@ function formatActivityDetailText(value: string): string {
   );
 }
 
-function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
-  const x = (window.innerWidth - panelWidth) / 2;
-  const y = (window.innerHeight - panelHeight) / 2;
-  return clampPanelPosition(x, y, panelWidth, panelHeight);
-}
-
 function clampPanelPosition(
   x: number,
   y: number,
@@ -169,15 +219,26 @@ function clampPanelPosition(
   };
 }
 
+function activityListKey(activities: ActivityItem[] | undefined): string {
+  if (!activities?.length) return "mock";
+  return activities.map((item) => `${item.id}:${item.timestamp}:${item.description}`).join("|");
+}
+
 const ActivityHistoryWithConnector = forwardRef<
   ActivityHistoryHandle,
   { activities?: ActivityItem[] }
 >(function ActivityHistoryWithConnector({ activities }, ref) {
+  const activitiesKey = activityListKey(activities);
   const hasApiActivities = Boolean(activities && activities.length > 0);
-  const displayActivities =
-    hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
-  const summaryItems = hasApiActivities
-    ? displayActivities.slice(0, 3).map((item) => ({
+
+  const displayActivities = useMemo(() => {
+    if (hasApiActivities && activities) return activities.map(mapApiActivity);
+    return MOCK_ACTIVITIES;
+  }, [activities, activitiesKey, hasApiActivities]);
+
+  const summaryItems = useMemo(
+    () =>
+      displayActivities.slice(0, 3).map((item) => ({
         id: item.id,
         title: item.title,
         time: item.timestamp,
@@ -187,64 +248,101 @@ const ActivityHistoryWithConnector = forwardRef<
             : item.kind === "note"
               ? ("user-plus" as const)
               : ("calendar" as const),
-      }))
-    : MOCK_SUMMARY_ITEMS;
-  const filterCounts = hasApiActivities
-    ? displayActivities.reduce(
-        (acc, item) => {
-          acc.all += 1;
-          if (item.kind === "call") acc.calls += 1;
-          if (item.kind === "note") acc.notes += 1;
-          if (item.kind === "update") acc.updates += 1;
-          return acc;
-        },
-        { all: 0, calls: 0, notes: 0, updates: 0 },
-      )
-    : MOCK_FILTER_COUNTS;
+      })),
+    [displayActivities],
+  );
+
+  const filterCounts = useMemo(
+    () =>
+      hasApiActivities
+        ? displayActivities.reduce(
+            (acc, item) => {
+              acc.all += 1;
+              if (item.kind === "call") acc.calls += 1;
+              if (item.kind === "note") acc.notes += 1;
+              if (item.kind === "update") acc.updates += 1;
+              if (item.kind === "booking_token") acc.booking_token += 1;
+              return acc;
+            },
+            { all: 0, calls: 0, notes: 0, updates: 0, booking_token: 0 },
+          )
+        : MOCK_FILTER_COUNTS,
+    [displayActivities, hasApiActivities],
+  );
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const detailPaneRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   const [open, setOpen] = useState(false);
   const [panelEntered, setPanelEntered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [positionMode, setPositionMode] = useState<"centered" | "custom">("centered");
   const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 });
+  const [portalReady, setPortalReady] = useState(false);
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
-  const filteredActivities = displayActivities.filter((item) => {
-    if (filter === "all") return true;
-    if (filter === "calls") return item.kind === "call";
-    if (filter === "notes") return item.kind === "note";
-    return item.kind === "update";
-  });
+
+  const filteredActivities = useMemo(
+    () =>
+      displayActivities.filter((item) => {
+        if (filter === "all") return true;
+        if (filter === "calls") return item.kind === "call";
+        if (filter === "notes") return item.kind === "note";
+        if (filter === "booking_token") return item.kind === "booking_token";
+        return item.kind === "update";
+      }),
+    [displayActivities, filter],
+  );
+
   const selected =
     filteredActivities.find((a) => a.id === selectedId) ||
     displayActivities.find((a) => a.id === selectedId) ||
     filteredActivities[0] ||
     displayActivities[0];
 
+  // Only reset when the activity list content changes — not on every render.
   useEffect(() => {
-    setSelectedId(displayActivities[0]?.id ?? "");
-  }, [displayActivities]);
+    setSelectedId((prev) => {
+      if (prev && displayActivities.some((item) => item.id === prev)) return prev;
+      return displayActivities[0]?.id ?? "";
+    });
+  }, [activitiesKey, displayActivities]);
 
-  const openPanel = useCallback(() => {
-    const panelWidth = Math.min(920, window.innerWidth - 32);
-    const estimatedHeight = Math.min(560, window.innerHeight - 48);
-    setPanelPosition(getCenteredPanelPosition(panelWidth, estimatedHeight));
-    setPanelEntered(false);
-    setOpen(true);
+  // Keep detail in sync when the active filter hides the current selection.
+  useEffect(() => {
+    if (!filteredActivities.length) return;
+    if (filteredActivities.some((item) => item.id === selectedId)) return;
+    setSelectedId(filteredActivities[0].id);
+  }, [filteredActivities, selectedId]);
+
+  const selectActivity = useCallback((activityId: string) => {
+    setSelectedId(activityId);
+    window.requestAnimationFrame(() => {
+      detailPaneRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, []);
 
-  useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
+  const openPanel = useCallback(
+    (activityId?: string) => {
+      if (activityId && displayActivities.some((item) => item.id === activityId)) {
+        setFilter("all");
+        setSelectedId(activityId);
+      }
+      setPositionMode("centered");
+      setPanelEntered(false);
+      setOpen(true);
+    },
+    [displayActivities],
+  );
 
-  useLayoutEffect(() => {
-    if (!open || !panelRef.current) return;
-    const rect = panelRef.current.getBoundingClientRect();
-    const centered = getCenteredPanelPosition(rect.width, rect.height);
-    setPanelPosition(centered);
-  }, [open]);
+  useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
 
   useEffect(() => {
     if (!open) return;
@@ -256,23 +354,33 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const closePanel = useCallback(() => {
     setPanelEntered(false);
-    window.setTimeout(() => setOpen(false), 280);
+    window.setTimeout(() => {
+      setOpen(false);
+      setPositionMode("centered");
+    }, 280);
   }, []);
 
-  const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!panelRef.current || event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
+  const handleDragStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!panelRef.current || event.button !== 0) return;
+      if ((event.target as HTMLElement).closest("button")) return;
 
-    const rect = panelRef.current.getBoundingClientRect();
-    isDraggingRef.current = true;
-    setIsDragging(true);
-    dragOffsetRef.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }, []);
+      const rect = panelRef.current.getBoundingClientRect();
+      if (positionMode === "centered") {
+        setPositionMode("custom");
+        setPanelPosition({ x: rect.left, y: rect.top });
+      }
+      isDraggingRef.current = true;
+      setIsDragging(true);
+      dragOffsetRef.current = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    [positionMode],
+  );
 
   const handleDragMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isDraggingRef.current || !panelRef.current) return;
@@ -310,35 +418,290 @@ const ActivityHistoryWithConnector = forwardRef<
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, closePanel]);
 
+  const panelTransform =
+    positionMode === "centered"
+      ? panelEntered
+        ? "translate(-50%, -50%) scale(1)"
+        : "translate(-50%, -50%) scale(0.86)"
+      : panelEntered
+        ? "scale(1)"
+        : "scale(0.86)";
+
+  const panelStyle =
+    positionMode === "centered"
+      ? { left: "50%", top: "50%", transform: panelTransform }
+      : { left: panelPosition.x, top: panelPosition.y, transform: panelTransform };
+
+  const modal =
+    open && portalReady
+      ? createPortal(
+          <>
+            <div
+              className={`fixed inset-0 z-[90] bg-black/25 backdrop-blur-[2px] transition-opacity duration-300 ${
+                panelEntered ? "opacity-100" : "opacity-0"
+              }`}
+              onClick={closePanel}
+              aria-hidden="true"
+            />
+            <div
+              ref={panelRef}
+              className={`fixed z-[95] flex h-[min(760px,calc(100vh-2rem))] w-[min(1180px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                panelEntered ? "opacity-100" : "opacity-0"
+              }`}
+              style={panelStyle}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Activity History"
+              data-no-dblclick-close
+            >
+              <div
+                className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
+                  isDragging ? "cursor-grabbing" : "cursor-grab"
+                }`}
+                onPointerDown={handleDragStart}
+                onPointerMove={handleDragMove}
+                onPointerUp={handleDragEnd}
+                onPointerCancel={handleDragEnd}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#fef3c7] text-[#d97706]">
+                    📋
+                  </span>
+                  <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">
+                    Activity History
+                  </h2>
+                  <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
+                    {filterCounts.all} EVENTS
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={closePanel}
+                  className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
+                  aria-label="Close activity history"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] px-5 py-3">
+                <FilterPill
+                  active={filter === "all"}
+                  onClick={() => setFilter("all")}
+                  label={`All ${filterCounts.all}`}
+                />
+                <FilterPill
+                  active={filter === "calls"}
+                  onClick={() => setFilter("calls")}
+                  label={`Calls ${filterCounts.calls}`}
+                  icon="📞"
+                />
+                <FilterPill
+                  active={filter === "notes"}
+                  onClick={() => setFilter("notes")}
+                  label={`Notes ${filterCounts.notes}`}
+                  icon="📝"
+                />
+                <FilterPill
+                  active={filter === "updates"}
+                  onClick={() => setFilter("updates")}
+                  label={`Updates ${filterCounts.updates}`}
+                  icon="🔄"
+                />
+                {filterCounts.booking_token > 0 ? (
+                  <FilterPill
+                    active={filter === "booking_token"}
+                    onClick={() => setFilter("booking_token")}
+                    label={`Booking & Token ${filterCounts.booking_token}`}
+                    icon="🏷️"
+                  />
+                ) : null}
+              </div>
+
+              <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="flex min-h-0 flex-col border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
+                  <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                      {filteredActivities.length} In {filter === "all" ? "All" : filter}
+                    </p>
+                    <p className="text-[10px] font-medium text-[#94a3b8]">
+                      Click once to view details
+                    </p>
+                  </div>
+                  <ul className="min-h-0 flex-1 overflow-y-auto">
+                    {filteredActivities.map((item) => {
+                      const isQuote = Boolean(item.isQuoteSent);
+                      const selectedRow = selected?.id === item.id;
+                      return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          onClick={() => selectActivity(item.id)}
+                          aria-pressed={selectedRow}
+                          className={`w-full border-b px-4 py-3 text-left ${
+                            isQuote
+                              ? selectedRow
+                                ? "border-emerald-200 bg-[#d1fae5]"
+                                : `border-emerald-100 bg-[#ecfdf5] text-[#065f46] ${V2_BTN_LIST_ITEM}`
+                              : selectedRow
+                                ? "border-[#f1f5f9] bg-[#eff6ff]"
+                                : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <KindBadge kind={item.kind} quoteSent={isQuote} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <p
+                                  className={`text-[10px] font-bold uppercase tracking-wide ${
+                                    isQuote ? "text-emerald-700" : "text-[#9ca3af]"
+                                  }`}
+                                >
+                                  {isQuote ? "Quote Sent to Customer ⭐" : item.kind}
+                                </p>
+                                <p
+                                  className={`shrink-0 text-[10px] ${
+                                    isQuote ? "text-emerald-600/80" : "text-[#9ca3af]"
+                                  }`}
+                                >
+                                  {item.timestamp}
+                                </p>
+                              </div>
+                              <p
+                                className={`mt-1 line-clamp-2 text-[12px] font-semibold leading-snug ${
+                                  isQuote ? "text-emerald-950" : "text-[#111827]"
+                                }`}
+                                title={item.title}
+                              >
+                                {item.title}
+                              </p>
+                              {isQuote && item.motivateLine ? (
+                                <p className="mt-1 line-clamp-2 text-[11px] font-medium italic leading-snug text-emerald-800">
+                                  {item.motivateLine}
+                                </p>
+                              ) : null}
+                              <p
+                                className={`mt-1 truncate text-[11px] ${
+                                  isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
+                                }`}
+                              >
+                                {item.author}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+
+                <div ref={detailPaneRef} className="min-h-0 overflow-y-auto p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                    Event Detail
+                  </p>
+                  {selected ? (
+                    <div className="mt-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <KindBadge kind={selected.kind} quoteSent={Boolean(selected.isQuoteSent)} />
+                        <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
+                      </div>
+                      <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
+                        {selected.title}
+                      </p>
+                      {selected.isQuoteSent && selected.motivateLine ? (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-[#ecfdf5] px-3 py-2.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700">
+                            Keep going
+                          </p>
+                          <p className="mt-1 text-[13px] font-semibold leading-snug text-emerald-900">
+                            {selected.motivateLine}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div
+                        className={`mt-3 rounded-lg border p-3 ${
+                          selected.isQuoteSent
+                            ? "border-emerald-100 bg-[#f0fdf4]"
+                            : "border-[#e5e7eb] bg-[#f9fafb]"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
+                          {selected.detail}
+                        </p>
+                      </div>
+                      <p className="mt-3 text-[11px] text-[#9ca3af]">👤 By: {selected.author}</p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </>,
+          document.body,
+        )
+      : null;
+
   return (
     <>
-      <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
+      <article className="rounded-xl border border-[#e0e5ec] bg-white p-4" data-no-dblclick-close>
         <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
           Activity History
         </p>
+        <p className="mt-1 text-[11px] text-[#94a3b8]">Click a note to open details</p>
 
         <ul className="mt-3 divide-y divide-[#f1f5f9]">
-          {summaryItems.map((item) => (
-            <li key={item.id} className="flex gap-3 py-3 first:pt-0 last:pb-0">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#6b7280]">
-                <SummaryIcon type={item.icon} />
-              </div>
-              <div className="min-w-0 flex-1 self-center">
-                <p
-                  className="line-clamp-2 text-[13px] font-semibold leading-snug text-[#111827]"
-                  title={item.title}
+          {summaryItems.map((item) => {
+            const full = displayActivities.find((a) => a.id === item.id);
+            const isQuote = Boolean(full?.isQuoteSent);
+            return (
+            <li key={item.id} className="first:pt-0 last:pb-0">
+              <button
+                type="button"
+                onClick={() => openPanel(item.id)}
+                className={`flex w-full gap-3 rounded-lg px-1 py-3 text-left ${
+                  isQuote ? "bg-[#ecfdf5]" : ""
+                } ${V2_BTN_LIST_ITEM}`}
+              >
+                <div
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    isQuote
+                      ? "bg-[#d1fae5] text-emerald-700"
+                      : "bg-[#f3f4f6] text-[#6b7280]"
+                  }`}
                 >
-                  {item.title}
-                </p>
-                <p className="mt-1 text-[11px] leading-none text-[#9ca3af]">{item.time}</p>
-              </div>
+                  <SummaryIcon type={isQuote ? "quote" : item.icon} />
+                </div>
+                <div className="min-w-0 flex-1 self-center">
+                  <p
+                    className={`line-clamp-2 text-[13px] font-semibold leading-snug ${
+                      isQuote ? "text-emerald-950" : "text-[#111827]"
+                    }`}
+                    title={item.title}
+                  >
+                    {item.title}
+                  </p>
+                  {isQuote && full?.motivateLine ? (
+                    <p className="mt-1 line-clamp-1 text-[11px] font-medium italic text-emerald-800">
+                      {full.motivateLine}
+                    </p>
+                  ) : null}
+                  <p
+                    className={`mt-1 text-[11px] leading-none ${
+                      isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
+                    }`}
+                  >
+                    {item.time}
+                  </p>
+                </div>
+              </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
 
         <button
           type="button"
-          onClick={openPanel}
+          onClick={() => openPanel()}
           aria-expanded={open}
           className={`group/btn mt-4 flex w-full items-center justify-center gap-2 rounded-lg border py-2.5 text-[11px] font-bold uppercase tracking-wide focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#10b981] ${
             open
@@ -363,145 +726,7 @@ const ActivityHistoryWithConnector = forwardRef<
         </button>
       </article>
 
-      {open ? (
-        <div
-          className={`fixed inset-0 z-[90] bg-black/25 backdrop-blur-[2px] transition-opacity duration-300 ${
-            panelEntered ? "opacity-100" : "opacity-0"
-          }`}
-          onClick={closePanel}
-          aria-hidden="true"
-        />
-      ) : null}
-
-      {open ? (
-        <div
-          ref={panelRef}
-          className={`fixed z-[95] flex max-h-[calc(100vh-6rem)] w-[min(920px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-            panelEntered ? "scale-100 opacity-100" : "scale-[0.86] opacity-0"
-          }`}
-          style={{ left: panelPosition.x, top: panelPosition.y }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Activity History"
-        >
-          <div
-            className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
-              isDragging ? "cursor-grabbing" : "cursor-grab"
-            }`}
-            onPointerDown={handleDragStart}
-            onPointerMove={handleDragMove}
-            onPointerUp={handleDragEnd}
-            onPointerCancel={handleDragEnd}
-          >
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[#fef3c7] text-[#d97706]">
-                📋
-              </span>
-              <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">
-                Activity History
-              </h2>
-              <span className="rounded-full bg-[#eff6ff] px-2.5 py-0.5 text-[10px] font-bold text-[#3b82f6]">
-                {filterCounts.all} EVENTS
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={closePanel}
-              className={`rounded-md px-2 py-1 text-[18px] leading-none text-[#9ca3af] ${V2_BTN_GHOST_ICON}`}
-              aria-label="Close activity history"
-            >
-              ×
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] px-5 py-3">
-            <FilterPill
-              active={filter === "all"}
-              onClick={() => setFilter("all")}
-              label={`All ${filterCounts.all}`}
-            />
-            <FilterPill
-              active={filter === "calls"}
-              onClick={() => setFilter("calls")}
-              label={`Calls ${filterCounts.calls}`}
-              icon="📞"
-            />
-            <FilterPill
-              active={filter === "notes"}
-              onClick={() => setFilter("notes")}
-              label={`Notes ${filterCounts.notes}`}
-              icon="📝"
-            />
-            <FilterPill
-              active={filter === "updates"}
-              onClick={() => setFilter("updates")}
-              label={`Updates ${filterCounts.updates}`}
-              icon="🔄"
-            />
-          </div>
-
-          <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="min-h-0 border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
-              <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                {filteredActivities.length} In {filter === "all" ? "All" : filter}
-              </p>
-              <ul className="max-h-[420px] overflow-y-auto">
-                {filteredActivities.map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(item.id)}
-                      className={`w-full border-b border-[#f1f5f9] px-4 py-3 text-left ${
-                        selectedId === item.id
-                          ? "bg-[#eff6ff]"
-                          : `text-[#475569] ${V2_BTN_LIST_ITEM}`
-                      }`}
-                    >
-                      <div className="flex items-start gap-3">
-                        <KindBadge kind={item.kind} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">
-                              {item.kind}
-                            </p>
-                            <p className="shrink-0 text-[10px] text-[#9ca3af]">{item.timestamp}</p>
-                          </div>
-                          <p
-                            className="mt-1 line-clamp-2 text-[12px] font-semibold leading-snug text-[#111827]"
-                            title={item.title}
-                          >
-                            {item.title}
-                          </p>
-                          <p className="mt-1 truncate text-[11px] text-[#9ca3af]">{item.author}</p>
-                        </div>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="min-h-[280px] p-4">
-              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Event Detail</p>
-              {selected ? (
-                <div className="mt-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <KindBadge kind={selected.kind} />
-                    <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
-                  </div>
-                  <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">{selected.title}</p>
-                  <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
-                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
-                      {selected.detail}
-                    </p>
-                  </div>
-                  <p className="mt-3 text-[11px] text-[#9ca3af]">👤 By: {selected.author}</p>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {modal}
     </>
   );
 });
@@ -535,7 +760,14 @@ function FilterPill({
   );
 }
 
-function KindBadge({ kind }: { kind: ActivityKind }) {
+function KindBadge({ kind, quoteSent }: { kind: ActivityKind; quoteSent?: boolean }) {
+  if (quoteSent) {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#bbf7d0] text-[10px] font-bold uppercase text-emerald-800">
+        Q
+      </span>
+    );
+  }
   const styles =
     kind === "note"
       ? "bg-[#fef3c7] text-[#d97706]"
@@ -552,7 +784,15 @@ function KindBadge({ kind }: { kind: ActivityKind }) {
   );
 }
 
-function SummaryIcon({ type }: { type: "user-plus" | "calendar" | "phone" }) {
+function SummaryIcon({ type }: { type: "user-plus" | "calendar" | "phone" | "quote" }) {
+  if (type === "quote") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    );
+  }
   if (type === "user-plus") {
     return (
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

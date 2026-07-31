@@ -3,6 +3,19 @@ import { BASE_URL } from "@/lib/base-url";
 export const CRM_TOKEN_STORAGE_KEY = "crm_token";
 export const CRM_ROLE_STORAGE_KEY = "crm_role";
 export const CRM_USER_NAME_STORAGE_KEY = "crm_user_name";
+/**
+ * The login credential (username typed at the login form).
+ * Distinct from crm_user_name which holds the display name (fullName).
+ * Used for Go backend scope filtering: leadDetails.assigned_to stores
+ * the login username, not the display name.
+ */
+export const CRM_LOGIN_USERNAME_KEY = "crm_login_username";
+/**
+ * Numeric user ID from the login / GET /api/auth/me response.
+ * Stored as a string (String(id)) — used for ID-based RBAC checks
+ * such as notification filtering for SALES_EXECUTIVE.
+ */
+export const CRM_USER_ID_STORAGE_KEY = "crm_user_id";
 /** Linked `Designer.name` from login / `GET /api/auth/me` — used for designer dashboard APIs. */
 export const CRM_DESIGNER_NAME_STORAGE_KEY = "crm_designer_name";
 export const CRM_DESIGNER_ID_STORAGE_KEY = "crm_designer_id";

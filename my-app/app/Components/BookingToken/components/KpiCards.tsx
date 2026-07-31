@@ -8,30 +8,37 @@ import {
   bookingDateFilterSummary,
   type BookingDateFilterState,
 } from "@/lib/booking-token-date-filter";
+import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
 import type { BookingTokenTab } from "../types";
 
 type Props = {
   /** Bump to refetch after pay / cancel / new deal. */
   refreshSignal?: number;
   dateFilter: BookingDateFilterState;
+  dealFilters?: BookingDealFilterState;
   tab: BookingTokenTab;
 };
 
-export default function KpiCards({ refreshSignal = 0, dateFilter, tab }: Props) {
+export default function KpiCards({
+  refreshSignal = 0,
+  dateFilter,
+  dealFilters,
+  tab,
+}: Props) {
   const [loading, setLoading] = useState(true);
   const [kpiCards, setKpiCards] = useState(() => computeBookingTokenKpis([], tab));
 
   const loadKpis = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await fetchDashboardDealRows({ tab, dateFilter });
+      const rows = await fetchDashboardDealRows({ tab, dateFilter, dealFilters });
       setKpiCards(computeBookingTokenKpis(rows, tab));
     } catch {
       setKpiCards(computeBookingTokenKpis([], tab));
     } finally {
       setLoading(false);
     }
-  }, [dateFilter, tab]);
+  }, [dateFilter, dealFilters, tab]);
 
   useEffect(() => {
     void loadKpis();

@@ -2,7 +2,7 @@ import { normalizeRole } from "@/lib/auth/api";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isPresalesRole as isPresalesRoleUtil } from "@/lib/roleUtils";
 
-export type LeadTypeFilterKey = "all" | CrmLeadType | "verified";
+export type LeadTypeFilterKey = "all" | CrmLeadType | "verified" | "ivr_call";
 
 const ALL_LEAD_TYPES: CrmLeadType[] = [
   "formlead",
@@ -35,7 +35,7 @@ export function getAllowedLeadTypesForRole(_role: string): CrmLeadType[] {
 }
 
 export function isLeadTypeAllowedForRole(role: string, leadType: string): boolean {
-  if (leadType === "all" || leadType === "verified") return true;
+  if (leadType === "all" || leadType === "verified" || leadType === "ivr_call") return true;
   return getAllowedLeadTypesForRole(role).includes(leadType as CrmLeadType);
 }
 
@@ -61,6 +61,7 @@ export function getLeadTypeFilterOptions(
       { value: "glead", label: "Google Ads" },
       { value: "mlead", label: "Meta Ads" },
       { value: "addlead", label: "Add Lead" },
+      { value: "ivr_call", label: "IVR Call" },
       { value: "websitelead", label: "Website Lead" },
       { value: "walkinlead", label: "Walk-in Lead" },
       { value: "whatsapplead", label: "WhatsApp" },
@@ -69,6 +70,7 @@ export function getLeadTypeFilterOptions(
   return [
     { value: "all", label: "All Types" },
     { value: "addlead", label: "Add Lead" },
+    { value: "ivr_call", label: "IVR Call" },
     { value: "formlead", label: "External Lead" },
     { value: "glead", label: "Google Ads" },
     { value: "mlead", label: "Meta Ads" },

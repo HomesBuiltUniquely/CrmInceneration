@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
 import { V2_BTN_NAV } from "./lead-detail-v2-motion";
+import {
+  isEmptySpaceDoubleClickTarget,
+  requestLeadDetailOverlayClose,
+} from "@/lib/lead-detail-overlay-close";
 
 export type DealControlSectionId =
   | "deal-overview"
@@ -145,9 +149,16 @@ export default function DealControlSidebar({
   }, []);
 
   return (
-    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-[#f8fafc] lg:flex">
-      <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
-        <div className="shrink-0">
+    <aside
+      className="sticky top-4 hidden h-[calc(100vh-2rem)] max-h-[calc(100vh-2rem)] w-full flex-col self-start overflow-hidden rounded-xl border border-[#dfe5ec] bg-[#f8fafc] lg:flex"
+      onDoubleClick={(event) => {
+        if (!isEmptySpaceDoubleClickTarget(event.target)) return;
+        event.preventDefault();
+        requestLeadDetailOverlayClose();
+      }}
+      title="Double-click empty space to close"
+    >      <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+        <div className="shrink-0" data-no-dblclick-close>
           <div className="flex items-center gap-2.5">
             <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1ed760] text-white">
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -185,8 +196,7 @@ export default function DealControlSidebar({
           })}
         </nav>
 
-        <div className="mt-4 shrink-0 space-y-3 border-t border-[#e5e7eb] pt-4">
-          <TeamMemberRow
+        <div className="mt-4 shrink-0 space-y-3 border-t border-[#e5e7eb] pt-4" data-no-dblclick-close>          <TeamMemberRow
             role="CRM"
             name={assigneeName}
             avatar={

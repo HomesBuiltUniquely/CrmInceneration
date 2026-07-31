@@ -5,9 +5,14 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ConfigurationScopeFloorPlan from "./ConfigurationScopeFloorPlan";
 import ReferenceViewModal from "./ReferenceViewModal";
+import { RequiredAsterisk, REQUIRED_FIELD_HINTS } from "./RequiredFieldHint";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
 import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
+import {
+  validateConfigurationScopeForMeeting,
+  type ConfigurationScopeValidationIssue,
+} from "@/lib/configuration-scope-validation";
 import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 import {
   createDefaultSelectedRoom,
@@ -20,8 +25,11 @@ import {
   getConfigurationScopeRequirements,
   mergeRequirementDefaults,
   miscAddOnOptions,
+  normalizeMiscAddOns,
+  normalizeStringList,
   putConfigurationScopeAestheticNotes,
   putConfigurationScopeRequirements,
+  joinProjectUnderstanding,
   splitProjectUnderstanding,
   TIMELINE_EXPECTATION_OPTIONS,
   toPutRequirementsBody,
@@ -36,6 +44,7 @@ import {
   type ScopeSelectedRoom,
 } from "@/lib/configuration-scope-client";
 import { seedPropertyNameFromLead } from "@/lib/lead-discovery-field-sync";
+import { syncCrmLeadToDesignModule } from "@/lib/design-module-phase-sync";
 import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
@@ -69,6 +78,14 @@ import type { CrmLeadType } from "@/lib/leads-filter";
 type Props = {
   leadType: string;
   leadId: string;
+  /** When set (e.g. opened inside lead-detail overlay), close instead of navigating away. */
+  onClose?: () => void;
+  /** Called after a successful Finalize when returning to Schedule Hub Meeting (immediate, no celebration). */
+  onSavedAndClose?: () => void;
+  /** Softer page chrome when embedded in a fullscreen overlay. */
+  embedded?: boolean;
+  /** Highlight every missing required field (e.g. redirected from Meeting Scheduled). */
+  highlightMissing?: boolean;
 };
 
 type ScopeSectionId =
@@ -115,23 +132,22 @@ function latestIsoTimestamp(...values: Array<string | null | undefined>): string
   return best;
 }
 
-function validateRequirementScopeForFinalize(requirements: ConfigurationScopeRequirements): string | null {
-  const rooms = requirements.selectedRooms ?? [];
-  if (rooms.length === 0) {
-    return "Requirement Scope needs at least one room before moving to the next phase.";
-  }
-  for (const room of rooms) {
-    const roomName = room.roomName?.trim() || "Selected room";
-    const selectedUnits = (room.units ?? []).filter((unit) => unit.selected && unit.label.trim());
-    if (selectedUnits.length === 0) {
-      return `Units Required is mandatory for ${roomName}. Please select at least one unit.`;
-    }
-    if (!(room.notes ?? "").trim()) {
-      return `Specific Room Notes is mandatory for ${roomName}.`;
-    }
-  }
-  return null;
+const SCOPE_FIELD_HINT =
+  "border-[#f0d4a8] bg-[#fffaf3] ring-1 ring-[#f5e2c4] focus:border-[#e8b86d] focus:ring-[#f5e2c4]";
+
+function FieldHintText({ message }: { message?: string }) {
+  if (!message) return null;
+  return (
+    <p className="mt-1.5 text-[12px] font-medium leading-snug text-[#9a6b2f]">{message}</p>
+  );
 }
+
+/** Soft guide styles for missing required fields (gentle, not alarming). */
+const SCOPE_HINT_BANNER =
+  "rounded-xl border border-[#f0d9b5] bg-gradient-to-br from-[#fff9f0] to-[#fff5e8] px-4 py-3.5 text-[13px] text-[#7a5530] shadow-sm";
+const SCOPE_HINT_PANEL = "border-[#e8c48a] bg-[#fff8ee]";
+const SCOPE_HINT_RING = "rounded-md ring-1 ring-[#f0d4a8]";
+const SCOPE_HINT_ROOM = "border-[#e8c48a] ring-1 ring-[#f5e2c4]";
 
 /** Shared medium hover motion for Configuration Scope interactive elements. */
 const SCOPE_TRANSITION = "transition-all duration-200 ease-out";
@@ -193,7 +209,14 @@ function ScopeAddPlusButton({
   );
 }
 
-export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
+export default function NewConfigurationScopePage({
+  leadType,
+  leadId,
+  onClose,
+  onSavedAndClose,
+  embedded = false,
+  highlightMissing = false,
+}: Props) {
   const router = useRouter();
   const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown> | null>(null);
@@ -205,6 +228,8 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   const [floorPlanViewPath, setFloorPlanViewPath] = useState("");
   const [floorPlanOpenPath, setFloorPlanOpenPath] = useState("");
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [showMissingFieldHints, setShowMissingFieldHints] = useState(highlightMissing);
+  const [showFinalizeCelebration, setShowFinalizeCelebration] = useState(false);
   const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(
     () => mergeRequirementDefaults(createDefaultRequirements()).requirements,
   );
@@ -408,6 +433,33 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         requirementsDirtyRef.current = false;
         setRequirements(saved);
         if (saved.bookingType) setBookingType(saved.bookingType);
+
+        // Keep Design Module View in sync when config scope is saved (not only on meeting schedule)
+        if (baseDetail) {
+          const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+          void syncCrmLeadToDesignModule({
+            leadType: validLeadType,
+            leadId,
+            lead: {
+              ...leadSnapshot,
+              floorPlanPublicLink:
+                floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
+              bookingType: saved.bookingType || leadSnapshot.bookingType,
+              configuration: leadConfiguration || leadSnapshot.configuration,
+            },
+            baseDetail,
+            designerName: leadSnapshot.designerName,
+            schedule: leadSnapshot.meetingDate?.trim()
+              ? {
+                  appointmentDate: leadSnapshot.meetingDate.trim(),
+                  scheduleTimezone: "Asia/Kolkata",
+                }
+              : undefined,
+          }).catch((err) => {
+            console.error("Design Module sync after config scope save failed:", err);
+          });
+        }
+
         return true;
       } catch (e) {
         const err = e as Error & { status?: number };
@@ -419,7 +471,7 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               ...fresh,
               selectedRooms: toSave.selectedRooms,
               availableRoomCatalog: toSave.availableRoomCatalog,
-              miscAddOns: toSave.miscAddOns,
+              miscAddOns: normalizeMiscAddOns(toSave.miscAddOns),
               kitchenLayout: toSave.kitchenLayout,
               materialFinish: toSave.materialFinish,
               familyContactName: toSave.familyContactName,
@@ -448,7 +500,15 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
         setRequirementsSaving(false);
       }
     },
-    [leadId, notifyError, requirements, validLeadType],
+    [
+      baseDetail,
+      floorPlanPublicLink,
+      leadConfiguration,
+      leadId,
+      notifyError,
+      requirements,
+      validLeadType,
+    ],
   );
 
   const handleReferenceUpload = useCallback(
@@ -546,15 +606,83 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
     window.print();
   }, []);
 
+  const hasFloorPlanUploaded = Boolean(
+    floorPlanS3Key.trim() || floorPlanPublicLink.trim() || floorPlanViewPath.trim(),
+  );
+
+  const validationIssues = useMemo((): ConfigurationScopeValidationIssue[] => {
+    if (!requirements) return [];
+    return validateConfigurationScopeForMeeting({
+      requirements,
+      configuration: leadConfiguration,
+      bookingType,
+      hasFloorPlan: hasFloorPlanUploaded,
+    });
+  }, [bookingType, floorPlanPublicLink, floorPlanS3Key, floorPlanViewPath, hasFloorPlanUploaded, leadConfiguration, requirements]);
+
+  const fieldErrorMessage = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const issue of validationIssues) {
+      if (!map.has(issue.key)) map.set(issue.key, issue.message);
+    }
+    return map;
+  }, [validationIssues]);
+
+  useEffect(() => {
+    if (highlightMissing) {
+      setShowMissingFieldHints(true);
+    }
+  }, [highlightMissing]);
+
+  useEffect(() => {
+    // Quietly clear the soft guide once nothing is missing (no celebration here).
+    if (showMissingFieldHints && !requirementsLoading && validationIssues.length === 0) {
+      setShowMissingFieldHints(false);
+    }
+  }, [requirementsLoading, showMissingFieldHints, validationIssues.length]);
+
+  useEffect(() => {
+    if (!showMissingFieldHints || validationIssues.length === 0 || requirementsLoading) return;
+    const firstSection = validationIssues[0]?.sectionId ?? "basic-understanding";
+    const timer = window.setTimeout(() => {
+      document.getElementById(firstSection)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [requirementsLoading, showMissingFieldHints, validationIssues]);
+
+  const finishAfterCelebration = useCallback(() => {
+    setShowFinalizeCelebration(false);
+    notifySuccess("Configuration scope saved.");
+    if (onSavedAndClose) {
+      onSavedAndClose();
+    } else if (onClose) {
+      onClose();
+    } else if (validLeadType) {
+      router.push(`/Leads/${validLeadType}/${leadId}`);
+    }
+  }, [leadId, notifySuccess, onClose, onSavedAndClose, router, validLeadType]);
+
   const handleFinalizeSubmit = useCallback(async () => {
-    if (!validLeadType || finalizing) return;
+    if (!validLeadType || finalizing || showFinalizeCelebration) return;
     if (!requirements) {
       notifyError("Configuration scope is still loading.");
       return;
     }
-    const requirementError = validateRequirementScopeForFinalize(requirements);
-    if (requirementError) {
-      notifyError(requirementError);
+    const issues = validateConfigurationScopeForMeeting({
+      requirements,
+      configuration: leadConfiguration,
+      bookingType,
+      hasFloorPlan: hasFloorPlanUploaded,
+    });
+    if (issues.length > 0) {
+      setShowMissingFieldHints(true);
+      notifyError(
+        issues[0]?.message ?? "A few details still need a moment of your care.",
+      );
+      document.getElementById(issues[0]?.sectionId ?? "basic-understanding")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
       return;
     }
     setFinalizing(true);
@@ -574,24 +702,70 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
       }
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
       notifyConfigurationScopeUpdated();
-      notifySuccess("Configuration scope saved.");
-      router.push(`/Leads/${validLeadType}/${leadId}`);
+
+      // Final push to Design after full config scope finalize
+      if (baseDetail) {
+        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
+        void syncCrmLeadToDesignModule({
+          leadType: validLeadType,
+          leadId,
+          lead: {
+            ...leadSnapshot,
+            floorPlanPublicLink:
+              floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
+            bookingType: requirements.bookingType || leadSnapshot.bookingType,
+            configuration: leadConfiguration || leadSnapshot.configuration,
+          },
+          baseDetail,
+          designerName: leadSnapshot.designerName,
+          schedule: leadSnapshot.meetingDate?.trim()
+            ? {
+                appointmentDate: leadSnapshot.meetingDate.trim(),
+                scheduleTimezone: "Asia/Kolkata",
+              }
+            : undefined,
+        }).catch((err) => {
+          console.error("Design Module sync after config scope finalize failed:", err);
+        });
+      }
+
+      // Meeting gate: reopen Schedule Hub Meeting immediately on save (no celebration delay).
+      if (onSavedAndClose) {
+        notifySuccess("Configuration scope saved.");
+        onSavedAndClose();
+        return;
+      }
+
+      setShowFinalizeCelebration(true);
     } finally {
       setFinalizing(false);
     }
   }, [
     baseDetail,
+    bookingType,
     finalizing,
+    floorPlanPublicLink,
     flushAllSaves,
     frontendPrefs,
+    hasFloorPlanUploaded,
     leadConfiguration,
     leadId,
     notifyError,
     notifySuccess,
+    onClose,
+    onSavedAndClose,
     requirements,
-    router,
+    showFinalizeCelebration,
     validLeadType,
   ]);
+
+  useEffect(() => {
+    if (!showFinalizeCelebration) return;
+    const timer = window.setTimeout(() => {
+      finishAfterCelebration();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [finishAfterCelebration, showFinalizeCelebration]);
 
   const basicUnderstandingFields = useMemo(
     () => ({
@@ -749,7 +923,30 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
   }, []);
 
   return (
-    <main className="configuration-scope-page min-h-screen bg-[#f3f5f7] px-4 py-6 font-sans md:px-6">
+    <main
+      className={`configuration-scope-page bg-[#f3f5f7] px-4 py-6 font-sans md:px-6 ${
+        embedded ? "min-h-0" : "min-h-screen"
+      }`}
+    >
+      <style>{`
+        @keyframes scopeCelebrate {
+          0% { opacity: 0; transform: translateY(14px) scale(0.9); }
+          15% { opacity: 1; transform: translateY(0) scale(1.05); }
+          55% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-8px) scale(0.98); }
+        }
+        @keyframes scopeConfettiPop {
+          0% { opacity: 0; transform: scale(0.6) rotate(-8deg); }
+          30% { opacity: 1; transform: scale(1.15) rotate(4deg); }
+          100% { opacity: 1; transform: scale(1) rotate(0deg); }
+        }
+        .scope-celebrate-card {
+          animation: scopeCelebrate 2s ease-out forwards;
+        }
+        .scope-celebrate-emoji {
+          animation: scopeConfettiPop 0.55s ease-out both;
+        }
+      `}</style>
       <div className="mx-auto grid max-w-[1320px] gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside
           data-print-hide
@@ -824,25 +1021,48 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
                 </svg>
               </div>
 
-              <Link
-                href={`/Leads/${leadType}/${leadId}`}
-                className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
-              >
-                Back To Lead Details
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              {onClose ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
                 >
-                  <path d="M19 12H5" />
-                  <path d="m12 19-7-7 7-7" />
-                </svg>
-              </Link>
+                  Back To Lead Details
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M19 12H5" />
+                    <path d="m12 19-7-7 7-7" />
+                  </svg>
+                </button>
+              ) : (
+                <Link
+                  href={`/Leads/${leadType}/${leadId}`}
+                  className="group inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[#d2dae5] bg-white px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[#374151] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a7f3d0] hover:bg-[#ecfdf5] hover:text-[#059669] hover:shadow-md active:scale-[0.98]"
+                >
+                  Back To Lead Details
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M19 12H5" />
+                    <path d="m12 19-7-7 7-7" />
+                  </svg>
+                </Link>
+              )}
             </div>
           </div>
         </aside>
@@ -854,6 +1074,48 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               ID: #{leadDisplayIdentifier}
             </p>
           </div>
+          {showMissingFieldHints && validationIssues.length > 0 ? (
+            <div role="status" className={SCOPE_HINT_BANNER}>
+              <p className="font-semibold text-[#8a5a28]">
+                You’re almost there — a few gentle details and we’re ready to schedule
+              </p>
+              <p className="mt-1 text-[12px] text-[#9a6b2f]">
+                Hover any soft amber field or the red * for a friendly reminder. Take your time.
+              </p>
+              <ul className="mt-2.5 space-y-1.5 border-t border-[#f0d9b5] pt-2.5">
+                {validationIssues.map((issue) => (
+                  <li
+                    key={issue.key}
+                    className="flex gap-2 text-[12px] leading-snug text-[#7a5530]"
+                  >
+                    <span className="mt-0.5 shrink-0 text-[#d4a35c]" aria-hidden="true">
+                      ○
+                    </span>
+                    <span>{issue.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {showFinalizeCelebration ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="pointer-events-none fixed inset-0 z-[120] flex items-center justify-center bg-[#0f172a]/30 backdrop-blur-[3px]"
+            >
+              <div className="scope-celebrate-card rounded-2xl border border-[#bbf7d0] bg-white px-9 py-7 text-center shadow-2xl">
+                <p className="scope-celebrate-emoji text-[34px] leading-none" aria-hidden="true">
+                  🎉
+                </p>
+                <p className="mt-2.5 text-[19px] font-extrabold tracking-tight text-[#0f8f3d]">
+                  Scope locked in — you owned this!
+                </p>
+                <p className="mt-1.5 max-w-[280px] text-[13px] font-medium leading-snug text-[#4b5563]">
+                  Next up: schedule the Hub Meeting and keep this deal moving.
+                </p>
+              </div>
+            </div>
+          ) : null}
           <div id="basic-understanding" className="scroll-mt-24">
             <BasicUnderstandingSection
               propertyNameSite={basicUnderstandingFields.propertyNameSite}
@@ -863,6 +1125,16 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               expectedTimeline={requirements?.expectedTimeline ?? ""}
               bookingTypeLoading={bookingTypeLoading}
               disabled={scopeFieldsDisabled}
+              fieldErrors={
+                showMissingFieldHints
+                  ? {
+                      propertyName: fieldErrorMessage.get("propertyName"),
+                      configuration: fieldErrorMessage.get("configuration"),
+                      bookingType: fieldErrorMessage.get("bookingType"),
+                      expectedTimeline: fieldErrorMessage.get("expectedTimeline"),
+                    }
+                  : undefined
+              }
               onPropertyNameSiteChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,
@@ -870,10 +1142,18 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
                 }));
               }}
               onFamilySizeDetailsChange={(value) => {
-                patchRequirements((prev) => ({
-                  ...prev,
-                  projectUnderstanding: value.trim() || null,
-                }));
+                patchRequirements((prev) => {
+                  const { propertyNameSite } = splitProjectUnderstanding(
+                    prev.projectUnderstanding,
+                  );
+                  return {
+                    ...prev,
+                    projectUnderstanding: joinProjectUnderstanding(
+                      propertyNameSite,
+                      value,
+                    ),
+                  };
+                });
               }}
               onBookingTypeChange={handleBookingTypeChange}
               onConfigurationChange={setLeadConfiguration}
@@ -896,6 +1176,17 @@ export default function NewConfigurationScopePage({ leadType, leadId }: Props) {
               loading={requirementsLoading}
               saving={requirementsSaving}
               onPatchRequirements={patchRequirements}
+              showFieldErrors={showMissingFieldHints}
+              fieldErrors={
+                showMissingFieldHints
+                  ? {
+                      rooms: fieldErrorMessage.get("rooms"),
+                      roomsExtra: fieldErrorMessage.get("roomsExtra"),
+                      floorPlan: fieldErrorMessage.get("floorPlan"),
+                      byRoom: fieldErrorMessage,
+                    }
+                  : undefined
+              }
             />
           </div>
           <div id="reference-inspiration" className="scroll-mt-24">
@@ -1569,6 +1860,8 @@ function RequirementScopeSection({
   loading,
   saving,
   onPatchRequirements,
+  showFieldErrors = false,
+  fieldErrors,
 }: {
   leadType: string;
   leadId: string;
@@ -1585,13 +1878,20 @@ function RequirementScopeSection({
   onPatchRequirements: (
     patch: (prev: ConfigurationScopeRequirements) => ConfigurationScopeRequirements,
   ) => void;
+  showFieldErrors?: boolean;
+  fieldErrors?: {
+    rooms?: string;
+    roomsExtra?: string;
+    floorPlan?: string;
+    byRoom?: Map<string, string>;
+  };
 }) {
   const [newRoomName, setNewRoomName] = useState("");
-  const catalog =
-    requirements?.availableRoomCatalog?.length
-      ? requirements.availableRoomCatalog
-      : [...DEFAULT_ROOM_CATALOG];
-  const selectedRooms = requirements?.selectedRooms ?? [];
+  const catalogSource = normalizeStringList(requirements?.availableRoomCatalog);
+  const catalog = catalogSource.length > 0 ? catalogSource : [...DEFAULT_ROOM_CATALOG];
+  const selectedRooms = Array.isArray(requirements?.selectedRooms)
+    ? requirements.selectedRooms
+    : [];
   const selectedNames = new Set(
     selectedRooms.map((room) => room.roomName.trim().toLowerCase()),
   );
@@ -1599,21 +1899,22 @@ function RequirementScopeSection({
   const toggleRoom = (roomName: string) => {
     const key = roomName.trim().toLowerCase();
     onPatchRequirements((prev) => {
-      const exists = prev.selectedRooms.some(
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const exists = rooms.some(
         (room) => room.roomName.trim().toLowerCase() === key,
       );
       if (exists) {
         return {
           ...prev,
-          selectedRooms: prev.selectedRooms.filter(
+          selectedRooms: rooms.filter(
             (room) => room.roomName.trim().toLowerCase() !== key,
           ),
         };
       }
-      const nextRoom = createDefaultSelectedRoom(roomName, prev.selectedRooms.length);
+      const nextRoom = createDefaultSelectedRoom(roomName, rooms.length);
       return {
         ...prev,
-        selectedRooms: [...prev.selectedRooms, nextRoom],
+        selectedRooms: [...rooms, nextRoom],
       };
     });
   };
@@ -1622,50 +1923,61 @@ function RequirementScopeSection({
     const trimmed = newRoomName.trim();
     if (!trimmed) return;
     onPatchRequirements((prev) => {
-      const catalogSet = new Set(prev.availableRoomCatalog);
+      const catalogSet = new Set(normalizeStringList(prev.availableRoomCatalog));
       catalogSet.add(trimmed);
-      const exists = prev.selectedRooms.some(
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const exists = rooms.some(
         (room) => room.roomName.trim().toLowerCase() === trimmed.toLowerCase(),
       );
-      const selectedRooms = exists
-        ? prev.selectedRooms
-        : [...prev.selectedRooms, createDefaultSelectedRoom(trimmed, prev.selectedRooms.length)];
+      const nextRooms = exists
+        ? rooms
+        : [...rooms, createDefaultSelectedRoom(trimmed, rooms.length)];
       return {
         ...prev,
         availableRoomCatalog: Array.from(catalogSet),
-        selectedRooms,
+        selectedRooms: nextRooms,
       };
     });
     setNewRoomName("");
   };
 
   const updateRoom = (roomId: string, patch: Partial<ScopeSelectedRoom>) => {
-    onPatchRequirements((prev) => ({
-      ...prev,
-      selectedRooms: prev.selectedRooms.map((room) =>
-        room.id === roomId ? { ...room, ...patch } : room,
-      ),
-    }));
+    onPatchRequirements((prev) => {
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      return {
+        ...prev,
+        selectedRooms: rooms.map((room) =>
+          room.id === roomId ? { ...room, ...patch } : room,
+        ),
+      };
+    });
   };
 
   const removeRoom = (room: ScopeSelectedRoom) => {
     const key = room.roomName.trim().toLowerCase();
-    onPatchRequirements((prev) => ({
-      ...prev,
-      selectedRooms: prev.selectedRooms.filter(
-        (entry) => entry.roomName.trim().toLowerCase() !== key,
-      ),
-      availableRoomCatalog: prev.availableRoomCatalog.filter(
-        (name) => name.trim().toLowerCase() !== key,
-      ),
-    }));
+    onPatchRequirements((prev) => {
+      const rooms = Array.isArray(prev.selectedRooms) ? prev.selectedRooms : [];
+      const catalogList = normalizeStringList(prev.availableRoomCatalog);
+      return {
+        ...prev,
+        selectedRooms: rooms.filter(
+          (entry) => entry.roomName.trim().toLowerCase() !== key,
+        ),
+        availableRoomCatalog: catalogList.filter(
+          (name) => name.trim().toLowerCase() !== key,
+        ),
+      };
+    });
   };
 
   const toggleMiscAddOn = (item: string) => {
+    const label = item.trim();
+    if (!label) return;
     onPatchRequirements((prev) => {
-      const selected = new Set(prev.miscAddOns);
-      if (selected.has(item)) selected.delete(item);
-      else selected.add(item);
+      const current = normalizeMiscAddOns(prev.miscAddOns);
+      const selected = new Set(current);
+      if (selected.has(label)) selected.delete(label);
+      else selected.add(label);
       return { ...prev, miscAddOns: Array.from(selected) };
     });
   };
@@ -1696,6 +2008,11 @@ function RequirementScopeSection({
       ) : (
         <div className="rounded-lg border border-[#e4e8ef] p-4">
           <FormLabel>Spaces to be Designed</FormLabel>
+          {showFieldErrors && (fieldErrors?.rooms || fieldErrors?.roomsExtra) ? (
+            <div className={`mt-2 px-3 py-2 text-[12px] font-medium text-[#9a6b2f] ${SCOPE_HINT_BANNER}`}>
+              {fieldErrors.roomsExtra || fieldErrors.rooms}
+            </div>
+          ) : null}
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
             <div>
@@ -1753,14 +2070,19 @@ function RequirementScopeSection({
                 <p className="text-[13px] text-[#9ca3af]">Select rooms from the catalog to configure units and notes.</p>
               ) : (
                 <div className="space-y-4">
-                  {selectedRooms.map((room) => (
+                  {selectedRooms.map((room) => {
+                    const roomKey = room.id || room.roomName;
+                    return (
                     <RoomConfigCard
                       key={room.id}
                       room={room}
+                      unitsError={fieldErrors?.byRoom?.get(`roomUnits:${roomKey}`)}
+                      notesError={fieldErrors?.byRoom?.get(`roomNotes:${roomKey}`)}
                       onUpdate={(patch) => updateRoom(room.id, patch)}
                       onRemove={() => removeRoom(room)}
                     />
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1776,6 +2098,7 @@ function RequirementScopeSection({
             floorPlanUploading={floorPlanUploading}
             onFloorPlanUpload={onFloorPlanUpload}
             onFloorPlanError={onFloorPlanError}
+            floorPlanError={showFieldErrors ? fieldErrors?.floorPlan : undefined}
             miscAddOns={requirements?.miscAddOns ?? []}
             kitchenLayout={requirements?.kitchenLayout ?? ""}
             materialFinish={requirements?.materialFinish ?? ""}
@@ -1803,6 +2126,7 @@ function ScopeExtrasSection({
   floorPlanUploading,
   onFloorPlanUpload,
   onFloorPlanError,
+  floorPlanError,
   miscAddOns,
   kitchenLayout,
   materialFinish,
@@ -1819,15 +2143,17 @@ function ScopeExtrasSection({
   floorPlanUploading: boolean;
   onFloorPlanUpload: (file: File) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
-  miscAddOns: string[];
+  floorPlanError?: string;
+  miscAddOns: string[] | null | undefined;
   kitchenLayout: string;
   materialFinish: string;
   onMiscAddOnToggle: (item: string) => void;
   onKitchenLayoutChange: (value: string) => void;
   onMaterialFinishChange: (value: string) => void;
 }) {
-  const addOnOptions = miscAddOnOptions([], miscAddOns);
-  const selectedAddOns = new Set(miscAddOns);
+  const safeAddOns = normalizeMiscAddOns(miscAddOns);
+  const addOnOptions = miscAddOnOptions([], safeAddOns);
+  const selectedAddOns = new Set(safeAddOns);
 
   return (
     <>
@@ -1849,17 +2175,14 @@ function ScopeExtrasSection({
           {addOnOptions.map((item) => {
             const checked = selectedAddOns.has(item);
             return (
-              <label
+              <button
                 key={item}
-                className={`flex min-h-[42px] cursor-pointer items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] font-medium text-[#374151] ${SCOPE_CHIP}`}
+                type="button"
+                aria-pressed={checked}
+                onClick={() => onMiscAddOnToggle(item)}
+                className={`flex min-h-[42px] w-full cursor-pointer items-center justify-between rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-left text-[13px] font-medium text-[#374151] ${SCOPE_CHIP}`}
               >
                 {item}
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => onMiscAddOnToggle(item)}
-                  className="sr-only"
-                />
                 <span
                   className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] border ${
                     checked ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white" : "border-[#d1d5db] bg-white"
@@ -1867,24 +2190,32 @@ function ScopeExtrasSection({
                 >
                   {checked ? "✓" : ""}
                 </span>
-              </label>
+              </button>
             );
           })}
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-        <ConfigurationScopeFloorPlan
-          leadType={leadType}
-          leadId={leadId}
-          floorPlanS3Key={floorPlanS3Key}
-          floorPlanPublicLink={floorPlanPublicLink}
-          floorPlanViewPath={floorPlanViewPath}
-          floorPlanOpenPath={floorPlanOpenPath}
-          uploading={floorPlanUploading}
-          onUpload={onFloorPlanUpload}
-          onError={onFloorPlanError}
-        />
+      <div className={`mt-4 grid gap-4 lg:grid-cols-[1.15fr_0.85fr] ${floorPlanError ? `p-2 ${SCOPE_HINT_RING}` : ""}`}>
+        <div>
+          <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.floorPlan}>
+            Floor Plan
+          </FormLabel>
+          <div className="mt-1.5">
+          <ConfigurationScopeFloorPlan
+            leadType={leadType}
+            leadId={leadId}
+            floorPlanS3Key={floorPlanS3Key}
+            floorPlanPublicLink={floorPlanPublicLink}
+            floorPlanViewPath={floorPlanViewPath}
+            floorPlanOpenPath={floorPlanOpenPath}
+            uploading={floorPlanUploading}
+            onUpload={onFloorPlanUpload}
+            onError={onFloorPlanError}
+          />
+          </div>
+          <FieldHintText message={floorPlanError} />
+        </div>
 
         <div className="flex flex-col justify-center gap-4">
           <div>
@@ -1915,16 +2246,21 @@ function RoomConfigCard({
   room,
   onUpdate,
   onRemove,
+  unitsError,
+  notesError,
 }: {
   room: ScopeSelectedRoom;
   onUpdate: (patch: Partial<ScopeSelectedRoom>) => void;
   onRemove: () => void;
+  unitsError?: string;
+  notesError?: string;
 }) {
   const [newUnitLabel, setNewUnitLabel] = useState("");
+  const units = Array.isArray(room.units) ? room.units : [];
 
   const toggleUnit = (label: string) => {
     onUpdate({
-      units: room.units.map((unit) =>
+      units: units.map((unit) =>
         unit.label === label ? { ...unit, selected: !unit.selected } : unit,
       ),
     });
@@ -1933,18 +2269,24 @@ function RoomConfigCard({
   const addUnit = () => {
     const trimmed = newUnitLabel.trim();
     if (!trimmed) return;
-    if (room.units.some((unit) => unit.label.toLowerCase() === trimmed.toLowerCase())) {
+    if (units.some((unit) => unit.label.toLowerCase() === trimmed.toLowerCase())) {
       setNewUnitLabel("");
       return;
     }
     onUpdate({
-      units: [...room.units, { label: trimmed, selected: true }],
+      units: [...units, { label: trimmed, selected: true }],
     });
     setNewUnitLabel("");
   };
 
+  const roomHasError = Boolean(unitsError || notesError);
+
   return (
-    <div className="rounded-lg border border-[#b8f0cc] bg-[#f6fff9] p-4">
+    <div
+      className={`rounded-lg border bg-[#f6fff9] p-4 ${
+        roomHasError ? SCOPE_HINT_ROOM : "border-[#b8f0cc]"
+      }`}
+    >
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#1ed760] text-[11px] font-bold text-white">
@@ -1964,9 +2306,11 @@ function RoomConfigCard({
 
       <div className="grid gap-4 md:grid-cols-[1fr_auto]">
         <div>
-          <FormLabel>Units Required</FormLabel>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {room.units.map((unit) => (
+          <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.roomUnits}>
+            Units Required (min. 2)
+          </FormLabel>
+          <div className={`mt-2 flex flex-wrap gap-2 ${unitsError ? `p-1 ${SCOPE_HINT_RING}` : ""}`}>
+            {units.map((unit) => (
               <button
                 key={unit.label}
                 type="button"
@@ -1996,38 +2340,48 @@ function RoomConfigCard({
               <ScopeAddPlusButton onClick={addUnit} ariaLabel="Add unit" size="sm" />
             </span>
           </div>
+          <FieldHintText message={unitsError} />
         </div>
         <div>
           <FormLabel>False Ceiling</FormLabel>
-          <label className={`mt-2 flex cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 ${SCOPE_CHIP}`}>
-            <input
-              type="checkbox"
-              checked={Boolean(room.falseCeilingRequired)}
-              onChange={(e) => onUpdate({ falseCeilingRequired: e.target.checked })}
-              className="sr-only"
-            />
+          <button
+            type="button"
+            onClick={() =>
+              onUpdate({ falseCeilingRequired: !Boolean(room.falseCeilingRequired) })
+            }
+            className={`mt-2 flex w-full cursor-pointer items-center gap-2 rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-left ${SCOPE_CHIP}`}
+            aria-pressed={Boolean(room.falseCeilingRequired)}
+          >
             <span
-              className={`inline-flex h-4 w-4 items-center justify-center rounded-[3px] border ${
+              className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border ${
                 room.falseCeilingRequired
                   ? "border-[#1ed760] bg-[#1ed760] text-[10px] text-white"
                   : "border-[#d1d5db] bg-white"
               }`}
+              aria-hidden="true"
             >
               {room.falseCeilingRequired ? "✓" : ""}
             </span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">Required</span>
-          </label>
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#9ca3af]">
+              Required
+            </span>
+          </button>
         </div>
       </div>
 
       <div className="mt-4">
-        <FormLabel>Specific Room Notes</FormLabel>
+        <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.roomNotes}>
+          Specific Room Notes
+        </FormLabel>
         <textarea
           value={room.notes ?? ""}
           onChange={(e) => onUpdate({ notes: e.target.value })}
           placeholder="e.g. Minimalist vibe, warm lighting..."
-          className={`mt-1 min-h-[72px] w-full rounded-md border border-[#e4e8ef] bg-white px-3 py-2 text-[13px] text-[#374151] outline-none ${SCOPE_INPUT}`}
+          className={`mt-1 min-h-[72px] w-full rounded-md border bg-white px-3 py-2 text-[13px] text-[#374151] outline-none ${
+            notesError ? SCOPE_FIELD_HINT : `border-[#e4e8ef] ${SCOPE_INPUT}`
+          }`}
         />
+        <FieldHintText message={notesError} />
       </div>
     </div>
   );
@@ -2041,6 +2395,7 @@ function BasicUnderstandingSection({
   expectedTimeline,
   bookingTypeLoading,
   disabled,
+  fieldErrors,
   onPropertyNameSiteChange,
   onFamilySizeDetailsChange,
   onBookingTypeChange,
@@ -2058,6 +2413,12 @@ function BasicUnderstandingSection({
   expectedTimeline: string;
   bookingTypeLoading: boolean;
   disabled: boolean;
+  fieldErrors?: {
+    propertyName?: string;
+    configuration?: string;
+    bookingType?: string;
+    expectedTimeline?: string;
+  };
   onPropertyNameSiteChange: (value: string) => void;
   onFamilySizeDetailsChange: (value: string) => void;
   onBookingTypeChange: (value: string) => void;
@@ -2081,14 +2442,19 @@ function BasicUnderstandingSection({
         <div className="grid lg:grid-cols-[1fr_220px]">
           <div className="grid gap-4 p-4 md:grid-cols-2">
             <div className="md:col-span-1">
-              <FormLabel>Property Name / Site</FormLabel>
+              <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.propertyName}>
+                Property Name / Site
+              </FormLabel>
               <input
                 value={propertyNameSite}
                 disabled={disabled}
                 onChange={(e) => onPropertyNameSiteChange(e.target.value)}
                 placeholder="Sharma Heights, Block C"
-                className={`mt-1 w-full rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
+                className={`mt-1 w-full rounded-md border bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${
+                  fieldErrors?.propertyName ? SCOPE_FIELD_HINT : `border-[#dfe5ec] ${SCOPE_INPUT}`
+                }`}
               />
+              <FieldHintText message={fieldErrors?.propertyName} />
             </div>
             <div className="md:col-span-1">
               <FormLabel>Family Size &amp; Details</FormLabel>
@@ -2101,13 +2467,19 @@ function BasicUnderstandingSection({
               />
             </div>
             <div>
-              <FormLabel>BHK Type</FormLabel>
+              <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.bhkType}>
+                BHK Type
+              </FormLabel>
               <div className="relative mt-1">
                 <select
                   disabled={disabled}
                   value={configuration || ""}
                   onChange={(e) => onConfigurationChange(e.target.value)}
-                  className="w-full appearance-none rounded-md border border-[#dfe5ec] bg-[#f9fafb] px-3 py-2 text-[14px] text-[#374151] outline-none"
+                  className={`w-full appearance-none rounded-md border px-3 py-2 text-[14px] text-[#374151] outline-none ${
+                    fieldErrors?.configuration
+                      ? SCOPE_FIELD_HINT
+                      : "border-[#dfe5ec] bg-[#f9fafb]"
+                  }`}
                 >
                   <option value="">Select BHK Type</option>
                   {CONFIGURATION_OPTIONS.map((option) => (
@@ -2124,15 +2496,20 @@ function BasicUnderstandingSection({
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
               </div>
+              <FieldHintText message={fieldErrors?.configuration} />
             </div>
             <div>
-              <FormLabel>Type</FormLabel>
+              <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.scopeBookingType}>
+                Type
+              </FormLabel>
               <div className="relative mt-1">
                 <select
                   value={bookingType}
                   disabled={bookingTypeLoading || disabled}
                   onChange={(e) => onBookingTypeChange(e.target.value)}
-                  className={`w-full appearance-none rounded-md border border-[#dfe5ec] bg-white px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${SCOPE_INPUT}`}
+                  className={`w-full appearance-none rounded-md border px-3 py-2 text-[14px] text-[#374151] outline-none disabled:cursor-wait disabled:opacity-60 ${
+                    fieldErrors?.bookingType ? SCOPE_FIELD_HINT : `border-[#dfe5ec] bg-white ${SCOPE_INPUT}`
+                  }`}
                 >
                   <option value="">{bookingTypeLoading ? "Loading…" : "Select Type"}</option>
                   {BOOKING_TYPE_OPTIONS.map((option) => (
@@ -2143,6 +2520,7 @@ function BasicUnderstandingSection({
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#9ca3af]">▾</span>
               </div>
+              <FieldHintText message={fieldErrors?.bookingType} />
             </div>
             <div className="flex flex-wrap gap-3 md:col-span-2">
               <CheckboxField
@@ -2160,8 +2538,16 @@ function BasicUnderstandingSection({
             </div>
           </div>
 
-          <div className="border-l-2 border-[#1ed760] bg-[#f5f7fa] p-4">
-            <FormLabel>Timeline Expectation</FormLabel>
+          <div
+            className={`border-l-2 p-4 ${
+              fieldErrors?.expectedTimeline
+                ? SCOPE_HINT_PANEL
+                : "border-[#1ed760] bg-[#f5f7fa]"
+            }`}
+          >
+            <FormLabel required requiredHint={REQUIRED_FIELD_HINTS.expectedTimeline}>
+              Timeline Expectation
+            </FormLabel>
             <div className="mt-3 space-y-3">
               {TIMELINE_EXPECTATION_OPTIONS.map((option) => (
                 <RadioOption
@@ -2173,6 +2559,7 @@ function BasicUnderstandingSection({
                 />
               ))}
             </div>
+            <FieldHintText message={fieldErrors?.expectedTimeline} />
           </div>
         </div>
       </div>
@@ -2180,9 +2567,20 @@ function BasicUnderstandingSection({
   );
 }
 
-function FormLabel({ children }: { children: ReactNode }) {
+function FormLabel({
+  children,
+  required = false,
+  requiredHint,
+}: {
+  children: ReactNode;
+  required?: boolean;
+  requiredHint?: string;
+}) {
   return (
-    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{children}</p>
+    <p className="inline-flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+      {children}
+      {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
+    </p>
   );
 }
 

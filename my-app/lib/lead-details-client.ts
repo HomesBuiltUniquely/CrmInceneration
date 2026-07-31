@@ -14,8 +14,14 @@ import {
   validateFloorPlanFile,
 } from "@/lib/floor-plan";
 import {
+  QUOTE_NOT_READY_USER_MESSAGE,
   sanitizeErrorMessage,
+  toFriendlyQuoteErrorMessage,
 } from "@/lib/friendly-api-error";
+import {
+  extractCustomerQuoteLink,
+  extractInternalQuoteLink,
+} from "@/lib/crm-quote-links";
 import { mergeClearFloorPlanInDetail } from "@/lib/lead-detail-mapper";
 import type { Lead } from "@/lib/data";
 function authHeaders(): HeadersInit {
@@ -376,7 +382,7 @@ export async function putHubScheduleDates(
 export async function postManualActivity(
   leadType: CrmLeadType,
   id: string,
-  activityType: "CALL" | "WHATSAPP" | "SMS" | "NOTE",
+  activityType: "CALL" | "WHATSAPP" | "SMS" | "NOTE" | "ASSIGNMENT",
   value: string
 ): Promise<string> {
   const res = await fetch(`/api/crm/lead/${leadType}/${id}/activity`, {
@@ -398,6 +404,36 @@ export async function postManualActivity(
     );
   }
   return text;
+}
+
+/** Activity text after Presales verify / sales handoff (WhatsApp, IVR, etc.). */
+export function buildLeadVerifiedActivityValue(args: {
+  verifiedBy: string;
+  assignedTo?: string;
+}): string {
+  const by = args.verifiedBy.trim() || "Presales";
+  const assigned = (args.assignedTo ?? "").trim();
+  if (assigned) {
+    return `Lead verified by ${by} (Presales). Assigned to ${assigned}.`;
+  }
+  return `Lead verified by ${by} (Presales). No sales executive assigned.`;
+}
+
+/**
+ * Persist verify + assignment into activity history.
+ * Prefers ASSIGNMENT (shows under Assignments filter); falls back to NOTE.
+ */
+export async function postLeadVerifiedActivity(
+  leadType: CrmLeadType,
+  id: string,
+  args: { verifiedBy: string; assignedTo?: string },
+): Promise<void> {
+  const value = buildLeadVerifiedActivityValue(args);
+  try {
+    await postManualActivity(leadType, id, "ASSIGNMENT", value);
+  } catch {
+    await postManualActivity(leadType, id, "NOTE", value);
+  }
 }
 
 function verifyPayloadMessage(parsed: Record<string, unknown> | null): string | null {
@@ -564,13 +600,25 @@ async function parseNewCrmQuoteResponse(res: Response, text: string): Promise<Ne
       (parsed?.message && parsed.message.trim()) ||
       (parsed?.error && parsed.error.trim()) ||
       text.trim();
+    if (res.status === 404 || res.status === 204) {
+      throw new Error(
+        toFriendlyQuoteErrorMessage(rawMessage, QUOTE_NOT_READY_USER_MESSAGE),
+      );
+    }
     const message = isHtmlLikePayload(rawMessage)
-      ? `Get quote failed (${res.status}). Upstream service returned an invalid response.`
-      : sanitizeErrorMessage(
+      ? "Unable to fetch quote right now. Please try again in a moment."
+      : toFriendlyQuoteErrorMessage(
           rawMessage,
-          "Unable to fetch quote link right now. Please try again.",
+          "Unable to fetch quote right now. Please try again.",
         );
     throw new Error(message);
+  }
+  if (parsed?.ok === false) {
+    const rawMessage =
+      (parsed.message && parsed.message.trim()) ||
+      (parsed.error && parsed.error.trim()) ||
+      "";
+    throw new Error(toFriendlyQuoteErrorMessage(rawMessage, QUOTE_NOT_READY_USER_MESSAGE));
   }
   return parsed ?? {};
 }
@@ -623,9 +671,12 @@ export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
       (typeof row?.message === "string" && row.message.trim()) ||
       (typeof row?.error === "string" && row.error.trim()) ||
       text.trim();
+    if (res.status === 404 || res.status === 204) {
+      throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+    }
     const message = isHtmlLikePayload(rawMessage)
-      ? `List quotes failed (${res.status}). Upstream service returned an invalid response.`
-      : sanitizeErrorMessage(
+      ? "Unable to list quote versions right now. Please try again."
+      : toFriendlyQuoteErrorMessage(
           rawMessage,
           "Unable to list quote versions right now. Please try again.",
         );
@@ -634,31 +685,145 @@ export async function listNewCrmQuotesByLead(leadId: string): Promise<unknown> {
   return parsed ?? {};
 }
 
+function pickQuoteIdCandidate(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return String(value);
+  }
+  return "";
+}
+
+function isBusinessQuoteLeadId(id: string): boolean {
+  return Boolean(id.trim()) && !/^\d+$/.test(id.trim());
+}
+
+/**
+ * Build unique quote lookup ids — business ids (GL-/AL-/pid) first, numeric Hub ids last.
+ * Design Module quotes are usually keyed by business/external id, not route `/Leads/.../1272`.
+ * Also tries Design upsert pid forms `${leadType}-${routeId}` / `${leadType}#${routeId}`.
+ */
+export function collectQuoteLookupCandidateIds(args: {
+  routeLeadId?: string;
+  leadBusinessId?: string;
+  externalReferenceId?: string;
+  leadType?: string;
+  baseDetail?: Record<string, unknown> | null;
+}): string[] {
+  const detail = args.baseDetail ?? {};
+  const routeId = (args.routeLeadId ?? "").trim();
+  const leadType = (args.leadType ?? pickQuoteIdCandidate(detail.leadType) ?? "")
+    .trim()
+    .toLowerCase();
+
+  const typedPairIds: string[] = [];
+  if (leadType && routeId && /^\d+$/.test(routeId)) {
+    typedPairIds.push(`${leadType}-${routeId}`, `${leadType}#${routeId}`);
+  }
+
+  const raw = [
+    args.externalReferenceId,
+    args.leadBusinessId,
+    pickQuoteIdCandidate(detail.uniqueId),
+    pickQuoteIdCandidate(detail.leadIdentifier),
+    pickQuoteIdCandidate(detail.lead_identifier),
+    pickQuoteIdCandidate(detail.externalLeadId),
+    pickQuoteIdCandidate(detail.externalReferenceId),
+    pickQuoteIdCandidate(detail.pid),
+    pickQuoteIdCandidate(detail.leadId),
+    pickQuoteIdCandidate(detail.leadRef),
+    pickQuoteIdCandidate(detail.leadCode),
+    ...typedPairIds,
+    pickQuoteIdCandidate(detail.customerId),
+    args.routeLeadId,
+    pickQuoteIdCandidate(detail.id),
+  ];
+
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const pushUnique = (id: string) => {
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  };
+
+  for (const id of raw) {
+    if (id && isBusinessQuoteLeadId(id)) pushUnique(id);
+  }
+  for (const id of raw) {
+    if (id && !isBusinessQuoteLeadId(id)) pushUnique(id);
+  }
+  return ordered;
+}
+
+function quoteResponseHasLink(res: NewCrmQuoteResponse): boolean {
+  return Boolean(extractCustomerQuoteLink(res) || extractInternalQuoteLink(res));
+}
+
+/**
+ * Resolve quote link by trying business + numeric lead ids on both
+ * `/by-lead` (Design Module) and `/by-external` (Hub).
+ */
+export async function resolveNewCrmQuoteInternalLink(args: {
+  routeLeadId?: string;
+  leadBusinessId?: string;
+  externalReferenceId?: string;
+  leadType?: string;
+  baseDetail?: Record<string, unknown> | null;
+}): Promise<NewCrmQuoteResponse> {
+  const ids = collectQuoteLookupCandidateIds(args);
+  if (ids.length === 0) {
+    throw new Error("Lead ID is required to fetch quote.");
+  }
+
+  let lastError: unknown;
+  for (const id of ids) {
+    try {
+      const res = await getNewCrmQuoteInternalLinkByLead(id);
+      if (quoteResponseHasLink(res)) return res;
+    } catch (e) {
+      lastError = e;
+    }
+    try {
+      const res = await getNewCrmQuoteInternalLinkByExternal(id);
+      if (quoteResponseHasLink(res)) return res;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (lastError instanceof Error) throw lastError;
+  throw new Error(QUOTE_NOT_READY_USER_MESSAGE);
+}
+
 /** Try list + internal-link routes for one business lead id (with optional external ref fallback). */
 export async function fetchNewCrmQuotePayloads(
   businessLeadId: string,
   externalReferenceId = "",
 ): Promise<unknown[]> {
-  const id = businessLeadId.trim();
-  const externalId = externalReferenceId.trim();
   const payloads: unknown[] = [];
+  const ids = collectQuoteLookupCandidateIds({
+    leadBusinessId: businessLeadId,
+    externalReferenceId,
+    routeLeadId: businessLeadId,
+  });
 
-  if (id) {
+  for (const id of ids) {
     // `GET /api/new-crm/quotes/by-lead/{id}` is not deployed upstream yet (404).
     // Quotes load via internal-link + Prolance revisions below.
     try {
-      payloads.push(await getNewCrmQuoteInternalLinkByLead(id));
+      const res = await getNewCrmQuoteInternalLinkByLead(id);
+      if (quoteResponseHasLink(res)) payloads.push(res);
     } catch {
       // Fall through to by-external.
     }
-  }
-
-  if (externalId) {
     try {
-      payloads.push(await getNewCrmQuoteInternalLinkByExternal(externalId));
+      const res = await getNewCrmQuoteInternalLinkByExternal(id);
+      if (quoteResponseHasLink(res)) payloads.push(res);
     } catch {
-      // No quote on external id either.
+      // No quote on this id.
     }
+    if (payloads.length > 0) break;
   }
 
   return payloads;

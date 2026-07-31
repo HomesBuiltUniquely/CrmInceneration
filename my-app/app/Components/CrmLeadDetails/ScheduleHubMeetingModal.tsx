@@ -21,7 +21,7 @@ import {
   minutesToHubTimeLabel,
   type BookedTimelineBlock,
 } from "@/lib/hub-meeting-schedule";
-import { Button, FieldLabel, Select, Textarea } from "./ui";
+import { Button, FieldLabel, Textarea } from "./ui";
 import { cn } from "@/lib/cn";
 
 const MEETING_TYPE_OPTIONS = [
@@ -79,22 +79,117 @@ function VerifiedBadge() {
   );
 }
 
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <FieldLabel>{label}</FieldLabel>
-      <div className="flex h-[40px] items-center rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3.5 text-[13px] font-medium text-[var(--crm-text-primary)]">
-        {value || "—"}
-      </div>
-    </div>
-  );
-}
-
 function SummaryIconBox({ children }: { children: ReactNode }) {
   return (
     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-slate-200 bg-slate-50 text-slate-500">
       {children}
     </span>
+  );
+}
+
+function SelectChevron() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      <path d="m6 8 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+type SelectionOption = {
+  value: string;
+  label: string;
+};
+
+function SelectionDropdown({
+  ariaLabel,
+  value,
+  options,
+  placeholder,
+  loadingLabel,
+  disabled = false,
+  onChange,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: SelectionOption[];
+  placeholder: string;
+  loadingLabel?: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="absolute inset-0 z-20">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="absolute inset-0 cursor-pointer rounded-none disabled:cursor-not-allowed"
+      />
+      {open ? (
+        <div
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute left-2 right-2 top-[calc(100%+6px)] z-50 max-h-[280px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.18)]"
+        >
+          <div className="px-2.5 py-2 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">
+            {loadingLabel || placeholder}
+          </div>
+          {options.map((option) => {
+            const selected = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition",
+                  selected
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "text-slate-700 hover:bg-slate-50",
+                )}
+              >
+                <span className="truncate">{option.label}</span>
+                {selected ? (
+                  <span className="ml-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-[10px] text-white">
+                    ✓
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+          {!loadingLabel && options.length === 0 ? (
+            <p className="px-2.5 py-3 text-[12px] text-slate-500">No options available.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -104,16 +199,29 @@ function SummaryColumn({
   value,
   meta,
   trailing,
+  required = false,
+  children,
 }: {
   leading: ReactNode;
   label: string;
   value: ReactNode;
   meta?: ReactNode;
   trailing?: ReactNode;
+  required?: boolean;
+  /** Optional interactive control (e.g. select) layered over the column. */
+  children?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[80px] flex-col justify-center px-4 py-3 sm:px-5">
-      <span className="mb-2 text-[11px] leading-none text-[var(--crm-text-muted)]">{label}</span>
+    <div
+      className={cn(
+        "relative flex min-h-[80px] flex-col justify-center px-4 py-3 transition sm:px-5",
+        children ? "hover:bg-emerald-50/50" : undefined,
+      )}
+    >
+      <span className="mb-2 text-[11px] leading-none text-[var(--crm-text-muted)]">
+        {label}
+        {required ? <span className="ml-0.5 font-bold text-rose-500">*</span> : null}
+      </span>
       <div className="flex items-center gap-3">
         <div className="shrink-0">{leading}</div>
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
@@ -125,9 +233,14 @@ function SummaryColumn({
               <div className="mt-0.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">{meta}</div>
             ) : null}
           </div>
-          {trailing ? <div className="shrink-0 self-center">{trailing}</div> : null}
+          {trailing ? (
+            <div className="shrink-0 self-center text-[var(--crm-text-muted)]">
+              {trailing}
+            </div>
+          ) : null}
         </div>
       </div>
+      {children}
     </div>
   );
 }
@@ -167,14 +280,14 @@ export default function ScheduleHubMeetingModal({
   error = "",
   leadCustomerName,
   leadDisplayId,
-  status,
-  path,
-  feedback,
-  hubMeetingPanelTitle,
+  status: _status,
+  path: _path,
+  feedback: _feedback,
+  hubMeetingPanelTitle: _hubMeetingPanelTitle,
   initialNote = "",
   minDate,
   emailMissing = false,
-  scheduleInstruction,
+  scheduleInstruction: _scheduleInstruction,
   onNotesChange,
 }: ScheduleHubMeetingModalProps) {
   const dateInputRef = useRef<HTMLInputElement>(null);
@@ -369,13 +482,72 @@ export default function ScheduleHubMeetingModal({
               </span>
             }
             label="Designer"
+            required
             value={
               <>
-                <span className="truncate">{designerName || "Select designer"}</span>
+                <span className="truncate">{designerName || "Choose a designer"}</span>
                 {designerName ? <VerifiedBadge /> : null}
               </>
             }
-          />
+            meta={
+              designerName ? (
+                <span className="font-semibold text-emerald-600">✓ Designer selected</span>
+              ) : (
+                "Required — click here to select"
+              )
+            }
+            trailing={<SelectChevron />}
+          >
+            <SelectionDropdown
+              ariaLabel="Select designer"
+              value={designerName}
+              onChange={(value) => {
+                setDesignerName(value);
+                setSelectedStartMin(null);
+              }}
+              options={designers.map((designer) => ({
+                value: designer.name,
+                label: designer.name,
+              }))}
+              placeholder="Select a designer"
+              loadingLabel={designersLoading ? "Loading designers…" : undefined}
+              disabled={designersLoading || busy}
+            />
+          </SummaryColumn>
+          <SummaryColumn
+            leading={
+              <SummaryIconBox>
+                <CalendarCheckIcon className="h-[18px] w-[18px]" />
+              </SummaryIconBox>
+            }
+            label="Meeting Type"
+            required
+            value={
+              <span className="truncate">
+                {meetingType ? meetingTypeLabel : "Choose meeting type"}
+              </span>
+            }
+            meta={
+              meetingType ? (
+                <span className="font-semibold text-emerald-600">✓ Meeting type selected</span>
+              ) : (
+                "Required — click here to select"
+              )
+            }
+            trailing={<SelectChevron />}
+          >
+            <SelectionDropdown
+              ariaLabel="Select meeting type"
+              value={meetingType}
+              onChange={setMeetingType}
+              options={MEETING_TYPE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              placeholder="Select meeting type"
+              disabled={busy}
+            />
+          </SummaryColumn>
           <SummaryColumn
             leading={
               <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-[15px] font-bold text-violet-700">
@@ -385,15 +557,6 @@ export default function ScheduleHubMeetingModal({
             label="Customer"
             value={<span className="truncate">{leadCustomerName}</span>}
             meta={leadDisplayId ? <span className="font-mono">{leadDisplayId}</span> : undefined}
-          />
-          <SummaryColumn
-            leading={
-              <SummaryIconBox>
-                <CalendarCheckIcon className="h-[18px] w-[18px]" />
-              </SummaryIconBox>
-            }
-            label="Meeting Type"
-            value={<span className="truncate">{meetingTypeLabel}</span>}
           />
           <SummaryColumn
             leading={
@@ -420,7 +583,7 @@ export default function ScheduleHubMeetingModal({
                 <button
                   type="button"
                   onClick={() => dateInputRef.current?.showPicker?.() ?? dateInputRef.current?.click()}
-                  className="whitespace-nowrap text-[12px] font-semibold text-emerald-600 hover:underline"
+                  className="relative z-[2] whitespace-nowrap text-[12px] font-semibold text-emerald-600 hover:underline"
                 >
                   Change Date
                 </button>
@@ -429,72 +592,65 @@ export default function ScheduleHubMeetingModal({
           />
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden px-6 py-4 lg:grid-cols-[300px_1fr]">
-          <div className="overflow-y-auto rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]/50 p-4">
-            <h3 className="mb-3 text-[14px] font-bold text-[var(--crm-text-primary)]">Meeting Details</h3>
-            <div className="space-y-3">
-              <ReadOnlyField label="Status" value={status} />
-              <ReadOnlyField label="Path" value={path} />
-              <ReadOnlyField label="Feedback" value={feedback} />
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden px-6 py-4 lg:grid-cols-[250px_1fr]">
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+            <div className="rounded-xl border border-[var(--crm-border)] bg-white p-4">
+              <h4 className="mb-2.5 text-[13px] font-bold text-[var(--crm-text-primary)]">
+                Selected Appointment
+              </h4>
+              <div className="grid grid-cols-1 gap-y-2.5">
+                {[
+                  { icon: "👤", label: "Designer", value: designerName || "—" },
+                  { icon: "🚩", label: "Lead ID", value: leadDisplayId || "—" },
+                  { icon: "👤", label: "Customer", value: leadCustomerName || "—" },
+                  {
+                    icon: "🕐",
+                    label: "Time",
+                    value:
+                      selectedStartMin !== null && selectedEndMin !== null
+                        ? formatHubTimeRange(selectedStartMin, selectedEndMin)
+                        : "—",
+                  },
+                  { icon: "📅", label: "Date", value: meetingDateLabel },
+                  { icon: "⏳", label: "Duration", value: `${HUB_MEETING_DURATION_MIN} Minutes` },
+                  {
+                    icon: "📋",
+                    label: "Meeting Type",
+                    value: meetingType ? meetingTypeLabel : "—",
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="flex items-center gap-2.5 text-[12px]">
+                    <span className="text-base leading-none opacity-70" aria-hidden>
+                      {item.icon}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-medium text-[var(--crm-text-muted)]">
+                        {item.label}
+                      </p>
+                      <p className="truncate font-semibold text-[var(--crm-text-primary)]">
+                        {item.value}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-              <h4 className="pt-1 text-[13px] font-bold text-[var(--crm-text-primary)]">{hubMeetingPanelTitle}</h4>
-              {scheduleInstruction ? (
-                <div className="space-y-2 text-[11px] text-[var(--crm-text-muted)]">{scheduleInstruction}</div>
-              ) : null}
-
-              <div>
-                <FieldLabel required>Designer</FieldLabel>
-                <Select
-                  value={designerName}
-                  onChange={(e) => {
-                    setDesignerName(e.target.value);
-                    setSelectedStartMin(null);
-                  }}
-                  disabled={designersLoading || busy}
-                  className="h-[40px] text-[13px]"
-                >
-                  <option value="">
-                    {designersLoading ? "Loading designers…" : "Select designer"}
-                  </option>
-                  {designers.map((d) => (
-                    <option key={d.id} value={d.name}>
-                      {d.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <FieldLabel required>Meeting Type</FieldLabel>
-                <Select
-                  value={meetingType}
-                  onChange={(e) => setMeetingType(e.target.value)}
-                  disabled={busy}
-                  className="h-[40px] text-[13px]"
-                >
-                  <option value="">Select meeting type</option>
-                  {MEETING_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <FieldLabel required>Notes</FieldLabel>
-                <Textarea
-                  value={notes}
-                  onChange={(e) => {
-                    setNotes(e.target.value);
-                    onNotesChange?.(e.target.value);
-                  }}
-                  placeholder="Add meeting context, customer expectations, preferences or important discussion points..."
-                  missing={showNoteError && !notes.trim()}
-                  disabled={busy}
-                  className="min-h-[100px] text-[13px]"
-                />
-              </div>
+            <div className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]/50 p-4">
+              <FieldLabel required>Notes</FieldLabel>
+              <Textarea
+                value={notes}
+                onChange={(e) => {
+                  setNotes(e.target.value);
+                  onNotesChange?.(e.target.value);
+                }}
+                placeholder="Add meeting context, customer expectations, preferences or important discussion points..."
+                missing={showNoteError && !notes.trim()}
+                disabled={busy}
+                className="mt-1.5 min-h-[140px] text-[13px]"
+              />
               {emailMissing ? (
-                <p className="text-[12px] text-rose-600">
+                <p className="mt-2 text-[12px] text-rose-600">
                   Add a valid customer email on the Lead tab before scheduling.
                 </p>
               ) : null}
@@ -645,37 +801,6 @@ export default function ScheduleHubMeetingModal({
                 </>
               )}
             </div>
-
-            <div className="border-t border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]/60 px-4 py-3">
-              <h4 className="mb-2.5 text-[13px] font-bold text-[var(--crm-text-primary)]">Selected Appointment</h4>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
-                {[
-                  { icon: "👤", label: "Designer", value: designerName || "—" },
-                  { icon: "👤", label: "Customer", value: leadCustomerName },
-                  { icon: "📅", label: "Date", value: meetingDateLabel },
-                  { icon: "🚩", label: "Lead ID", value: leadDisplayId },
-                  {
-                    icon: "🕐",
-                    label: "Time",
-                    value:
-                      selectedStartMin !== null && selectedEndMin !== null
-                        ? formatHubTimeRange(selectedStartMin, selectedEndMin)
-                        : "—",
-                  },
-                  { icon: "⏳", label: "Duration", value: `${HUB_MEETING_DURATION_MIN} Minutes` },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center gap-2 text-[12px]">
-                    <span className="text-base leading-none opacity-70" aria-hidden>
-                      {item.icon}
-                    </span>
-                    <div>
-                      <p className="text-[10px] font-medium text-[var(--crm-text-muted)]">{item.label}</p>
-                      <p className="font-semibold text-[var(--crm-text-primary)]">{item.value}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         </div>
 
@@ -691,8 +816,20 @@ export default function ScheduleHubMeetingModal({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setSelectedStartMin(null)}
-              disabled={busy || selectedStartMin === null}
+              onClick={() => {
+                setDesignerName("");
+                setMeetingType("");
+                setSelectedStartMin(null);
+                setBookedBlocks([]);
+                setLocalError("");
+                setShowNoteError(false);
+              }}
+              disabled={
+                busy ||
+                (!designerName.trim() &&
+                  !meetingType.trim() &&
+                  selectedStartMin === null)
+              }
             >
               Clear Selection
             </Button>

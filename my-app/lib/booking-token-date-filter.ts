@@ -122,6 +122,35 @@ export function resolveBookingDateRange(
   return {};
 }
 
+export type BookingDateApiParams = {
+  dateRange?: string;
+  submittedFrom?: string;
+  submittedTo?: string;
+};
+
+/** Map UI preset → Hub `dateRange` query param (custom dates use submittedFrom/To). */
+export function bookingDateFilterApiParams(filter: BookingDateFilterState): BookingDateApiParams {
+  if (filter.preset === "all") return {};
+
+  if (filter.preset === "custom") {
+    const range = resolveBookingDateRange(filter);
+    const params: BookingDateApiParams = {};
+    if (range.submittedFrom) params.submittedFrom = range.submittedFrom;
+    if (range.submittedTo) params.submittedTo = range.submittedTo;
+    return params;
+  }
+
+  const dateRangeByPreset: Partial<Record<BookingDatePresetId, string>> = {
+    previousMonth: "previous_month",
+    "3months": "3m",
+    "6months": "6m",
+    "1year": "1y",
+  };
+  const dateRange = dateRangeByPreset[filter.preset];
+  return dateRange ? { dateRange } : {};
+}
+
+/** @deprecated Prefer bookingDateFilterApiParams for Hub queries */
 export function bookingDateFilterQueryParams(
   filter: BookingDateFilterState,
 ): ResolvedBookingDateRange {

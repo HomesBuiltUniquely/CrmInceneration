@@ -6,7 +6,10 @@ import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
+import {
+  readLeadCreatedAtRaw,
+  readLeadDateRawForCrmDateField,
+} from "@/lib/lead-follow-up-insights";
 import {
   augmentLeadSourceCountsWithWalkIn,
   fetchWalkInLeadsForMerge,
@@ -22,7 +25,12 @@ import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
-import { hubHandlesDateFilter } from "@/lib/crm-date-field-filter";
+import {
+  hubHandlesDateFilter,
+  rawInInclusiveDateRange,
+  resolveEffectiveDateField,
+} from "@/lib/crm-date-field-filter";
+import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -144,19 +152,7 @@ function inDateRange(
   from: string,
   to: string
 ): boolean {
-  if (!from && !to) return true;
-  const ts = leadDateRaw ? Date.parse(leadDateRaw) : Number.NaN;
-  if (Number.isNaN(ts)) return false;
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (from) {
-    const fromTs = Date.parse(`${from}T00:00:00`);
-    if (!Number.isNaN(fromTs) && ts < fromTs) return false;
-  }
-  if (to) {
-    const toTs = Date.parse(`${to}T00:00:00`) + dayMs - 1;
-    if (!Number.isNaN(toTs) && ts > toTs) return false;
-  }
-  return true;
+  return rawInInclusiveDateRange(leadDateRaw, from, to);
 }
 
 async function resolveViewerRole(req: NextRequest): Promise<string> {
@@ -190,6 +186,7 @@ const LEADS_EXTRA_PARAMS = [
   "presalesMilestoneSubStage",
   "verificationStatus",
   "reinquiry",
+  "leadSource",
 ] as const;
 
 function buildLeadsExtraParams(
@@ -282,6 +279,7 @@ async function fetchPresalesSearchLeads(
   sort: string,
   search: string,
   usePresalesSearchPool = true,
+  isNewCrmGlobalSearchMode = false,
 ): Promise<ApiLead[]> {
   const parseChunk = (json: unknown): Array<{ type?: string; lead?: ApiLead }> => {
     if (!json || typeof json !== "object") return [];
@@ -319,7 +317,11 @@ async function fetchPresalesSearchLeads(
     upstream.searchParams.set("page", String(pageNum));
     upstream.searchParams.set("size", String(searchSize));
     upstream.searchParams.set("sort", sort);
+    upstream.searchParams.set("milestoneScope", "crm");
     if (search) upstream.searchParams.set("search", search);
+    if (isNewCrmGlobalSearchMode) {
+      upstream.searchParams.set("newCrmGlobalSearch", "true");
+    }
     appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
     const res = await fetch(upstream.toString(), {
       headers: upstreamAuthHeaders(req),
@@ -373,7 +375,11 @@ async function fetchPresalesSearchLeads(
       upstream.searchParams.set("page", String(pageNum));
       upstream.searchParams.set("size", String(pageSize));
       upstream.searchParams.set("sort", sort);
+      upstream.searchParams.set("milestoneScope", "crm");
       if (search) upstream.searchParams.set("search", search);
+      if (isNewCrmGlobalSearchMode) {
+        upstream.searchParams.set("newCrmGlobalSearch", "true");
+      }
       appendLeadsExtraParams(upstream, url, effDates, usePresalesSearchPool);
       const res = await fetch(upstream.toString(), {
         headers: upstreamAuthHeaders(req),
@@ -403,6 +409,7 @@ function filterAndSortMergedLeads(
   effDates: { from: string; to: string },
   usePresalesMilestoneFilters: boolean,
   search: string,
+  trustUpstreamSearch = false,
 ): ApiLead[] {
   const assignee = (url.searchParams.get("assignee") ?? "").trim().toLowerCase();
   const assigneeAliasSet = parseAssigneeAliasSetQuery(
@@ -426,7 +433,7 @@ function filterAndSortMergedLeads(
 
   return leads
     .filter((lead) => {
-      if (search) {
+      if (search && !trustUpstreamSearch) {
         const needle = search.toLowerCase();
         const needleDigits = search.replace(/\D/g, "");
         const assigneeText =
@@ -487,15 +494,34 @@ function filterAndSortMergedLeads(
 
       const ltKey = normalizeLeadTypeKey(lead.leadType);
       const isExternalListRow = ltKey === "walkinlead" || ltKey === "whatsapplead";
-      if (!skipHubDateFilter && !isExternalListRow && (dateFrom || dateTo)) {
-        const dateFieldRaw = usePresalesMilestoneFilters
+      // Hub date bounds are unreliable for WhatsApp/walk-in — always filter those locally.
+      const mustLocalDateFilter =
+        Boolean(dateFrom || dateTo) && (isExternalListRow || !skipHubDateFilter);
+      if (mustLocalDateFilter) {
+        const dateFieldRaw = isExternalListRow
           ? (() => {
-              const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-              return assignedTs > 0
-                ? new Date(assignedTs).toISOString()
-                : readLeadCreatedAtRaw(lead);
+              const effField = resolveEffectiveDateField({
+                dateFrom,
+                dateTo,
+                dateField: url.searchParams.get("dateField"),
+                crmMonthWindow: url.searchParams.get("crmMonthWindow"),
+              });
+              if (effField === "assigned" || usePresalesMilestoneFilters) {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              }
+              return readLeadDateRawForCrmDateField(lead, effField || "created");
             })()
-          : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+          : usePresalesMilestoneFilters
+            ? (() => {
+                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
+                return assignedTs > 0
+                  ? new Date(assignedTs).toISOString()
+                  : readLeadCreatedAtRaw(lead);
+              })()
+            : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
         if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
       }
 
@@ -527,6 +553,7 @@ export async function GET(req: NextRequest) {
   const size = url.searchParams.get("size") ?? "20";
   const sort = url.searchParams.get("sort") ?? "updatedAt,desc";
   const leadTypeParam = (url.searchParams.get("leadType") ?? "all").trim().toLowerCase();
+  const hubLeadTypeParam = hubLeadTypeForFilterKey(leadTypeParam).trim().toLowerCase();
   const search = (url.searchParams.get("search") ?? "").trim();
   const viewerRole = await resolveViewerRole(req);
   const milestoneScope = (url.searchParams.get("milestoneScope") ?? "").trim().toLowerCase();
@@ -536,6 +563,10 @@ export async function GET(req: NextRequest) {
     milestoneScope === "crm" &&
     newCrmGlobalSearch &&
     NEW_CRM_GLOBAL_SEARCH_ROLES.has(viewerRoleKey);
+  // Global search: show verified + unverified (do not forward CRM inbox verified filter).
+  if (isNewCrmGlobalSearchMode && search.length > 0) {
+    url.searchParams.delete("verificationStatus");
+  }
   const allowedLeadTypes = isNewCrmGlobalSearchMode
     ? [...CRM_LEAD_TYPES]
     : getAllowedLeadTypesForRole(viewerRoleKey);
@@ -543,9 +574,11 @@ export async function GET(req: NextRequest) {
   const leadPool = (url.searchParams.get("leadPool") ?? "").trim().toLowerCase();
   const usePresalesSearchPool = isPresalesRole(viewerRoleKey) || leadPool === "presales";
   const usePresalesMilestoneFilters = usePresalesSearchPool;
+  // CRM `/Leads` defaults to verified sales pool; IVR intake lives in unverified
+  // presales. Global search must merge presales-search (no verified filter) or
+  // phone/name matches never appear from CRM even though Presales finds them.
   const includePresalesInGlobalSearch =
     isNewCrmGlobalSearchMode &&
-    viewerRoleKey === "SUPER_ADMIN" &&
     !usePresalesSearchPool &&
     search.length > 0;
 
@@ -553,7 +586,12 @@ export async function GET(req: NextRequest) {
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
 
   if (!mergeAll && managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
@@ -584,7 +622,12 @@ export async function GET(req: NextRequest) {
   }
 
   if (!mergeAll && !managerEndpoint) {
-    const leadType = leadTypeParam === "all" ? "formlead" : leadTypeParam;
+    const leadType =
+      leadTypeParam === "all"
+        ? "formlead"
+        : isIvrCallFilterKey(leadTypeParam)
+          ? "addlead"
+          : leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
@@ -615,7 +658,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam) && !isIvrCallFilterKey(leadTypeParam)) {
     const presalesPerType = 1000;
     const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(
@@ -625,6 +668,7 @@ export async function GET(req: NextRequest) {
       sort,
       search,
       usePresalesSearchPool,
+      isNewCrmGlobalSearchMode,
     );
     const [walkInResult, whatsappResult] = await Promise.all([
       fetchWalkInLeadsForMerge({
@@ -670,6 +714,7 @@ export async function GET(req: NextRequest) {
       effDates,
       usePresalesMilestoneFilters,
       search,
+      usePresalesSearchPool && search.length > 0 && isNewCrmGlobalSearchMode,
     );
     const pageNum = Number.parseInt(page, 10) || 0;
     const pageSize = Number.parseInt(size, 10) || 20;
@@ -697,15 +742,15 @@ export async function GET(req: NextRequest) {
   const selectedTypes =
     leadTypeParam === "all"
       ? allowedLeadTypes
-      : CRM_LEAD_TYPES.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-        ? allowedLeadTypes.includes(leadTypeParam as (typeof CRM_LEAD_TYPES)[number])
-          ? ([leadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
+      : CRM_LEAD_TYPES.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+        ? allowedLeadTypes.includes(hubLeadTypeParam as (typeof CRM_LEAD_TYPES)[number])
+          ? ([hubLeadTypeParam] as (typeof CRM_LEAD_TYPES)[number][])
           : []
         : allowedLeadTypes;
 
   if (selectedTypes.length === 0) {
     return NextResponse.json(
-      { error: `${viewerRoleKey || "Current role"} cannot access ${leadTypeParam || "this lead type"}.` },
+      { error: `${viewerRoleKey || "Current role"} cannot access ${hubLeadTypeParam || leadTypeParam || "this lead type"}.` },
       { status: 403 }
     );
   }
@@ -848,13 +893,18 @@ export async function GET(req: NextRequest) {
     }
   }
   if (includePresalesInGlobalSearch) {
+    // Do not forward CRM `verificationStatus=verified` into presales-search —
+    // that hides unverified IVR / intake rows the user is looking for.
+    const presalesSearchUrl = new URL(url.toString());
+    presalesSearchUrl.searchParams.delete("verificationStatus");
     const presalesRows = await fetchPresalesSearchLeads(
       req,
-      url,
+      presalesSearchUrl,
       effDates,
       sort,
       search,
-      false,
+      true,
+      isNewCrmGlobalSearchMode,
     );
     for (const lead of presalesRows) {
       const id = leadStableIdentifier(lead);

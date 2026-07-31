@@ -6,10 +6,14 @@ export type ActivityType =
   | "update"
   | "status"
   | "call"
+  /** Backend `QUOTE_SENT_TO_CUSTOMER` — quote emailed to customer. */
+  | "quote_sent_to_customer"
   /** Backend `DesignQA_Link` — invitation email / persisted quiz URL. */
   | "design_qa_invite"
   /** Backend `DESIGN_QA_SUBMITTED` — customer submitted external Design QA form. */
-  | "design_qa_submitted";
+  | "design_qa_submitted"
+  /** Booking & Token handoff, cancel, restore, refund audit events. */
+  | "booking_token";
 
 export interface ActivityItem {
   id: string;
@@ -97,6 +101,19 @@ export interface Lead {
   lostReason?: string;
   /** Quote / proposal link for `POST /v1/quote/send`. */
   quoteLink?: string;
+  /** Hub `quote_sent_info` JSON (full object when present). */
+  quoteSentInfo?: import("@/lib/quote-sent-info").QuoteSentInfo | null;
+  /** Hub: true after quote email successfully sent to customer. */
+  quoteSentToCustomer?: boolean;
+  quoteSentAt?: string | null;
+  quoteSentBy?: string | null;
+  /** Total successful customer sends (increments on each send). */
+  quoteSentCount?: number;
+  /** Most recent send (from quoteSentInfo when available). */
+  lastQuoteSentAt?: string | null;
+  lastQuoteSentBy?: string | null;
+  /** Design / Hub quote id stored in quoteSentInfo. */
+  quoteId?: string | null;
   /**
    * Read-only from GET detail (`designQaLink` / `design_qa_quiz_url`). Same URL as the Style Discovery email.
    * Do not include on PUT bodies — backend owns persistence.

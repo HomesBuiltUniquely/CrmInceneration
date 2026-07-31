@@ -5,8 +5,8 @@ import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
   getLeadDetail,
-  getNewCrmQuoteInternalLinkByExternal,
-  getNewCrmQuoteInternalLinkByLead,
+  resolveNewCrmQuoteInternalLink,
+  postLeadVerifiedActivity,
   postManualActivity,
   postQuoteSend,
   postStageRollback,
@@ -19,8 +19,12 @@ import {
   uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
 import {
+  QUOTE_NOT_READY_USER_MESSAGE,
+  toFriendlyQuoteErrorMessage,
+} from "@/lib/friendly-api-error";
+import {
   detailJsonToLead,
-  mapActivitiesJson,
+  mapLeadActivitiesJson,
   mergeLeadIntoDetail,
   applyCustomerNameToDetail,
   pickCustomerNameFromDetail,
@@ -39,6 +43,11 @@ import {
   type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
 import {
+  buildPhaseFieldsForDesignModule,
+  fetchConfigScopeSummary,
+  syncCrmLeadToDesignModule,
+} from "@/lib/design-module-phase-sync";
+import {
   canEditLeadPhoneAndEmail,
   shouldMaskLeadPhoneForRole,
 } from "@/lib/lead-contact-access";
@@ -50,12 +59,17 @@ import Tabs, { type TabId } from "./Tabs";
 import LeadInfoTab from "./LeadInfoTab";
 import AssignmentsTab from "./AssignmentsTab";
 import ActivityTimeline from "./ActivityTimeline";
+import BookingTokenCancellationBar from "./BookingTokenCancellationBar";
 import FooterActions from "./FooterActions";
 import CompleteTaskModal, {
   type CompleteTaskApiPayload,
   type PresalesCompleteTaskApiPayload,
   type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
+import {
+  RESUME_MEETING_SCHEDULE_EVENT,
+  type ResumeMeetingScheduleDetail,
+} from "@/lib/configuration-scope-events";
 import {
   createAppointment,
   type CreateAppointmentResponse,
@@ -146,6 +160,9 @@ import {
 import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
 import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
+import QuoteSentCelebrationOverlay from "@/app/Components/CrmLeadDetailsV2/QuoteSentCelebrationOverlay";
+import { pickRandomQuoteSentMotivateLine } from "@/lib/quote-sent-motivate";
+import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
 import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
@@ -158,7 +175,8 @@ import {
 import {
   markWhatsappPresalesNameUpdateBeenUsed,
   resolveWhatsappPresalesNameLocked,
-  isDefaultWhatsappPlaceholderName,
+  isDefaultInboundPlaceholderName,
+  isPresalesOneTimeNameEditLead,
   shouldShowWhatsappPresalesNameHint,
   validateWhatsappCustomerNameForSave,
 } from "@/lib/whatsapp-presales-name-lock";
@@ -301,6 +319,14 @@ const emptyLead = (id: string, leadType: CrmLeadType): Lead => ({
   additionalLeadSourcesList: [],
   lostReason: "",
   quoteLink: "",
+  quoteSentInfo: null,
+  quoteSentToCustomer: false,
+  quoteSentAt: null,
+  quoteSentBy: null,
+  quoteSentCount: 0,
+  lastQuoteSentAt: null,
+  lastQuoteSentBy: null,
+  quoteId: null,
   designerEmail: "",
 });
 
@@ -428,6 +454,8 @@ async function postExternalIntakeLead(args: {
   /** Complete Task / modal overrides (sent before PUT lead detail). */
   propertyNotes?: string;
   configuration?: string;
+  /** Config scope summary for Design Module designer handoff. */
+  scopeSummary?: import("@/lib/design-module-phase-sync").DesignModuleConfigScopeSummary | null;
   /** When set (e.g. after scheduling), forwarded to Hub external-intake. */
   schedule?: {
     appointmentDate: string;
@@ -490,12 +518,27 @@ async function postExternalIntakeLead(args: {
 
   const idCandidates: Array<{ source: string; value: string }> = [
     { source: "baseDetail.externalLeadId", value: pickText(args.baseDetail.externalLeadId) },
+    { source: "baseDetail.leadIdentifier", value: pickText(args.baseDetail.leadIdentifier) },
+    { source: "baseDetail.uniqueId", value: pickText(args.baseDetail.uniqueId) },
+    { source: "lead.leadId", value: pickText(args.lead.leadId) },
+    { source: "lead.externalReferenceId", value: pickText(args.lead.externalReferenceId) },
     { source: "baseDetail.leadId", value: pickText(args.baseDetail.leadId) },
     { source: "baseDetail.id", value: pickText(args.baseDetail.id) },
     { source: "baseDetail.customerId", value: pickText(args.baseDetail.customerId) },
   ];
-  const chosen = idCandidates.find((c) => c.value);
+  // Prefer business ids like AL-xxx over bare numeric Hub ids ("35")
+  const chosen =
+    idCandidates.find((c) => c.value && !/^\d+$/.test(c.value.trim())) ||
+    idCandidates.find((c) => c.value);
   const externalLeadId = chosen ? normalizeExternalLeadId(chosen.value) : "";
+  const numericCrmLeadId = (() => {
+    const raw =
+      args.baseDetail.id ??
+      (typeof args.baseDetail.hubLeadId === "number" ? args.baseDetail.hubLeadId : undefined) ??
+      (typeof args.lead.id === "number" && args.lead.id > 0 ? args.lead.id : undefined);
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
   const payload: Record<string, unknown> = {
     projectName:
       pickText(args.baseDetail.fullName) ||
@@ -510,11 +553,20 @@ async function postExternalIntakeLead(args: {
       pickText(args.baseDetail.emailAddress) ||
       pickText(args.baseDetail.mail),
     externalLeadId,
+    pid: externalLeadId,
     sourceProject: "crm-inceneration",
     designerName: "",
     salesExecutive: "",
     salesExecutiveEmail: "",
   };
+  if (args.leadType && isCrmLeadType(args.leadType)) {
+    payload.leadType = args.leadType;
+    payload.crmLeadType = args.leadType;
+  }
+  if (numericCrmLeadId != null) {
+    payload.leadId = numericCrmLeadId;
+    payload.crmLeadId = numericCrmLeadId;
+  }
   const resolvedDesignerName = normalizeOptionalPersonField(
     pickText(args.schedule?.designerName) ||
       pickText(args.lead.designerName) ||
@@ -598,6 +650,25 @@ async function postExternalIntakeLead(args: {
     }
   }
 
+  // Discovery + Connection summary (designer handoff) — keep in sync with upsert
+  const phaseFields = buildPhaseFieldsForDesignModule({
+    lead: {
+      ...args.lead,
+      propertyNotes: propertyNotes || args.lead.propertyNotes,
+      configuration: configuration || args.lead.configuration,
+    },
+    scopeSummary: args.scopeSummary ?? null,
+    schedule: args.schedule,
+    salesExecutive: pickText(payload.salesExecutive),
+    salesExecutiveEmail: pickText(payload.salesExecutiveEmail),
+    pincode: pickText(args.lead.pincode) || pickText(args.baseDetail.pincode),
+    leadSource: pickText(args.lead.leadSource) || pickText(args.baseDetail.leadSource),
+    possessionDate:
+      pickText(args.lead.possessionDate) || pickText(args.baseDetail.possessionDate),
+    altPhone: pickText(args.lead.altPhone) || pickText(args.baseDetail.altPhone),
+  });
+  Object.assign(payload, phaseFields);
+
   if (!payload.externalLeadId) {
     console.warn(
       "Skipping external intake: no externalLeadId found.",
@@ -654,6 +725,10 @@ async function postDesignModuleCrmLeadUpsert(args: {
   contactNo?: string;
   clientEmail?: string;
   designerName?: string;
+  lead?: Lead;
+  scopeSummary?: import("@/lib/design-module-phase-sync").DesignModuleConfigScopeSummary | null;
+  salesExecutive?: string;
+  salesExecutiveEmail?: string;
   schedule?: {
     appointmentDate?: string;
     appointmentSlot?: string;
@@ -681,6 +756,26 @@ async function postDesignModuleCrmLeadUpsert(args: {
   }
   if (args.schedule?.scheduleTimezone?.trim()) {
     body.scheduleTimezone = args.schedule.scheduleTimezone.trim();
+  }
+
+  if (args.lead) {
+    Object.assign(
+      body,
+      buildPhaseFieldsForDesignModule({
+        lead: args.lead,
+        scopeSummary: args.scopeSummary ?? null,
+        schedule: {
+          ...args.schedule,
+          designerName: args.designerName,
+        },
+        salesExecutive: args.salesExecutive,
+        salesExecutiveEmail: args.salesExecutiveEmail,
+        pincode: args.lead.pincode,
+        leadSource: args.lead.leadSource,
+        possessionDate: args.lead.possessionDate,
+        altPhone: args.lead.altPhone,
+      }),
+    );
   }
 
   const res = await fetch("/api/crm/design-module/crm-lead/upsert", {
@@ -845,6 +940,9 @@ export default function LeadDetailsApiClient({
 
   const [activeTab, setActiveTab] = useState<TabId>("lead");
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
+  const [resumeMeetingSchedule, setResumeMeetingSchedule] = useState<{
+    meetingFeedback?: string;
+  } | null>(null);
   const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
@@ -884,6 +982,8 @@ export default function LeadDetailsApiClient({
   const [rollbackSubStage, setRollbackSubStage] = useState("");
   const [rollbackReason, setRollbackReason] = useState("");
   const [quoteSending, setQuoteSending] = useState(false);
+  const [quoteCelebrateOpen, setQuoteCelebrateOpen] = useState(false);
+  const [quoteCelebrateLine, setQuoteCelebrateLine] = useState("");
   const [quoteFetching, setQuoteFetching] = useState(false);
   const [getQuoteUnlockedSticky, setGetQuoteUnlockedSticky] = useState(false);
   const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
@@ -963,12 +1063,17 @@ export default function LeadDetailsApiClient({
           /* list refresh on next load is enough */
         }
       });
-      if (lt === "whatsapplead") {
+      if (isPresalesOneTimeNameEditLead(lt, mapped.leadSource)) {
         const serverName = (mapped.name ?? "").trim();
         const serverPhone = mapped.phone ?? "";
         setWhatsappNameLockedFromServer(
           Boolean(serverName) &&
-            !isDefaultWhatsappPlaceholderName(serverName, serverPhone),
+            !isDefaultInboundPlaceholderName(
+              lt,
+              mapped.leadSource,
+              serverName,
+              serverPhone,
+            ),
         );
       } else {
         setWhatsappNameLockedFromServer(false);
@@ -1023,7 +1128,7 @@ export default function LeadDetailsApiClient({
       setLoading(false);
       void getLeadActivities(lt, leadId)
         .then((actJson) => {
-          const activities = mapActivitiesJson(actJson);
+          const activities = mapLeadActivitiesJson(actJson, lt, leadId);
           setLead((prev) => ({ ...prev, activities }));
           return loadCreatedTimeline(detailJson, actJson);
         })
@@ -1825,7 +1930,10 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     try {
       const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({ ...prev, activities: mapActivitiesJson(actJson) }));
+      setLead((prev) => ({
+        ...prev,
+        activities: mapLeadActivitiesJson(actJson, lt, leadId),
+      }));
     } catch {
       /* ignore */
     }
@@ -1911,6 +2019,7 @@ export default function LeadDetailsApiClient({
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
+          leadSource: previousLead.leadSource,
           phone: previousLead.phone,
           handedOffToSales:
             isLeadHandedOffToSales(previousLead) ||
@@ -1987,6 +2096,7 @@ export default function LeadDetailsApiClient({
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
+          leadSource: previousLead.leadSource,
           phone: previousLead.phone,
           handedOffToSales:
             isLeadHandedOffToSales(previousLead) ||
@@ -2048,7 +2158,11 @@ export default function LeadDetailsApiClient({
   ]);
 
   const persistLeadDetailFields = useCallback(
-    async (successMessage: string, leadOverride?: Lead) => {
+    async (
+      successMessage: string,
+      leadOverride?: Lead,
+      options?: { silent?: boolean },
+    ) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const leadToSave = leadOverride ?? lead;
@@ -2087,7 +2201,9 @@ export default function LeadDetailsApiClient({
           lt,
           leadId,
         ).catch(() => undefined);
-        notifySuccess(successMessage);
+        if (!options?.silent && successMessage.trim()) {
+          notifySuccess(successMessage);
+        }
         maybeOpenSalesClosureAfterWon([
           leadToSave.status,
           leadToSave.stageBlock?.milestoneStage,
@@ -2127,7 +2243,7 @@ export default function LeadDetailsApiClient({
   }, [persistLeadDetailFields]);
 
   const handleLeadContactSave = useCallback(
-    async (patch: Partial<Lead>) => {
+    async (patch: Partial<Lead>, options?: { silent?: boolean }) => {
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const mergedLead = { ...lead, ...patch };
@@ -2151,7 +2267,9 @@ export default function LeadDetailsApiClient({
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
           }),
         );
-        notifySuccess("Contact details saved.");
+        if (!options?.silent) {
+          notifySuccess("Contact details saved.");
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : "Save failed";
         setSecondBoxError(message);
@@ -2164,12 +2282,16 @@ export default function LeadDetailsApiClient({
   );
 
   const handleConnectionPhaseSave = useCallback(
-    async (draft?: DiscoveryPhaseSaveDraft) => {
+    async (draft?: DiscoveryPhaseSaveDraft, options?: { silent?: boolean }) => {
       const saveLead = draft ? { ...lead, ...draft } : lead;
       if (draft) {
         setLead((prev) => ({ ...prev, ...draft }));
       }
-      await persistLeadDetailFields("Discovery phase saved.", saveLead);
+      await persistLeadDetailFields(
+        options?.silent ? "" : "Discovery phase saved.",
+        saveLead,
+        { silent: options?.silent },
+      );
       if (!validLeadType) return;
       const lt = leadTypeParam as CrmLeadType;
       const propertyLocation = saveLead.propertyLocation ?? "";
@@ -2181,8 +2303,33 @@ export default function LeadDetailsApiClient({
         notifyError(message);
         throw new Error(message);
       }
+
+      // Keep Design Module View data fresh when Discovery/Connection fields change
+      void syncCrmLeadToDesignModule({
+        leadType: lt,
+        leadId,
+        lead: saveLead,
+        baseDetail,
+        designerName: saveLead.designerName,
+        schedule: saveLead.meetingDate?.trim()
+          ? {
+              appointmentDate: saveLead.meetingDate.trim(),
+              scheduleTimezone: "Asia/Kolkata",
+            }
+          : undefined,
+      }).catch((e) => {
+        console.error("Design Module upsert after Discovery/Connection save failed:", e);
+      });
     },
-    [lead, leadId, leadTypeParam, notifyError, persistLeadDetailFields, validLeadType],
+    [
+      baseDetail,
+      lead,
+      leadId,
+      leadTypeParam,
+      notifyError,
+      persistLeadDetailFields,
+      validLeadType,
+    ],
   );
 
   const handleSendQuote = useCallback(async () => {
@@ -2190,36 +2337,36 @@ export default function LeadDetailsApiClient({
     const lt = leadTypeParam as CrmLeadType;
     let link = lead.quoteLink?.trim() ?? "";
     if (!link) {
-      const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
-      if (leadIdentifier) {
-        try {
-          let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
-          try {
-            res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
-          } catch {
-            const externalId = lead.externalReferenceId?.trim() ?? "";
-            if (!externalId) throw new Error("Quote link unavailable");
-            res = await getNewCrmQuoteInternalLinkByExternal(externalId);
-          }
-          link =
-            (res.internalQuoteUrl ?? "").trim() ||
-            (res.customerQuoteUrl ?? "").trim();
-          if (link) {
-            patchLead({ quoteLink: link });
-            setBaseDetail((prev) => ({
-              ...prev,
-              quoteLink: link,
-              quoteURL: link,
-              proposalLink: link,
-            }));
-          }
-        } catch {
-          // ignore fetch-link error and keep user-facing validation below
+      try {
+        const res = await resolveNewCrmQuoteInternalLink({
+          routeLeadId: leadId,
+          leadBusinessId: lead.leadId,
+          externalReferenceId: lead.externalReferenceId,
+          leadType: lt,
+          baseDetail,
+        });
+        link =
+          extractCustomerQuoteLink(res) ||
+          extractInternalQuoteLink(res) ||
+          (res.internalQuoteUrl ?? "").trim() ||
+          (res.customerQuoteUrl ?? "").trim();
+        if (link) {
+          patchLead({ quoteLink: link });
+          setBaseDetail((prev) => ({
+            ...prev,
+            quoteLink: link,
+            quoteURL: link,
+            proposalLink: link,
+          }));
         }
+      } catch {
+        // ignore fetch-link error and keep user-facing validation below
       }
     }
     if (!link) {
-      notifyError("Quote link is not available yet. Please fetch quote first.");
+      notifyError(
+        "Quote link is not available yet. Please generate the quote on the design side, then click Get Quote.",
+      );
       return;
     }
     if (!lead.email?.trim()) {
@@ -2228,32 +2375,79 @@ export default function LeadDetailsApiClient({
     }
     setQuoteSending(true);
     try {
-      const payload = buildEmailRequest(lead, "Quote Sent", true);
-      if (payload) {
-        payload.quoteLink = link;
-        const res = await sendEmailNotification(payload);
-        if (res.success) {
-          notifySuccess(res.message || "Quote sent.");
-        } else {
-          notifyError(res.message || "Quote send failed");
-        }
-      } else {
-        notifyError("Failed to build email payload.");
+      const quoteId =
+        lead.quoteId?.trim() ||
+        extractQuoteIdFromUrl(link) ||
+        "";
+
+      // POST /v1/quote/send — Hub updates quote_sent_info only when leadId + leadType are set.
+      const formData = new FormData();
+      formData.append("leadId", String(leadId));
+      formData.append("leadType", String(leadTypeParam));
+      formData.append("toEmail", lead.email.trim());
+      formData.append("quoteLink", link);
+      formData.append("subject", quoteSubject.trim() || "Your Hub Interior Quote");
+      formData.append("body", quoteBody.trim() || "Please find your quote in the link below.");
+      if (quoteId) formData.append("quoteId", quoteId);
+
+      await postQuoteSend(formData);
+      notifySuccess("Quote sent.");
+
+      // Reconcile from Hub (quoteSentCount / quoteSentInfo / timeline QUOTE_SENT_TO_CUSTOMER).
+      try {
+        const refreshed = await getLeadDetail(lt, leadId);
+        setBaseDetail(withStickyQuoteInDetail(refreshed, link));
+        const refreshedLead = detailJsonToLead(refreshed, lt);
+        setLead((prev) => ({
+          ...refreshedLead,
+          id: leadId,
+          quoteLink: link,
+          activities: prev.activities,
+          bookingType: prev.bookingType,
+          salesManagerName: prev.salesManagerName,
+        }));
+      } catch {
+        // Do not bump quoteSentCount locally — Hub owns send count (2 sends = same lead, count 2 on detail only).
+        patchLead({
+          quoteSentToCustomer: true,
+        });
+        setBaseDetail((prev) => ({
+          ...prev,
+          quoteSentToCustomer: true,
+        }));
       }
+
+      await refreshActivities().catch(() => undefined);
+      setQuoteCelebrateLine(pickRandomQuoteSentMotivateLine());
+      setQuoteCelebrateOpen(true);
+      dispatchCrmLeadsInvalidate();
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Quote send failed");
+      notifyError(
+        e instanceof Error
+          ? toFriendlyQuoteErrorMessage(e.message, "Unable to send quote right now. Please try again.")
+          : "Unable to send quote right now. Please try again.",
+      );
     } finally {
       setQuoteSending(false);
     }
   }, [
+    baseDetail,
+    lead,
     lead.email,
+    lead.externalReferenceId,
     lead.leadId,
+    lead.quoteId,
     lead.quoteLink,
+    lead.quoteSentAt,
+    lead.quoteSentCount,
     leadId,
     leadTypeParam,
+    notifyError,
+    notifySuccess,
     patchLead,
     quoteBody,
     quoteSubject,
+    refreshActivities,
     validLeadType,
   ]);
 
@@ -2313,26 +2507,28 @@ export default function LeadDetailsApiClient({
 
   const handleGetQuote = useCallback(async () => {
     if (!validLeadType) return;
-    const leadIdentifier = (lead.leadId?.trim() || leadId).trim();
-    if (!leadIdentifier) {
+    const candidatesOk =
+      Boolean(lead.leadId?.trim()) ||
+      Boolean(lead.externalReferenceId?.trim()) ||
+      Boolean(leadId.trim());
+    if (!candidatesOk) {
       notifyError("Lead ID is required to fetch quote.");
       return;
     }
     setQuoteFetching(true);
     setQuoteLinkPersistError("");
     try {
-      let res: Awaited<ReturnType<typeof getNewCrmQuoteInternalLinkByLead>>;
-      try {
-        res = await getNewCrmQuoteInternalLinkByLead(leadIdentifier);
-      } catch (byLeadError) {
-        const externalId = lead.externalReferenceId?.trim() ?? "";
-        if (!externalId) throw byLeadError;
-        res = await getNewCrmQuoteInternalLinkByExternal(externalId);
-      }
+      const res = await resolveNewCrmQuoteInternalLink({
+        routeLeadId: leadId,
+        leadBusinessId: lead.leadId,
+        externalReferenceId: lead.externalReferenceId,
+        leadType: leadTypeParam,
+        baseDetail,
+      });
       const customerLink = extractCustomerQuoteLink(res);
       const internalLink = extractInternalQuoteLink(res);
       if (!customerLink) {
-        notifyError("Quote generated response missing customer link.");
+        notifyError(QUOTE_NOT_READY_USER_MESSAGE);
         return;
       }
       patchLead({ quoteLink: customerLink });
@@ -2348,24 +2544,31 @@ export default function LeadDetailsApiClient({
       } catch (e) {
         notifyError(
           e instanceof Error
-            ? `Quote generated, but saving quote link failed. Please retry. (${e.message})`
-            : "Quote generated, but saving quote link failed. Please retry.",
+            ? toFriendlyQuoteErrorMessage(
+                e.message,
+                "Quote was found, but saving the quote link failed. Please retry.",
+              )
+            : "Quote was found, but saving the quote link failed. Please retry.",
         );
       }
       if (internalLink && typeof window !== "undefined") {
         window.open(internalLink, "_blank", "noopener,noreferrer");
-      } else {
-        notifyError("Internal quote link is not available to open.");
       }
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Get quote failed");
+      notifyError(
+        e instanceof Error
+          ? toFriendlyQuoteErrorMessage(e.message, QUOTE_NOT_READY_USER_MESSAGE)
+          : QUOTE_NOT_READY_USER_MESSAGE,
+      );
     } finally {
       setQuoteFetching(false);
     }
   }, [
+    baseDetail,
     lead.externalReferenceId,
     lead.leadId,
     leadId,
+    leadTypeParam,
     notifyError,
     notifySuccess,
     patchLead,
@@ -2486,6 +2689,7 @@ export default function LeadDetailsApiClient({
     () => ({
       leadType: leadTypeParam,
       leadId,
+      leadSource: lead.leadSource,
       phone: lead.phone,
       handedOffToSales: inSalesPhase,
       viewerRoleKey,
@@ -2494,6 +2698,7 @@ export default function LeadDetailsApiClient({
     }),
     [
       inSalesPhase,
+      lead.leadSource,
       lead.name,
       lead.phone,
       leadId,
@@ -2515,7 +2720,12 @@ export default function LeadDetailsApiClient({
   const handleWhatsappNameSave = useCallback(async () => {
     if (!validLeadType || !showWhatsappPresalesNameHint) return;
     const trimmed = (lead.name ?? "").trim();
-    const validation = validateWhatsappCustomerNameForSave(trimmed, lead.phone);
+    const validation = validateWhatsappCustomerNameForSave(
+      trimmed,
+      lead.phone,
+      leadTypeParam,
+      lead.leadSource,
+    );
     if (!validation.ok) {
       notifyError(validation.message);
       return;
@@ -2529,7 +2739,7 @@ export default function LeadDetailsApiClient({
       const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
       setBaseDetail(stickyDetail);
       const mapped = detailJsonToLead(stickyDetail, lt);
-      markWhatsappPresalesNameUpdateBeenUsed(leadId);
+      markWhatsappPresalesNameUpdateBeenUsed(leadId, leadTypeParam, lead.leadSource);
       setWhatsappNameLockedFromServer(true);
       setWhatsappNameLockTick((t) => t + 1);
       setLead((prev) => ({
@@ -2557,6 +2767,22 @@ export default function LeadDetailsApiClient({
     showWhatsappPresalesNameHint,
     validLeadType,
   ]);
+
+  /** After Configuration Scope finalize from a meeting gate, reopen Schedule Hub Meeting. */
+  useEffect(() => {
+    const onResumeMeeting = (event: Event) => {
+      const detail = (event as CustomEvent<ResumeMeetingScheduleDetail>).detail;
+      if (!detail?.leadId || detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setResumeMeetingSchedule({
+        meetingFeedback: detail.meetingFeedback,
+      });
+      setCompleteTaskVerifyFocus(false);
+      setCompleteTaskOpen(true);
+    };
+    window.addEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+    return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+  }, [leadId, leadType]);
 
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
@@ -2622,12 +2848,38 @@ export default function LeadDetailsApiClient({
         payload.salesExecutiveId = args.salesExecutiveId;
       }
 
+      const assignedToName =
+        (args.salesExecutiveName ?? "").trim() ||
+        (args.salesExecutiveId && args.salesExecutiveId > 0
+          ? salesExecutiveLabel(
+              salesExecutiveOptions.find((u) => u.id === args.salesExecutiveId) ?? {
+                id: args.salesExecutiveId,
+              },
+            )
+          : "");
+
+      const verifiedByName =
+        (salesClosureAuthUser ? getNameFromUser(salesClosureAuthUser) : "").trim() ||
+        (typeof window !== "undefined"
+          ? (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim()
+          : "") ||
+        "Presales";
+
       const lt = leadTypeParam as CrmLeadType;
-      await postVerifyLead(lt, leadId, payload);
+      const verifyResult = await postVerifyLead(lt, leadId, payload);
+      const assignedFromHub =
+        verifyResult &&
+        typeof verifyResult === "object" &&
+        typeof (verifyResult as { assignedTo?: unknown }).assignedTo === "string"
+          ? String((verifyResult as { assignedTo: string }).assignedTo).trim()
+          : "";
+      const assignedDisplay = assignedToName || assignedFromHub;
+
       notifySuccess("Lead successfully handed off to sales team.");
       setLead((prev) => ({
         ...prev,
         verified: true,
+        ...(assignedDisplay ? { assignee: assignedDisplay } : {}),
         stageBlock: {
           ...prev.stageBlock,
           presalesMilestoneStage: "Data Conversion",
@@ -2642,6 +2894,13 @@ export default function LeadDetailsApiClient({
           presalesMilestoneSubStage: "Assigned",
         }),
       );
+
+      // Activity history: who verified (Presales) + whom assigned (Sales).
+      await postLeadVerifiedActivity(lt, leadId, {
+        verifiedBy: verifiedByName,
+        assignedTo: assignedDisplay || undefined,
+      }).catch(() => undefined);
+
       if (args.note.trim()) {
         await postManualActivity(lt, leadId, "NOTE", args.note.trim());
       }
@@ -2654,6 +2913,8 @@ export default function LeadDetailsApiClient({
       load,
       notifySuccess,
       refreshActivities,
+      salesClosureAuthUser,
+      salesExecutiveOptions,
       validLeadType,
     ],
   );
@@ -2878,37 +3139,63 @@ export default function LeadDetailsApiClient({
             meetingDate = slotDate;
             followUpDate = slotDate;
           }
-          designerName = args.meetingAppointment.designerName;
           const meetingDesignerName = args.meetingAppointment.designerName;
+          designerName = meetingDesignerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
             designerName: args.meetingAppointment.designerName,
           });
-          void postExternalIntakeLead({
-            lead,
-            baseDetail,
-            authUser: salesClosureAuthUser,
-            leadType: lt,
-            propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
-            configuration: resolveLeadPropertyGateField(args.configuration, lead.configuration),
-            schedule:
-              schedule.appointmentDate ||
-              schedule.appointmentSlot ||
-              schedule.designerName
-                ? schedule
-                : undefined,
-          })
-            .then(() => {
-              const numericLeadId = Number(
-                baseDetail.id ?? baseDetail.leadId ?? lead.id,
-              );
-              const externalLeadId =
-                typeof lead.leadId === "string" && lead.leadId.trim()
+          void (async () => {
+            try {
+              const enrichedLead: Lead = {
+                ...lead,
+                propertyNotes:
+                  resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes) ||
+                  lead.propertyNotes,
+                configuration:
+                  resolveLeadPropertyGateField(args.configuration, lead.configuration) ||
+                  lead.configuration,
+                meetingType: meetingType || lead.meetingType,
+                designerName: meetingDesignerName || lead.designerName,
+              };
+              const scopeSummary = await fetchConfigScopeSummary(lt, leadId, {
+                budget: enrichedLead.budget,
+              });
+              await postExternalIntakeLead({
+                lead: enrichedLead,
+                baseDetail,
+                authUser: salesClosureAuthUser,
+                leadType: lt,
+                propertyNotes: enrichedLead.propertyNotes,
+                configuration: enrichedLead.configuration,
+                scopeSummary,
+                schedule:
+                  schedule.appointmentDate ||
+                  schedule.appointmentSlot ||
+                  schedule.designerName
+                    ? schedule
+                    : undefined,
+              });
+              const numericLeadId = Number(baseDetail.id ?? lead.id);
+              const externalLeadIdCandidates = [
+                typeof lead.externalReferenceId === "string"
+                  ? lead.externalReferenceId.trim()
+                  : "",
+                typeof lead.leadId === "string" && !/^\d+$/.test(lead.leadId.trim())
                   ? lead.leadId.trim()
-                  : String(baseDetail.leadId ?? baseDetail.externalLeadId ?? "").trim();
+                  : "",
+                String(baseDetail.leadIdentifier ?? "").trim(),
+                String(baseDetail.externalLeadId ?? "").trim(),
+                typeof lead.leadId === "string" ? lead.leadId.trim() : "",
+                String(baseDetail.leadId ?? "").trim(),
+              ].filter(Boolean);
+              const externalLeadId =
+                externalLeadIdCandidates.find((v) => !/^\d+$/.test(v)) ||
+                externalLeadIdCandidates[0] ||
+                "";
               if (Number.isFinite(numericLeadId) && externalLeadId) {
-                void postDesignModuleCrmLeadUpsert({
+                await postDesignModuleCrmLeadUpsert({
                   leadType: lt,
                   leadId: numericLeadId,
                   leadIdentifier: externalLeadId,
@@ -2925,21 +3212,18 @@ export default function LeadDetailsApiClient({
                     baseDetail.email ?? baseDetail.emailAddress ?? "",
                   ).trim(),
                   designerName: meetingDesignerName,
+                  lead: enrichedLead,
+                  scopeSummary,
                   schedule,
-                }).catch((e) => {
-                  console.error(
-                    "Design Module CRM lead upsert failed after meeting schedule:",
-                    e,
-                  );
                 });
               }
-            })
-            .catch((e) => {
+            } catch (e) {
               console.error(
-                "External intake API call failed after meeting schedule:",
+                "Design Module sync failed after meeting schedule:",
                 e,
               );
-            });
+            }
+          })();
         }
 
         if (
@@ -3086,6 +3370,17 @@ export default function LeadDetailsApiClient({
 
         const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
         if (emailPayload) {
+          // Hub quote_sent_info (and other lead-bound emails) need numeric DB id + leadType.
+          emailPayload.leadId = String(leadId);
+          emailPayload.leadType = String(leadTypeParam);
+          if (emailPayload.subStage === "Quote Sent") {
+            const qLink = leadForSave.quoteLink?.trim() || "";
+            if (qLink) emailPayload.quoteLink = qLink;
+            const qid =
+              leadForSave.quoteId?.trim() ||
+              (qLink ? extractQuoteIdFromUrl(qLink) : "");
+            if (qid) emailPayload.quoteId = qid;
+          }
           void sendEmailNotification(emailPayload).then((emailResult) => {
             if (!emailResult.success) {
               notifyError(`Email warning: ${emailResult.message}`);
@@ -3245,12 +3540,18 @@ export default function LeadDetailsApiClient({
         <LeadDetailV2Provider value={v2Context}>
           <NewLeadDetailPage leadType={leadType} leadId={leadId} />
         </LeadDetailV2Provider>
+        <QuoteSentCelebrationOverlay
+          open={quoteCelebrateOpen}
+          motivateLine={quoteCelebrateLine}
+          onDone={() => setQuoteCelebrateOpen(false)}
+        />
         <CompleteTaskModal
           lead={lead}
           open={completeTaskOpen}
           onClose={() => {
             setCompleteTaskOpen(false);
             setCompleteTaskVerifyFocus(false);
+            setResumeMeetingSchedule(null);
           }}
           forcePresalesVerifyPanel={completeTaskVerifyFocus}
           onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
@@ -3270,6 +3571,10 @@ export default function LeadDetailsApiClient({
           userRole={viewerRoleKey}
           presalesHandedOff={presalesHandedOff || inSalesPhase}
           onPhoneCall={handlePhoneCallLog}
+          leadType={leadType}
+          leadId={leadId}
+          resumeMeetingSchedule={resumeMeetingSchedule}
+          onResumeMeetingConsumed={() => setResumeMeetingSchedule(null)}
         />
         <BookingDoneModal
           open={bookingDoneOpen}
@@ -3389,6 +3694,11 @@ export default function LeadDetailsApiClient({
 
   return (
     <main className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-6 md:px-6 lg:px-8">
+      <QuoteSentCelebrationOverlay
+        open={quoteCelebrateOpen}
+        motivateLine={quoteCelebrateLine}
+        onDone={() => setQuoteCelebrateOpen(false)}
+      />
       <div className="mx-auto max-w-[1440px]">
         <TopBar
           designQaOpen={designQaOpen}
@@ -3431,6 +3741,15 @@ export default function LeadDetailsApiClient({
             window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
           }}
         />
+        {validLeadType ? (
+          <BookingTokenCancellationBar
+            leadType={leadTypeParam as CrmLeadType}
+            leadId={leadId}
+            lead={lead}
+            onLeadReload={() => void load()}
+            onActivitiesRefresh={refreshActivities}
+          />
+        ) : null}
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} viewerRole={viewerRoleKey} />
         <Tabs active={activeTab} onChange={setActiveTab} />
@@ -3502,6 +3821,7 @@ export default function LeadDetailsApiClient({
         onClose={() => {
           setCompleteTaskOpen(false);
           setCompleteTaskVerifyFocus(false);
+          setResumeMeetingSchedule(null);
         }}
         forcePresalesVerifyPanel={completeTaskVerifyFocus}
         onApiComplete={usePresalesCompleteTask ? undefined : handleCompleteTaskApi}
@@ -3521,6 +3841,10 @@ export default function LeadDetailsApiClient({
         userRole={viewerRoleKey}
         presalesHandedOff={presalesHandedOff || inSalesPhase}
         onPhoneCall={handlePhoneCallLog}
+        leadType={leadType}
+        leadId={leadId}
+        resumeMeetingSchedule={resumeMeetingSchedule}
+        onResumeMeetingConsumed={() => setResumeMeetingSchedule(null)}
       />
       {rollbackOpen ? (
         <div className="fixed inset-0 z-[82] flex items-center justify-center bg-black/45 px-4">

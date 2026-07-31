@@ -14,21 +14,32 @@ import BookingPaymentPanel, {
 import CancelDealConfirmModal from "./CancelDealConfirmModal";
 import ConvertToBookingModal from "./ConvertToBookingModal";
 import DeleteCancelledLeadModal from "./DeleteCancelledLeadModal";
-import { cancelBookingTokenDeal, convertBookingTokenDeal } from "@/lib/booking-done-api";
+import RejectCancellationModal from "./RejectCancellationModal";
+import {
+  approveBookingTokenCancellation,
+  cancelBookingTokenDeal,
+  convertBookingTokenDeal,
+  rejectBookingTokenCancellation,
+  resubmitBookingTokenCancellation,
+} from "@/lib/booking-done-api";
 import type { BookingTokenCancelInput } from "@/lib/booking-done-api";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { deleteBookingTokenForLead } from "@/lib/booking-token-delete";
-import { isAfterCancellationWindow } from "@/lib/booking-token-cancellation";
-import { canShowCancellation } from "@/lib/booking-token-listing-type";
+import { canSuperAdminDeleteBookingTokenDeal } from "@/lib/booking-token-cancellation";
+import { resolveShowCancellationButton } from "@/lib/booking-token-listing-type";
 import { persistClosedWonBookingDoneMilestone } from "@/lib/closed-won-customer-milestone";
+import { restoreBookingTokenCancellation } from "@/lib/cancellation-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isSuperAdminRole } from "@/lib/roleUtils";
 import {
+  BOOKING_TOKEN_DEALS_PAGE_SIZE,
   fetchDashboardDealRows,
+  fetchDashboardDealsPage,
   filterDealRowsForTab,
 } from "@/lib/booking-token-deals-fetch";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
 
 const MONEY_CELL =
   "px-2 py-3 text-right text-xs tabular-nums text-[var(--bt-text)] whitespace-nowrap";
@@ -39,57 +50,268 @@ const STATUS_HEAD = `${HEAD_CELL} text-center`;
 const BODY_CELL = "px-2 py-3 align-middle";
 const STATUS_CELL = `${BODY_CELL} text-center`;
 const STICKY_ACTION_HEAD =
-  "sticky right-0 z-20 bg-slate-50/95 px-3 py-2.5 text-center text-[9px] font-bold uppercase tracking-wider text-[var(--bt-muted)] shadow-[-6px_0_10px_rgba(15,23,42,0.05)]";
+  "sticky right-0 z-20 w-[168px] min-w-[168px] max-w-[168px] bg-slate-50/95 px-3 py-2.5 text-center text-[9px] font-bold uppercase tracking-wider text-[var(--bt-muted)] shadow-[-6px_0_10px_rgba(15,23,42,0.05)]";
 const STICKY_ACTION_CELL =
-  "sticky right-0 z-10 bg-[var(--bt-surface)] px-3 py-3 align-top shadow-[-6px_0_10px_rgba(15,23,42,0.05)] group-hover:bg-slate-50/50";
+  "sticky right-0 z-10 w-[168px] min-w-[168px] max-w-[168px] bg-[var(--bt-surface)] px-3 py-3 align-top shadow-[-6px_0_10px_rgba(15,23,42,0.05)] group-hover:bg-slate-50/50";
 
-const ACTION_COL_WIDTH = "152px";
+const ACTION_COL_WIDTH = 168;
 
-const COLUMN_WIDTHS_WITH_REMAINING = [
-  "22%",
-  "9%",
-  "8%",
-  "8%",
-  "8%",
-  "7%",
-  "7%",
-  "7%",
-  "7%",
-  ACTION_COL_WIDTH,
-] as const;
+type TableColumn = {
+  id: string;
+  header: string;
+  width: string;
+  headClassName: string;
+};
 
-const COLUMN_WIDTHS_WITHOUT_REMAINING = [
-  "25%",
-  "10%",
-  "9%",
-  "9%",
-  "9%",
-  "8%",
-  "8%",
-  "8%",
-  ACTION_COL_WIDTH,
-] as const;
+function buildTableColumns(showRemaining: boolean): TableColumn[] {
+  const cols: TableColumn[] = [
+    {
+      id: "serialNo",
+      header: "No.",
+      width: "44px",
+      headClassName: `${HEAD_CELL} text-center`,
+    },
+    {
+      id: "customer",
+      header: "Customer",
+      width: showRemaining ? "180px" : "196px",
+      headClassName: HEAD_CELL,
+    },
+    {
+      id: "assign",
+      header: "Assign",
+      width: "96px",
+      headClassName: HEAD_CELL,
+    },
+    {
+      id: "dealValue",
+      header: "Deal Value",
+      width: "108px",
+      headClassName: MONEY_HEAD,
+    },
+    {
+      id: "received",
+      header: "Received",
+      width: "100px",
+      headClassName: MONEY_HEAD,
+    },
+    {
+      id: "tenPercent",
+      header: "10% Target",
+      width: "100px",
+      headClassName: MONEY_HEAD,
+    },
+  ];
+
+  if (showRemaining) {
+    cols.push({
+      id: "remaining",
+      header: "Remaining",
+      width: "96px",
+      headClassName: MONEY_HEAD,
+    });
+  }
+
+  cols.push(
+    {
+      id: "token",
+      header: "Token",
+      width: "80px",
+      headClassName: STATUS_HEAD,
+    },
+    {
+      id: "booking",
+      header: "Booking",
+      width: "88px",
+      headClassName: STATUS_HEAD,
+    },
+    {
+      id: "finance",
+      header: "Finance",
+      width: "88px",
+      headClassName: STATUS_HEAD,
+    },
+    {
+      id: "action",
+      header: "Action",
+      width: `${ACTION_COL_WIDTH}px`,
+      headClassName: STICKY_ACTION_HEAD,
+    },
+  );
+
+  return cols;
+}
+
+function tableMinWidth(columns: TableColumn[]): number {
+  return columns.reduce((sum, col) => {
+    const match = col.width.match(/^(\d+(?:\.\d+)?)px$/);
+    return sum + (match ? Number(match[1]) : 96);
+  }, 0);
+}
 
 const ACTION_BTN_VIEW = "bt-btn bt-btn-action bt-btn-action-view";
 const ACTION_BTN_PAY = "bt-btn bt-btn-action bt-btn-action-pay";
 const ACTION_BTN_CONVERT = "bt-btn bt-btn-action bt-btn-action-convert";
 const ACTION_BTN_CANCEL = "bt-btn bt-btn-action bt-btn-action-danger";
 const ACTION_BTN_DELETE = "bt-btn bt-btn-action bt-btn-action-danger";
+const ACTION_BTN_APPROVE = "bt-btn bt-btn-action bt-btn-action-convert";
+const ACTION_BTN_REJECT = "bt-btn bt-btn-action bt-btn-action-danger";
+const ACTION_BTN_RESTORE = "bt-btn bt-btn-action bt-btn-action-convert";
+const ACTION_BTN_RESUBMIT = "bt-btn bt-btn-action bt-btn-action-pay";
 
 function ActionButtonStack({ children }: { children: ReactNode }) {
   return (
     <div
-      className="flex flex-col gap-1.5"
-      style={{ width: ACTION_COL_WIDTH, minWidth: ACTION_COL_WIDTH, maxWidth: ACTION_COL_WIDTH }}
+      className="flex w-full flex-col gap-1.5"
+      style={{ minWidth: ACTION_COL_WIDTH - 24, maxWidth: ACTION_COL_WIDTH - 24 }}
     >
       {children}
     </div>
   );
 }
 
+function tableTextCell(value: string, muted = false): ReactNode {
+  return (
+    <span
+      className={`block truncate text-xs whitespace-nowrap ${
+        muted ? "text-[var(--bt-muted)]" : "text-[var(--bt-text)]"
+      }`}
+      title={value === "—" ? undefined : value}
+    >
+      {value}
+    </span>
+  );
+}
+
+function renderDealCell(
+  row: DealRow,
+  columnId: string,
+  opts: {
+    showRemainingColumn: boolean;
+    stickyBg: string;
+    highlighted: boolean;
+    nowMs: number;
+    isSuperAdmin: boolean;
+    approveSubmitting: boolean;
+    rowIndex: number;
+    onView: (row: DealRow) => void;
+    onPay: (row: DealRow) => void;
+    onCancel: (row: DealRow) => void;
+    onConvert: (row: DealRow) => void;
+    onDelete: (row: DealRow) => void;
+    onApproveCancellation: (row: DealRow) => void;
+    onRejectCancellation: (row: DealRow) => void;
+    onRestore: (row: DealRow) => void;
+    onResubmit: (row: DealRow) => void;
+    actionBusyId: string | null;
+  },
+): ReactNode {
+  switch (columnId) {
+    case "serialNo":
+      return (
+        <span className="block text-center text-[11px] font-semibold tabular-nums text-[var(--bt-muted)]">
+          {opts.rowIndex}
+        </span>
+      );
+    case "customer":
+      return (
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-600">
+            {row.initials}
+          </div>
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="truncate text-xs font-semibold text-[var(--bt-text)]"
+                title={row.customer}
+              >
+                {row.customer}
+              </span>
+              {row.listingType === "cancel" ? (
+                <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-red-700">
+                  Cancel
+                </span>
+              ) : row.listingType === "booking" ? (
+                <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
+                  Booking
+                </span>
+              ) : null}
+            </div>
+            <div className="truncate text-[10px] text-[var(--bt-muted)]" title={row.asset}>
+              {row.asset}
+            </div>
+          </div>
+        </div>
+      );
+    case "assign":
+      return tableTextCell(row.assign);
+    case "dealValue":
+      return <span className="font-semibold">{row.dealValue}</span>;
+    case "received":
+      return row.preBooking;
+    case "tenPercent":
+      return <span className="text-[var(--bt-muted)]">{row.tenPercentTarget}</span>;
+    case "remaining":
+      return opts.showRemainingColumn ? (
+        <span className="font-semibold">{row.remaining}</span>
+      ) : null;
+    case "token":
+      return <TokenBadge status={row.tokenStatus} />;
+    case "booking":
+      return <BookingStatusText status={row.bookingStatus} />;
+    case "finance":
+      return (
+        <FinanceReviewBadge
+          status={row.financeReviewStatus}
+          remainingAmount={row.remainingAmount}
+          rejectReason={row.financeRejectReason}
+        />
+      );
+    case "action":
+      return (
+        <DealRowActions
+          row={row}
+          onView={opts.onView}
+          onPay={opts.onPay}
+          onCancel={opts.onCancel}
+          onConvert={opts.onConvert}
+          onDelete={opts.onDelete}
+          onApproveCancellation={opts.onApproveCancellation}
+          onRejectCancellation={opts.onRejectCancellation}
+          onRestore={opts.onRestore}
+          onResubmit={opts.onResubmit}
+          actionBusyId={opts.actionBusyId}
+          showDelete={opts.isSuperAdmin && canSuperAdminDeleteBookingTokenDeal(row, opts.nowMs)}
+          showCancel={!opts.approveSubmitting && !opts.actionBusyId}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+function dealCellClassName(columnId: string, stickyBg: string, highlighted: boolean): string {
+  if (columnId === "action") {
+    return `${STICKY_ACTION_CELL} ${stickyBg} ${highlighted ? "group-hover:bg-emerald-50/80" : ""}`;
+  }
+  if (columnId === "serialNo") {
+    return `${BODY_CELL} text-center`;
+  }
+  if (columnId === "dealValue" || columnId === "received" || columnId === "tenPercent" || columnId === "remaining") {
+    return `${MONEY_CELL}${columnId === "dealValue" || columnId === "remaining" ? " font-semibold" : ""}${
+      columnId === "tenPercent" ? " text-[var(--bt-muted)]" : ""
+    }`;
+  }
+  if (columnId === "token" || columnId === "booking" || columnId === "finance") {
+    return STATUS_CELL;
+  }
+  return BODY_CELL;
+}
+
 type Props = {
   tab: BookingTokenTab;
   dateFilter: BookingDateFilterState;
+  dealFilters?: BookingDealFilterState;
   onDealCancelled?: () => void;
   onDealsChanged?: () => void;
   onConvertedToBooking?: () => void;
@@ -121,6 +343,11 @@ function TokenBadge({ status }: { status: TokenStatus }) {
 function BookingStatusText({ status }: { status: BookingStatus }) {
   if (status === "cancelled") {
     return <span className="text-[10px] font-bold uppercase text-red-600">Cancelled</span>;
+  }
+  if (status === "pending_cancellation") {
+    return (
+      <span className="text-[10px] font-bold uppercase text-amber-700">Pending cancel</span>
+    );
   }
   if (status === "confirmed") {
     return <span className="text-[10px] font-bold uppercase text-emerald-600">Confirmed</span>;
@@ -159,6 +386,11 @@ function DealRowActions({
   onCancel,
   onConvert,
   onDelete,
+  onApproveCancellation,
+  onRejectCancellation,
+  onRestore,
+  onResubmit,
+  actionBusyId,
   showDelete,
   showCancel,
 }: {
@@ -168,14 +400,61 @@ function DealRowActions({
   onCancel: (row: DealRow) => void;
   onConvert: (row: DealRow) => void;
   onDelete: (row: DealRow) => void;
+  onApproveCancellation: (row: DealRow) => void;
+  onRejectCancellation: (row: DealRow) => void;
+  onRestore: (row: DealRow) => void;
+  onResubmit: (row: DealRow) => void;
+  actionBusyId: string | null;
   showDelete: boolean;
   showCancel: boolean;
 }) {
+  const busy = actionBusyId === row.id;
   return (
     <ActionButtonStack>
       <button type="button" onClick={() => onView(row)} className={ACTION_BTN_VIEW}>
         View
       </button>
+
+      {row.canApproveCancellation ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onApproveCancellation(row)}
+            className={ACTION_BTN_APPROVE}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            onClick={() => onRejectCancellation(row)}
+            className={ACTION_BTN_REJECT}
+          >
+            Reject
+          </button>
+        </>
+      ) : null}
+
+      {row.canRestoreBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onRestore(row)}
+          className={ACTION_BTN_RESTORE}
+        >
+          {busy ? "Restoring…" : "Restore"}
+        </button>
+      ) : null}
+
+      {row.canResubmitBookingTokenCancellation ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onResubmit(row)}
+          className={ACTION_BTN_RESUBMIT}
+        >
+          {busy ? "Sending…" : "Send again"}
+        </button>
+      ) : null}
 
       {showDelete ? (
         <button type="button" onClick={() => onDelete(row)} className={ACTION_BTN_DELETE}>
@@ -234,13 +513,14 @@ function TrashIcon() {
 function applyCancellationWindow(rows: DealRow[], nowMs: number): DealRow[] {
   return rows.map((row) => ({
     ...row,
-    showCancellation: canShowCancellation(row.listingType, row.submittedAt, nowMs),
+    showCancellation: resolveShowCancellationButton(row, nowMs),
   }));
 }
 
 export default function DealsTable({
   tab,
   dateFilter,
+  dealFilters,
   onDealCancelled,
   onDealsChanged,
   onConvertedToBooking,
@@ -250,7 +530,9 @@ export default function DealsTable({
   const fromBookingDone = searchParams.get("from") === "booking-done";
 
   const [rows, setRows] = useState<DealRow[]>([]);
+  const [page, setPage] = useState(0);
   const [totalElements, setTotalElements] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -265,8 +547,16 @@ export default function DealsTable({
   const [deleteTarget, setDeleteTarget] = useState<DealRow | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [approveSubmitting, setApproveSubmitting] = useState(false);
+  const [rejectTarget, setRejectTarget] = useState<DealRow | null>(null);
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
+  const [approvalError, setApprovalError] = useState("");
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [viewerRole, setViewerRole] = useState("");
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [allTabCounts, setAllTabCounts] = useState<{ token: number; booking: number } | null>(
+    null,
+  );
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -285,10 +575,12 @@ export default function DealsTable({
     [displayRows],
   );
 
-  const columnCount = showRemainingColumn ? 10 : 9;
-  const columnWidths = showRemainingColumn
-    ? COLUMN_WIDTHS_WITH_REMAINING
-    : COLUMN_WIDTHS_WITHOUT_REMAINING;
+  const tableColumns = useMemo(
+    () => buildTableColumns(showRemainingColumn),
+    [showRemainingColumn],
+  );
+  const columnCount = tableColumns.length;
+  const minTableWidth = useMemo(() => tableMinWidth(tableColumns), [tableColumns]);
 
   const openPanel = useCallback((row: DealRow, mode: BookingPaymentPanelMode) => {
     setSelectedDeal(row);
@@ -305,24 +597,65 @@ export default function DealsTable({
     setLoading(true);
     setLoadError("");
     try {
-      // Fetch all active deals and filter client-side so Pay auto-promote on Hub does not
-      // hide token-stage rows (Convert to Booking is manual after 10% is paid).
-      const mapped = await fetchDashboardDealRows({ tab, dateFilter });
+      const result = await fetchDashboardDealsPage({
+        tab,
+        dateFilter,
+        dealFilters,
+        page,
+        size: BOOKING_TOKEN_DEALS_PAGE_SIZE,
+      });
 
-      setRows(mapped);
-      setTotalElements(mapped.length);
+      setRows(result.rows);
+      setTotalElements(result.totalElements);
+      setTotalPages(result.totalPages);
+      if (result.page !== page) {
+        setPage(result.page);
+      }
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Unable to load deals.");
       setRows([]);
       setTotalElements(0);
+      setTotalPages(0);
     } finally {
       setLoading(false);
     }
-  }, [tab, dateFilter]);
+  }, [tab, dateFilter, dealFilters, page]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [tab, dateFilter, dealFilters]);
 
   useEffect(() => {
     void loadDeals();
-  }, [loadDeals, fromBookingDone, highlightId, tab]);
+  }, [loadDeals, fromBookingDone, highlightId]);
+
+  useEffect(() => {
+    if (tab !== "all") {
+      setAllTabCounts(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        /** Same date + deal filters + Hub role visibility as table/KPIs. */
+        const rows = await fetchDashboardDealRows({
+          tab: "all",
+          dateFilter,
+          dealFilters,
+        });
+        if (cancelled) return;
+        setAllTabCounts({
+          token: rows.filter((row) => row.listingType === "token").length,
+          booking: rows.filter((row) => row.listingType === "booking").length,
+        });
+      } catch {
+        if (!cancelled) setAllTabCounts(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, dateFilter, dealFilters, fromBookingDone, highlightId, totalElements]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -335,11 +668,16 @@ export default function DealsTable({
       setCancelSubmitting(true);
       setCancelError("");
       try {
-        await cancelBookingTokenDeal(cancelTarget.id, input);
+        const result = await cancelBookingTokenDeal(cancelTarget.id, input);
+        const movedToCancel =
+          input.scope === "deal" &&
+          (result.listingType === "cancel" ||
+            result.bookingStatus?.trim().toLowerCase() === "cancelled" ||
+            result.bookingStatus?.trim().toLowerCase() === "pending_cancellation");
         setCancelTarget(null);
         await loadDeals();
         onDealsChanged?.();
-        if (input.scope === "deal") {
+        if (movedToCancel) {
           onDealCancelled?.();
         }
       } catch (error) {
@@ -394,6 +732,84 @@ export default function DealsTable({
     }
   }, [deleteTarget, loadDeals, onDealsChanged]);
 
+  const handleApproveCancellation = useCallback(
+    async (row: DealRow) => {
+      setApproveSubmitting(true);
+      setApprovalError("");
+      try {
+        await approveBookingTokenCancellation(row.id);
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(
+          error instanceof Error ? error.message : "Unable to approve cancellation.",
+        );
+      } finally {
+        setApproveSubmitting(false);
+      }
+    },
+    [loadDeals, onDealsChanged],
+  );
+
+  const handleRejectCancellation = useCallback(
+    async (reason: string) => {
+      if (!rejectTarget) return;
+      setRejectSubmitting(true);
+      setApprovalError("");
+      try {
+        await rejectBookingTokenCancellation(rejectTarget.id, reason);
+        setRejectTarget(null);
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(
+          error instanceof Error ? error.message : "Unable to reject cancellation.",
+        );
+      } finally {
+        setRejectSubmitting(false);
+      }
+    },
+    [rejectTarget, loadDeals, onDealsChanged],
+  );
+
+  const handleRestoreDeal = useCallback(
+    async (row: DealRow) => {
+      if (!isCrmLeadType(row.leadType)) return;
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await restoreBookingTokenCancellation(
+          row.leadType as CrmLeadType,
+          String(row.leadId),
+        );
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to restore deal.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
+  );
+
+  const handleResubmitDeal = useCallback(
+    async (row: DealRow) => {
+      setActionBusyId(row.id);
+      setApprovalError("");
+      try {
+        await resubmitBookingTokenCancellation(row.id);
+        await loadDeals();
+        onDealsChanged?.();
+      } catch (error) {
+        setApprovalError(error instanceof Error ? error.message : "Unable to send again.");
+      } finally {
+        setActionBusyId(null);
+      }
+    },
+    [loadDeals, onDealsChanged],
+  );
+
   const tabLabel =
     tab === "all"
       ? "all active"
@@ -402,6 +818,11 @@ export default function DealsTable({
         : tab === "token"
           ? "token"
           : "cancelled";
+
+  const showingFrom = totalElements === 0 ? 0 : page * BOOKING_TOKEN_DEALS_PAGE_SIZE + 1;
+  const showingTo = Math.min((page + 1) * BOOKING_TOKEN_DEALS_PAGE_SIZE, totalElements);
+  const canGoPrevious = page > 0 && !loading;
+  const canGoNext = page + 1 < totalPages && !loading;
 
   const emptyMessage =
     tab === "cancel"
@@ -468,31 +889,61 @@ export default function DealsTable({
         }}
         onConfirm={handleConfirmDelete}
       />
+      <RejectCancellationModal
+        open={rejectTarget != null}
+        deal={rejectTarget}
+        submitting={rejectSubmitting}
+        error={approvalError}
+        onClose={() => {
+          if (rejectSubmitting) return;
+          setRejectTarget(null);
+          setApprovalError("");
+        }}
+        onConfirm={(reason) => void handleRejectCancellation(reason)}
+      />
       <div className="overflow-hidden rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
-        {loadError ? (
+        {loadError || approvalError ? (
           <div className="border-b border-[var(--bt-border)] bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {loadError}
+            {loadError || approvalError}
+          </div>
+        ) : null}
+        {tab === "all" && allTabCounts ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--bt-border)] bg-slate-50/70 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--bt-muted)]">
+            <span>
+              Token{" "}
+              <span className="tabular-nums text-amber-700">{allTabCounts.token}</span>
+            </span>
+            <span className="text-[var(--bt-border)]">·</span>
+            <span>
+              Booking{" "}
+              <span className="tabular-nums text-blue-700">{allTabCounts.booking}</span>
+            </span>
+            <span className="text-[var(--bt-border)]">·</span>
+            <span>
+              All{" "}
+              <span className="tabular-nums text-[var(--bt-text)]">
+                {allTabCounts.token + allTabCounts.booking}
+              </span>
+            </span>
           </div>
         ) : null}
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed text-left text-sm">
+          <table
+            className="w-full text-left text-sm"
+            style={{ minWidth: minTableWidth }}
+          >
             <colgroup>
-              {columnWidths.map((width, index) => (
-                <col key={`${width}-${index}`} style={{ width }} />
+              {tableColumns.map((col) => (
+                <col key={col.id} style={{ width: col.width }} />
               ))}
             </colgroup>
             <thead>
               <tr className="border-b border-[var(--bt-border)] bg-slate-50/80">
-                <th className={HEAD_CELL}>Customer</th>
-                <th className={MONEY_HEAD}>Deal Value</th>
-                <th className={MONEY_HEAD}>Received</th>
-                <th className={MONEY_HEAD}>10% Target</th>
-                {showRemainingColumn ? <th className={MONEY_HEAD}>Remaining</th> : null}
-                <th className={STATUS_HEAD}>Token</th>
-                <th className={STATUS_HEAD}>Booking</th>
-                <th className={STATUS_HEAD}>Finance</th>
-                <th className={`${MONEY_HEAD} text-center`}>Exp. Close</th>
-                <th className={STICKY_ACTION_HEAD}>Action</th>
+                {tableColumns.map((col) => (
+                  <th key={col.id} className={col.headClassName}>
+                    {col.header}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -511,9 +962,28 @@ export default function DealsTable({
                   </td>
                 </tr>
               ) : null}
-              {displayRows.map((row) => {
+              {displayRows.map((row, index) => {
                 const highlighted = highlightId && row.id === highlightId;
                 const stickyBg = highlighted ? "bg-emerald-50/80" : "bg-[var(--bt-surface)]";
+                const cellOpts = {
+                  showRemainingColumn,
+                  stickyBg,
+                  highlighted: Boolean(highlighted),
+                  nowMs,
+                  isSuperAdmin,
+                  approveSubmitting,
+                  rowIndex: page * BOOKING_TOKEN_DEALS_PAGE_SIZE + index + 1,
+                  onView: (dealRow: DealRow) => openPanel(dealRow, "view"),
+                  onPay: (dealRow: DealRow) => openPanel(dealRow, "pay"),
+                  onCancel: setCancelTarget,
+                  onConvert: setConvertTarget,
+                  onDelete: setDeleteTarget,
+                  onApproveCancellation: (dealRow: DealRow) => void handleApproveCancellation(dealRow),
+                  onRejectCancellation: setRejectTarget,
+                  onRestore: (dealRow: DealRow) => void handleRestoreDeal(dealRow),
+                  onResubmit: (dealRow: DealRow) => void handleResubmitDeal(dealRow),
+                  actionBusyId,
+                };
                 return (
                   <tr
                     key={row.id}
@@ -522,79 +992,15 @@ export default function DealsTable({
                       highlighted ? "bg-emerald-50/80 ring-1 ring-inset ring-emerald-200" : ""
                     }`}
                   >
-                    <td className={BODY_CELL}>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-600">
-                          {row.initials}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <span
-                              className="truncate text-xs font-semibold text-[var(--bt-text)]"
-                              title={row.customer}
-                            >
-                              {row.customer}
-                            </span>
-                            {row.listingType === "cancel" ? (
-                              <span className="shrink-0 rounded-full border border-red-200 bg-red-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-red-700">
-                                Cancel
-                              </span>
-                            ) : row.listingType === "booking" ? (
-                              <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
-                                Booking
-                              </span>
-                            ) : row.fromBookingDone ? (
-                              <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-700">
-                                Done
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="truncate text-[10px] text-[var(--bt-muted)]" title={row.asset}>
-                            {row.asset}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className={`${MONEY_CELL} font-semibold`}>{row.dealValue}</td>
-                    <td className={MONEY_CELL}>{row.preBooking}</td>
-                    <td className={`${MONEY_CELL} text-[var(--bt-muted)]`}>{row.tenPercentTarget}</td>
-                    {showRemainingColumn ? (
-                      <td className={`${MONEY_CELL} font-semibold`}>{row.remaining}</td>
-                    ) : null}
-                    <td className={STATUS_CELL}>
-                      <TokenBadge status={row.tokenStatus} />
-                    </td>
-                    <td className={STATUS_CELL}>
-                      <BookingStatusText status={row.bookingStatus} />
-                    </td>
-                    <td className={STATUS_CELL}>
-                      <FinanceReviewBadge
-                        status={row.financeReviewStatus}
-                        remainingAmount={row.remainingAmount}
-                        rejectReason={row.financeRejectReason}
-                      />
-                    </td>
-                    <td className={`${MONEY_CELL} text-center text-[10px] text-[var(--bt-muted)]`}>
-                      {row.expClosing}
-                    </td>
-                    <td
-                      className={`${STICKY_ACTION_CELL} ${stickyBg} ${highlighted ? "group-hover:bg-emerald-50/80" : ""}`}
-                    >
-                      <div className="flex justify-end">
-                        <DealRowActions
-                        row={row}
-                        onView={(dealRow) => openPanel(dealRow, "view")}
-                        onPay={(dealRow) => openPanel(dealRow, "pay")}
-                        onCancel={setCancelTarget}
-                        onConvert={setConvertTarget}
-                        onDelete={setDeleteTarget}
-                        showDelete={
-                          isSuperAdmin && isAfterCancellationWindow(row.submittedAt, nowMs)
-                        }
-                        showCancel
-                      />
-                      </div>
-                    </td>
+                    {tableColumns.map((col) => {
+                      const content = renderDealCell(row, col.id, cellOpts);
+                      if (col.id === "remaining" && !showRemainingColumn) return null;
+                      return (
+                        <td key={col.id} className={dealCellClassName(col.id, stickyBg, Boolean(highlighted))}>
+                          {content}
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -603,18 +1009,27 @@ export default function DealsTable({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--bt-border)] bg-slate-50/60 px-4 py-3 text-xs text-[var(--bt-muted)]">
           <span className="font-semibold uppercase tracking-wide">
-            Showing {displayRows.length} of {totalElements} {tabLabel} deals
+            {totalElements === 0
+              ? `Showing 0 ${tabLabel} deals`
+              : `Showing ${showingFrom}–${showingTo} of ${totalElements} ${tabLabel} deals`}
           </span>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-medium tabular-nums">
+              Page {totalPages === 0 ? 0 : page + 1} of {totalPages}
+            </span>
             <button
               type="button"
-              className="bt-btn bt-btn-pagination"
+              onClick={() => setPage((prev) => Math.max(0, prev - 1))}
+              disabled={!canGoPrevious}
+              className="bt-btn bt-btn-pagination disabled:cursor-not-allowed disabled:opacity-40"
             >
               Previous
             </button>
             <button
               type="button"
-              className="bt-btn bt-btn-pagination"
+              onClick={() => setPage((prev) => prev + 1)}
+              disabled={!canGoNext}
+              className="bt-btn bt-btn-pagination disabled:cursor-not-allowed disabled:opacity-40"
             >
               Next
             </button>

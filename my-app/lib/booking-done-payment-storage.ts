@@ -8,11 +8,68 @@ export type PaymentProofFile = {
 
 const STORAGE_PREFIX = "booking-done-payment-proofs:";
 const AMOUNT_STORAGE_PREFIX = "booking-done-payment-amount:";
+const BOOKING_DATE_STORAGE_PREFIX = "booking-done-booking-date:";
 const MAX_FILES = 12;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 function amountStorageKey(leadType: string, leadId: string): string {
   return `${AMOUNT_STORAGE_PREFIX}${leadType}:${leadId}`;
+}
+
+function bookingDateStorageKey(leadType: string, leadId: string): string {
+  return `${BOOKING_DATE_STORAGE_PREFIX}${leadType}:${leadId}`;
+}
+
+/** Local calendar day as `YYYY-MM-DD`. */
+export function todayBookingDateValue(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function isValidBookingDateValue(value: string): boolean {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;
+  const [year, month, day] = trimmed.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  );
+}
+
+export function formatBookingDateLabel(value: string): string {
+  if (!isValidBookingDateValue(value)) return "";
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString("en-IN", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function readBookingDate(leadType: string, leadId: string): string {
+  if (typeof window === "undefined") return "";
+  const stored = window.localStorage.getItem(bookingDateStorageKey(leadType, leadId)) ?? "";
+  return isValidBookingDateValue(stored) ? stored : "";
+}
+
+export function writeBookingDate(
+  leadType: string,
+  leadId: string,
+  value: string,
+): void {
+  if (typeof window === "undefined") return;
+  const trimmed = value.trim();
+  if (!trimmed || !isValidBookingDateValue(trimmed)) {
+    window.localStorage.removeItem(bookingDateStorageKey(leadType, leadId));
+    return;
+  }
+  window.localStorage.setItem(bookingDateStorageKey(leadType, leadId), trimmed);
 }
 
 export function readPaymentAmount(leadType: string, leadId: string): string {
@@ -119,6 +176,7 @@ export function clearBookingDoneDraft(leadType: string, leadId: string): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(amountStorageKey(leadType, leadId));
   window.localStorage.removeItem(storageKey(leadType, leadId));
+  window.localStorage.removeItem(bookingDateStorageKey(leadType, leadId));
 }
 
 /** Reconstruct uploadable files from draft data URLs (for multipart POST). */

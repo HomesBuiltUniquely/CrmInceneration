@@ -17,6 +17,8 @@ export type PaymentHistoryEntry = {
   id: string;
   sequence: number;
   amount: number;
+  /** Portion above 10% target — routed to Finance (Hub). */
+  extraAmount?: number;
   cumulativeReceived: number;
   remainingAfter: number;
   paymentKind?: string;
@@ -37,10 +39,26 @@ export type PaymentHistoryResponse = {
   leadId?: number;
   leadIdentifier?: string;
   customerName?: string;
+  assign?: string | null;
+  assignee?: string | null;
+  designerName?: string | null;
+  bookingDate?: string | null;
+  createdAt?: string | null;
+  submittedAt?: string | null;
+  submittedByName?: string | null;
+  cancelledByName?: string | null;
+  cancelledAt?: string | null;
+  cancellationReason?: string | null;
+  cancellationRequestedByName?: string | null;
+  cancellationRequestedAt?: string | null;
+  cancellationApprovedByName?: string | null;
+  cancellationApprovedAt?: string | null;
   quoteAmount: number;
   tenPercentAmount: number;
   amountReceived: number;
   remainingAmount: number;
+  extraAmountReceived?: number;
+  totalAmountReceived?: number;
   financeReviewStatus?: FinanceReviewStatus | string;
   financeReviewAt?: string | null;
   financeReviewBy?: string | null;
@@ -104,10 +122,17 @@ export function buildFallbackPaymentHistory(deal: DealRow): PaymentHistoryRespon
     leadId: deal.leadId,
     leadIdentifier: deal.leadIdentifier,
     customerName: deal.customer,
+    assign: deal.assign === "—" ? null : deal.assign,
+    designerName: deal.designerName === "—" ? null : deal.designerName,
+    bookingDate: deal.bookingDate ?? null,
+    createdAt: deal.createdAt ?? null,
+    submittedAt: deal.submittedAt,
     quoteAmount: deal.dealValueAmount,
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: paid,
     remainingAmount: remaining,
+    extraAmountReceived: deal.extraAmountReceived,
+    totalAmountReceived: deal.totalAmountReceived,
     history,
   };
 }

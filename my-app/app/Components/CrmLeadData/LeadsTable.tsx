@@ -1,13 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { leads } from "@/lib/data";
 import { getStoredLeadStatus, LEAD_STATUS_EVENT } from "@/lib/lead-status";
 import type { LeadRowModel } from "@/lib/leads-filter";
 
-import { persistLeadsListScrollBeforeNavigate } from "@/lib/leads-view-persist";
-import { buildLeadDetailPath, type CrmWorkspace } from "@/lib/crm-workspace";
+import type { CrmWorkspace } from "@/lib/crm-workspace";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
+import CrmFullscreenOverlayModal from "@/app/Components/Shared/CrmFullscreenOverlayModal";
+import NewLeadDetailApiClient from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailApiClient";
+import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
+import { flushLeadDetailPendingSaves } from "@/lib/lead-detail-pending-flush";
+import { LEAD_DETAIL_OVERLAY_CLOSE_EVENT } from "@/lib/lead-detail-overlay-close";
 
 type ChipTone = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
 
@@ -126,6 +130,7 @@ type LeadRowActionProps = {
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
+  onOpenLead?: (row: LeadRowModel) => void;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
@@ -165,31 +170,6 @@ function AlertButton({
   );
 }
 
-function openLeadDetail(
-  router: ReturnType<typeof useRouter>,
-  row: LeadRowModel,
-  leadsWorkspace: CrmWorkspace = "sales",
-) {
-  persistLeadsListScrollBeforeNavigate();
-  const url = buildLeadDetailPath(row.leadType, row.id, leadsWorkspace);
-  if (typeof window !== "undefined") {
-    const width = 1080;
-    const height = 720;
-    const left = Math.max(0, Math.floor((window.screen.width - width) / 2));
-    const top = Math.max(0, Math.floor((window.screen.height - height) / 2));
-    const popup = window.open(
-      url,
-      "_blank",
-      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`,
-    );
-    if (popup) {
-      popup.focus();
-      return;
-    }
-  }
-  router.push(url, { scroll: false });
-}
-
 function LeadRowAction({
   row,
   selected,
@@ -199,22 +179,28 @@ function LeadRowAction({
   gridClass,
   onDelete,
   onAssign,
-  leadsWorkspace = "sales",
+  onOpenLead,
 }: LeadRowActionProps) {
-  const router = useRouter();
   const critical = row.journey.status?.tone === "critical";
+  const lostPath = Boolean(row.lostPathHighlight || row.lostQuoteHighlight);
+  const lostQuote = Boolean(row.lostQuoteHighlight);
+  const open = () => onOpenLead?.(row);
   return (
     <div
-      onClick={() => openLeadDetail(router, row, leadsWorkspace)}
-      className={`${gridClass} cursor-pointer border-t border-[var(--crm-border)] px-4 py-3 transition-all hover:bg-[var(--crm-surface-subtle)] ${
-        selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
-      }`}
+      onClick={open}
+      className={`${gridClass} cursor-pointer border-t px-4 py-3 transition-all ${
+        lostPath
+          ? "border-red-200 bg-red-50 hover:bg-red-100/80"
+          : `border-[var(--crm-border)] hover:bg-[var(--crm-surface-subtle)] ${
+              selected ? "bg-blue-50/60 ring-1 ring-inset ring-blue-100" : ""
+            }`
+      } ${selected && lostPath ? "ring-1 ring-inset ring-red-200" : ""}`}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLeadDetail(router, row, leadsWorkspace);
+          open();
         }
       }}
     >
@@ -239,6 +225,9 @@ function LeadRowAction({
           <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
           <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
           <div className="mt-1 flex flex-wrap items-center gap-1">
+            {row.leadSource === "IVR Call" ? (
+              <TinyTag chip={{ label: "IVR Call", tone: "violet" }} />
+            ) : null}
             {row.verificationTag === "verified" ? (
               <TinyTag chip={{ label: "Verified", tone: "green" }} />
             ) : row.verificationTag === "unverified" ? (
@@ -256,6 +245,9 @@ function LeadRowAction({
               </span>
             ) : null}
             {row.callDelayed ? <TinyTag chip={{ label: "Call Delayed", tone: "violet" }} /> : null}
+            {row.lostQuoteHighlight ? (
+              <TinyTag chip={{ label: "Lost Quote Sent", tone: "rose" }} />
+            ) : null}
             {row.pipelineBadge === "presales" ? (
               <TinyTag chip={{ label: "Presales", tone: "amber" }} />
             ) : row.pipelineBadge === "sales" ? (
@@ -433,9 +425,16 @@ type LeadsTableProps = {
   onPageSizeChange?: (size: number) => void;
   selectedRowIds?: string[];
   onSelectedRowIdsChange?: (ids: string[]) => void;
+  /**
+   * When set (e.g. client-filtered insight view), header "select all" toggles
+   * every id in this list — not only the current page of `rows`.
+   */
+  selectAllRowIds?: string[];
   onDeleteRow?: (row: LeadRowModel) => void;
   onAssignRow?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
+  /** When set, empty state explains that search is filtering the list. */
+  searchQuery?: string;
 };
 
 export default function LeadsTable({
@@ -448,11 +447,18 @@ export default function LeadsTable({
   onPageSizeChange,
   selectedRowIds = [],
   onSelectedRowIdsChange,
+  selectAllRowIds,
   onDeleteRow,
   onAssignRow,
-  leadsWorkspace = "sales",
+  leadsWorkspace: _leadsWorkspace = "sales",
+  searchQuery = "",
 }: LeadsTableProps) {
+  const { notifySuccess } = useGlobalNotifier();
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
+  const [openLead, setOpenLead] = useState<{
+    leadType: string;
+    leadId: string;
+  } | null>(null);
 
   useEffect(() => {
     const readOverrides = () => {
@@ -491,7 +497,13 @@ export default function LeadsTable({
   const showActions = Boolean(onAssignRow || onDeleteRow);
   const showSelection = showActions && Boolean(onSelectedRowIdsChange);
   const gridClass = getLeadsTableGridClass(showActions);
-  const allSelected = rows.length > 0 && rows.every((row) => selectedRowIds.includes(row.id));
+  const selectAllTargets =
+    selectAllRowIds && selectAllRowIds.length > 0
+      ? selectAllRowIds
+      : rows.map((row) => row.id);
+  const allSelected =
+    selectAllTargets.length > 0 &&
+    selectAllTargets.every((id) => selectedRowIds.includes(id));
   const someSelected = selectedRowIds.length > 0 && !allSelected;
   const selectAllRef = useRef<HTMLInputElement | null>(null);
 
@@ -501,7 +513,7 @@ export default function LeadsTable({
   }, [someSelected]);
 
   return (
-    <section className="mx-auto mt-5 w-full max-w-[1400px] px-4">
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-5`}>
       <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-4 py-3 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
           <div>
@@ -512,7 +524,7 @@ export default function LeadsTable({
                 checked={allSelected}
                 onChange={(event) =>
                   onSelectedRowIdsChange?.(
-                    event.target.checked ? rows.map((row) => row.id) : []
+                    event.target.checked ? [...selectAllTargets] : []
                   )
                 }
                 className="h-4 w-4 cursor-pointer accent-blue-600"
@@ -534,7 +546,17 @@ export default function LeadsTable({
           </div>
         ) : rows.length === 0 ? (
           <div className="border-t border-[var(--crm-border)] px-6 py-10 text-center text-[12px] text-[var(--crm-text-muted)]">
-            No leads found.
+            {searchQuery.trim() ? (
+              <>
+                No leads match{" "}
+                <span className="font-semibold text-[var(--crm-text-primary)]">
+                  “{searchQuery.trim()}”
+                </span>
+                . Clear search to see all leads.
+              </>
+            ) : (
+              "No leads found."
+            )}
           </div>
         ) : (
           rows.map((r, idx) => (
@@ -555,7 +577,12 @@ export default function LeadsTable({
               gridClass={gridClass}
               onDelete={onDeleteRow}
               onAssign={onAssignRow}
-              leadsWorkspace={leadsWorkspace}
+              onOpenLead={(row) =>
+                setOpenLead({
+                  leadType: row.leadType,
+                  leadId: row.id,
+                })
+              }
             />
           ))
         )}
@@ -570,6 +597,34 @@ export default function LeadsTable({
           />
         ) : null}
       </div>
+
+      <CrmFullscreenOverlayModal
+        open={Boolean(openLead)}
+        onClose={() => setOpenLead(null)}
+        onBeforeClose={async () => {
+          const labels = await flushLeadDetailPendingSaves();
+          if (labels.length > 0) {
+            notifySuccess(
+              `Auto-saved fields you forgot to save: ${labels.join(", ")}`,
+              5500,
+            );
+          }
+        }}
+        title="Lead details"
+        hideHeader
+        closeOnBackdrop
+        closeEventName={LEAD_DETAIL_OVERLAY_CLOSE_EVENT}
+        zOverlay={80}
+        zPanel={85}
+      >
+        {openLead ? (
+          <NewLeadDetailApiClient
+            key={`${openLead.leadType}-${openLead.leadId}`}
+            leadType={openLead.leadType}
+            leadId={openLead.leadId}
+          />
+        ) : null}
+      </CrmFullscreenOverlayModal>
     </section>
   );
 }

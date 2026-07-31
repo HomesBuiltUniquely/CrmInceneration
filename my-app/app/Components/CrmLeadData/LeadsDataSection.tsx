@@ -49,9 +49,11 @@ import {
   appendLeadPoolQuery,
   appendWorkspaceMilestoneFilterQuery,
   defaultVerificationForLeadTypeFilter,
+  filterLeadsForClientWorkspaceInbox,
   isDedicatedFilterLeadType,
   leadMatchesWorkspaceMilestoneFilter,
   pipelineRoleForWorkspace,
+  usesClientWorkspaceInboxFilter,
   type CrmWorkspace,
 } from "@/lib/crm-workspace";
 import { canUsePresalesHierarchyFilters, crmPipelineRoleParam } from "@/lib/roleUtils";
@@ -78,6 +80,7 @@ import { shouldPresalesExecutiveSeeLeadInCrmPool } from "@/lib/presales-lead-vis
 import { trustPresalesUpstreamLeadScope } from "@/lib/presales-leads-pool";
 import LeadsTable from "./LeadsTable";
 import LeadsToolbar from "./LeadsToolbar";
+import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import {
   assigneeAliasNorms,
@@ -91,7 +94,7 @@ import {
   computeAutoFollowUpDateToPersist,
   persistAutoFollowUpDatesForLeads,
 } from "@/lib/lead-follow-up-persist";
-import { computeLostSegmentCounts, isLostPathLead, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
+import { computeLostSegmentCounts, isLostPathLead, isLostSegmentInsightMode, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
 import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
@@ -101,7 +104,6 @@ import {
 } from "@/lib/sales-admin-insight-tiles";
 import {
   countSalesManagerMineVsTeam,
-  narrowSalesManagerLeadsIfTeamKnown,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import {
@@ -112,7 +114,18 @@ import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helper
 import {
   setEffectiveNewCrmStartDate,
 } from "@/lib/new-crm-cutoff";
-import { appendCrmDateFilters, type CrmDateFieldSelection } from "@/lib/crm-date-field-filter";
+import {
+  appendCrmDateFilters,
+  isToolbarDateFilterActive,
+  type CrmDateFieldSelection,
+} from "@/lib/crm-date-field-filter";
+import {
+  appendIvrLeadSourceFilter,
+  countIvrCallLeads,
+  filterIvrCallLeads,
+  hubLeadTypeForFilterKey,
+  isIvrCallFilterKey,
+} from "@/lib/ivr-lead-source";
 
 type Props = {
   search: string;
@@ -175,6 +188,8 @@ type Props = {
   superAdminPresalesAssigneeNames?: string[];
   /** Resets search and all header filters (passed up to Header). */
   onResetAll?: () => void;
+  /** Clears only the global search query (keeps other filters). */
+  onClearSearch?: () => void;
   /** Route workspace: sales `/Leads` vs presales `/presales-leads`. */
   leadsWorkspace?: CrmWorkspace;
 };
@@ -580,22 +595,141 @@ async function fetchMergedPage(
   const normalizedViewerRole = normalizeRole(viewerRole);
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
   const explicitVerification = verificationStatus.trim();
+  // Global search must return verified + unverified (IVR intake, etc.).
+  // CRM inbox still defaults to verified when the search box is empty.
   const resolvedVerification =
     normalizedLeadType === "verified"
       ? "verified"
-      : explicitVerification ||
-        defaultVerificationForLeadTypeFilter(
-          normalizedLeadType,
-          leadsWorkspace,
-          verificationStatus,
-          viewerRole,
-        );
+      : search.trim()
+        ? ""
+        : explicitVerification ||
+          defaultVerificationForLeadTypeFilter(
+            normalizedLeadType,
+            leadsWorkspace,
+            verificationStatus,
+            viewerRole,
+          );
+
+  /**
+   * IVR Call is a virtual tile (`leadSource`), not a Hub leadType.
+   * Hub often ignores `leadSource` and returns all Add Lead rows — always filter client-side
+   * from the same pool the IVR tile count uses.
+   */
+  if (isIvrCallFilterKey(normalizedLeadType)) {
+    const pageFromIvrLeads = (leads: ApiLead[]): SpringPage<ApiLead> => {
+      const sorted = [...leads].sort(
+        (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+      );
+      const countBasis =
+        leadsWorkspace === "sales" ? pickPrimarySourceRows(sorted) : sorted;
+      const filtered = filterIvrCallLeads(countBasis);
+      const totalElements = filtered.length;
+      const start = Math.max(0, page * size);
+      return {
+        content: filtered.slice(start, start + size),
+        totalElements,
+        uniquePrimaryTotal: totalElements,
+        totalRowCount: filtered.length,
+        totalPages: Math.max(1, Math.ceil(totalElements / Math.max(1, size))),
+        number: page,
+        size,
+      };
+    };
+
+    const managerAssigneePoolScope = usesAdminSalesPoolForAssigneeScope(
+      viewerRole,
+      leadsWorkspace,
+      assigneeAliasSet?.length ?? 0,
+    );
+
+    if (
+      (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
+      !usesRoleEndpoint
+    ) {
+      const { leads } = await fetchAllAdminLeads(
+        {
+          workspace: leadsWorkspace,
+          search,
+          assignee,
+          sort,
+          dateFrom,
+          dateTo,
+          dateField,
+          crmMonthWindow,
+          verificationStatus: resolvedVerification,
+          reinquiry,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          // Full pool (same as heatmap tile counts), then client-filter IVR.
+          leadType: "all",
+          assigneeAliasSet,
+        },
+        getCrmAuthHeaders(),
+      );
+      return pageFromIvrLeads(leads);
+    }
+
+    const pageSize = 500;
+    const all: ApiLead[] = [];
+    let totalPages = 1;
+    for (let pageNum = 0; pageNum < totalPages; pageNum += 1) {
+      const qs = new URLSearchParams();
+      qs.set("mergeAll", "1");
+      qs.set("leadType", "all");
+      qs.set("milestoneScope", "crm");
+      qs.set("page", String(pageNum));
+      qs.set("size", String(pageSize));
+      qs.set("sort", sort);
+      if (search.trim()) qs.set("search", search.trim());
+      appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+      appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
+      appendWorkspaceMilestoneFilterQuery(
+        qs,
+        leadsWorkspace,
+        milestoneStage,
+        milestoneStageCategory,
+        milestoneSubStage,
+      );
+      if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
+      if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+      if (usesRoleEndpoint) qs.set("roleView", leadView);
+      appendIvrLeadSourceFilter(qs, normalizedLeadType);
+      appendLeadPoolQuery(qs, leadsWorkspace);
+      const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+        headers: getCrmAuthHeaders(),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        if (res.status === 401) throw new Error("Session expired. Please login again.");
+        if (res.status === 403) throw new Error("You don't have access to this lead view.");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const pageJson = (await res.json()) as SpringPage<ApiLead>;
+      const chunk = Array.isArray(pageJson.content) ? pageJson.content : [];
+      all.push(...chunk);
+      totalPages = Math.max(1, Number(pageJson.totalPages ?? 1));
+      if (chunk.length < pageSize) break;
+    }
+
+    let scoped = dedupeAdminPoolLeads(all);
+    if (usesClientWorkspaceInboxFilter(leadsWorkspace, normalizedViewerRole)) {
+      scoped = filterLeadsForClientWorkspaceInbox(
+        scoped,
+        leadsWorkspace,
+        resolvedVerification,
+      );
+    }
+    return pageFromIvrLeads(scoped);
+  }
 
   /** Walk-in / WhatsApp live on dedicated Hub resources — always use merge filter route. */
   if (isDedicatedFilterLeadType(normalizedLeadType)) {
     const qs = new URLSearchParams();
     qs.set("mergeAll", "1");
-    qs.set("leadType", normalizedLeadType);
+    qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType));
     qs.set("milestoneScope", "crm");
     qs.set("page", String(page));
     qs.set("size", String(size));
@@ -647,7 +781,7 @@ async function fetchMergedPage(
         qs.set("page", String(pageNum));
         qs.set("size", String(pageSize));
         qs.set("sort", sort);
-        qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
+        qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType));
         qs.set("milestoneScope", "crm");
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
@@ -662,6 +796,7 @@ async function fetchMergedPage(
         );
         if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
         if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
+        appendIvrLeadSourceFilter(qs, normalizedLeadType);
         appendLeadPoolQuery(qs, leadsWorkspace);
         const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
           cache: "no-store",
@@ -697,14 +832,25 @@ async function fetchMergedPage(
     const merged = [...byId.values()].sort(
       (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
     );
-    const countBasis = leadsWorkspace === "sales" ? pickPrimarySourceRows(merged) : merged;
+    const workspaceScoped =
+      usesClientWorkspaceInboxFilter(leadsWorkspace, normalizedViewerRole)
+        ? filterLeadsForClientWorkspaceInbox(
+            merged,
+            leadsWorkspace,
+            resolvedVerification,
+          )
+        : merged;
+    const countBasis =
+      leadsWorkspace === "sales"
+        ? pickPrimarySourceRows(workspaceScoped)
+        : workspaceScoped;
     const start = Math.max(0, page * size);
     const pageRows = countBasis.slice(start, start + size);
     return {
       content: pageRows,
       totalElements: countBasis.length,
       uniquePrimaryTotal: countBasis.length,
-      totalRowCount: merged.length,
+      totalRowCount: workspaceScoped.length,
       totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, size))),
       number: page,
       size,
@@ -723,10 +869,9 @@ async function fetchMergedPage(
     !usesRoleEndpoint &&
     !isDedicatedFilterLeadType(normalizedLeadType)
   ) {
-    const superAdminGlobalSearchAcrossPools =
-      normalizeRole(viewerRole) === "SUPER_ADMIN" &&
-      search.trim().length > 0;
-    if (superAdminGlobalSearchAcrossPools) {
+    const adminGlobalSearchAcrossPools =
+      usesAdminLeadsApi(viewerRole) && search.trim().length > 0;
+    if (adminGlobalSearchAcrossPools) {
       const primaryWorkspace: CrmWorkspace = leadsWorkspace === "presales" ? "presales" : "sales";
       const secondaryWorkspace: CrmWorkspace =
         primaryWorkspace === "sales" ? "presales" : "sales";
@@ -738,13 +883,13 @@ async function fetchMergedPage(
         dateTo,
         dateField,
         crmMonthWindow,
-        verificationStatus:
-          workspace === "presales" ? "" : resolvedVerification,
+        // Both pools: no verified/unverified filter while searching.
+        verificationStatus: "",
         reinquiry,
         milestoneStage: "",
         milestoneStageCategory: "",
         milestoneSubStage: "",
-        leadType: normalizedLeadType === "verified" ? "all" : normalizedLeadType,
+        leadType: hubLeadTypeForFilterKey(normalizedLeadType),
       });
       const [primaryAll, secondaryAll] = await Promise.all([
         fetchAllAdminLeads(
@@ -811,7 +956,7 @@ async function fetchMergedPage(
         milestoneStage,
         milestoneStageCategory,
         milestoneSubStage,
-        leadType: normalizedLeadType === "verified" ? "all" : normalizedLeadType,
+        leadType: hubLeadTypeForFilterKey(normalizedLeadType),
       },
       getCrmAuthHeaders(),
     );
@@ -828,7 +973,7 @@ async function fetchMergedPage(
   qs.set("page", usesRoleEndpoint ? "0" : String(page));
   qs.set("size", usesRoleEndpoint ? "500" : String(size));
   qs.set("sort", sort);
-  qs.set("leadType", normalizedLeadType === "verified" ? "all" : normalizedLeadType || "all");
+  qs.set("leadType", hubLeadTypeForFilterKey(normalizedLeadType) || "all");
   qs.set("milestoneScope", "crm");
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
@@ -849,6 +994,7 @@ async function fetchMergedPage(
   if (reinquiry.trim()) qs.set("reinquiry", reinquiry.trim());
   if (resolvedVerification) qs.set("verificationStatus", resolvedVerification);
   if (usesRoleEndpoint) qs.set("roleView", leadView);
+  appendIvrLeadSourceFilter(qs, normalizedLeadType);
   appendLeadPoolQuery(qs, leadsWorkspace);
 
   const res = await fetch(
@@ -1120,6 +1266,7 @@ export default function LeadsDataSection({
   onInsightTableModeChange,
   superAdminPresalesAssigneeNames,
   onResetAll,
+  onClearSearch,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -1160,6 +1307,9 @@ export default function LeadsDataSection({
   const [adminMilestoneTableLeads, setAdminMilestoneTableLeads] = useState<ApiLead[] | null>(
     null,
   );
+  /** Full primary-source pool for insight tiles (overdue, lost segment, etc.) — same source as tile counts. */
+  const [insightTablePoolLeads, setInsightTablePoolLeads] = useState<ApiLead[] | null>(null);
+  const [insightPoolRefreshNonce, setInsightPoolRefreshNonce] = useState(0);
   const [insightTableMode, setInsightTableMode] = useState<InsightTableMode>(() => {
     const mode = persistedView.insightTableMode;
     return (mode as InsightTableMode | null | undefined) ?? null;
@@ -1950,6 +2100,10 @@ export default function LeadsDataSection({
     clientScopeRoleKey === "PRESALES_EXECUTIVE" ||
     clientScopeRoleKey === "PRE_SALES";
   const isGlobalSearchActive = debouncedSearch.trim().length > 0;
+  /** Admin roles: search both sales + presales pools (IVR/intake live in presales). */
+  const adminGlobalSearchAcrossPools =
+    usesAdminLeadsApi(clientScopeRoleKey) && isGlobalSearchActive;
+  /** SUPER_ADMIN UI: Sales/Presales pool match pills during cross-pool search. */
   const superAdminGlobalSearchActive =
     clientScopeRoleKey === "SUPER_ADMIN" && isGlobalSearchActive;
   const superAdminPresalesPoolSet = useMemo(
@@ -2233,7 +2387,7 @@ export default function LeadsDataSection({
           ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
           : leads;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
-        const queryAssignee = superAdminGlobalSearchActive ? "" : assigneeName;
+        const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2302,9 +2456,20 @@ export default function LeadsDataSection({
           trustPresalesScope ||
           !requiresClientScopedDataset ||
           isGlobalSearchActive;
+        // Global search may return unverified / presales IVR rows — do not strip them
+        // with the sales verified-inbox filter (same reason Presales search finds them).
+        const inboxScoped =
+          usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) &&
+          !isGlobalSearchActive
+            ? filterLeadsForClientWorkspaceInbox(
+                allLeads,
+                leadsWorkspace,
+                verificationStatusFromHeader,
+              )
+            : allLeads;
         let roleScopedLeads = skipClientRoleFilter
-          ? allLeads
-          : allLeads.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey));
+          ? inboxScoped
+          : inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey));
         if (superAdminPresalesPoolActive) {
           roleScopedLeads = roleScopedLeads.filter((lead) =>
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
@@ -2361,7 +2526,27 @@ export default function LeadsDataSection({
             clientScopeRoleKey,
             bffAssigneeAliasSet,
           );
-          if (activeAssigneeScope.length === 0) return pageJson;
+          if (activeAssigneeScope.length === 0) {
+            // Same as origin/main: trust Hub/BFF page meta (full pool totals).
+            // Only re-scope when sales-manager/exec client inbox filter is needed.
+            if (!usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)) {
+              return pageJson;
+            }
+            const inboxScoped = filterLeadsForClientWorkspaceInbox(
+              Array.isArray(pageJson.content) ? pageJson.content : [],
+              leadsWorkspace,
+              verificationStatusFromHeader,
+            );
+            const roleScoped =
+              requiresClientScopedDataset && !isGlobalSearchActive
+                ? inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+                : inboxScoped;
+            // Client inbox filter only drops rows on the current page — keep Hub totals.
+            return {
+              ...pageJson,
+              content: roleScoped,
+            };
+          }
           const scopedContent = filterLeadsByAssigneeScope(
             Array.isArray(pageJson.content) ? pageJson.content : [],
             activeAssigneeScope,
@@ -2403,6 +2588,7 @@ export default function LeadsDataSection({
       requiresClientScopedDataset,
       isGlobalSearchActive,
       superAdminGlobalSearchActive,
+      adminGlobalSearchAcrossPools,
       activeAssigneeScope,
       activeAssigneeScopeKey,
       effectiveAssigneeScope,
@@ -2443,7 +2629,7 @@ export default function LeadsDataSection({
       const assigneeFetchSeed =
         effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
       const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
-        const queryAssignee = superAdminGlobalSearchActive ? "" : assigneeName;
+        const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2500,7 +2686,7 @@ export default function LeadsDataSection({
         }
         return applyAssigneeScopeFilter(allLeads);
       };
-      if (superAdminGlobalSearchActive) {
+      if (superAdminGlobalSearchActive || adminGlobalSearchAcrossPools) {
         return applySuperAdminPool(await fetchAllPagesForAssignee(""));
       }
 
@@ -2538,6 +2724,7 @@ export default function LeadsDataSection({
       superAdminPresalesPoolSet,
       leadsWorkspace,
       superAdminGlobalSearchActive,
+      adminGlobalSearchAcrossPools,
     ],
   );
 
@@ -2554,10 +2741,11 @@ export default function LeadsDataSection({
     let cancelled = false;
     void (async () => {
       try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const salesScopedAssigneeFilterActive =
           leadsWorkspace === "sales" && salesHierarchyFilterActive;
         if (salesScopedAssigneeFilterActive) {
@@ -2608,13 +2796,15 @@ export default function LeadsDataSection({
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusFromHeader.trim() ||
-              defaultVerificationForLeadTypeFilter(
-                summaryLeadType,
-                leadsWorkspace,
-                verificationStatusFromHeader,
-                roleKey,
-              );
+            : debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader.trim() ||
+                defaultVerificationForLeadTypeFilter(
+                  summaryLeadType,
+                  leadsWorkspace,
+                  verificationStatusFromHeader,
+                  roleKey,
+                );
         if (salesHierarchyFilterActive) {
           return;
         }
@@ -2645,7 +2835,9 @@ export default function LeadsDataSection({
             dateField,
             crmMonthWindow: crmMonthWindowProp,
             summaryLeadType,
-            verificationStatusProp: verificationStatusFromHeader,
+            verificationStatusProp: debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader,
             reinquiry,
             roleKey,
             viewerWorkspace: leadsWorkspace,
@@ -2672,11 +2864,31 @@ export default function LeadsDataSection({
         }
         if (cancelled) return;
         const poolTotal = Number(heatmapData.totalElements ?? heatmapData.leads.length ?? 0);
+        const uniquePrimaryPool = Number(
+          heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
+        );
         const milestoneToolbarActive = Boolean(
           milestoneStage.trim() ||
             milestoneStageCategory.trim() ||
             milestoneSubStage.trim(),
         );
+        // Full-pool heatmap must not overwrite Total Leads when stage/category/substage
+        // filter is on (milestone table effect owns that total — Super Admin + Sales Admin).
+        if (
+          (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") &&
+          !salesHierarchyFilterActive &&
+          activeAssigneeScope.length === 0 &&
+          !milestoneToolbarActive &&
+          // Lead-type / IVR tile filters own table totals — do not reset to full pool.
+          summaryLeadTypeRaw === "all"
+        ) {
+          const customers = uniquePrimaryPool > 0 ? uniquePrimaryPool : poolTotal;
+          const rows = Math.max(poolTotal, customers);
+          if (customers > 0 || rows > 0) {
+            setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
+            setVisibleFilteredTotal(customers);
+          }
+        }
         const primaryTypes = heatmapData.leadTypeCountsPrimaryUnique;
         const allRowTypes = heatmapData.leadTypeCountsAllRows;
         setLeadTypeCountsPrimary(primaryTypes?.all > 0 ? primaryTypes : null);
@@ -2742,6 +2954,11 @@ export default function LeadsDataSection({
         setLeadTypeCounts({
           ...countsWithInsights,
           verified: Number(heatmapData.verifiedCount ?? 0),
+          ivr_call: countIvrCallLeads(
+            heatmapData.primaryRows.length > 0
+              ? heatmapData.primaryRows
+              : heatmapData.leads,
+          ),
         });
       } catch {
         if (!cancelled) {
@@ -2806,20 +3023,23 @@ export default function LeadsDataSection({
     setError(null);
     void (async () => {
       try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const resolvedVerification =
           summaryLeadType === "verified"
             ? "verified"
-            : verificationStatusFromHeader.trim() ||
-              defaultVerificationForLeadTypeFilter(
-                summaryLeadType,
-                leadsWorkspace,
-                verificationStatusFromHeader,
-                roleKey,
-              );
+            : debouncedSearch.trim()
+              ? ""
+              : verificationStatusFromHeader.trim() ||
+                defaultVerificationForLeadTypeFilter(
+                  summaryLeadType,
+                  leadsWorkspace,
+                  verificationStatusFromHeader,
+                  roleKey,
+                );
         const milestoneAliasSet =
           effectiveAssigneeScope.length > 0
             ? effectiveAssigneeScope
@@ -2929,10 +3149,11 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
         const summaryLeadType =
-          leadType.trim().toLowerCase() === "verified"
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
-            : leadType.trim().toLowerCase() || "all";
+            : summaryLeadTypeRaw;
         const raw = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc");
         if (cancelled) return;
         const scopedTeam =
@@ -2941,11 +3162,19 @@ export default function LeadsDataSection({
             : managerTeamNamesFromHeader.length > 0
               ? managerTeamNamesFromHeader
               : managerTeamNames;
-        const managerRole = roleKey === "SALES_MANAGER" || roleKey === "MANAGER";
+        const inboxScoped =
+          usesClientWorkspaceInboxFilter(leadsWorkspace, roleKey) &&
+          !isGlobalSearchActive
+            ? filterLeadsForClientWorkspaceInbox(
+              raw,
+              leadsWorkspace,
+              verificationStatusFromHeader,
+            )
+          : raw;
         const scoped =
-          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey) || managerRole
-            ? raw
-            : raw.filter((lead) => canViewLeadByRole(lead, roleKey));
+          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
+            ? inboxScoped
+            : inboxScoped.filter((lead) => canViewLeadByRole(lead, roleKey));
         const base = computeLeadTypeCountsFromRows(scoped);
         const summaryTotals = computeJourneySummaryCounts(scoped);
         // Only update total from this effect when
@@ -3042,10 +3271,16 @@ export default function LeadsDataSection({
 
   const load = useCallback(async (opts?: { forceNetwork?: boolean }) => {
     const roleKeyForLoad = normalizeRole(authRoleProp ?? currentRole);
-    const insightModeActive = insightTableMode !== null;
-    const requestPage = insightModeActive ? 0 : page;
-    const requestSize = insightModeActive ? 500 : size;
-    const requestLeadType = insightModeActive ? "all" : leadType;
+    /** Insight tiles use a dedicated full-pool effect (not paged Hub fetches). */
+    if (insightTableMode !== null) {
+      return;
+    }
+
+    setInsightTablePoolLeads(null);
+
+    const requestPage = page;
+    const requestSize = size;
+    const requestLeadType = leadType;
     const cacheKey = buildLeadsListCacheKey({
       requestPage,
       requestSize,
@@ -3065,7 +3300,7 @@ export default function LeadsDataSection({
       activeAssigneeScopeKey,
       leadsWorkspace,
       roleKeyForLoad,
-      insightModeActive,
+      insightModeActive: false,
     });
     const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
@@ -3088,20 +3323,47 @@ export default function LeadsDataSection({
     try {
 
       const applyAdminTotalsFromTablePage = (pageJson: SpringPage<ApiLead>) => {
-        const totalRows = pageJson.totalRowCount ?? pageJson.totalElements ?? 0;
-        const uniquePrimary = pageJson.uniquePrimaryTotal ?? totalRows;
-        const assigneeScopedTotals = pageJson.uniquePrimaryTotal !== undefined;
+        const pageContentLen = Array.isArray(pageJson.content) ? pageJson.content.length : 0;
+        const totalRows = Number(pageJson.totalRowCount ?? pageJson.totalElements ?? 0);
+        const uniquePrimary = Number(
+          pageJson.uniquePrimaryTotal ?? pageJson.totalRowCount ?? pageJson.totalElements ?? 0,
+        );
+        const pageSizeHint = Number(pageJson.size ?? 0);
+        /**
+         * Hub/BFF sometimes echoes the current page size as totalElements (e.g. 20 of 20).
+         * Do not treat a real short page (e.g. 4 IVR rows of 4 total) as that bug.
+         */
+        const looksLikePageSizedTotal =
+          pageSizeHint > 0 &&
+          pageContentLen === pageSizeHint &&
+          totalRows === pageSizeHint &&
+          uniquePrimary === pageSizeHint;
+
+        if (looksLikePageSizedTotal) {
+          // Keep heatmap-driven pool totals; do not overwrite with page size (e.g. 20).
+          return;
+        }
+
         setVisibleFilteredTotal(
-          assigneeScopedTotals ? uniquePrimary : (pageJson.totalElements ?? 0),
+          Number.isFinite(uniquePrimary) && uniquePrimary > 0
+            ? uniquePrimary
+            : Number.isFinite(totalRows)
+              ? totalRows
+              : 0,
         );
         if (
-          assigneeScopedTotals &&
-          (roleKeyForLoad === "SUPER_ADMIN" ||
-            roleKeyForLoad === "SALES_ADMIN" ||
-            roleKeyForLoad === "SALES_MANAGER" ||
-            roleKeyForLoad === "MANAGER")
+          roleKeyForLoad === "SUPER_ADMIN" ||
+          roleKeyForLoad === "SALES_ADMIN" ||
+          roleKeyForLoad === "SALES_MANAGER" ||
+          roleKeyForLoad === "MANAGER"
         ) {
-          setAdminPoolDisplayTotals({ uniquePrimary, totalRows });
+          setAdminPoolDisplayTotals({
+            uniquePrimary:
+              Number.isFinite(uniquePrimary) && uniquePrimary >= 0
+                ? uniquePrimary
+                : totalRows,
+            totalRows: Math.max(totalRows, uniquePrimary || 0),
+          });
         }
       };
 
@@ -3118,7 +3380,21 @@ export default function LeadsDataSection({
           setSuperAdminSearchPoolTotals(null);
         }
         if (usePageMetaForUi) {
-          if (
+          if (isIvrCallFilterKey(requestLeadType)) {
+            const ivrTotal = Number(pageJson.totalElements ?? 0);
+            setVisibleFilteredTotal(ivrTotal);
+            if (
+              roleKeyForLoad === "SUPER_ADMIN" ||
+              roleKeyForLoad === "SALES_ADMIN" ||
+              roleKeyForLoad === "SALES_MANAGER" ||
+              roleKeyForLoad === "MANAGER"
+            ) {
+              setAdminPoolDisplayTotals({
+                uniquePrimary: ivrTotal,
+                totalRows: Number(pageJson.totalRowCount ?? ivrTotal),
+              });
+            }
+          } else if (
             usesAdminLeadsApi(roleKeyForLoad) &&
             leadViewKey !== "my" &&
             leadViewKey !== "team"
@@ -3164,7 +3440,6 @@ export default function LeadsDataSection({
         salesHierarchyFilterActive ||
         !requiresClientScopedDataset ||
         isGlobalSearchActive ||
-        insightModeActive ||
         trustPresalesUpstreamLeadScope(normalizeRole(authRoleProp ?? currentRole));
       const requested = {
         page: requestPage,
@@ -3184,7 +3459,7 @@ export default function LeadsDataSection({
         contentLength: (json.content ?? []).length,
         totalElements: json.totalElements ?? 0,
       });
-      if (!insightModeActive && (json.content?.length ?? 0) === 0 && page > 0) {
+      if ((json.content?.length ?? 0) === 0 && page > 0) {
         const fallbackPage = page - 1;
         const fallbackRequested = { ...requested, page: fallbackPage };
         console.info("[crm:leads] empty page fallback", fallbackRequested);
@@ -3232,9 +3507,11 @@ export default function LeadsDataSection({
     dateTo,
     debouncedSearch,
     activeAssigneeScopeKey,
+    activeAssigneeScope,
     salesHierarchyFilterActive,
     effectiveAssigneeScopeKey,
     fetchScopedMergedPage,
+    fetchAllScopedMergedLeads,
     leadType,
     milestoneStage,
     milestoneStageCategory,
@@ -3256,6 +3533,71 @@ export default function LeadsDataSection({
   ]);
 
   useEffect(() => {
+    if (insightTableMode === null) {
+      setInsightTablePoolLeads(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setPage(0);
+    void (async () => {
+      try {
+        const summaryLeadTypeRaw = leadType.trim().toLowerCase() || "all";
+        const summaryLeadType =
+          summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
+            ? "all"
+            : summaryLeadTypeRaw;
+        const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
+        if (cancelled) return;
+        let pool = salesInsightCountLeads(scopedRows);
+        if (activeAssigneeScope.length > 0) {
+          pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope);
+        }
+        setInsightTablePoolLeads(pool);
+        setData({
+          content: pool,
+          totalElements: pool.length,
+          totalPages: Math.max(1, Math.ceil(pool.length / Math.max(1, size))),
+          size,
+          number: 0,
+        } as SpringPage<ApiLead>);
+        setVisibleFilteredTotal(pool.length);
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "Failed to load insight leads";
+        setError(msg);
+        setInsightTablePoolLeads([]);
+        setVisibleFilteredTotal(0);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    insightTableMode,
+    leadType,
+    sort,
+    dateFrom,
+    dateTo,
+    dateField,
+    debouncedSearch,
+    crmMonthWindowProp,
+    verificationStatusFromHeader,
+    reinquiry,
+    leadViewKey,
+    leadsWorkspace,
+    activeAssigneeScope,
+    size,
+    fetchAllScopedMergedLeads,
+    insightPoolRefreshNonce,
+  ]);
+
+  useEffect(() => {
     const roleKey = normalizeRole(authRoleProp ?? currentRole);
     const milestoneToolbarActive = Boolean(
       milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
@@ -3268,8 +3610,11 @@ export default function LeadsDataSection({
     ) {
       return;
     }
+    if (insightTableMode !== null) {
+      return;
+    }
     void load();
-  }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage]);
+  }, [load, authRoleProp, currentRole, leadViewKey, milestoneStage, milestoneStageCategory, milestoneSubStage, insightTableMode]);
 
   const whatsappListActive = leadType.trim().toLowerCase() === "whatsapplead";
 
@@ -3293,24 +3638,36 @@ export default function LeadsDataSection({
 
   useEffect(() => {
     const onInvalidate = () => {
-      void load({ forceNetwork: true });
+      if (insightTableMode !== null) {
+        setInsightPoolRefreshNonce((n) => n + 1);
+      } else {
+        void load({ forceNetwork: true });
+      }
       setLastRefreshTime(new Date());
     };
     window.addEventListener("crm:leads-invalidate", onInvalidate);
     return () => window.removeEventListener("crm:leads-invalidate", onInvalidate);
-  }, [load]);
+  }, [load, insightTableMode]);
 
   const handleRefresh = useCallback(async () => {
     setError(null);
+    if (insightTableMode !== null) {
+      setInsightPoolRefreshNonce((n) => n + 1);
+      setLastRefreshTime(new Date());
+      return;
+    }
     handleResetAll();
     await load();
     setLastRefreshTime(new Date());
-  }, [load, handleResetAll]);
+  }, [load, handleResetAll, insightTableMode]);
 
   const adminMilestoneTableActive = adminMilestoneTableLeads !== null;
+  const insightTablePoolActive = insightTablePoolLeads !== null;
   const contentFromApi = adminMilestoneTableActive
     ? adminMilestoneTableLeads.slice(page * size, page * size + size)
-    : (data?.content ?? []);
+    : insightTablePoolActive
+      ? insightTablePoolLeads
+      : (data?.content ?? []);
   const scopedTeamForInsight =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const scopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
@@ -3324,12 +3681,29 @@ export default function LeadsDataSection({
 
   const isClientScopedRole = requiresClientScopedDataset;
   const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
-  const managerScopeRole =
-    clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
+  const workspaceInboxFiltered = useMemo(() => {
+    if (
+      !usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey) ||
+      isGlobalSearchActive
+    ) {
+      return contentFromApi;
+    }
+    return filterLeadsForClientWorkspaceInbox(
+      contentFromApi,
+      leadsWorkspace,
+      verificationStatusFromHeader,
+    );
+  }, [
+    contentFromApi,
+    isGlobalSearchActive,
+    leadsWorkspace,
+    scopeRoleKey,
+    verificationStatusFromHeader,
+  ]);
   const roleScopedContent =
-    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope && !managerScopeRole
-      ? contentFromApi.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-      : contentFromApi;
+    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
+      ? workspaceInboxFiltered.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
+      : workspaceInboxFiltered;
   const hasMilestoneFilter = Boolean(
     milestoneStage.trim() || milestoneStageCategory.trim() || milestoneSubStage.trim(),
   );
@@ -3347,12 +3721,30 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
-  const showLostPathLeadsInTable = shouldShowLostPathLeadsInTable({
-    searchActive: isGlobalSearchActive,
-    insightTableMode,
-    milestoneStageCategory,
-    milestoneSubStage,
-  });
+  const showLostPathLeadsInTable =
+    shouldShowLostPathLeadsInTable({
+      searchActive: isGlobalSearchActive,
+      insightTableMode,
+      milestoneStageCategory,
+      milestoneSubStage,
+      listFiltersActive: (() => {
+        const lt = leadType.trim().toLowerCase();
+        const leadTypeFilterOn =
+          Boolean(lt) && lt !== "all" && lt !== "verified";
+        return (
+          isToolbarDateFilterActive({ dateField, dateFrom, dateTo }) ||
+          Boolean((crmMonthWindowProp ?? "").trim()) ||
+          leadTypeFilterOn ||
+          Boolean(assignee.trim()) ||
+          Boolean(
+            milestoneStage.trim() ||
+              milestoneStageCategory.trim() ||
+              milestoneSubStage.trim(),
+          ) ||
+          Boolean(reinquiry.trim())
+        );
+      })(),
+    }) || isIvrCallFilterKey(leadType);
   const tableContent = showLostPathLeadsInTable
     ? content
     : content.filter((lead) => !isLostPathLead(lead));
@@ -3382,10 +3774,10 @@ export default function LeadsDataSection({
   }, [autoFollowUpPersistSignature, content, leadTypeFallbackForPersist]);
   const roleKeyForInsight = normalizeRole(authRoleProp ?? currentRole);
   const insightOpts = normalizeInsightCountOpts({
-    viewerRole: roleKeyForInsight,
+    viewerRole: roleKeyForInsight === "SALES_ADMIN" ? "SALES_MANAGER" : roleKeyForInsight,
     currentUserName: currentUserName ?? "",
     managerTeamNames: scopedTeamForInsight,
-    leadView: insightLeadView,
+    leadView: roleKeyForInsight === "SALES_ADMIN" ? "default" : insightLeadView,
     dateFrom,
     dateTo,
   });
@@ -3402,9 +3794,14 @@ export default function LeadsDataSection({
         : leadType.trim().toLowerCase()) as CrmLeadType,
     );
     const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
+    const quoteInsight =
+      insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent";
+    const lostPath = isLostPathLead(lead);
     return {
       ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
       callDelayed: isFirstCallDelayedLead(lead),
+      lostPathHighlight: lostPath,
+      lostQuoteHighlight: quoteInsight && lostPath,
     };
   });
   const norm = (v: string) => v.trim().toLowerCase();
@@ -3419,29 +3816,41 @@ export default function LeadsDataSection({
     insightTableMode !== null
       ? rows.slice(page * size, page * size + size)
       : rows;
+  const ivrCallFilterActive = isIvrCallFilterKey(leadType);
   const total =
     insightTableMode !== null
       ? rows.length
       : adminMilestoneTableActive
         ? adminMilestoneTableLeads.length
-        : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
+        : ivrCallFilterActive
+          ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
+          : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
   const totalPages =
     insightTableMode !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
       : adminMilestoneTableActive
         ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-        : visibleFilteredTotal !== null
-          ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-          : data?.totalPages && data.totalPages > 0
-            ? data.totalPages
-            : Math.max(1, Math.ceil(total / Math.max(1, size)));
+        : ivrCallFilterActive
+          ? Math.max(
+              1,
+              Number(data?.totalPages) > 0
+                ? Number(data?.totalPages)
+                : Math.ceil(total / Math.max(1, size)),
+            )
+          : visibleFilteredTotal !== null
+            ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+            : data?.totalPages && data.totalPages > 0
+              ? data.totalPages
+              : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
-  const rowsById = new Map(visibleRows.map((row) => [row.id, row]));
+  const rowsById = new Map(rows.map((row) => [row.id, row]));
   const selectedLeads = selectedRowIds
     .map((id) => rowsById.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
   const selectedCount = selectedLeads.length;
+  const insightSelectAllRowIds =
+    insightTableMode !== null ? rows.map((row) => row.id) : undefined;
   const isBulkBarVisible = selectedCount > 0;
   const selectedLeadsByType = useMemo(
     () => groupRowsByLeadType(selectedLeads),
@@ -3848,8 +4257,8 @@ export default function LeadsDataSection({
                 ? "Meeting Rescheduled — substage filter"
                 : insightTableMode === "meetingCancelled"
                   ? "Meeting Cancelled — substage filter"
-                  : insightTableMode === "quoteSent"
-                    ? "Quote Sent — meeting done, quotation shared"
+                  : insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent"
+                    ? "Quote Sent"
                     : insightTableMode === "quoteDue"
                       ? "Quote Due — Meeting Done but Quote Pending"
                       : insightTableMode === "lostDiscovery"
@@ -3875,7 +4284,7 @@ export default function LeadsDataSection({
   return (
     <>
       {insightBannerText ? (
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-2 px-6 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3">
+        <div className={`${LEADS_PAGE_CONTAINER_CLASS} flex flex-col gap-2 pt-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3`}>
           <p className="min-w-0 text-[13px] font-semibold text-[var(--crm-text-primary)]">
             {insightBannerText}
             {insightBannerFollowUpNote ? (
@@ -4044,8 +4453,39 @@ export default function LeadsDataSection({
         deleteAllDisabled={isDeleting || !canDeleteAll}
         onDeleteAllClick={() => setDeleteModalType("all")}
       />
+      {isGlobalSearchActive ? (
+        <div
+          className={`${LEADS_PAGE_CONTAINER_CLASS} pt-2`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-3 py-1.5">
+            <p className="min-w-0 truncate text-[12px] font-semibold text-[var(--crm-text-primary)]">
+              <span className="mr-2 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--crm-accent)]">
+                Search
+              </span>
+              Showing results for{" "}
+              <span className="rounded bg-white/80 px-1.5 py-0.5 font-bold text-[var(--crm-accent)]">
+                “{debouncedSearch.trim()}”
+              </span>
+              {loading ? (
+                <span className="ml-1.5 font-medium text-[var(--crm-text-secondary)]">
+                  · Searching…
+                </span>
+              ) : null}
+            </p>
+            <button
+              type="button"
+              onClick={() => onClearSearch?.()}
+              className="shrink-0 rounded-md border border-[var(--crm-accent-ring)] bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[var(--crm-accent)] hover:bg-[var(--crm-accent-soft)]"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      ) : null}
       {isBulkBarVisible ? (
-      <section className="mx-auto sticky top-2 z-20 mt-3 max-w-[1200px] px-6">
+      <section className={`${LEADS_PAGE_CONTAINER_CLASS} sticky top-2 z-20 mt-3`}>
         <div className="rounded-2xl border border-emerald-200 bg-[#dcefe8] px-4 py-2.5 shadow-[0_6px_18px_rgba(16,24,40,0.08)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
@@ -4100,7 +4540,7 @@ export default function LeadsDataSection({
       </section>
       ) : null}
       {error ? (
-        <div className="mx-auto mt-2 max-w-[1200px] px-6 text-[12px] text-[var(--crm-danger-text)]">
+        <div className={`${LEADS_PAGE_CONTAINER_CLASS} mt-2 text-[12px] text-[var(--crm-danger-text)]`}>
           {error}
           {process.env.NODE_ENV === "development" ? (
             <span className="mt-1 block text-[var(--crm-text-muted)]">
@@ -4123,9 +4563,11 @@ export default function LeadsDataSection({
         onPageSizeChange={(nextSize) => setSize(nextSize)}
         selectedRowIds={selectedRowIds}
         onSelectedRowIdsChange={setSelectedRowIds}
+        selectAllRowIds={insightSelectAllRowIds}
         onDeleteRow={canBulkDelete ? (row) => void requestDeleteLeadRow(row) : undefined}
         onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
         leadsWorkspace={leadsWorkspace}
+        searchQuery={debouncedSearch}
       />
       {rowAssignModalOpen && rowAssignLead ? (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(9,14,30,0.55)] backdrop-blur-[4px] px-3 py-4">
