@@ -570,19 +570,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-          {summary.remainingAmount > 0 ? (
-            <SummaryCard
-              label="Remaining (10%)"
-              value={formatQuoteAmount(summary.remainingAmount)}
-            />
-          ) : null}
-          {(summary.extraAmountReceived ?? 0) > 0 ? (
-            <SummaryCard
-              label="Extra (Finance)"
-              value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
-              highlight
-            />
-          ) : null}
+                  {summary.remainingAmount > 0 ? (
+                    <SummaryCard
+                      label="Remaining (10%)"
+                      value={formatQuoteAmount(summary.remainingAmount)}
+                    />
+                  ) : null}
+                  {(summary.extraAmountReceived ?? 0) > 0 ? (
+                    <SummaryCard
+                      label="Extra (Finance)"
+                      value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
+                      highlight
+                    />
+                  ) : null}
                   {deal && shouldShowFinanceReview(deal.financeReviewStatus ?? "NOT_READY", deal.remainingAmount) ? (
                     <SummaryCard
                       label="Finance review"

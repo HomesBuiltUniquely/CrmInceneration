@@ -198,6 +198,12 @@ export const adminPanelApi = {
     call<AnyJson>("create-pre-sales", { method: "POST", body: JSON.stringify(payload) }),
   createAdmin: (payload: AnyJson) =>
     call<AnyJson>("create-admin", { method: "POST", body: JSON.stringify(payload) }),
+  /** SUPER_ADMIN / ADMIN: create SALES_ADMIN via auth register-with-role. */
+  createSalesAdmin: (payload: AnyJson) =>
+    callAuth<AnyJson>("/api/auth/register-with-role", {
+      method: "POST",
+      body: JSON.stringify(withPreferredParentId({ ...payload, role: "SALES_ADMIN" })),
+    }),
   listManagers: () => list("managers"),
   /** All managers from GET /api/admin/managers (includes inactive). */
   listManagersAll: () => list("managers"),
