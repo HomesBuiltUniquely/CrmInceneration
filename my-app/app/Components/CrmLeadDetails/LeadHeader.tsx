@@ -174,6 +174,20 @@ export default function LeadHeader({
               Payment {lead.paymentReceived}
             </span>
           ) : null}
+          {lead.stageBlock?.renovationAssigned ||
+          lead.stageBlock?.milestoneSubStage?.trim().toUpperCase() === "RENOVATION" ? (
+            <span className="inline-flex h-6 max-w-full items-center truncate rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
+              Renovation
+              {lead.stageBlock?.renovationSalesManager
+                ? ` · Manager: ${lead.stageBlock.renovationSalesManager}`
+                : ""}
+              {` · Exec: ${
+                lead.stageBlock?.renovationSalesExecutive?.trim() ||
+                lead.assignee ||
+                "—"
+              }`}
+            </span>
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2.5">
           {showPresalesMilestone ? (

@@ -64,7 +64,9 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
   const limit = pickNumber(u, ["renovationLimit"]) ?? fallbackLimit;
   const current = pickNumber(u, ["renovationAssignedThisMonth"]) ?? 0;
   const remaining = pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
-  const pct = limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0;
+  const pct =
+    pickNumber(u, ["renovationUsagePercent"]) ??
+    (limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0);
   return {
     userId,
     name: String(u.fullName ?? u.name ?? u.username ?? `User ${userId}`),
@@ -102,7 +104,7 @@ export default function RenovationLeadLimitDashboard() {
   const loadLimits = () => {
     setLimitsLoading(true);
     void Promise.all([
-      leadLimitsApi.getRenovationLimits(),
+      leadLimitsApi.getRenovationLimits().catch(() => null),
       // We also need all users from PRESALES and SALES
       adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
       adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
@@ -116,7 +118,7 @@ export default function RenovationLeadLimitDashboard() {
         
         // Use the returned API array to map to `users`. If `apiResult` has the right shape, we merge.
         // Assuming API returns `{ users: [...], defaultLimit: 20 }` or similar structure.
-        const apiData = apiResult as Record<string, unknown>;
+        const apiData = (apiResult ?? {}) as Record<string, unknown>;
         const rawUsers = [
           ...(Array.isArray(apiData.salesManagers) ? apiData.salesManagers : []),
           ...(Array.isArray(apiData.salesExecutives) ? apiData.salesExecutives : []),

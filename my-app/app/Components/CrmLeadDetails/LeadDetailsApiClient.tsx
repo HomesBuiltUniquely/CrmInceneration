@@ -3403,10 +3403,27 @@ export default function LeadDetailsApiClient({
             console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
-        if (mapped.stageBlock?.renovationAssigned) {
-          const mgr = mapped.stageBlock.renovationSalesManager || "Manager";
-          const exec = mapped.stageBlock.renovationSalesExecutive || "Executive";
-          notifySuccess(`✅ Lead assigned to ${mgr} (Manager) & ${exec} (Executive)`);
+        if (
+          String(args.feedback ?? "").trim().toUpperCase() === "RENOVATION" ||
+          mapped.stageBlock?.renovationAssigned
+        ) {
+          const mgr = mapped.stageBlock?.renovationSalesManager?.trim() || "";
+          const exec =
+            mapped.stageBlock?.renovationSalesExecutive?.trim() ||
+            mapped.assignee?.trim() ||
+            "";
+          const execMissing = !exec || /^[-–—]+$/.test(exec);
+          if (execMissing && !mgr) {
+            notifyError(
+              "Renovation team monthly limit reached; contact admin.",
+            );
+          } else {
+            notifySuccess(
+              execMissing
+                ? `Assigned to renovation team${mgr ? ` (Manager: ${mgr})` : ""}`
+                : `Assigned to ${exec}`,
+            );
+          }
         } else {
           notifySuccess("Saved");
         }

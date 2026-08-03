@@ -293,6 +293,9 @@ export default function CompleteTaskModal({
   const [conflictBusy, setConflictBusy] = useState(false);
   /** The feedback value that triggered the conflict check — needed when user resolves conflict. */
   const pendingScheduleFeedbackRef = useRef<string>("");
+  /** Pending Renovation feedback label while confirm popup is open (not committed yet). */
+  const pendingRenovationLabelRef = useRef<string>("");
+  const [renovationConfirmOpen, setRenovationConfirmOpen] = useState(false);
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
@@ -377,6 +380,8 @@ export default function CompleteTaskModal({
     setSelectedCancelIds([]);
     setApiError("");
     setGatePopupMessage("");
+    setRenovationConfirmOpen(false);
+    pendingRenovationLabelRef.current = "";
     setLostReason(lead.lostReason?.trim() ?? "");
     setVerifyPincode(lead.pincode?.trim() ?? "");
     setVerifySalesExecutiveId("");
@@ -1015,13 +1020,44 @@ export default function CompleteTaskModal({
     if (fb) setFeedback(fb);
   };
 
-  const handleFeedbackSelect = async (value: string) => {
+  const isRenovationFeedbackOption = (option: FeedbackOption | undefined): boolean =>
+    Boolean(option && option.subStageName.trim().toUpperCase() === "RENOVATION");
+
+  const applyFeedbackSelection = async (value: string) => {
     setFeedback(value);
     if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
       await openScheduleMeetingAfterConflictCheck(value);
     } else {
       setHubMeetingOpen(false);
     }
+  };
+
+  const handleFeedbackSelect = async (value: string) => {
+    const option = feedbackOptions.find((o) => o.label === value);
+    // Renovation: confirm popup before committing selection (no PUT until Save).
+    if (
+      !presalesMode &&
+      isRenovationFeedbackOption(option) &&
+      !lead.stageBlock?.renovationAssigned
+    ) {
+      pendingRenovationLabelRef.current = value;
+      setRenovationConfirmOpen(true);
+      return;
+    }
+    await applyFeedbackSelection(value);
+  };
+
+  const handleRenovationConfirmCancel = () => {
+    pendingRenovationLabelRef.current = "";
+    setRenovationConfirmOpen(false);
+  };
+
+  const handleRenovationConfirmAccept = () => {
+    const label = pendingRenovationLabelRef.current.trim();
+    pendingRenovationLabelRef.current = "";
+    setRenovationConfirmOpen(false);
+    if (!label) return;
+    void applyFeedbackSelection(label);
   };
 
   const handleHubMeetingConfirm = async (payload: ScheduleHubMeetingConfirmPayload) => {
@@ -1291,13 +1327,18 @@ export default function CompleteTaskModal({
     }
 
     if (onApiComplete) {
+      const selected = feedbackOptions.find((o) => o.label === feedback);
+      // Hub renovation assign requires exact milestone strings.
+      const substageToSave = selected?.subStageName.trim() || feedback.trim();
+      const stageToSave = (selected?.stage ?? status).trim();
+      const catToSave = (selected?.stageCategory ?? path).trim();
       setApiBusy(true);
       setApiError("");
       try {
         await onApiComplete({
-          feedback,
-          milestoneStage: status,
-          milestoneStageCategory: path,
+          feedback: substageToSave,
+          milestoneStage: stageToSave,
+          milestoneStageCategory: catToSave,
           note,
           nextCallDateLocal: scheduleMode || noFollowUpRequired ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
@@ -1542,11 +1583,24 @@ export default function CompleteTaskModal({
                         value={option.label}
                         disabled={isAlreadyAssigned}
                       >
-                        {option.label} {isAlreadyAssigned ? "(Already Assigned)" : ""}
+                        {option.label}{isAlreadyAssigned ? " (locked)" : ""}
                       </option>
                     );
                   })}
                 </Select>
+
+                {lead.stageBlock?.renovationAssigned ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
+                    Renovation already assigned
+                    {lead.stageBlock.renovationSalesManager
+                      ? ` · Manager: ${lead.stageBlock.renovationSalesManager}`
+                      : ""}
+                    {lead.stageBlock.renovationSalesExecutive || lead.assignee
+                      ? ` · Exec: ${lead.stageBlock.renovationSalesExecutive || lead.assignee}`
+                      : ""}
+                    . Re-selecting Renovation is disabled.
+                  </p>
+                ) : null}
 
                 {feedbackLoading && (
                   <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
@@ -2053,6 +2107,53 @@ export default function CompleteTaskModal({
         onClose={() => setConflictDialogOpen(false)}
         busy={conflictBusy}
       />
+
+      {renovationConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="renovation-confirm-title"
+          onClick={handleRenovationConfirmCancel}
+        >
+          <div
+            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="renovation-confirm-title"
+              className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
+            >
+              Confirm Renovation lead?
+            </h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-[var(--crm-text-secondary)]">
+              This lead will be marked as Renovation and reassigned to the renovation sales team
+              using round-robin. Continue?
+            </p>
+            <p className="mt-2 text-[12px] text-[var(--crm-text-muted)]">
+              This cannot be undone from Complete Task. Saving the note will apply the assignment.
+            </p>
+            <div className="mt-5 flex flex-col-reverse justify-end gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleRenovationConfirmCancel}
+                className="h-[40px] rounded-[12px] border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 text-[13px] font-medium text-[var(--crm-text-primary)]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleRenovationConfirmAccept}
+                className="h-[40px] rounded-[12px] px-5 text-[13px] font-medium"
+              >
+                Confirm & assign
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
