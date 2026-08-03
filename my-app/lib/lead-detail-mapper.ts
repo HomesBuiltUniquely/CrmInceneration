@@ -508,6 +508,9 @@ export function extractStage(detail: Record<string, unknown>) {
     presalesMilestoneSubStage: ps.subStage || null,
     legacyStage: (st?.stage as string | null | undefined) ?? null,
     legacySubstage: substage ?? null,
+    renovationAssigned: (st?.renovationAssigned as boolean | undefined) ?? false,
+    renovationSalesManager: (st?.renovationSalesManager as string | undefined) ?? null,
+    renovationSalesExecutive: (st?.renovationSalesExecutive as string | undefined) ?? null,
   };
 }
 
@@ -649,6 +652,9 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       presalesMilestoneSubStage: st.presalesMilestoneSubStage,
       stage: st.legacyStage ?? "Initial Stage",
       substage: { substage: st.legacySubstage ?? null },
+      renovationAssigned: st.renovationAssigned,
+      renovationSalesManager: st.renovationSalesManager,
+      renovationSalesExecutive: st.renovationSalesExecutive,
     },
     branch: pickStr(detail, "experienceCenter", "experience_center", "branch", "branchName", "branch_name", "office", "officeName", "territory", "region") || undefined,
     previousAssignee: pickStr(detail, "previousAssignee", "previous_assignee") || undefined,

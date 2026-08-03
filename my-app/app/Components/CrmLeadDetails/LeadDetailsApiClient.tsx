@@ -3403,7 +3403,13 @@ export default function LeadDetailsApiClient({
             console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
-        notifySuccess("Saved");
+        if (mapped.stageBlock?.renovationAssigned) {
+          const mgr = mapped.stageBlock.renovationSalesManager || "Manager";
+          const exec = mapped.stageBlock.renovationSalesExecutive || "Executive";
+          notifySuccess(`✅ Lead assigned to ${mgr} (Manager) & ${exec} (Executive)`);
+        } else {
+          notifySuccess("Saved");
+        }
         maybeOpenSalesClosureAfterWon([
           args.feedback,
           args.milestoneStage,

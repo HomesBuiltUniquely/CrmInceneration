@@ -38,6 +38,9 @@ export type LeadStageBlock = {
   presalesMilestoneSubStage?: string | null;
   stage?: string | null;
   substage?: { substage?: string | null } | null;
+  renovationAssigned?: boolean;
+  renovationSalesManager?: string | null;
+  renovationSalesExecutive?: string | null;
 };
 
 export interface Lead {

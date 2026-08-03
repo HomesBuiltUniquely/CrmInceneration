@@ -642,6 +642,19 @@ export default function CompleteTaskModal({
         }
 
         if (!cancelled) {
+          if (!presalesMode && !mappings.some((m) => m.subStageName.trim().toUpperCase() === "RENOVATION")) {
+            let insertIdx = mappings.length;
+            for (let i = 0; i < mappings.length; i++) {
+              if (mappings[i].stage.trim().toLowerCase() === "discovery") {
+                insertIdx = i + 1;
+              }
+            }
+            mappings.splice(insertIdx, 0, {
+              stage: "Discovery",
+              stageCategory: "Discovery Won",
+              subStageName: "Renovation",
+            });
+          }
           setFeedbackMappings(mappings);
           if (presalesMode) {
             const presetSub =
@@ -1520,14 +1533,19 @@ export default function CompleteTaskModal({
                   ].join(" ")}
                 >
                   <option value="">{feedbackPlaceholder}</option>
-                  {feedbackOptions.map((option) => (
-                    <option
-                      key={`${option.stage}-${option.stageCategory}-${option.label}`}
-                      value={option.label}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
+                  {feedbackOptions.map((option) => {
+                    const isRenovation = option.subStageName.trim().toUpperCase() === "RENOVATION";
+                    const isAlreadyAssigned = isRenovation && !!lead.stageBlock?.renovationAssigned;
+                    return (
+                      <option
+                        key={`${option.stage}-${option.stageCategory}-${option.label}`}
+                        value={option.label}
+                        disabled={isAlreadyAssigned}
+                      >
+                        {option.label} {isAlreadyAssigned ? "(Already Assigned)" : ""}
+                      </option>
+                    );
+                  })}
                 </Select>
 
                 {feedbackLoading && (

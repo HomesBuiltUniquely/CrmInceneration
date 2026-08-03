@@ -20,6 +20,7 @@ import {
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import SalesTargetSection from "./SalesTargetSection";
+import RenovationLeadLimitDashboard from "./RenovationLeadLimitDashboard";
 import {
   isManagerStatusToggleRole,
   isPresalesExecutiveRole,
@@ -2717,6 +2718,7 @@ function LeadLimitSection() {
     useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
   const [limitsLoading, setLimitsLoading] = useState(false);
+  const [mainTab, setMainTab] = useState<"standard" | "renovation">("standard");
 
   const loadLimits = () => {
     setLimitsLoading(true);
@@ -2790,11 +2792,49 @@ function LeadLimitSection() {
         }}
       >
         <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
-        <Btn color={C.accent} style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
-          ↻ Refresh
-        </Btn>
+        
+        <div style={{ display: "flex", background: C.surface, borderRadius: 10, padding: 4 }}>
+          <button
+            onClick={() => setMainTab("standard")}
+            style={{
+              padding: "8px 24px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
+              background: mainTab === "standard" ? C.white : "transparent",
+              color: mainTab === "standard" ? C.accent : C.muted,
+              boxShadow: mainTab === "standard" ? "0 2px 4px rgba(0,0,0,0.05)" : "none",
+              transition: "all 0.2s ease"
+            }}
+          >
+            Standard
+          </button>
+          <button
+            onClick={() => setMainTab("renovation")}
+            style={{
+              padding: "8px 24px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
+              background: mainTab === "renovation" ? C.white : "transparent",
+              color: mainTab === "renovation" ? C.accent : C.muted,
+              boxShadow: mainTab === "renovation" ? "0 2px 4px rgba(0,0,0,0.05)" : "none",
+              transition: "all 0.2s ease"
+            }}
+          >
+            Renovation
+          </button>
+        </div>
       </div>
 
+      {mainTab === "renovation" ? (
+        <RenovationLeadLimitDashboard />
+      ) : (
+        <>
       {/* Default limit banner */}
       <div
         style={{
@@ -2877,26 +2917,36 @@ function LeadLimitSection() {
       <div
         style={{
           display: "flex",
-          gap: 6,
-          background: C.surface,
-          borderRadius: 10,
-          padding: 5,
-          width: "fit-content",
+          justifyContent: "space-between",
+          alignItems: "center",
           marginBottom: 20,
         }}
       >
-        <Tab
-          label="Per User Limits"
-          active={limitTab === "users"}
-          onClick={() => setLimitTab("users")}
-        />
-        <Tab
-          label="Set by Role"
-          active={limitTab === "role"}
-          onClick={() => setLimitTab("role")}
-        />
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            background: C.surface,
+            borderRadius: 10,
+            padding: 5,
+            width: "fit-content",
+          }}
+        >
+          <Tab
+            label="Per User Limits"
+            active={limitTab === "users"}
+            onClick={() => setLimitTab("users")}
+          />
+          <Tab
+            label="Set by Role"
+            active={limitTab === "role"}
+            onClick={() => setLimitTab("role")}
+          />
+        </div>
+        <Btn color={C.accent} style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
+          ↻ Refresh
+        </Btn>
       </div>
-
       {limitTab === "users" && (
         <>
           {/* Selection section */}
@@ -3625,6 +3675,8 @@ function LeadLimitSection() {
           </div>
         </div>
       </Modal>
+        </>
+      )}
         </>
       )}
     </Card>

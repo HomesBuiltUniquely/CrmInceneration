@@ -34,4 +34,8 @@ export const leadLimitsApi = {
     const raw = await call<unknown>("users");
     return normalizeToArray<AnyJson>(raw);
   },
+  getRenovationLimits: () => call<AnyJson>("renovation"),
+  setRenovationDefault: (limit: number) => call<AnyJson>("renovation/default", { method: "POST", body: JSON.stringify({ limit }) }),
+  setUserRenovationLimit: (userId: number | string, limit: number) =>
+    call<AnyJson>(`renovation/user/${userId}`, { method: "POST", body: JSON.stringify({ limit }) }),
 };
