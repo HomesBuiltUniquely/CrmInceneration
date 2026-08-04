@@ -161,6 +161,90 @@ body {
   }
 }
 
+/* Insights funnel — modal & substage motion */
+@keyframes insights-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes insights-backdrop-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes insights-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.94);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes insights-modal-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+}
+
+@keyframes insights-substage-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.insights-backdrop-in {
+  animation: insights-backdrop-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.insights-backdrop-out {
+  animation: insights-backdrop-out 0.22s ease-in both;
+}
+
+.insights-modal-in {
+  animation: insights-modal-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.insights-modal-out {
+  animation: insights-modal-out 0.22s ease-in both;
+}
+
+.insights-substage-in {
+  animation: insights-substage-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.insights-substage-top-lift {
+  transform: translateY(-3px);
+  transition:
+    transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* Configuration Scope — full-page print / Save as PDF */
 @media print {
   @page {

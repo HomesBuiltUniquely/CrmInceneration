@@ -27,6 +27,10 @@ import {
 } from "@/lib/insights-quote-sent-metrics";
 import { buildLeadBudgetInvestmentMapSync, enrichInvestmentMapWithQuotes, stableLeadKey } from "@/lib/insights-lead-investment";
 import { computeFunnelStageInvestmentTotals, computeFreshLeadInvestmentTotal } from "@/lib/insights-sales-funnel-investment";
+import {
+  buildInsightsFunnelStagePathData,
+  type FunnelStagePathDataMap,
+} from "@/lib/insights-funnel-stage-paths";
 import { fetchInsightsRevenueForecastTarget } from "@/lib/insights-revenue-forecast-target";
 import { salesTargetsApi } from "@/lib/sales-targets-api";
 import { currentSalesTargetMonth } from "@/lib/sales-targets";
@@ -297,6 +301,7 @@ export default function InsightsClient1() {
 
   const [funnelStageValues, setFunnelStageValues] = useState<Record<string, number> | null>(null);
   const [funnelMetricsLoading, setFunnelMetricsLoading] = useState(false);
+  const [stagePathData, setStagePathData] = useState<FunnelStagePathDataMap>({});
 
   const salesFunnelStageCount = dashboard.salesFunnel.length;
 
@@ -333,21 +338,39 @@ export default function InsightsClient1() {
       try {
         const range = resolveBookingDateRange(dateFilter);
         const assigneeAliasSet = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
-        const data = await fetchAdminLeadsHeatmapData(
-          {
-            workspace: "sales",
-            dateFrom: range.submittedFrom,
-            dateTo: range.submittedTo,
-            assigneeAliasSet: assigneeAliasSet.length > 0 ? assigneeAliasSet : undefined,
-          },
-          getCrmAuthHeaders(),
-        );
+        const subStatusQs = new URLSearchParams({ resource: "sub-status", role: "sales" });
+        const [data, subMapRes] = await Promise.all([
+          fetchAdminLeadsHeatmapData(
+            {
+              workspace: "sales",
+              dateFrom: range.submittedFrom,
+              dateTo: range.submittedTo,
+              assigneeAliasSet: assigneeAliasSet.length > 0 ? assigneeAliasSet : undefined,
+            },
+            getCrmAuthHeaders(),
+          ),
+          fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
+            cache: "no-store",
+            headers: getCrmAuthHeaders(),
+          }).catch(() => null),
+        ]);
         if (cancelled) return;
 
         const scopedLeads = filterInsightsQuoteSentScopeLeads(data.primaryRows, {
           branchId,
           filterOptions,
         });
+
+        let subMappings: Array<{ stage: string; stageCategory: string; subStageName: string }> = [];
+        if (subMapRes?.ok) {
+          const mapJson = (await subMapRes.json()) as {
+            mappings?: Array<{ stage: string; stageCategory: string; subStageName: string }>;
+          };
+          subMappings = mapJson.mappings ?? [];
+        }
+        if (!cancelled) {
+          setStagePathData(buildInsightsFunnelStagePathData(scopedLeads, subMappings));
+        }
         const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
         const salesFunnel = dashboard.salesFunnel;
 
@@ -368,6 +391,7 @@ export default function InsightsClient1() {
           setQuoteSentWonMetrics({ count: 0, totalValue: 0, loading: false });
           setFunnelStageValues(null);
           setFunnelMetricsLoading(false);
+          setStagePathData({});
         }
       }
     })();
@@ -549,6 +573,7 @@ export default function InsightsClient1() {
         quotationMetricsLoading={quoteSentWonMetrics.loading}
         funnelStageValues={funnelStageValues}
         funnelMetricsLoading={funnelMetricsLoading}
+        stagePathData={stagePathData}
       />
       <InsightsSect4
         dropReasons={dashboard.dropReasons}
