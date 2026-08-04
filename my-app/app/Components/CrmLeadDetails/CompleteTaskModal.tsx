@@ -13,6 +13,7 @@ import {
 } from "@/lib/milestone-substage-map";
 import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-substages";
 import {
+  isRenovationFeedbackLocked,
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
   requiresLeadPropertyGateForCompleteTask,
@@ -1032,13 +1033,20 @@ export default function CompleteTaskModal({
     }
   };
 
+  const renovationFeedbackLocked = isRenovationFeedbackLocked(
+    lead.stageBlock?.renovationAssigned,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.milestoneStageCategory,
+  );
+
   const handleFeedbackSelect = async (value: string) => {
     const option = feedbackOptions.find((o) => o.label === value);
     // Renovation: confirm popup before committing selection (no PUT until Save).
     if (
       !presalesMode &&
       isRenovationFeedbackOption(option) &&
-      !lead.stageBlock?.renovationAssigned
+      !renovationFeedbackLocked
     ) {
       pendingRenovationLabelRef.current = value;
       setRenovationConfirmOpen(true);
@@ -1576,7 +1584,7 @@ export default function CompleteTaskModal({
                   <option value="">{feedbackPlaceholder}</option>
                   {feedbackOptions.map((option) => {
                     const isRenovation = option.subStageName.trim().toUpperCase() === "RENOVATION";
-                    const isAlreadyAssigned = isRenovation && !!lead.stageBlock?.renovationAssigned;
+                    const isAlreadyAssigned = isRenovation && renovationFeedbackLocked;
                     return (
                       <option
                         key={`${option.stage}-${option.stageCategory}-${option.label}`}
@@ -1589,7 +1597,7 @@ export default function CompleteTaskModal({
                   })}
                 </Select>
 
-                {lead.stageBlock?.renovationAssigned ? (
+                {renovationFeedbackLocked ? (
                   <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
                     Renovation already assigned
                     {lead.stageBlock.renovationSalesManager
