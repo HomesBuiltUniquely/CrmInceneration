@@ -44,7 +44,7 @@ function meetingQuoteLeadTypeTiles(
     ["Meeting Rescheduled", counts.meetingRescheduled ?? 0],
     ["Meeting Cancelled", counts.meetingCancelled ?? 0],
     ["Quote Sent", counts.quoteSent ?? 0],
-    ["Quote Due", counts.quoteDue ?? 0],
+    ["Meeting Successful", counts.meetingSuccessful ?? 0],
   ];
 }
 
@@ -62,7 +62,7 @@ function insightKeyForLeadTypeLabel(
   if (label === "Meeting Rescheduled") return "meetingRescheduled";
   if (label === "Meeting Cancelled") return "meetingCancelled";
   if (label === "Quote Sent") return "quoteSent";
-  if (label === "Quote Due") return "quoteDue";
+  if (label === "Meeting Successful") return "meetingSuccessful";
   if (label === "Discovery Lost") return "lostDiscovery";
   if (label === "Connection Lost") return "lostConnection";
   if (label === "Experience & Design Lost") return "lostExperienceDesign";
