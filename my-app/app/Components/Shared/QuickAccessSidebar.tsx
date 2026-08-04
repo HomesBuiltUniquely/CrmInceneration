@@ -19,7 +19,9 @@ function pathnameMatchesSidebarHref(pathname: string, href: string): boolean {
   const base = href.trim();
   if (!base) return false;
   if (base === "/") return path === "/" || path === "";
-  return path === base || path.startsWith(`${base}/`);
+  const normPath = path.toLowerCase();
+  const normBase = base.toLowerCase();
+  return normPath === normBase || normPath.startsWith(`${normBase}/`);
 }
 
 function sidebarHrefMatchLength(href: string): number {
@@ -574,6 +576,9 @@ export default function QuickAccessSidebar({
           if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
           if (item.id === "crm-booking-token") {
             return canAccessBookingTokenDashboard(currentRole || profileRole);
+          }
+          if (item.id === "crm-insights") {
+            return isSuperAdmin;
           }
           return true;
         }),

@@ -40,6 +40,11 @@ import InsightSect3 from "./InsightsSect3";
 import InsightsSect4 from "./InsightsSect4";
 import InsightsSect5 from "./InsightsSect5";
 import InsightsSect6 from "./InsightsSect6";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import { dashboardSidebarSections } from "../Shared/sidebar-data";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import InsightsDateFilterPopover from "./InsightsDateFilterPopover";
 import InsightsDropdownFilter, { type DropdownOption } from "./InsightsDropdownFilter";
 
@@ -73,6 +78,23 @@ function salesPeopleSelectValue(sel: SalesPeopleSelection): string {
 }
 
 export default function InsightsClient1() {
+  const router = useRouter();
+  const [viewerRole, setViewerRole] = useState<string>("");
+  const [roleLoaded, setRoleLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+      setViewerRole(normalizeRole(stored));
+    } catch {
+      setViewerRole("");
+    } finally {
+      setRoleLoaded(true);
+    }
+  }, []);
+
+  const isSuperAdmin = viewerRole === "SUPER_ADMIN";
+
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_BOOKING_DATE_FILTER,
   );
@@ -441,161 +463,202 @@ export default function InsightsClient1() {
     [dashboard.revenueForecast, forecastTargetInr],
   );
 
-  return (
-    <>
-      <main className="w-full bg-[#f4f7fb] px-4 py-6 sm:px-6 lg:px-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="shrink-0">
-            <h1 className="text-3xl font-extrabold tracking-tight text-[#1f2937] sm:text-4xl">
-              CRM Insights
-            </h1>
-            <p className="mt-1.5 max-w-md text-xs font-medium text-gray-500 sm:text-sm">
-              Precision analytics for elite interior design operations.
-            </p>
+  if (roleLoaded && !isSuperAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-center">
+        <div className="max-w-md rounded-2xl border border-rose-200 bg-white p-8 shadow-sm">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 mb-4">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
           </div>
-
-          <div className="w-full space-y-3 lg:w-auto">
-            {/* Custom Filter Controls Bar */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <InsightsDateFilterPopover
-                value={dateFilter}
-                onChange={setDateFilter}
-              />
-
-              <InsightsDropdownFilter
-                options={salespeopleOptions}
-                value={salesSelect}
-                onChange={(val) => setSalesPeople(parseSalesPeopleValue(val))}
-                placeholder="All Salespeople"
-                icon="users"
-                ariaLabel="Filter by Salespeople"
-              />
-
-              <InsightsDropdownFilter
-                options={branchOptions}
-                value={branchId}
-                onChange={setBranchId}
-                placeholder="Location: All"
-                icon="location"
-                ariaLabel="Filter by Branch location"
-              />
-
-              {isAnyFilterActive ? (
-                <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="inline-flex h-10 items-center justify-center rounded-xl border border-rose-200 bg-rose-50/80 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors shadow-2xs"
-                  title="Clear all active filters"
-                >
-                  <svg
-                    className="mr-1 h-3.5 w-3.5 text-rose-600"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                  Reset Filters
-                </button>
-              ) : null}
-
-              <button
-                type="button"
-                disabled
-                title="Export PDF feature coming soon"
-                className="inline-flex h-10 cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-gray-200 bg-gray-100 px-4 text-xs font-semibold text-gray-400 opacity-80"
-              >
-                <svg
-                  className="h-4 w-4 text-gray-400"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
-                </svg>
-                Export PDF
-              </button>
-            </div>
-
-            {/* Error and Loading indicators */}
-            {error ? (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-medium text-rose-700 shadow-2xs">
-                {error}
-              </div>
-            ) : null}
-            {loading ? (
-              <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600">
-                <svg
-                  className="h-4 w-4 animate-spin text-indigo-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
-                </svg>
-                <span>Updating insights data...</span>
-              </div>
-            ) : null}
-          </div>
+          <h2 className="text-lg font-bold text-gray-900">Access Restricted</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            CRM Insights is currently available to Super Admin users only.
+          </p>
+          <button
+            type="button"
+            onClick={() => router.push("/")}
+            className="mt-6 inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500"
+          >
+            Return to Dashboard
+          </button>
         </div>
-      </main>
+      </div>
+    );
+  }
 
-      <InsightSect2 kpis={dashboard.kpis} tokenMetrics={tokenMetrics} />
-      <InsightSect3
-        salesFunnel={dashboard.salesFunnel}
-        lostFunnel={dashboard.lostFunnel}
-        revenueDistribution={dashboard.revenueDistribution}
-        totalLeadsCount={dashboard.kpis.totalLeads.value}
-        tokenMetrics={tokenMetrics}
-        quotationCount={quoteSentWonMetrics.count}
-        quotationValue={quoteSentWonMetrics.totalValue}
-        quotationMetricsLoading={quoteSentWonMetrics.loading}
-        funnelStageValues={funnelStageValues}
-        funnelMetricsLoading={funnelMetricsLoading}
-        stagePathData={stagePathData}
-      />
-      <InsightsSect4
-        dropReasons={dashboard.dropReasons}
-        stageVelocity={dashboard.stageVelocity}
-      />
-      <InsightsSect5
-        team={dashboard.teamPerformance.map((m): InsightsTeamMember => ({
-          ...m,
-          targetIncentive:
-            typeof m.userId === "number" && incentiveTargets[m.userId] != null
-              ? incentiveTargets[m.userId]
-              : undefined,
-          achievedIncentive: m.closedValue,
-        }))}
-        teamPeriod={teamPeriod}
-        onTeamPeriodChange={setTeamPeriod}
-      />
-      <InsightsSect6
-        leadsOverTime={dashboard.leadsOverTime}
-        conversionTrend={dashboard.conversionTrend}
-        revenueForecast={revenueForecastForUi}
-      />
-    </>
+  return (
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div>
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName="Super Admin"
+            profileRole={viewerRole || "SUPER_ADMIN"}
+            profileInitials="SA"
+          />
+        </div>
+
+        <div className="bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
+          <main className="w-full bg-[#f4f7fb] px-4 py-6 sm:px-6 lg:px-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              <div className="shrink-0">
+                <h1 className="text-3xl font-extrabold tracking-tight text-[#1f2937] sm:text-4xl">
+                  CRM Insights
+                </h1>
+                <p className="mt-1.5 max-w-md text-xs font-medium text-gray-500 sm:text-sm">
+                  Precision analytics for elite interior design operations.
+                </p>
+              </div>
+
+              <div className="w-full space-y-3 lg:w-auto">
+                {/* Custom Filter Controls Bar */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <InsightsDateFilterPopover
+                    value={dateFilter}
+                    onChange={setDateFilter}
+                  />
+
+                  <InsightsDropdownFilter
+                    options={salespeopleOptions}
+                    value={salesSelect}
+                    onChange={(val) => setSalesPeople(parseSalesPeopleValue(val))}
+                    placeholder="All Salespeople"
+                    icon="users"
+                    ariaLabel="Filter by Salespeople"
+                  />
+
+                  <InsightsDropdownFilter
+                    options={branchOptions}
+                    value={branchId}
+                    onChange={setBranchId}
+                    placeholder="Location: All"
+                    icon="location"
+                    ariaLabel="Filter by Branch location"
+                  />
+
+                  {isAnyFilterActive ? (
+                    <button
+                      type="button"
+                      onClick={clearAllFilters}
+                      className="inline-flex h-10 items-center justify-center rounded-xl border border-rose-200 bg-rose-50/80 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition-colors shadow-2xs"
+                      title="Clear all active filters"
+                    >
+                      <svg
+                        className="mr-1 h-3.5 w-3.5 text-rose-600"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M6 18L18 6M6 6l12 12"
+                        />
+                      </svg>
+                      Reset Filters
+                    </button>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    disabled
+                    title="Export PDF feature coming soon"
+                    className="inline-flex h-10 cursor-not-allowed items-center justify-center gap-2 rounded-xl border border-gray-200 bg-gray-100 px-4 text-xs font-semibold text-gray-400 opacity-80"
+                  >
+                    <svg
+                      className="h-4 w-4 text-gray-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                    Export PDF
+                  </button>
+                </div>
+
+                {/* Error and Loading indicators */}
+                {error ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-medium text-rose-700 shadow-2xs">
+                    {error}
+                  </div>
+                ) : null}
+                {loading ? (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-indigo-600">
+                    <svg
+                      className="h-4 w-4 animate-spin text-indigo-600"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                    <span>Updating insights data...</span>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </main>
+
+          <InsightSect2 kpis={dashboard.kpis} tokenMetrics={tokenMetrics} />
+          <InsightSect3
+            salesFunnel={dashboard.salesFunnel}
+            lostFunnel={dashboard.lostFunnel}
+            revenueDistribution={dashboard.revenueDistribution}
+            totalLeadsCount={dashboard.kpis.totalLeads.value}
+            tokenMetrics={tokenMetrics}
+            quotationCount={quoteSentWonMetrics.count}
+            quotationValue={quoteSentWonMetrics.totalValue}
+            quotationMetricsLoading={quoteSentWonMetrics.loading}
+            funnelStageValues={funnelStageValues}
+            funnelMetricsLoading={funnelMetricsLoading}
+            stagePathData={stagePathData}
+          />
+          <InsightsSect4
+            dropReasons={dashboard.dropReasons}
+            stageVelocity={dashboard.stageVelocity}
+          />
+          <InsightsSect5
+            team={dashboard.teamPerformance.map((m): InsightsTeamMember => ({
+              ...m,
+              targetIncentive:
+                typeof m.userId === "number" && incentiveTargets[m.userId] != null
+                  ? incentiveTargets[m.userId]
+                  : undefined,
+              achievedIncentive: m.closedValue,
+            }))}
+            teamPeriod={teamPeriod}
+            onTeamPeriodChange={setTeamPeriod}
+          />
+          <InsightsSect6
+            leadsOverTime={dashboard.leadsOverTime}
+            conversionTrend={dashboard.conversionTrend}
+            revenueForecast={revenueForecastForUi}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
