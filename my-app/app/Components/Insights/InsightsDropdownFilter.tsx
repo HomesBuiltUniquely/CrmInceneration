@@ -14,8 +14,13 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
-  icon?: "users" | "location";
+  icon?: "users" | "location" | "none";
   ariaLabel?: string;
+  disabled?: boolean;
+  /** Stretch trigger to container width (filter grids). */
+  fullWidth?: boolean;
+  /** Treat these values as inactive/default (no indigo highlight). Defaults: empty + "all". */
+  defaultValues?: string[];
 };
 
 export default function InsightsDropdownFilter({
@@ -25,6 +30,9 @@ export default function InsightsDropdownFilter({
   placeholder,
   icon = "users",
   ariaLabel,
+  disabled = false,
+  fullWidth = false,
+  defaultValues,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -33,6 +41,10 @@ export default function InsightsDropdownFilter({
   useEffect(() => {
     if (!open) setSearch("");
   }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -69,23 +81,35 @@ export default function InsightsDropdownFilter({
     new Set(filteredOptions.map((opt) => opt.category).filter(Boolean)),
   ) as string[];
 
-  const isDefaultSelected = !value || value === "all";
+  const defaults = defaultValues ?? ["", "all"];
+  const isDefaultSelected = defaults.includes(value);
 
   return (
-    <div ref={rootRef} className="relative inline-block text-left">
+    <div
+      ref={rootRef}
+      className={`relative text-left ${fullWidth ? "block w-full" : "inline-block"}`}
+    >
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+        }}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel || placeholder}
-        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 ${
-          !isDefaultSelected
-            ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
-            : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-55 ${
+          fullWidth ? "w-full" : ""
+        } ${
+          disabled
+            ? "border-gray-200 bg-gray-50 text-gray-500"
+            : !isDefaultSelected
+              ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
+              : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
         }`}
       >
-        <span className="flex items-center gap-2 truncate">
+        <span className="flex min-w-0 items-center gap-2 truncate">
           {icon === "users" ? (
             <svg
               className={`h-4 w-4 shrink-0 transition-colors ${
@@ -102,7 +126,7 @@ export default function InsightsDropdownFilter({
                 d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
               />
             </svg>
-          ) : (
+          ) : icon === "location" ? (
             <svg
               className={`h-4 w-4 shrink-0 transition-colors ${
                 !isDefaultSelected ? "text-indigo-600" : "text-gray-400 group-hover:text-gray-600"
@@ -123,8 +147,8 @@ export default function InsightsDropdownFilter({
                 d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
               />
             </svg>
-          )}
-          <span className="truncate max-w-[140px] sm:max-w-[190px]">
+          ) : null}
+          <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[140px] sm:max-w-[190px]"}`}>
             {selectedOption ? selectedOption.label : placeholder}
           </span>
         </span>
@@ -142,7 +166,7 @@ export default function InsightsDropdownFilter({
         </svg>
       </button>
 
-      {open ? (
+      {open && !disabled ? (
         <div
           role="listbox"
           className="absolute left-0 z-50 mt-2 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 animate-in fade-in-50 zoom-in-95 duration-150"

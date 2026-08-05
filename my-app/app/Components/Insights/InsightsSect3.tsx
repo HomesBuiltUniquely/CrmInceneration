@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatInsightsCount,
   formatInsightsInrCompact,
@@ -9,7 +9,7 @@ import {
   type InsightsFunnelStage,
 } from "@/lib/crm-insights-api";
 import type { TokenMetricsData } from "./InsightSect2";
-import { recalcFunnelConversionPercents } from "@/lib/insights-sales-funnel-investment";
+import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
 import {
   resolveFunnelCanonicalKey,
   type FunnelStagePathDataMap,
@@ -27,25 +27,42 @@ type Props = {
   funnelStageValues?: Record<string, number> | null;
   funnelMetricsLoading?: boolean;
   stagePathData?: FunnelStagePathDataMap;
+  stagePathLoading?: boolean;
+  /** When true, stage bars are current-in-milestone inventory (not pool total / cumulative). */
+  useCurrentStageInventory?: boolean;
 };
 
-const WON_FUNNEL_STYLES = [
-  { bar: "bg-[#111827] text-white", indent: "", width: "w-[92%]" },
-  { bar: "bg-[#1E293B] text-white", indent: "ml-1 sm:ml-3 lg:ml-5", width: "w-[84%]" },
-  { bar: "bg-[#334155] text-white", indent: "ml-2 sm:ml-6 lg:ml-10", width: "w-[76%]" },
-  { bar: "bg-[#475569] text-white", indent: "ml-3 sm:ml-9 lg:ml-15", width: "w-[68%]" },
-  { bar: "bg-[#64748B] text-white", indent: "ml-4 sm:ml-12 lg:ml-20", width: "w-[60%]" },
-  { bar: "bg-[#22E574] text-gray-900", indent: "ml-5 sm:ml-15 lg:ml-25", width: "w-[52%]" },
+const WON_FUNNEL_BAR_COLORS = [
+  "bg-[#0B1220] text-white",
+  "bg-[#111827] text-white",
+  "bg-[#1E293B] text-white",
+  "bg-[#334155] text-white",
+  "bg-[#475569] text-white",
+  "bg-[#64748B] text-white",
+  "bg-[#94A3B8] text-gray-900",
 ];
 
-const LOST_FUNNEL_STYLES = [
-  { bar: "bg-[#7F1D1D] text-white", indent: "", width: "w-[92%]" },
-  { bar: "bg-[#991B1B] text-white", indent: "ml-1 sm:ml-3 lg:ml-5", width: "w-[84%]" },
-  { bar: "bg-[#B91C1C] text-white", indent: "ml-2 sm:ml-6 lg:ml-10", width: "w-[76%]" },
-  { bar: "bg-[#DC2626] text-white", indent: "ml-3 sm:ml-9 lg:ml-15", width: "w-[68%]" },
-  { bar: "bg-[#EF4444] text-white", indent: "ml-4 sm:ml-12 lg:ml-20", width: "w-[60%]" },
-  { bar: "bg-[#F87171] text-gray-950", indent: "ml-5 sm:ml-15 lg:ml-25", width: "w-[52%]" },
+const LOST_FUNNEL_BAR_COLORS = [
+  "bg-[#450A0A] text-white",
+  "bg-[#7F1D1D] text-white",
+  "bg-[#991B1B] text-white",
+  "bg-[#B91C1C] text-white",
+  "bg-[#DC2626] text-white",
+  "bg-[#EF4444] text-white",
+  "bg-[#F87171] text-gray-950",
 ];
+
+/**
+ * Perfect centered pyramid widths (equal inset both sides).
+ * Strong even steps so All / Won / Lost all read as a funnel.
+ */
+function funnelPyramidWidthPercent(index: number, stageCount: number): number {
+  if (stageCount <= 1) return 100;
+  const maxW = 100;
+  const minW = 52;
+  const step = (maxW - minW) / (stageCount - 1);
+  return Math.round((maxW - index * step) * 10) / 10;
+}
 
 const PHASE_COLORS = ["bg-[#111827]", "bg-[#334155]", "bg-[#64748B]", "bg-[#22E574]"];
 
@@ -57,50 +74,86 @@ type SubstageItem = {
 function SubstageList({
   items,
   pathTone,
+  loading,
 }: {
   items: SubstageItem[];
   pathTone: "won" | "lost";
+  loading?: boolean;
 }) {
   const sorted = useMemo(() => [...items].sort((a, b) => b.count - a.count), [items]);
   const hasLeads = sorted.some((s) => s.count > 0);
-
-  if (!hasLeads) {
-    return (
-      <div className="rounded-xl border border-dashed border-gray-200 p-5 text-center text-xs font-medium text-gray-500">
-        No leads on this path yet
-      </div>
-    );
-  }
-
   const topAccent =
     pathTone === "won"
-      ? "border-emerald-300/80 bg-gradient-to-r from-emerald-50/90 to-white shadow-[0_8px_24px_-8px_rgba(16,185,129,0.35)] ring-1 ring-emerald-200/80"
-      : "border-red-300/80 bg-gradient-to-r from-red-50/90 to-white shadow-[0_8px_24px_-8px_rgba(239,68,68,0.3)] ring-1 ring-red-200/80";
-
+      ? "border-emerald-300/80 bg-gradient-to-br from-emerald-50 to-white shadow-[0_10px_28px_rgba(16,185,129,0.14)] ring-1 ring-emerald-200/80"
+      : "border-red-300/80 bg-gradient-to-br from-red-50 to-white shadow-[0_10px_28px_rgba(239,68,68,0.12)] ring-1 ring-red-200/80";
   const topBadge =
     pathTone === "won"
       ? "bg-emerald-100 text-emerald-700"
       : "bg-red-100 text-red-700";
 
+  if (loading) {
+    return (
+      <div className="space-y-2.5" aria-busy="true" aria-label="Loading substages">
+        {[0, 1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className="h-12 animate-pulse rounded-xl border border-gray-100 bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100"
+            style={{ animationDelay: `${i * 80}ms` }}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // True empty = no substage catalog; all-zero still lists rows so user sees path structure
+  if (sorted.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 p-6 text-center text-xs font-medium text-gray-500">
+        No leads on this path yet
+      </div>
+    );
+  }
+
+  if (!hasLeads) {
+    return (
+      <div className="space-y-2.5">
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 p-4 text-center text-xs font-medium text-gray-500">
+          No leads on this path yet
+        </div>
+        {sorted.map((item) => (
+          <div
+            key={item.title}
+            className="flex items-center justify-between rounded-xl border border-gray-100 bg-white/80 p-3 opacity-70"
+          >
+            <span className="truncate text-xs font-semibold text-gray-600">{item.title}</span>
+            <span className="ml-3 shrink-0 text-xs font-bold tabular-nums text-gray-400">
+              0 leads
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-2.5">
       {sorted.map((item, idx) => {
         const isTop = idx === 0 && item.count > 0;
+        const delayMs = isTop ? 80 : 120 + idx * 45;
+
         return (
           <div
             key={item.title}
-            style={{ animationDelay: `${idx * 55}ms` }}
-            className={`insights-substage-in flex items-center justify-between rounded-xl border p-3.5 transition-all duration-300 ease-out ${
+            style={{ animationDelay: `${delayMs}ms` }}
+            className={`flex items-center justify-between rounded-xl border p-3.5 transition-[box-shadow,transform] duration-300 ease-out ${
               isTop
-                ? `insights-substage-top-lift z-[1] relative ${topAccent}`
-                : "border-gray-200/90 bg-gray-50/70 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-white hover:shadow-sm"
+                ? `insights-substage-row-top ${topAccent}`
+                : "insights-substage-row border-gray-200/90 bg-white/90 hover:border-gray-300 hover:shadow-sm"
             }`}
           >
             <div className="flex min-w-0 items-center gap-2.5">
               <span
-                className={`truncate text-xs font-semibold tracking-wide text-gray-800 ${
-                  isTop ? "uppercase" : ""
-                }`}
+                className={`truncate text-xs font-semibold ${isTop ? "text-gray-900" : "text-gray-700"}`}
               >
                 {item.title}
               </span>
@@ -112,13 +165,9 @@ function SubstageList({
                 </span>
               ) : null}
             </div>
-            <span
-              className={`ml-3 shrink-0 tabular-nums ${
-                isTop ? "text-sm font-extrabold text-gray-900" : "text-xs font-bold text-gray-900"
-              }`}
-            >
+            <span className="ml-3 shrink-0 text-xs font-bold tabular-nums text-gray-900">
               {formatInsightsCount(item.count)}{" "}
-              <span className={`font-normal ${isTop ? "text-gray-600" : "text-gray-500"}`}>
+              <span className="font-medium text-gray-500">
                 {item.count === 1 ? "lead" : "leads"}
               </span>
             </span>
@@ -134,49 +183,39 @@ function SubstageModal({
   funnelTab,
   wonSubstages,
   lostSubstages,
+  loading,
   onClose,
 }: {
   stageLabel: string;
   funnelTab: "all" | "won" | "lost";
   wonSubstages: SubstageItem[];
   lostSubstages: SubstageItem[];
+  loading?: boolean;
   onClose: () => void;
 }) {
-  const [closing, setClosing] = useState(false);
-
-  const requestClose = () => {
-    if (closing) return;
-    setClosing(true);
-    window.setTimeout(onClose, 220);
-  };
-
-  useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, []);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") requestClose();
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [closing]);
+  }, [onClose]);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
 
   const showWon = funnelTab === "all" || funnelTab === "won";
   const showLost = funnelTab === "all" || funnelTab === "lost";
 
   const pathFilterLabel =
-    funnelTab === "all"
-      ? "All (Won & Lost)"
-      : funnelTab === "won"
-        ? "Won Path"
-        : "Lost Path";
+    funnelTab === "all" ? "All paths" : funnelTab === "won" ? "Won path" : "Lost path";
 
-  const pathFilterPill =
+  const pathFilterClass =
     funnelTab === "won"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80"
       : funnelTab === "lost"
@@ -185,61 +224,61 @@ function SubstageModal({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 ${
-        closing ? "insights-backdrop-out" : "insights-backdrop-in"
-      } bg-slate-950/50 backdrop-blur-md`}
-      onClick={requestClose}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="funnel-substage-title"
+      className="insights-funnel-backdrop fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-md"
+      onClick={onClose}
+      role="presentation"
     >
       <div
-        className={`relative max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-[0_24px_64px_-16px_rgba(15,23,42,0.35)] ${
-          closing ? "insights-modal-out" : "insights-modal-in"
-        }`}
+        className="insights-funnel-modal relative max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-[0_24px_64px_rgba(15,23,42,0.22)]"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="funnel-substage-title"
       >
-        <div className="border-b border-gray-100 bg-gradient-to-b from-gray-50/80 to-white px-5 py-4 sm:px-6 sm:py-5">
-          <div className="flex items-start justify-between gap-3">
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-slate-800 via-indigo-500 to-emerald-400" />
+
+        <div className="max-h-[85vh] overflow-y-auto p-5 sm:p-6">
+          <div className="mb-5 flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
             <div>
               <h3 id="funnel-substage-title" className="text-lg font-bold text-gray-900">
-                {stageLabel} Substage Breakdown
+                {stageLabel}
               </h3>
-              <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                <span>Path filter:</span>
-                <span
-                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${pathFilterPill}`}
-                >
-                  {pathFilterLabel}
-                </span>
-              </p>
+              <p className="mt-1 text-sm text-gray-500">Substage breakdown</p>
+              <span
+                className={`mt-2 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${pathFilterClass}`}
+              >
+                {pathFilterLabel}
+              </span>
             </div>
             <button
               type="button"
-              onClick={requestClose}
-              className="rounded-full p-2 text-gray-400 transition-all duration-200 hover:scale-105 hover:bg-gray-100 hover:text-gray-700 active:scale-95"
+              onClick={onClose}
+              className="rounded-full p-2 text-gray-400 transition-all duration-200 hover:rotate-90 hover:bg-gray-100 hover:text-gray-700"
               aria-label="Close modal"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
-        </div>
 
-        <div className="max-h-[calc(85vh-5.5rem)] overflow-y-auto px-5 py-5 sm:px-6 sm:py-6 [scrollbar-gutter:stable]">
-          <div className="space-y-7">
+          <div className="space-y-6">
             {showWon ? (
               <div>
                 {funnelTab === "all" ? (
                   <div className="mb-3 flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-emerald-500" />
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                      Won Path Substages
+                      Won path substages
                     </h4>
                   </div>
                 ) : null}
-                <SubstageList items={wonSubstages} pathTone="won" />
+                <SubstageList items={wonSubstages} pathTone="won" loading={loading} />
               </div>
             ) : null}
 
@@ -249,11 +288,11 @@ function SubstageModal({
                   <div className="mb-3 flex items-center gap-2">
                     <span className="h-2 w-2 rounded-full bg-red-500" />
                     <h4 className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                      Lost Path Substages
+                      Lost path substages
                     </h4>
                   </div>
                 ) : null}
-                <SubstageList items={lostSubstages} pathTone="lost" />
+                <SubstageList items={lostSubstages} pathTone="lost" loading={loading} />
               </div>
             ) : null}
           </div>
@@ -275,57 +314,167 @@ export default function InsightSect3({
   funnelStageValues,
   funnelMetricsLoading,
   stagePathData = {},
+  stagePathLoading = false,
+  useCurrentStageInventory = false,
 }: Props) {
   const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost">("all");
   const [selectedStagePopup, setSelectedStagePopup] = useState<string | null>(null);
 
   const fullSalesFunnel = useMemo(() => {
+    // Authoritative inventory: never replace Fresh Lead with pool total
+    if (useCurrentStageInventory && salesFunnel.length > 0) {
+      return salesFunnel;
+    }
+
+    // Hub fallback only — do NOT inject totalLeadsCount as Fresh Lead
+    // (Fresh Lead is a milestone stage inventory, not all leads)
     const hasFresh = salesFunnel.some((s) => {
       const k = (s.stageKey || s.stageLabel).toLowerCase();
       return k.includes("fresh") || k.includes("new lead") || k.includes("received");
     });
+    if (hasFresh) return salesFunnel;
 
-    if (hasFresh || !totalLeadsCount) return salesFunnel;
-
-    const topValue = salesFunnel[0]?.value ?? 0;
-    const freshStage: InsightsFunnelStage = {
-      stageKey: "fresh_lead",
-      stageLabel: "Fresh Lead",
-      count: totalLeadsCount,
-      countLabel: "Leads",
-      value: topValue,
-      conversionPercent: 100,
-    };
-    return [freshStage, ...salesFunnel];
-  }, [salesFunnel, totalLeadsCount]);
+    // If Hub omits Fresh Lead stage, leave stages as-is (no synthetic total-as-fresh)
+    return salesFunnel;
+  }, [salesFunnel, useCurrentStageInventory]);
 
   const activeSalesFunnel = useMemo(() => {
     const withCounts = fullSalesFunnel.map((stage) => {
       const key = stage.stageKey || stage.stageLabel;
       let count = stage.count;
 
-      const stageKeyNorm = key.toLowerCase();
-      const isClosedWonStage =
-        stageKeyNorm.includes("closed_won") ||
-        stageKeyNorm.includes("closed won") ||
-        stageKeyNorm === "closed" ||
-        stageKeyNorm.includes("booking");
-
-      if (isClosedWonStage && tokenMetrics?.bookingCount != null) {
-        count = Math.max(stage.count, tokenMetrics.bookingCount);
-      }
+      // Closed inventory already comes from milestone counts when aligned —
+      // do not inflate with bookingCount (that caused 133 vs heatmap 128)
 
       let value = stage.value;
       if (funnelStageValues && !funnelMetricsLoading) {
-        const override = funnelStageValues[key] ?? funnelStageValues[stage.stageLabel];
+        const override =
+          funnelStageValues[key] ??
+          funnelStageValues[stage.stageLabel] ??
+          funnelStageValues[resolveFunnelCanonicalKey(key)];
         if (override != null) value = override;
       }
 
       return { ...stage, count, value };
     });
 
-    return recalcFunnelConversionPercents(withCounts);
-  }, [fullSalesFunnel, funnelMetricsLoading, funnelStageValues, tokenMetrics?.bookingCount]);
+    return useCurrentStageInventory
+      ? recalcFunnelSharePercents(withCounts)
+      : recalcFunnelConversionPercents(withCounts);
+  }, [
+    fullSalesFunnel,
+    funnelMetricsLoading,
+    funnelStageValues,
+    useCurrentStageInventory,
+  ]);
+
+  const lostStages = lostFunnel?.stages ?? [];
+
+  const lostCountByStageKey = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const s of lostStages) {
+      const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+      map[k] = s.count;
+    }
+    return map;
+  }, [lostStages]);
+
+  const wonSegmentTotal = useMemo(() => {
+    let sum = 0;
+    for (const stage of activeSalesFunnel) {
+      const key = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
+      if (key === "fresh_lead" || key === "total") continue;
+      const path = stagePathData[key];
+      const lost = lostCountByStageKey[key] ?? path?.lostTotal ?? 0;
+      const won = path?.wonTotal ?? Math.max(0, stage.count - lost);
+      sum += won;
+    }
+    return sum;
+  }, [activeSalesFunnel, stagePathData, lostCountByStageKey]);
+
+  const wonSegmentValue = useMemo(() => {
+    let sum = 0;
+    for (const stage of activeSalesFunnel) {
+      const key = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
+      if (key === "fresh_lead" || key === "total") continue;
+      const path = stagePathData[key];
+      const lost = lostCountByStageKey[key] ?? path?.lostTotal ?? 0;
+      const won = path?.wonTotal ?? Math.max(0, stage.count - lost);
+      if (won <= 0 || stage.count <= 0) continue;
+      // Approximate won investment share from current stage inventory value
+      sum += (Number(stage.value) || 0) * (won / stage.count);
+    }
+    return sum;
+  }, [activeSalesFunnel, stagePathData, lostCountByStageKey]);
+
+  /**
+   * Display funnel:
+   * - Total bar always (All / Won / Lost)
+   * - Fresh Lead bar only on All (hidden on Won / Lost)
+   * - Won Total = sum of won-path stage counts
+   * - Lost Total = sum of Lost Segment stage counts
+   */
+  const displaySalesFunnel = useMemo(() => {
+    const milestoneStages =
+      funnelTab === "all"
+        ? activeSalesFunnel
+        : activeSalesFunnel.filter(
+            (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
+          );
+
+    const poolTotal =
+      totalLeadsCount != null && totalLeadsCount > 0
+        ? totalLeadsCount
+        : activeSalesFunnel.reduce((sum, s) => sum + (Number(s.count) || 0), 0);
+
+    const lostSegmentTotal =
+      lostFunnel?.total != null && lostFunnel.total > 0
+        ? lostFunnel.total
+        : (lostFunnel?.stages ?? []).reduce((sum, s) => sum + (Number(s.count) || 0), 0);
+
+    // Current-in-stage: sum is the pool. Cumulative roll-up: first stage already ≈ full value.
+    const poolValue = useCurrentStageInventory
+      ? activeSalesFunnel.reduce((sum, s) => sum + (Number(s.value) || 0), 0)
+      : Number(activeSalesFunnel[0]?.value ?? 0) ||
+        activeSalesFunnel.reduce((sum, s) => sum + (Number(s.value) || 0), 0);
+
+    let totalCount = poolTotal;
+    let totalValue = poolValue;
+    let countLabel = "Leads";
+    if (funnelTab === "won") {
+      totalCount = wonSegmentTotal;
+      totalValue = wonSegmentValue;
+      countLabel = "Won Leads";
+    } else if (funnelTab === "lost") {
+      totalCount = lostSegmentTotal;
+      countLabel = "Lost Leads";
+    }
+
+    const totalStage: InsightsFunnelStage = {
+      stageKey: "total",
+      stageLabel: "Total",
+      count: totalCount,
+      countLabel,
+      value: totalValue,
+      conversionPercent: 100,
+    };
+
+    // Percents for milestone bars stay based on inventory (exclude Total from recalculation)
+    const withPercents = useCurrentStageInventory
+      ? recalcFunnelSharePercents(milestoneStages)
+      : recalcFunnelConversionPercents(milestoneStages);
+
+    return [totalStage, ...withPercents];
+  }, [
+    activeSalesFunnel,
+    funnelTab,
+    lostFunnel?.stages,
+    lostFunnel?.total,
+    totalLeadsCount,
+    useCurrentStageInventory,
+    wonSegmentTotal,
+    wonSegmentValue,
+  ]);
 
   const phasesWithOverrides = revenueDistribution.phases.map((phase) => {
     const key = (phase.phaseKey || phase.phaseLabel).toLowerCase();
@@ -359,20 +508,10 @@ export default function InsightSect3({
   });
 
   const totalPhaseValue = phasesWithOverrides.reduce((sum, p) => sum + p.value, 0);
-  const lostStages = lostFunnel?.stages ?? [];
-
-  const lostCountByStageKey = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const s of lostStages) {
-      const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
-      map[k] = s.count;
-    }
-    return map;
-  }, [lostStages]);
 
   const activeStagePopupDetails = useMemo(() => {
     if (!selectedStagePopup) return null;
-    const stage = activeSalesFunnel.find(
+    const stage = displaySalesFunnel.find(
       (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === selectedStagePopup,
     );
     const label = stage ? stage.stageLabel : selectedStagePopup;
@@ -382,7 +521,7 @@ export default function InsightSect3({
       wonSubstages: path?.wonSubstages ?? [],
       lostSubstages: path?.lostSubstages ?? [],
     };
-  }, [selectedStagePopup, activeSalesFunnel, stagePathData]);
+  }, [selectedStagePopup, displaySalesFunnel, stagePathData]);
 
   return (
     <main className="mt-10 px-4">
@@ -392,7 +531,9 @@ export default function InsightSect3({
           <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-xl font-bold text-gray-900">Sales Funnel Efficiency</h2>
-              <p className="mt-0.5 text-xs text-gray-500">Stage-by-stage lead progression & lost drop analysis</p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Current leads in each milestone stage (same as Journey heatmap)
+              </p>
             </div>
 
             <div className="flex items-center gap-1 self-start rounded-lg border border-gray-200 bg-gray-100 p-0.5 sm:self-auto">
@@ -400,15 +541,22 @@ export default function InsightSect3({
                 <button
                   key={tab}
                   type="button"
-                  onClick={() => setFunnelTab(tab)}
-                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-300 ease-out ${
+                  onClick={() => {
+                    setFunnelTab(tab);
+                    setSelectedStagePopup(null);
+                  }}
+                  className={`min-w-[4.75rem] cursor-pointer rounded-md px-3 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out ${
                     funnelTab === tab
                       ? tab === "won"
-                        ? "bg-emerald-600 font-bold text-white shadow-md shadow-emerald-600/25"
+                        ? "bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-500 hover:shadow-md hover:brightness-110"
                         : tab === "lost"
-                          ? "bg-red-600 font-bold text-white shadow-md shadow-red-600/25"
-                          : "bg-slate-900 font-bold text-white shadow-md shadow-slate-900/20"
-                      : "text-gray-600 hover:bg-gray-200/60 hover:text-gray-900"
+                          ? "bg-red-600 font-bold text-white shadow-xs hover:bg-red-500 hover:shadow-md hover:brightness-110"
+                          : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
+                      : tab === "won"
+                        ? "text-gray-600 hover:bg-emerald-100 hover:text-emerald-700 hover:shadow-xs"
+                        : tab === "lost"
+                          ? "text-gray-600 hover:bg-red-100 hover:text-red-700 hover:shadow-xs"
+                          : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
                   }`}
                 >
                   {tab === "all" ? "All" : tab === "won" ? "Won" : "Lost"}
@@ -417,111 +565,159 @@ export default function InsightSect3({
             </div>
           </div>
 
-          {activeSalesFunnel.length === 0 ? (
+          {displaySalesFunnel.length === 0 ? (
             <p className="text-sm text-gray-500">No funnel data for this filter.</p>
           ) : (
-            <div
-              className={`space-y-5 transition-opacity duration-300 ${
-                selectedStagePopup ? "opacity-100" : ""
-              }`}
-            >
-              {activeSalesFunnel.map((stage, index) => {
-                const canonicalKey = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
-                const isFreshLead = canonicalKey === "fresh_lead";
-                const isClosedWonStage = canonicalKey === "closed";
-                const pathBreakdown = stagePathData[canonicalKey];
+            <div className="relative">
+              {selectedStagePopup ? (
+                <div
+                  className="pointer-events-none absolute inset-0 z-10 rounded-xl bg-slate-900/[0.04] backdrop-blur-[1px] transition-opacity duration-300"
+                  aria-hidden
+                />
+              ) : null}
 
-                const wonCount = pathBreakdown?.wonTotal ?? stage.count;
-                const lostCount = pathBreakdown?.lostTotal ?? lostCountByStageKey[canonicalKey] ?? 0;
+              <div className="relative w-full space-y-2.5">
+                {displaySalesFunnel.map((stage, index) => {
+                  const canonicalKey = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
+                  const isTotal = canonicalKey === "total";
+                  const isFreshLead = canonicalKey === "fresh_lead";
+                  const isClosedWonStage = canonicalKey === "closed";
+                  const pathBreakdown = stagePathData[canonicalKey];
 
-                let displayCount = stage.count;
-                if (funnelTab === "won") displayCount = wonCount;
-                else if (funnelTab === "lost") displayCount = lostCount;
+                  const lostCount =
+                    lostCountByStageKey[canonicalKey] ?? pathBreakdown?.lostTotal ?? 0;
+                  const wonCount = pathBreakdown?.wonTotal ?? Math.max(0, stage.count - lostCount);
 
-                const useLostStyle = funnelTab === "lost";
-                const style = useLostStyle
-                  ? LOST_FUNNEL_STYLES[Math.min(index, LOST_FUNNEL_STYLES.length - 1)]
-                  : WON_FUNNEL_STYLES[Math.min(index, WON_FUNNEL_STYLES.length - 1)];
+                  let displayCount = stage.count;
+                  if (!isTotal) {
+                    if (funnelTab === "won") displayCount = wonCount;
+                    else if (funnelTab === "lost") displayCount = lostCount;
+                  }
 
-                let countText = `${formatInsightsCount(displayCount)} ${stage.countLabel || "Leads"}`;
-                if (isClosedWonStage && funnelTab !== "lost") {
-                  countText = `${formatInsightsCount(displayCount)} Booked Leads`;
-                } else if (funnelTab === "lost") {
-                  countText = `${formatInsightsCount(displayCount)} Lost Leads`;
-                }
+                  const useLostStyle = funnelTab === "lost";
+                  const palette = useLostStyle ? LOST_FUNNEL_BAR_COLORS : WON_FUNNEL_BAR_COLORS;
+                  let barColor =
+                    palette[Math.min(index, palette.length - 1)] ?? palette[palette.length - 1]!;
+                  if (isClosedWonStage && !useLostStyle) {
+                    barColor = "bg-[#22C55E] text-gray-950";
+                  }
 
-                const stageValue = stage.value;
-                const isPopupOpen = selectedStagePopup === canonicalKey;
-                const isClickable = !isFreshLead;
-                const isDimmed = Boolean(selectedStagePopup) && !isPopupOpen;
+                  const widthPct = funnelPyramidWidthPercent(index, displaySalesFunnel.length);
+                  const sideInsetPct = (100 - widthPct) / 2;
 
-                return (
-                  <div
-                    key={stage.stageKey || stage.stageLabel}
-                    className={`flex w-full items-center transition-all duration-300 ease-out ${
-                      isDimmed ? "scale-[0.985] opacity-45" : "opacity-100"
-                    }`}
-                  >
+                  const displayLabel = isClosedWonStage ? "Closed" : stage.stageLabel;
+
+                  let countText = `${formatInsightsCount(displayCount)} ${stage.countLabel || "Leads"}`;
+                  if (isTotal) {
+                    countText =
+                      funnelTab === "lost"
+                        ? `${formatInsightsCount(displayCount)} Lost Leads`
+                        : funnelTab === "won"
+                          ? `${formatInsightsCount(displayCount)} Won Leads`
+                          : `${formatInsightsCount(displayCount)} Leads`;
+                  } else if (isClosedWonStage && funnelTab !== "lost") {
+                    countText = `${formatInsightsCount(displayCount)} Leads`;
+                  } else if (funnelTab === "lost") {
+                    countText = `${formatInsightsCount(displayCount)} Lost Leads`;
+                  }
+
+                  const stageValue =
+                    funnelTab === "won" && !isTotal && stage.count > 0
+                      ? (Number(stage.value) || 0) * (wonCount / stage.count)
+                      : stage.value;
+                  const isPopupOpen = selectedStagePopup === canonicalKey;
+                  const isClickable = !isFreshLead && !isTotal;
+                  const isDimmed = Boolean(selectedStagePopup) && !isPopupOpen;
+
+                  const showWonLostBadge =
+                    funnelTab === "all" && !isFreshLead && !isTotal;
+
+                  const wonLostBadgeClass = isClosedWonStage
+                    ? "inline-flex h-5 items-center rounded-md bg-black/15 px-1.5 text-[9px] font-semibold whitespace-nowrap text-gray-950 sm:h-6 sm:px-2 sm:text-[10px]"
+                    : "inline-flex h-5 items-center rounded-md bg-white/20 px-1.5 text-[9px] font-semibold whitespace-nowrap text-white/90 sm:h-6 sm:px-2 sm:text-[10px]";
+
+                  const percentLabel = isTotal
+                    ? formatInsightsPercent(100)
+                    : funnelTab === "lost"
+                      ? `${formatInsightsPercent(
+                          lostStages.find(
+                            (s) =>
+                              resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) ===
+                              canonicalKey,
+                          )?.dropPercent ?? 0,
+                          0,
+                        )} Drop`
+                      : funnelTab === "won"
+                        ? formatInsightsPercent(
+                            wonSegmentTotal > 0 ? (wonCount / wonSegmentTotal) * 100 : 0,
+                          )
+                        : formatInsightsPercent(stage.conversionPercent);
+
+                  const metricsText =
+                    funnelTab !== "lost" && !isTotal && !isFreshLead
+                      ? `${countText} | ${
+                          funnelMetricsLoading ? "…" : formatInsightsInrCompact(stageValue)
+                        }`
+                      : countText;
+
+                  return (
                     <div
-                      onClick={
-                        isClickable
-                          ? () => setSelectedStagePopup(isPopupOpen ? null : canonicalKey)
-                          : undefined
-                      }
-                      title={isClickable ? "Click to view substage breakdown" : undefined}
-                      className={`flex h-14 items-center justify-between gap-3 px-3 sm:px-5 ${style.bar} ${style.indent} ${style.width} rounded-xl transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                        isClickable ? "cursor-pointer" : ""
-                      } ${
-                        isPopupOpen
-                          ? "relative z-10 -translate-y-2 scale-[1.025] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.45)] ring-2 ring-white/40"
-                          : isClickable
-                            ? "shadow-xs hover:-translate-y-1 hover:shadow-lg hover:shadow-black/20 active:scale-[0.995]"
-                            : "shadow-xs"
+                      key={stage.stageKey || stage.stageLabel}
+                      className={`flex w-full items-stretch transition-all duration-500 ease-out ${
+                        isDimmed ? "scale-[0.985] opacity-45 blur-[0.3px]" : "opacity-100"
                       }`}
                     >
-                      <span className="text-xs font-semibold sm:text-sm lg:text-base">
-                        {stage.stageLabel}
-                      </span>
-                      <div className="flex flex-wrap items-center justify-end gap-2 text-right">
-                        <span className="text-xs font-bold sm:text-sm lg:text-base">
-                          {countText}
-                          {funnelTab !== "lost" ? (
-                            <>
-                              {" | "}
-                              {funnelMetricsLoading ? (
-                                <span className="opacity-80">Loading…</span>
-                              ) : (
-                                formatInsightsInrCompact(stageValue)
-                              )}
-                            </>
-                          ) : null}
-                        </span>
-                        {funnelTab === "all" && !isFreshLead ? (
-                          <span className="rounded-md bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white/90">
-                            {formatInsightsCount(wonCount)} won · {formatInsightsCount(lostCount)} lost
-                          </span>
-                        ) : null}
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="transition-[padding] duration-500 ease-out"
+                          style={{
+                            paddingLeft: `${sideInsetPct}%`,
+                            paddingRight: `${sideInsetPct}%`,
+                          }}
+                        >
+                          <div
+                            onClick={
+                              isClickable
+                                ? () => setSelectedStagePopup(isPopupOpen ? null : canonicalKey)
+                                : undefined
+                            }
+                            title={isClickable ? "Click to view substage breakdown" : undefined}
+                            className={`flex h-12 w-full items-center gap-2 px-2.5 sm:h-14 sm:gap-3 sm:px-4 ${barColor} rounded-xl shadow-xs transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:z-10 hover:-translate-y-1.5 hover:scale-[1.015] hover:shadow-[0_14px_32px_rgba(15,23,42,0.22)] ${
+                              isClickable ? "cursor-pointer active:scale-[0.995]" : "cursor-default"
+                            } ${
+                              isPopupOpen
+                                ? "insights-funnel-bar-lift z-10 shadow-[0_18px_40px_rgba(15,23,42,0.28)] ring-2 ring-white/35"
+                                : ""
+                            }`}
+                          >
+                            <span className="w-[5.5rem] shrink-0 truncate text-left text-[11px] font-semibold sm:w-[7rem] sm:text-sm">
+                              {displayLabel}
+                            </span>
+                            <div className="ml-auto flex min-w-0 items-center justify-end gap-2 sm:gap-2.5">
+                              <span className="text-right text-[11px] font-bold whitespace-nowrap tabular-nums sm:text-sm">
+                                {metricsText}
+                              </span>
+                              {showWonLostBadge ? (
+                                <span className={wonLostBadgeClass}>
+                                  {formatInsightsCount(wonCount)} won ·{" "}
+                                  {formatInsightsCount(lostCount)} lost
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
                       </div>
+                      <span
+                        className={`flex w-[3.75rem] shrink-0 items-center justify-end text-right text-[11px] font-bold whitespace-nowrap tabular-nums sm:w-[5rem] sm:text-sm transition-opacity duration-300 ${
+                          isDimmed ? "text-gray-400" : "text-gray-700"
+                        }`}
+                      >
+                        {percentLabel}
+                      </span>
                     </div>
-                    <span
-                      className={`ml-auto pl-3 text-xs font-bold sm:text-sm transition-opacity duration-300 ${
-                        isDimmed ? "text-gray-400" : "text-gray-700"
-                      }`}
-                    >
-                      {funnelTab === "lost"
-                        ? `${formatInsightsPercent(
-                            lostStages.find(
-                              (s) =>
-                                resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) ===
-                                canonicalKey,
-                            )?.dropPercent ?? 0,
-                            0,
-                          )} Drop`
-                        : formatInsightsPercent(stage.conversionPercent)}
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -531,6 +727,7 @@ export default function InsightSect3({
               funnelTab={funnelTab}
               wonSubstages={activeStagePopupDetails.wonSubstages}
               lostSubstages={activeStagePopupDetails.lostSubstages}
+              loading={stagePathLoading}
               onClose={() => setSelectedStagePopup(null)}
             />
           ) : null}

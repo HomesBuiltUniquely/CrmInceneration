@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BOOKING_DATE_PRESETS,
@@ -14,8 +15,14 @@ import {
   fetchInsightsFilterOptions,
   type InsightsDashboard,
   type InsightsFilterOptions,
+  type InsightsLostFunnelStage,
+  type InsightsTeamMember,
 } from "@/lib/crm-insights-api";
-import { fetchAdminLeadsHeatmapData } from "@/lib/admin-leads-api";
+import {
+  fetchAdminLeadsHeatmapData,
+  milestoneCountsFromLeads,
+  normalizeMilestoneCountsToCanonical,
+} from "@/lib/admin-leads-api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { fetchDashboardDealRows } from "@/lib/booking-token-deals-fetch";
 import {
@@ -25,28 +32,60 @@ import {
   listQuoteSentWonLeads,
   resolveInsightsAssigneeAliases,
 } from "@/lib/insights-quote-sent-metrics";
-import { buildLeadBudgetInvestmentMapSync, enrichInvestmentMapWithQuotes, stableLeadKey } from "@/lib/insights-lead-investment";
-import { computeFunnelStageInvestmentTotals, computeFreshLeadInvestmentTotal } from "@/lib/insights-sales-funnel-investment";
 import {
+  buildLeadBudgetInvestmentMapSync,
+  enrichInvestmentMapWithQuotes,
+  stableLeadKey,
+} from "@/lib/insights-lead-investment";
+import {
+  computeFunnelCurrentStageInvestmentTotals,
+  computeFreshLeadStageInvestmentTotal,
+} from "@/lib/insights-sales-funnel-investment";
+import {
+  buildAlignedSalesFunnelStages,
   buildInsightsFunnelStagePathData,
+  fetchInsightsFunnelStagePathData,
   type FunnelStagePathDataMap,
 } from "@/lib/insights-funnel-stage-paths";
-import { fetchInsightsRevenueForecastTarget } from "@/lib/insights-revenue-forecast-target";
-import { salesTargetsApi } from "@/lib/sales-targets-api";
-import { currentSalesTargetMonth } from "@/lib/sales-targets";
-import { type InsightsTeamMember } from "@/lib/crm-insights-api";
+import {
+  computeLostSegmentCounts,
+  computeLostSegmentDropReasons,
+} from "@/lib/lead-lost-segment";
+import {
+  salesAdminPoolInsightOpts,
+  salesInsightCountLeads,
+} from "@/lib/sales-admin-insight-tiles";
+import {
+  computeTeamMatrixIncentiveMetrics,
+  formatTeamMatrixIncentiveScope,
+  loadTeamMatrixIncentiveBase,
+  type TeamMemberIncentiveMetrics,
+} from "@/lib/insights-team-incentive-matrix";
+import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
+import {
+  CRM_ROLE_STORAGE_KEY,
+  CRM_USER_ID_STORAGE_KEY,
+  normalizeRole,
+} from "@/lib/auth/api";
+import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
 import InsightSect3 from "./InsightsSect3";
 import InsightsSect4 from "./InsightsSect4";
 import InsightsSect5 from "./InsightsSect5";
 import InsightsSect6 from "./InsightsSect6";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
-import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
-import { dashboardSidebarSections } from "../Shared/sidebar-data";
-import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import InsightsDateFilterPopover from "./InsightsDateFilterPopover";
 import InsightsDropdownFilter, { type DropdownOption } from "./InsightsDropdownFilter";
+
+function isSalesManagerRole(role: string): boolean {
+  const r = role.trim().toLowerCase().replace(/[_\s]+/g, " ");
+  return (
+    r === "sales manager" ||
+    r === "manager" ||
+    r === "sales_manager" ||
+    r.includes("sales manager")
+  );
+}
 
 type SalesPeopleSelection =
   | { kind: "all" }
@@ -78,23 +117,6 @@ function salesPeopleSelectValue(sel: SalesPeopleSelection): string {
 }
 
 export default function InsightsClient1() {
-  const router = useRouter();
-  const [viewerRole, setViewerRole] = useState<string>("");
-  const [roleLoaded, setRoleLoaded] = useState(false);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-      setViewerRole(normalizeRole(stored));
-    } catch {
-      setViewerRole("");
-    } finally {
-      setRoleLoaded(true);
-    }
-  }, []);
-
-  const isSuperAdmin = viewerRole === "SUPER_ADMIN";
-
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_BOOKING_DATE_FILTER,
   );
@@ -102,7 +124,10 @@ export default function InsightsClient1() {
   const [salesPeople, setSalesPeople] = useState<SalesPeopleSelection>({
     kind: "all",
   });
-  const [teamPeriod, setTeamPeriod] = useState<"daily" | "monthly">("monthly");
+  /** Hub team matrix always monthly (Insights date window). */
+  const teamPeriod = "monthly" as const;
+  const [role, setRole] = useState("");
+  const [viewerUserId, setViewerUserId] = useState<number | null>(null);
 
   const [filterOptions, setFilterOptions] = useState<InsightsFilterOptions>({
     branches: [],
@@ -115,8 +140,46 @@ export default function InsightsClient1() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Per-user monthly incentive targets (from sales-targets API)
-  const [incentiveTargets, setIncentiveTargets] = useState<Record<number, number>>({});
+  /** Achieved/Payoff vs Insights date filter (Incentives engine). */
+  const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
+    Map<number, IncentiveBookingLead[]>
+  >(() => new Map());
+  const [teamIncentiveTargets, setTeamIncentiveTargets] = useState<
+    Map<string, Map<number, number>>
+  >(() => new Map());
+  const [teamIncentiveByUser, setTeamIncentiveByUser] = useState<
+    Map<number, TeamMemberIncentiveMetrics>
+  >(() => new Map());
+  const [incentiveScopeLabel, setIncentiveScopeLabel] = useState("");
+  const [teamIncentivesLoading, setTeamIncentivesLoading] = useState(false);
+
+  useEffect(() => {
+    setRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
+    const rawId = window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY);
+    const id = rawId ? Number(rawId) : NaN;
+    setViewerUserId(Number.isFinite(id) && id > 0 ? id : null);
+  }, []);
+
+  const canPickTeamIncentives = useMemo(() => {
+    const r = role.toUpperCase();
+    return (
+      r === "SUPER_ADMIN" ||
+      r === "SALES_ADMIN" ||
+      r === "ADMIN" ||
+      r === "SALES_MANAGER" ||
+      r === "MANAGER"
+    );
+  }, [role]);
+
+  const roleLabel = useMemo(
+    () =>
+      role
+        .toLowerCase()
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ") || "User",
+    [role],
+  );
 
   const loadFilters = useCallback(async (selectedBranch: string) => {
     try {
@@ -211,6 +274,22 @@ export default function InsightsClient1() {
     void loadFilters(branchId);
   }, [branchId, loadFilters]);
 
+  /** Drop people selection if it no longer exists under current branch filter-options. */
+  useEffect(() => {
+    if (salesPeople.kind === "all") return;
+    if (salesPeople.kind === "manager") {
+      const ok = filterOptions.salesManagers.some((m) => m.id === salesPeople.id);
+      if (!ok) setSalesPeople({ kind: "all" });
+      return;
+    }
+    const execOk =
+      filterOptions.salesExecutives.some((e) => e.id === salesPeople.id) ||
+      filterOptions.salesManagers.some((m) =>
+        (m.executives ?? []).some((e) => e.id === salesPeople.id),
+      );
+    if (!execOk) setSalesPeople({ kind: "all" });
+  }, [filterOptions, salesPeople]);
+
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
@@ -219,25 +298,128 @@ export default function InsightsClient1() {
     void loadTokenMetrics();
   }, [loadTokenMetrics]);
 
-  // Load per-user monthly targets from sales-targets API whenever team data changes
+  // Achieved + Payoff = same executive-leads API as Incentives page
   useEffect(() => {
     let cancelled = false;
-    const month = currentSalesTargetMonth();
+    const team = dashboard.teamPerformance;
+    // Wait for role from localStorage so admin doesn't take the self-only path first.
+    if (!role) {
+      setTeamIncentivesLoading(team.length > 0);
+      return;
+    }
+    if (team.length === 0) {
+      setTeamIncentiveLeads(new Map());
+      setTeamIncentiveTargets(new Map());
+      setTeamIncentiveByUser(new Map());
+      setIncentiveScopeLabel("");
+      setTeamIncentivesLoading(false);
+      return;
+    }
+    setTeamIncentivesLoading(true);
+    setTeamIncentiveLeads(new Map());
+    setTeamIncentiveByUser(new Map());
+    setIncentiveScopeLabel(formatTeamMatrixIncentiveScope(dateFilter));
+
+    const applyProgress = (state: {
+      leadsByUserId: Map<number, IncentiveBookingLead[]>;
+      targetsByMonth: Map<string, Map<number, number>>;
+      done: boolean;
+    }) => {
+      if (cancelled) return;
+      setTeamIncentiveLeads(state.leadsByUserId);
+      setTeamIncentiveTargets(state.targetsByMonth);
+      setTeamIncentiveByUser(
+        computeTeamMatrixIncentiveMetrics({
+          team,
+          leadsByUserId: state.leadsByUserId,
+          dateFilter,
+          targetsByMonth: state.targetsByMonth,
+        }),
+      );
+      if (state.done) setTeamIncentivesLoading(false);
+    };
+
     void (async () => {
       try {
-        const rows = await salesTargetsApi.listUsers(month);
-        if (cancelled) return;
-        const map: Record<number, number> = {};
-        for (const row of rows) {
-          map[row.userId] = row.monthlyTargetInr;
-        }
-        setIncentiveTargets(map);
+        await loadTeamMatrixIncentiveBase({
+          team,
+          dateFilter,
+          canPickTeam: canPickTeamIncentives,
+          viewerUserId,
+          onProgress: applyProgress,
+        });
       } catch {
-        // silently ignore — columns will show — when target unavailable
+        if (!cancelled) {
+          setTeamIncentiveLeads(new Map());
+          setTeamIncentiveTargets(new Map());
+          setTeamIncentiveByUser(new Map());
+          setTeamIncentivesLoading(false);
+        }
       }
     })();
-    return () => { cancelled = true; };
-  }, [dashboard.teamPerformance]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    dashboard.teamPerformance,
+    dateFilter,
+    canPickTeamIncentives,
+    viewerUserId,
+    role,
+  ]);
+
+  // Recompute metrics when date/leads/targets change without a full reload mid-stream
+  useEffect(() => {
+    if (dashboard.teamPerformance.length === 0) return;
+    if (teamIncentiveLeads.size === 0) return;
+    setTeamIncentiveByUser(
+      computeTeamMatrixIncentiveMetrics({
+        team: dashboard.teamPerformance,
+        leadsByUserId: teamIncentiveLeads,
+        dateFilter,
+        targetsByMonth: teamIncentiveTargets,
+      }),
+    );
+    setIncentiveScopeLabel(formatTeamMatrixIncentiveScope(dateFilter));
+  }, [
+    dashboard.teamPerformance,
+    teamIncentiveLeads,
+    teamIncentiveTargets,
+    dateFilter,
+  ]);
+
+  const teamForMatrix = useMemo((): InsightsTeamMember[] => {
+    const rows = dashboard.teamPerformance
+      .filter((m) => !isSalesManagerRole(m.role || ""))
+      .map((m) => {
+        const uid = Number(m.userId);
+        const leads = Number(m.leads) || 0;
+        const closed = Number(m.closed) || 0;
+        const hubConv = Number(m.conversionPercent);
+        const conversionPercent = Number.isFinite(hubConv)
+          ? Math.round(hubConv * 10) / 10
+          : leads > 0
+            ? Math.round((closed / leads) * 1000) / 10
+            : 0;
+        const inc =
+          Number.isFinite(uid) && uid > 0
+            ? teamIncentiveByUser.get(uid)
+            : undefined;
+        // Only FE Incentives engine — never fall back to missing Hub fields as 0
+        const achievedIncentive = inc != null ? inc.achievedIncentive : undefined;
+        const payoff = inc != null ? inc.payoff : undefined;
+
+        return {
+          ...m,
+          leads,
+          closed,
+          conversionPercent,
+          achievedIncentive,
+          payoff,
+        };
+      });
+    return rows.sort((a, b) => (Number(b.leads) || 0) - (Number(a.leads) || 0));
+  }, [dashboard.teamPerformance, teamIncentiveByUser]);
 
   const executiveOptions = useMemo(() => {
     if (filterOptions.salesManagers.some((m) => (m.executives?.length ?? 0) > 0)) {
@@ -324,8 +506,46 @@ export default function InsightsClient1() {
   const [funnelStageValues, setFunnelStageValues] = useState<Record<string, number> | null>(null);
   const [funnelMetricsLoading, setFunnelMetricsLoading] = useState(false);
   const [stagePathData, setStagePathData] = useState<FunnelStagePathDataMap>({});
+  const [stagePathLoading, setStagePathLoading] = useState(true);
+  /** Authoritative totals from same sales admin pool as Leads page (phone-unique, verified). */
+  const [alignedSalesPoolTotal, setAlignedSalesPoolTotal] = useState<number | null>(null);
+  const [alignedLostFunnel, setAlignedLostFunnel] = useState<InsightsDashboard["lostFunnel"] | null>(
+    null,
+  );
+  /** Drop reasons from same lost-segment leads as Lost Funnel Total. */
+  const [alignedDropReasons, setAlignedDropReasons] = useState<
+    InsightsDashboard["dropReasons"] | null
+  >(null);
+  /** Current-in-stage funnel (Fresh Lead = milestone inventory, not pool total). */
+  const [alignedSalesFunnel, setAlignedSalesFunnel] = useState<
+    InsightsDashboard["salesFunnel"] | null
+  >(null);
 
-  const salesFunnelStageCount = dashboard.salesFunnel.length;
+  // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
+  useEffect(() => {
+    let cancelled = false;
+    setStagePathLoading(true);
+    void (async () => {
+      try {
+        const range = resolveBookingDateRange(dateFilter);
+        const assignees = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
+        const data = await fetchInsightsFunnelStagePathData({
+          dateFrom: range.submittedFrom,
+          dateTo: range.submittedTo,
+          assignees: assignees.length > 0 ? assignees : undefined,
+        });
+        if (!cancelled) {
+          setStagePathData((prev) => (Object.keys(prev).length > 0 ? prev : data));
+          setStagePathLoading(false);
+        }
+      } catch {
+        if (!cancelled) setStagePathLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dateFilter, filterOptions, salesPeople]);
 
   const applyInvestmentMetrics = useCallback(
     (
@@ -335,12 +555,12 @@ export default function InsightsClient1() {
       opts: ReturnType<typeof buildInsightsQuoteSentCountOpts>,
     ) => {
       const count = computeQuoteSentWonCount(scopedLeads, opts);
-      const funnelTotals = computeFunnelStageInvestmentTotals(
+      const funnelTotals = computeFunnelCurrentStageInvestmentTotals(
         scopedLeads,
         investments,
         salesFunnel,
       );
-      funnelTotals.fresh_lead = computeFreshLeadInvestmentTotal(scopedLeads, investments);
+      funnelTotals.fresh_lead = computeFreshLeadStageInvestmentTotal(scopedLeads, investments);
       setFunnelStageValues(funnelTotals);
 
       let totalValue = 0;
@@ -352,19 +572,20 @@ export default function InsightsClient1() {
     [],
   );
 
+  // Authoritative pool — same as Super Admin Sales Journey Heatmap + Lost Segment
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (salesFunnelStageCount === 0) return;
-
       try {
         const range = resolveBookingDateRange(dateFilter);
         const assigneeAliasSet = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
-        const subStatusQs = new URLSearchParams({ resource: "sub-status", role: "sales" });
+        const subStatusQs = new URLSearchParams({ resource: "sub-status", role: "SALES_EXECUTIVE" });
+
         const [data, subMapRes] = await Promise.all([
           fetchAdminLeadsHeatmapData(
             {
               workspace: "sales",
+              verificationStatus: "verified",
               dateFrom: range.submittedFrom,
               dateTo: range.submittedTo,
               assigneeAliasSet: assigneeAliasSet.length > 0 ? assigneeAliasSet : undefined,
@@ -382,23 +603,91 @@ export default function InsightsClient1() {
           branchId,
           filterOptions,
         });
+        // Same phone-unique pool used by Leads insight tiles / Lost Segment / Journey heatmap
+        const insightPool = salesInsightCountLeads(scopedLeads);
+        const insightOpts = salesAdminPoolInsightOpts(
+          "",
+          [],
+          range.submittedFrom,
+          range.submittedTo,
+        );
+        const lostCounts = computeLostSegmentCounts(insightPool, insightOpts);
+        const dropReasonsAligned = computeLostSegmentDropReasons(insightPool, insightOpts);
+        const lostStages: InsightsLostFunnelStage[] = [
+          {
+            stageKey: "fresh_lead_lost",
+            stageLabel: "Fresh Lead Lost",
+            count: 0,
+            dropPercent: 0,
+          },
+          {
+            stageKey: "discovery_lost",
+            stageLabel: "Discovery Lost",
+            count: lostCounts.lostDiscovery,
+            dropPercent: 0,
+          },
+          {
+            stageKey: "connection_lost",
+            stageLabel: "Connection Lost",
+            count: lostCounts.lostConnection,
+            dropPercent: 0,
+          },
+          {
+            stageKey: "exp_design_lost",
+            stageLabel: "Exp & Design Lost",
+            count: lostCounts.lostExperienceDesign,
+            dropPercent: 0,
+          },
+          {
+            stageKey: "decision_lost",
+            stageLabel: "Decision Lost",
+            count: lostCounts.lostDecision,
+            dropPercent: 0,
+          },
+          {
+            stageKey: "closed_lost",
+            stageLabel: "Closed Lost",
+            count: lostCounts.lostClosed,
+            dropPercent: 0,
+          },
+        ];
+        const lostTotal = lostStages.reduce((s, x) => s + x.count, 0);
+        for (const st of lostStages) {
+          st.dropPercent = lostTotal > 0 ? Math.round((st.count / lostTotal) * 100) : 0;
+        }
 
-        let subMappings: Array<{ stage: string; stageCategory: string; subStageName: string }> = [];
+        let subMappings: Array<{ stage: string; stageCategory: string; subStageName: string }> =
+          [];
         if (subMapRes?.ok) {
-          const mapJson = (await subMapRes.json()) as {
-            mappings?: Array<{ stage: string; stageCategory: string; subStageName: string }>;
-          };
-          subMappings = mapJson.mappings ?? [];
+          try {
+            const mapJson = (await subMapRes.json()) as {
+              mappings?: Array<{ stage: string; stageCategory: string; subStageName: string }>;
+            };
+            subMappings = mapJson.mappings ?? [];
+          } catch {
+            subMappings = [];
+          }
         }
-        if (!cancelled) {
-          setStagePathData(buildInsightsFunnelStagePathData(scopedLeads, subMappings));
-        }
-        const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
-        const salesFunnel = dashboard.salesFunnel;
 
+        const milestoneCounts = normalizeMilestoneCountsToCanonical(
+          milestoneCountsFromLeads(insightPool, "sales"),
+          "sales",
+        );
+        const salesFunnelShell = buildAlignedSalesFunnelStages(milestoneCounts);
+
+        if (!cancelled) {
+          setAlignedSalesPoolTotal(insightPool.length);
+          setAlignedLostFunnel({ total: lostTotal, stages: lostStages });
+          setAlignedDropReasons(dropReasonsAligned);
+          setStagePathData(buildInsightsFunnelStagePathData(insightPool, subMappings));
+          setStagePathLoading(false);
+          setAlignedSalesFunnel(salesFunnelShell);
+        }
+
+        const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
         const budgetMap = buildLeadBudgetInvestmentMapSync(scopedLeads);
         if (cancelled) return;
-        applyInvestmentMetrics(scopedLeads, budgetMap, salesFunnel, opts);
+        applyInvestmentMetrics(scopedLeads, budgetMap, salesFunnelShell, opts);
         setFunnelMetricsLoading(false);
 
         const enriched = await enrichInvestmentMapWithQuotes(scopedLeads, budgetMap, {
@@ -407,109 +696,58 @@ export default function InsightsClient1() {
           maxQuoteIds: 120,
         });
         if (cancelled) return;
-        applyInvestmentMetrics(scopedLeads, enriched, salesFunnel, opts);
+        applyInvestmentMetrics(scopedLeads, enriched, salesFunnelShell, opts);
       } catch {
         if (!cancelled) {
           setQuoteSentWonMetrics({ count: 0, totalValue: 0, loading: false });
           setFunnelStageValues(null);
           setFunnelMetricsLoading(false);
-          setStagePathData({});
+          setAlignedSalesPoolTotal(null);
+          setAlignedLostFunnel(null);
+          setAlignedDropReasons(null);
+          setAlignedSalesFunnel(null);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [
-    applyInvestmentMetrics,
-    branchId,
-    dateFilter,
-    dashboard.salesFunnel,
-    filterOptions,
-    salesPeople,
-    salesFunnelStageCount,
-  ]);
-
-  const [forecastTargetInr, setForecastTargetInr] = useState<number | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const target = await fetchInsightsRevenueForecastTarget({
-          dateFilter,
-          branchId,
-          salesPeople,
-          filterOptions,
-        });
-        if (!cancelled) setForecastTargetInr(target > 0 ? target : null);
-      } catch {
-        if (!cancelled) setForecastTargetInr(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId, dateFilter, filterOptions, salesPeople]);
-
-  const revenueForecastForUi = useMemo(
-    () => ({
-      ...dashboard.revenueForecast,
-      target:
-        forecastTargetInr != null && forecastTargetInr > 0
-          ? forecastTargetInr
-          : dashboard.revenueForecast.target,
-    }),
-    [dashboard.revenueForecast, forecastTargetInr],
-  );
-
-  if (roleLoaded && !isSuperAdmin) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md rounded-2xl border border-rose-200 bg-white p-8 shadow-sm">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 mb-4">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-lg font-bold text-gray-900">Access Restricted</h2>
-          <p className="mt-2 text-sm text-gray-600">
-            CRM Insights is currently available to Super Admin users only.
-          </p>
-          <button
-            type="button"
-            onClick={() => router.push("/")}
-            className="mt-6 inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500"
-          >
-            Return to Dashboard
-          </button>
-        </div>
-      </div>
-    );
-  }
+  }, [applyInvestmentMetrics, branchId, dateFilter, filterOptions, salesPeople]);
 
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <div>
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName="Super Admin"
-            profileRole={viewerRole || "SUPER_ADMIN"}
-            profileInitials="SA"
-          />
-        </div>
+        <QuickAccessSidebar
+          appBadge="HO WS"
+          appName="Hows"
+          appTagline="by HUB"
+          sections={dashboardSidebarSections}
+          profileName={roleLabel}
+          profileRole={role}
+          profileInitials={roleLabel.slice(0, 2).toUpperCase() || "SA"}
+        />
 
-        <div className="bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
-          <main className="w-full bg-[#f4f7fb] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="min-w-0 bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
+          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
+            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
+              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
+              <div>
+                <h1 className="text-base font-bold text-[var(--crm-text-primary)]">
+                  Insights
+                </h1>
+                <p className="text-xs text-[var(--crm-text-muted)]">
+                  Sales performance &amp; pipeline analytics
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div className="shrink-0">
-                <h1 className="text-3xl font-extrabold tracking-tight text-[#1f2937] sm:text-4xl">
+                <h2 className="text-3xl font-extrabold tracking-tight text-[#1f2937] sm:text-4xl">
                   CRM Insights
-                </h1>
+                </h2>
                 <p className="mt-1.5 max-w-md text-xs font-medium text-gray-500 sm:text-sm">
                   Precision analytics for elite interior design operations.
                 </p>
@@ -622,40 +860,45 @@ export default function InsightsClient1() {
             </div>
           </main>
 
-          <InsightSect2 kpis={dashboard.kpis} tokenMetrics={tokenMetrics} />
-          <InsightSect3
-            salesFunnel={dashboard.salesFunnel}
-            lostFunnel={dashboard.lostFunnel}
-            revenueDistribution={dashboard.revenueDistribution}
-            totalLeadsCount={dashboard.kpis.totalLeads.value}
+          <InsightSect2
+            kpis={{
+              ...dashboard.kpis,
+              totalLeads: {
+                ...dashboard.kpis.totalLeads,
+                value: alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value,
+              },
+            }}
             tokenMetrics={tokenMetrics}
-            quotationCount={quoteSentWonMetrics.count}
-            quotationValue={quoteSentWonMetrics.totalValue}
-            quotationMetricsLoading={quoteSentWonMetrics.loading}
-            funnelStageValues={funnelStageValues}
-            funnelMetricsLoading={funnelMetricsLoading}
-            stagePathData={stagePathData}
           />
+      <InsightSect3
+        salesFunnel={alignedSalesFunnel ?? dashboard.salesFunnel}
+        lostFunnel={alignedLostFunnel ?? dashboard.lostFunnel}
+        revenueDistribution={dashboard.revenueDistribution}
+        totalLeadsCount={alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value}
+        tokenMetrics={tokenMetrics}
+        quotationCount={quoteSentWonMetrics.count}
+        quotationValue={quoteSentWonMetrics.totalValue}
+        quotationMetricsLoading={quoteSentWonMetrics.loading}
+        funnelStageValues={funnelStageValues}
+        funnelMetricsLoading={funnelMetricsLoading}
+        stagePathData={stagePathData}
+        stagePathLoading={stagePathLoading}
+        useCurrentStageInventory={Boolean(alignedSalesFunnel)}
+      />
           <InsightsSect4
-            dropReasons={dashboard.dropReasons}
+            dropReasons={alignedDropReasons ?? dashboard.dropReasons}
+            lostTotalOverride={alignedLostFunnel?.total ?? dashboard.lostFunnel?.total ?? null}
             stageVelocity={dashboard.stageVelocity}
           />
           <InsightsSect5
-            team={dashboard.teamPerformance.map((m): InsightsTeamMember => ({
-              ...m,
-              targetIncentive:
-                typeof m.userId === "number" && incentiveTargets[m.userId] != null
-                  ? incentiveTargets[m.userId]
-                  : undefined,
-              achievedIncentive: m.closedValue,
-            }))}
-            teamPeriod={teamPeriod}
-            onTeamPeriodChange={setTeamPeriod}
+            team={teamForMatrix}
+            incentiveScopeLabel={incentiveScopeLabel}
+            incentivesLoading={teamIncentivesLoading}
           />
           <InsightsSect6
             leadsOverTime={dashboard.leadsOverTime}
             conversionTrend={dashboard.conversionTrend}
-            revenueForecast={revenueForecastForUi}
+            revenueForecast={dashboard.revenueForecast}
           />
         </div>
       </div>

@@ -65,14 +65,61 @@ export function computeFunnelStageInvestmentTotals(
   return totals;
 }
 
-/** Total investment for all active (non-lost) leads — Fresh Lead funnel bar. */
-export function computeFreshLeadInvestmentTotal(
+/**
+ * Sum investment only for leads currently sitting in each funnel stage
+ * (matches Journey heatmap stage inventory, not cumulative "ever reached").
+ */
+export function computeFunnelCurrentStageInvestmentTotals(
+  leads: ApiLead[],
+  investments: Map<string, number>,
+  backendStages: InsightsFunnelStage[],
+): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const stage of backendStages) {
+    totals[stage.stageKey || stage.stageLabel] = 0;
+  }
+
+  // index → first backend stage key that maps to this depth
+  const keyByIndex = new Map<number, string>();
+  for (const stage of backendStages) {
+    const idx = backendStageIndex(stage);
+    if (!keyByIndex.has(idx)) {
+      keyByIndex.set(idx, stage.stageKey || stage.stageLabel);
+    }
+  }
+
+  for (const lead of leads) {
+    const amount = investments.get(stableLeadKey(lead)) ?? 0;
+    if (amount <= 0) continue;
+    const leadIdx = salesFunnelStageIndex(lead);
+    const key = keyByIndex.get(leadIdx);
+    if (!key) continue;
+    totals[key] = (totals[key] ?? 0) + amount;
+  }
+
+  return totals;
+}
+
+/** Investment for leads currently in Fresh Lead milestone only. */
+export function computeFreshLeadStageInvestmentTotal(
   leads: ApiLead[],
   investments: Map<string, number>,
 ): number {
   return leads
-    .filter((lead) => !isLostPathLead(lead))
+    .filter((lead) => salesFunnelStageIndex(lead) === 0)
     .reduce((sum, lead) => sum + (investments.get(stableLeadKey(lead)) ?? 0), 0);
+}
+
+/**
+ * Pipeline-share % (current inventory model). First stage is 100 only when it's the
+ * sole stage; otherwise each stage is % of total across shown stages.
+ */
+export function recalcFunnelSharePercents(stages: InsightsFunnelStage[]): InsightsFunnelStage[] {
+  const total = stages.reduce((s, x) => s + (Number(x.count) || 0), 0);
+  return stages.map((stage) => ({
+    ...stage,
+    conversionPercent: total > 0 ? (stage.count / total) * 100 : 0,
+  }));
 }
 
 export function recalcFunnelConversionPercents(stages: InsightsFunnelStage[]): InsightsFunnelStage[] {

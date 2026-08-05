@@ -45,10 +45,13 @@ export type InsightsDropReason = {
   percent: number;
 };
 
+/** Hub stage-velocity hop (persisted transition history). FE displays only — do not recompute. */
 export type InsightsStageVelocity = {
   fromStage: string;
   toStage: string;
+  /** Mean days for completions in the current filter window (1 decimal). */
   avgDays: number;
+  /** currentAvg − previousPeriodAvg; negative = faster (good). */
   trendDays: number;
 };
 
@@ -62,8 +65,12 @@ export type InsightsTeamMember = {
   closed: number;
   closedValue: number;
   conversionPercent: number;
+  /** Hub optional row active flag (P0 matrix). */
+  active?: boolean;
+  /** FE Incentives only (prefer); Hub usually omits. */
   targetIncentive?: number;
   achievedIncentive?: number;
+  payoff?: number;
 };
 
 export type InsightsChartPoint = {
@@ -81,6 +88,10 @@ export type InsightsDashboard = {
     salesManagerId?: number | null;
     salesExecutiveId?: number | null;
     teamPeriod?: string | null;
+    /** Hub frozen rule echo (P0) e.g. lead.assignee ⇄ User.fullName|username */
+    assigneeRule?: string | null;
+    /** Hub frozen field for branch scope e.g. User.branch */
+    branchField?: string | null;
   };
   kpis: {
     totalLeads: InsightsKpiMetric;
@@ -421,8 +432,20 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
         closed: asNum(m.closed),
         closedValue: asNum(m.closedValue),
         conversionPercent: asNum(m.conversionPercent),
+        active:
+          typeof m.active === "boolean"
+            ? m.active
+            : m.active == null
+              ? undefined
+              : Boolean(m.active),
         targetIncentive: m.targetIncentive != null ? asNum(m.targetIncentive) : undefined,
         achievedIncentive: m.achievedIncentive != null ? asNum(m.achievedIncentive) : undefined,
+        payoff:
+          m.payoff != null
+            ? asNum(m.payoff)
+            : m.incentivePayout != null
+              ? asNum(m.incentivePayout)
+              : undefined,
       }),
     ),
     leadsOverTime: {

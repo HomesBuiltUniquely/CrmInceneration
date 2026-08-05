@@ -13,6 +13,10 @@ import {
 type Props = {
   value: BookingDateFilterState;
   onChange: (next: BookingDateFilterState) => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+  /** Header subtitle under “Date Range Filter”. */
+  subtitle?: string;
 };
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -27,7 +31,13 @@ function toYmd(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-export default function InsightsDateFilterPopover({ value, onChange }: Props) {
+export default function InsightsDateFilterPopover({
+  value,
+  onChange,
+  disabled = false,
+  fullWidth = false,
+  subtitle = "Filter insights by specific period",
+}: Props) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<BookingDateFilterState>(value);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -53,6 +63,10 @@ export default function InsightsDateFilterPopover({ value, onChange }: Props) {
       }
     }
   }, [open, value, todayYmd]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -167,19 +181,30 @@ export default function InsightsDateFilterPopover({ value, onChange }: Props) {
   };
 
   return (
-    <div ref={rootRef} className="relative inline-block text-left">
+    <div
+      ref={rootRef}
+      className={`relative text-left ${fullWidth ? "block w-full" : "inline-block"}`}
+    >
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((prev) => !prev);
+        }}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 ${
-          active
-            ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
-            : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-55 ${
+          fullWidth ? "w-full" : ""
+        } ${
+          disabled
+            ? "border-gray-200 bg-gray-50 text-gray-500"
+            : active
+              ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
+              : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
         }`}
       >
-        <span className="flex items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
           <svg
             className={`h-4 w-4 shrink-0 transition-colors ${
               active ? "text-indigo-600" : "text-gray-400 group-hover:text-gray-600"
@@ -195,7 +220,7 @@ export default function InsightsDateFilterPopover({ value, onChange }: Props) {
               d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
             />
           </svg>
-          <span className="truncate max-w-[150px] sm:max-w-[200px]">
+          <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[150px] sm:max-w-[200px]"}`}>
             {active ? bookingDateFilterSummary(value) : "All Time"}
           </span>
         </span>
@@ -212,7 +237,7 @@ export default function InsightsDateFilterPopover({ value, onChange }: Props) {
         </svg>
       </button>
 
-      {open ? (
+      {open && !disabled ? (
         <div
           role="dialog"
           aria-label="Select date range"
@@ -222,7 +247,7 @@ export default function InsightsDateFilterPopover({ value, onChange }: Props) {
           <div className="flex items-center justify-between border-b border-gray-100 bg-slate-50/90 px-4 py-3">
             <div>
               <p className="text-xs font-bold text-gray-900">Date Range Filter</p>
-              <p className="text-[11px] text-gray-500">Filter insights by specific period</p>
+              <p className="text-[11px] text-gray-500">{subtitle}</p>
             </div>
             {active ? (
               <button

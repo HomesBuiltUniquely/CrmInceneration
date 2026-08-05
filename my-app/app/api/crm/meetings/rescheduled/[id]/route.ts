@@ -1,0 +1,10 @@
+import { NextRequest } from "next/server";
+import { proxyNotifyGet } from "@/lib/crm-notify-proxy";
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  return proxyNotifyGet(req, `/v1/meetings/rescheduled/${encodeURIComponent(id)}`);
+}

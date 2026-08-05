@@ -1,11 +1,28 @@
 # CRM Insights Dashboard — Backend Handoff
 
-**Status:** Hub Phase 1 implemented · Frontend wired to `/api/crm/insights/*`  
+**Status:** Hub Phase 1 + **P0 filter alignment** shipped · Frontend wired to `/api/crm/insights/*`  
 **Audience:** Hub / Spring backend team (`Project-ERP`)  
 **Frontend repo:** `CrmInceneration/my-app`  
 **UI route:** `/Insights`  
 **Related filters:** Booking & Token date filter (`booking-token-date-filter.ts`)  
 **Note:** `branchId` is Hub **branch code string** (e.g. `HBR`), not numeric FK.
+
+**Related QA / filter accuracy:** [`CRM_INSIGHTS_FILTER_ACCURACY_QA.md`](./CRM_INSIGHTS_FILTER_ACCURACY_QA.md)  
+**Hub API source of truth (backend):** `docs/CRM_INSIGHTS_DASHBOARD_API.md` (assignee/branch frozen rules + samples)
+
+### P0 frozen (Hub) — FE trusts this
+
+| Area | Rule |
+|------|------|
+| Scope | One Scope for KPIs, funnels, drop, velocity, team, charts |
+| Manager filter | Only **SALES_EXECUTIVE under manager**; no manager row; manager leads out of team KPIs |
+| Executive filter | Matrix **0–1** rows matching `userId` |
+| Both people ids | Prefer executive; Hub **400** if exec ∉ manager team |
+| Role locks | SE self; SM own team; admin full |
+| Assignee | `lead.assignee` ⇄ `User.fullName` or `username` (case-insensitive) |
+| Branch | `User.branch` code |
+| Matrix Hub fields | leads, meetings, proposals, closed, closedValue, conversionPercent, `active` |
+| Matrix incentives | FE only (Target / Achieved / Payoff) |
 
 ---
 
@@ -160,7 +177,9 @@ Return **raw numbers** (counts, amounts in INR, percentages as numbers). Fronten
     "branchId": null,
     "salesManagerId": null,
     "salesExecutiveId": null,
-    "teamPeriod": "monthly"
+    "teamPeriod": "monthly",
+    "assigneeRule": "lead.assignee matches User.fullName or username (case-insensitive)",
+    "branchField": "User.branch"
   },
   "kpis": {
     "totalLeads": {
@@ -388,38 +407,69 @@ Lost / dropped leads in period, grouped by drop reason.
 
 ### 5.5 Stage velocity
 
-Average days to move between stages.
+Average days between Hub **checkpoint pairs** from **persisted transition history**. Frontend displays `stageVelocity` as-is — do **not** recompute from lead list fields.
+
+**Fixed pairs (order):**
+
+| fromStage | toStage | Hub checkpoint meaning |
+|-----------|---------|------------------------|
+| Discovery | Connection | Enter Discovery/Fresh Lead → enter Connection |
+| Connection | Design Meeting | Enter Connection → **Meeting Scheduled** |
+| Design | Proposal | After **Meeting Successful** → `quote_sent_info.quoteSentToCustomer === true` (process flag, not a pipeline milestone) |
+| Proposal | Closed Won | After quote sent → Closed Won (Token Done / Booking Done) |
 
 | Field | Definition |
 |-------|------------|
-| `avgDays` | Mean days for transitions completed in selected period |
-| `trendDays` | `currentAvg - previousPeriodAvg` (negative = faster = good) |
+| `avgDays` | Mean days for **completed** transitions (`exitedAt` set) in the selected window (exit date, not lead createdAt); 1 decimal |
+| `trendDays` | `currentAvg - previousPeriodAvg` (equal-length prior window). Negative = faster = good. `0` when `dateRange=all` or no prior samples |
+
+Filters (`dateRange` / branch / manager / exec) match other Insights widgets. Incomplete in-progress leads do not affect that hop’s average until they complete the hop.
+
+**Frontend:** Trust Hub `avgDays` / `trendDays`. Do not zero trends when `trendDays === avgDays`. Do not invent durations on FE. Empty/all-zero after deploy is valid until history accumulates.
 
 ### 5.6 Team performance matrix
 
-One row per salesperson in scope.
+One row per salesperson in scope. FE maps Hub metrics; Target / Achieved / Payoff are **FE Incentives only**.
 
-| Field | Definition |
-|-------|------------|
-| `leads` | Leads assigned / handled |
-| `meetings` | Meetings conducted |
-| `proposals` | Proposals sent |
-| `closed` | Closed won count |
-| `closedValue` | Closed won INR |
-| `conversionPercent` | `(closed / leads) * 100` |
-| `teamPeriod` | `daily` or `monthly` window for this table |
+| Field | Source |
+|-------|--------|
+| `leads`, `meetings`, `proposals`, `closed` | Hub — **FE only displays**; same people/branch as rest of dashboard |
+| `closedValue` | Hub still returns; **FE does not show Value** |
+| `conversionPercent` | Prefer Hub; else FE `(closed / leads) * 100` |
+| `active` | Hub optional row flag |
+| `achievedIncentive` / `payoff` | **FE Incentives**, Insights date filter (All = all time). Payoff = sum of 15-day slabs. **No Target column** |
+| `teamPeriod` | FE always sends `monthly` (Insights date window for matrix activity) |
 
-When `salesExecutiveId` is set, return **0 or 1** rows for that person.
+**Hub field semantics (shipped — product-correct):**
 
-When `salesManagerId` is set, return **team executives under that manager**.
+| Field | Meaning | Date basis | Attribution |
+|-------|---------|------------|-------------|
+| `meetings` | Appointments scheduled into CRM | `Appointment.createdAt` in matrix window | `Appointment.salesUserId` |
+| `proposals` | Quotes sent (process) | `quote_sent_info.lastQuoteSentAt` else `quoteSentAt` in window | `lead.assignee` (same as KPIs) |
+| `leads` / `closed` | Hub KPI-aligned counts | Hub date rules for matrix | same scope |
+
+**Window vs `teamPeriod` (Hub):**
+- `teamPeriod=monthly` (FE default): Insights date window for leads + meetings + proposals
+- `teamPeriod=daily`: those counts use **UTC today only**
+
+**Not used (removed on Hub):** stage “proposal-like”, lead `meetingDate`, “currently in meeting stage” headcounts.
+
+**FE notes:**
+- Labels **Meetings** / **Proposals** remain display-only Hub numbers — no FE recompute
+- Target + **Value** columns removed from matrix UI
+- Achieved / Payoff follow header **date** filter (Incentives engine)
 
 ### 5.7 Charts
 
-| Block | Bucketing |
-|-------|-----------|
-| `leadsOverTime` | For short ranges (≤ 7–14 days): day labels. For longer ranges: week or month buckets — return consistent `label` + `count` |
-| `conversionTrend` | Ordered period buckets with conversion % |
-| `revenueForecast` | `actual` = closed/recognized in period; `projected` = forecast to period end; `target` = configured target |
+All from the **same** `/dashboard` body — pure FE render, no client recompute from lead lists.
+
+| Block | Hub shape | FE |
+|-------|-----------|-----|
+| `leadsOverTime` | `changePercent` + `points[{label,count}]` | Bars X=label Y=count; badge vs previous period |
+| `conversionTrend` | `changePercent` + `points[{label,conversionPercent}]` | Line 0–100%; badge last−first |
+| `revenueForecast` | `{ target, actual, projected }` INR | 3 bars Actual / Projected / Target — **not** Incentives target |
+
+**Bucketing (Hub):** ≤14d → DOW; ≤90d → WEEK n; longer/all → month names. Empty periods → zeros are valid.
 
 ---
 

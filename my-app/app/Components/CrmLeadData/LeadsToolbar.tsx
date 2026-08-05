@@ -35,6 +35,10 @@ import {
   viewerShowsMeetingDateToolbarOption,
   type CrmDateFieldSelection,
 } from "@/lib/crm-date-field-filter";
+import InsightsDropdownFilter, {
+  type DropdownOption,
+} from "@/app/Components/Insights/InsightsDropdownFilter";
+import CrmDatePickerField from "@/app/Components/Shared/CrmDatePickerField";
 
 function meetingQuoteLeadTypeTiles(
   counts: Record<string, number>,
@@ -44,7 +48,7 @@ function meetingQuoteLeadTypeTiles(
     ["Meeting Rescheduled", counts.meetingRescheduled ?? 0],
     ["Meeting Cancelled", counts.meetingCancelled ?? 0],
     ["Quote Sent", counts.quoteSent ?? 0],
-    ["Quote Due", counts.quoteDue ?? 0],
+    ["Meeting Successful", counts.meetingSuccessful ?? 0],
   ];
 }
 
@@ -62,7 +66,7 @@ function insightKeyForLeadTypeLabel(
   if (label === "Meeting Rescheduled") return "meetingRescheduled";
   if (label === "Meeting Cancelled") return "meetingCancelled";
   if (label === "Quote Sent") return "quoteSent";
-  if (label === "Quote Due") return "quoteDue";
+  if (label === "Meeting Successful") return "meetingSuccessful";
   if (label === "Discovery Lost") return "lostDiscovery";
   if (label === "Connection Lost") return "lostConnection";
   if (label === "Experience & Design Lost") return "lostExperienceDesign";
@@ -153,77 +157,24 @@ function Chevron() {
   );
 }
 
-function FilterSelectField({
+function stringOptions(values: string[], allLabel = "All"): DropdownOption[] {
+  return [{ value: "", label: allLabel }, ...values.map((v) => ({ value: v, label: v }))];
+}
+
+function FilterControl({
   label,
-  value,
-  onChange,
-  disabled,
   children,
 }: {
   label: string;
-  value: string;
-  onChange: (next: string) => void;
-  disabled?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label
-      className={`group flex min-h-[52px] flex-col justify-center gap-0.5 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-2 py-1.5 transition-all ${
-        disabled
-          ? "cursor-not-allowed opacity-55"
-          : "hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface)] focus-within:border-[var(--crm-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--crm-accent-soft)]"
-      }`}
-    >
-      <span className="text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--crm-text-muted)]">
+    <div className="min-w-0 space-y-1">
+      <span className="block text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--crm-text-muted)]">
         {label}
       </span>
-      <div className="relative min-w-0">
-        <select
-          value={value}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full cursor-pointer appearance-none truncate bg-transparent pr-5 text-[11px] font-semibold text-[var(--crm-text-primary)] focus:outline-none disabled:cursor-not-allowed"
-        >
-          {children}
-        </select>
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center text-[var(--crm-text-muted)]">
-          <Chevron />
-        </div>
-      </div>
-    </label>
-  );
-}
-
-function FilterDateField({
-  label,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  disabled?: boolean;
-  onChange: (next: string) => void;
-}) {
-  return (
-    <label
-      className={`group flex min-h-[52px] flex-col justify-center gap-0.5 rounded-lg border border-[var(--crm-border)] bg-[var(--crm-input-bg)] px-2 py-1.5 transition-all ${
-        disabled
-          ? "cursor-not-allowed opacity-55"
-          : "hover:border-[var(--crm-border-strong)] hover:bg-[var(--crm-surface)] focus-within:border-[var(--crm-accent-ring)] focus-within:ring-2 focus-within:ring-[var(--crm-accent-soft)]"
-      }`}
-    >
-      <span className="text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--crm-text-muted)]">
-        {label}
-      </span>
-      <input
-        type="date"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-transparent text-[11px] font-semibold text-[var(--crm-text-primary)] focus:outline-none disabled:cursor-not-allowed [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-60"
-      />
-    </label>
+      {children}
+    </div>
   );
 }
 
@@ -1090,216 +1041,259 @@ export default function LeadsToolbar({
                 Reset
               </button>
             </div>
-            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {isSalesWorkspace && (viewerRole === "ADMIN" || viewerRole === "SUPER_ADMIN") && (
-                <FilterSelectField label="Sales Admin" value={salesAdminFilter} onChange={onSalesAdminFilterChange}>
-                  <option value="">All</option>
-                  {salesAdminOptions.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </FilterSelectField>
+                <FilterControl label="Sales Admin">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="All"
+                    ariaLabel="Sales Admin"
+                    value={salesAdminFilter}
+                    onChange={onSalesAdminFilterChange}
+                    options={stringOptions(salesAdminOptions)}
+                  />
+                </FilterControl>
               )}
               {isSalesWorkspace && !isSalesExecutive && !isPresalesFlow ? (
-                <FilterSelectField label="Sales Exec" value={salesExecFilter} onChange={onSalesExecFilterChange}>
-                  <option value="">All</option>
-                  {salesExecOptions.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </FilterSelectField>
+                <FilterControl label="Sales Exec">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="All"
+                    ariaLabel="Sales Exec"
+                    value={salesExecFilter}
+                    onChange={onSalesExecFilterChange}
+                    options={stringOptions(salesExecOptions)}
+                  />
+                </FilterControl>
               ) : null}
               {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
-                <>
-                  <FilterSelectField label="Sales Mgr" value={salesManagerFilter} onChange={onSalesManagerFilterChange}>
-                    <option value="">All</option>
-                    {salesManagerOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                </>
+                <FilterControl label="Sales Mgr">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="All"
+                    ariaLabel="Sales Mgr"
+                    value={salesManagerFilter}
+                    onChange={onSalesManagerFilterChange}
+                    options={stringOptions(salesManagerOptions)}
+                  />
+                </FilterControl>
               ) : null}
               {isPresalesWorkspace && showPresalesHierarchyFilters ? (
                 <>
-                  <FilterSelectField
-                    label="Presales Mgr"
-                    value={presalesManagerFilter}
-                    onChange={(next) => {
-                      onPresalesManagerFilterChange(next);
-                      if (next) onPresalesExecFilterChange("");
-                    }}
-                  >
-                    <option value="">All</option>
-                    {presalesManagerOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                  <FilterSelectField
-                    label="Presales Exec"
-                    value={presalesExecFilter}
-                    onChange={onPresalesExecFilterChange}
-                  >
-                    <option value="">All</option>
-                    {presalesExecOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
+                  <FilterControl label="Presales Mgr">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      placeholder="All"
+                      ariaLabel="Presales Mgr"
+                      value={presalesManagerFilter}
+                      onChange={(next) => {
+                        onPresalesManagerFilterChange(next);
+                        if (next) onPresalesExecFilterChange("");
+                      }}
+                      options={stringOptions(presalesManagerOptions)}
+                    />
+                  </FilterControl>
+                  <FilterControl label="Presales Exec">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      placeholder="All"
+                      ariaLabel="Presales Exec"
+                      value={presalesExecFilter}
+                      onChange={onPresalesExecFilterChange}
+                      options={stringOptions(presalesExecOptions)}
+                    />
+                  </FilterControl>
                 </>
               ) : null}
-              <FilterSelectField label="Lead Type" value={leadType} onChange={onLeadTypeChange}>
-                {leadTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </FilterSelectField>
+              <FilterControl label="Lead Type">
+                <InsightsDropdownFilter
+                  fullWidth
+                  icon="none"
+                  placeholder="All Types"
+                  ariaLabel="Lead Type"
+                  value={leadType}
+                  onChange={onLeadTypeChange}
+                  options={leadTypeOptions.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  }))}
+                />
+              </FilterControl>
               {isSalesWorkspace && !isSalesManager && !isSalesExecutive && !isPresalesFlow ? (
-                <FilterSelectField label="Assignee" value={assignee} onChange={onAssigneeChange}>
-                  <option value="">All</option>
-                  {assigneeOptions.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </FilterSelectField>
+                <FilterControl label="Assignee">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="All"
+                    ariaLabel="Assignee"
+                    value={assignee}
+                    onChange={onAssigneeChange}
+                    options={stringOptions(assigneeOptions)}
+                  />
+                </FilterControl>
               ) : null}
               {isPresalesFlow ? (
                 <>
-                  <FilterSelectField
-                    label="Presales Stage"
-                    value={milestoneStage}
-                    onChange={(v) => {
-                      onMilestoneStageChange(v);
-                      onMilestoneStageCategoryChange("");
-                      onMilestoneSubStageChange("");
-                    }}
-                  >
-                    <option value="">All</option>
-                    {milestoneStageOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                  <FilterSelectField
-                    label="Presales Category"
-                    value={milestoneStageCategory}
-                    onChange={(v) => {
-                      onMilestoneStageCategoryChange(v);
-                      onMilestoneSubStageChange("");
-                    }}
-                    disabled={!milestoneStage.trim()}
-                  >
-                    <option value="">
-                      {milestoneStage.trim() ? "All" : "Select stage first"}
-                    </option>
-                    {milestoneStageCategoryOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                  <FilterSelectField
-                    label="Presales Substage"
-                    value={milestoneSubStage}
-                    onChange={onMilestoneSubStageChange}
-                    disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
-                  >
-                    <option value="">
-                      {milestoneStage.trim() && milestoneStageCategory.trim()
-                        ? "All"
-                        : milestoneStage.trim()
-                          ? "Select category first"
-                          : "Select stage first"}
-                    </option>
-                    {milestoneSubStageOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                </>
-              ) : (
-                <>
-                  <FilterSelectField
-                    label="Stage"
-                    value={milestoneStage}
-                    onChange={(v) => {
-                      onMilestoneStageChange(v);
-                      onMilestoneStageCategoryChange("");
-                      onMilestoneSubStageChange("");
-                    }}
-                  >
-                    <option value="">All</option>
-                    {milestoneStageOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                  <FilterSelectField
-                    label="Category"
-                    value={milestoneStageCategory}
-                    onChange={(v) => {
-                      onMilestoneStageCategoryChange(v);
-                      onMilestoneSubStageChange("");
-                    }}
-                    disabled={!milestoneStage.trim() || salesNoMilestoneFilterActive}
-                  >
-                    <option value="">
-                      {salesNoMilestoneFilterActive
-                        ? "N/A for No milestone"
-                        : milestoneStage.trim()
-                          ? "All"
-                          : "Select stage first"}
-                    </option>
-                    {milestoneStageCategoryOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
-                  <FilterSelectField
-                    label="Sub Stage"
-                    value={milestoneSubStage}
-                    onChange={onMilestoneSubStageChange}
-                    disabled={
-                      salesNoMilestoneFilterActive ||
-                      !milestoneStage.trim() ||
-                      !milestoneStageCategory.trim()
-                    }
-                  >
-                    <option value="">
-                      {salesNoMilestoneFilterActive
-                        ? "N/A for No milestone"
-                        : milestoneStage.trim() && milestoneStageCategory.trim()
+                  <FilterControl label="Presales Stage">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      placeholder="All"
+                      ariaLabel="Presales Stage"
+                      value={milestoneStage}
+                      onChange={(v) => {
+                        onMilestoneStageChange(v);
+                        onMilestoneStageCategoryChange("");
+                        onMilestoneSubStageChange("");
+                      }}
+                      options={stringOptions(milestoneStageOptions)}
+                    />
+                  </FilterControl>
+                  <FilterControl label="Presales Category">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      disabled={!milestoneStage.trim()}
+                      placeholder={milestoneStage.trim() ? "All" : "Select stage first"}
+                      ariaLabel="Presales Category"
+                      value={milestoneStageCategory}
+                      onChange={(v) => {
+                        onMilestoneStageCategoryChange(v);
+                        onMilestoneSubStageChange("");
+                      }}
+                      options={stringOptions(
+                        milestoneStageCategoryOptions,
+                        milestoneStage.trim() ? "All" : "Select stage first",
+                      )}
+                    />
+                  </FilterControl>
+                  <FilterControl label="Presales Substage">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      disabled={!milestoneStage.trim() || !milestoneStageCategory.trim()}
+                      placeholder={
+                        milestoneStage.trim() && milestoneStageCategory.trim()
                           ? "All"
                           : milestoneStage.trim()
                             ? "Select category first"
-                            : "Select stage first"}
-                    </option>
-                    {milestoneSubStageOptions.map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </FilterSelectField>
+                            : "Select stage first"
+                      }
+                      ariaLabel="Presales Substage"
+                      value={milestoneSubStage}
+                      onChange={onMilestoneSubStageChange}
+                      options={stringOptions(
+                        milestoneSubStageOptions,
+                        milestoneStage.trim() && milestoneStageCategory.trim()
+                          ? "All"
+                          : milestoneStage.trim()
+                            ? "Select category first"
+                            : "Select stage first",
+                      )}
+                    />
+                  </FilterControl>
+                </>
+              ) : (
+                <>
+                  <FilterControl label="Stage">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      placeholder="All"
+                      ariaLabel="Stage"
+                      value={milestoneStage}
+                      onChange={(v) => {
+                        onMilestoneStageChange(v);
+                        onMilestoneStageCategoryChange("");
+                        onMilestoneSubStageChange("");
+                      }}
+                      options={stringOptions(milestoneStageOptions)}
+                    />
+                  </FilterControl>
+                  <FilterControl label="Category">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      disabled={!milestoneStage.trim() || salesNoMilestoneFilterActive}
+                      placeholder={
+                        salesNoMilestoneFilterActive
+                          ? "N/A for No milestone"
+                          : milestoneStage.trim()
+                            ? "All"
+                            : "Select stage first"
+                      }
+                      ariaLabel="Category"
+                      value={milestoneStageCategory}
+                      onChange={(v) => {
+                        onMilestoneStageCategoryChange(v);
+                        onMilestoneSubStageChange("");
+                      }}
+                      options={stringOptions(
+                        milestoneStageCategoryOptions,
+                        salesNoMilestoneFilterActive
+                          ? "N/A for No milestone"
+                          : milestoneStage.trim()
+                            ? "All"
+                            : "Select stage first",
+                      )}
+                    />
+                  </FilterControl>
+                  <FilterControl label="Sub Stage">
+                    <InsightsDropdownFilter
+                      fullWidth
+                      icon="none"
+                      disabled={
+                        salesNoMilestoneFilterActive ||
+                        !milestoneStage.trim() ||
+                        !milestoneStageCategory.trim()
+                      }
+                      placeholder={
+                        salesNoMilestoneFilterActive
+                          ? "N/A for No milestone"
+                          : milestoneStage.trim() && milestoneStageCategory.trim()
+                            ? "All"
+                            : milestoneStage.trim()
+                              ? "Select category first"
+                              : "Select stage first"
+                      }
+                      ariaLabel="Sub Stage"
+                      value={milestoneSubStage}
+                      onChange={onMilestoneSubStageChange}
+                      options={stringOptions(
+                        milestoneSubStageOptions,
+                        salesNoMilestoneFilterActive
+                          ? "N/A for No milestone"
+                          : milestoneStage.trim() && milestoneStageCategory.trim()
+                            ? "All"
+                            : milestoneStage.trim()
+                              ? "Select category first"
+                              : "Select stage first",
+                      )}
+                    />
+                  </FilterControl>
                 </>
               )}
               {isPresalesWorkspace ? (
-                <FilterSelectField label="Reinquiry" value={reinquiry} onChange={onReinquiryChange}>
-                  <option value="">All</option>
-                  <option value="true">Reinquiry only</option>
-                  <option value="false">Non-reinquiry only</option>
-                </FilterSelectField>
+                <FilterControl label="Reinquiry">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="All"
+                    ariaLabel="Reinquiry"
+                    value={reinquiry}
+                    onChange={onReinquiryChange}
+                    options={[
+                      { value: "", label: "All" },
+                      { value: "true", label: "Reinquiry only" },
+                      { value: "false", label: "Non-reinquiry only" },
+                    ]}
+                  />
+                </FilterControl>
               ) : null}
             </div>
             <div className="mt-2 border-t border-[var(--crm-border)] pt-2">
@@ -1317,37 +1311,42 @@ export default function LeadsToolbar({
                   </span>
                 ) : null}
               </div>
-              <div className="grid gap-1.5 sm:grid-cols-3">
-              <FilterSelectField
-                label="Filter by"
-                value={draftDateField}
-                onChange={handleDraftDateFieldChange}
-              >
-                <option value="">Select date field</option>
-                {dateFieldToolbarOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </FilterSelectField>
-              <FilterDateField
-                label="From"
-                value={draftDateFrom}
-                disabled={!dateFilterEnabled}
-                onChange={(next) => {
-                  setDraftDateFrom(next);
-                  commitDateRange(next, draftDateTo);
-                }}
-              />
-              <FilterDateField
-                label="To"
-                value={draftDateTo}
-                disabled={!dateFilterEnabled}
-                onChange={(next) => {
-                  setDraftDateTo(next);
-                  commitDateRange(draftDateFrom, next);
-                }}
-              />
+              <div className="grid gap-2 sm:grid-cols-3">
+                <FilterControl label="Filter by">
+                  <InsightsDropdownFilter
+                    fullWidth
+                    icon="none"
+                    placeholder="Select date field"
+                    ariaLabel="Filter by date field"
+                    value={draftDateField}
+                    onChange={handleDraftDateFieldChange}
+                    options={[
+                      { value: "", label: "Select date field" },
+                      ...dateFieldToolbarOptions.map((opt) => ({
+                        value: opt.value,
+                        label: opt.label,
+                      })),
+                    ]}
+                  />
+                </FilterControl>
+                <CrmDatePickerField
+                  label="From"
+                  value={draftDateFrom}
+                  disabled={!dateFilterEnabled}
+                  max={draftDateTo || undefined}
+                  onChange={(next) => {
+                    commitDateRange(next, draftDateTo);
+                  }}
+                />
+                <CrmDatePickerField
+                  label="To"
+                  value={draftDateTo}
+                  disabled={!dateFilterEnabled}
+                  min={draftDateFrom || undefined}
+                  onChange={(next) => {
+                    commitDateRange(draftDateFrom, next);
+                  }}
+                />
               </div>
             </div>
           </div>

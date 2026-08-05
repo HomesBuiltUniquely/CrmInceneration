@@ -104,11 +104,10 @@ export function isQuoteSentLead(lead: ApiLead): boolean {
 }
 
 /**
- * Quote due: explicit pending substage only (e.g. "MD but Quote pending",
- * "Meeting Done but Quote Pending") — not "Meeting Successful".
+ * Meeting Successful substage.
  */
-export function isQuoteDueLead(lead: ApiLead): boolean {
-  return isQuotePendingSubStage(lead);
+export function isMeetingSuccessfulLead(lead: ApiLead): boolean {
+  return normLabel(readLeadMilestoneSubStage(lead)) === "meeting successful";
 }
 
 export type MilestoneTileCounts = {
@@ -116,7 +115,7 @@ export type MilestoneTileCounts = {
   meetingRescheduled: number;
   meetingCancelled: number;
   quoteSent: number;
-  quoteDue: number;
+  meetingSuccessful: number;
   /** Quote Sent tile = quote emailed to customer (Hub `quoteSentToCustomer`). */
   lostQuoteSent: number;
 };
@@ -130,7 +129,7 @@ export function computeMilestoneTileCounts(
     meetingRescheduled: 0,
     meetingCancelled: 0,
     quoteSent: 0,
-    quoteDue: 0,
+    meetingSuccessful: 0,
     lostQuoteSent: 0,
   };
 
@@ -149,7 +148,7 @@ export function computeMilestoneTileCounts(
     if (isMeetingScheduledSubStage(lead)) counts.meetingScheduled += 1;
     if (isMeetingRescheduledSubStage(lead)) counts.meetingRescheduled += 1;
     if (isMeetingCancelledSubStage(lead)) counts.meetingCancelled += 1;
-    if (isQuoteDueLead(lead)) counts.quoteDue += 1;
+    if (isMeetingSuccessfulLead(lead)) counts.meetingSuccessful += 1;
   }
 
   return counts;
@@ -160,7 +159,7 @@ export type MilestoneInsightMode =
   | "meetingRescheduled"
   | "meetingCancelled"
   | "quoteSent"
-  | "quoteDue"
+  | "meetingSuccessful"
   | "lostQuoteSent";
 
 export function filterLeadsForMilestoneInsightMode(
@@ -182,8 +181,8 @@ export function filterLeadsForMilestoneInsightMode(
         return isMeetingRescheduledSubStage(lead);
       case "meetingCancelled":
         return isMeetingCancelledSubStage(lead);
-      case "quoteDue":
-        return isQuoteDueLead(lead);
+      case "meetingSuccessful":
+        return isMeetingSuccessfulLead(lead);
       default:
         return true;
     }
