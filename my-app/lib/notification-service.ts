@@ -350,13 +350,21 @@ function bookingTitle(raw: RawBookingItem): string {
 
   const paid = Number(raw.amountReceived ?? raw.amount_received ?? raw.paidAmount ?? raw.paid_amount ?? 0);
   const target = Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
+  const remaining = Number(raw.remainingAmount ?? raw.remaining_amount ?? 0);
+  const quoteAmount = Number(raw.quoteAmount ?? raw.quote_amount ?? 0);
+
+  // Check if full payment is received (remaining is 0 or paid equals quote amount)
+  const isFullPayment = 
+    remaining === 0 || 
+    (quoteAmount > 0 && paid >= quoteAmount);
 
   const isFullTenPercent =
     /full[\s_]*10/i.test(kind) ||               // "FULL 10%", "full_10", "full10", etc.
     kind.toUpperCase() === "BOOKING" ||          // payment_kind = BOOKING
     (target > 0 && paid >= target);             // numeric: paid >= 10% target
 
-  if (isFullTenPercent) return "Booking Done";
+  // "Booking Done" for both 10% payment and full payment
+  if (isFullPayment || isFullTenPercent) return "Booking Done";
   return "Token Received";
 }
 
