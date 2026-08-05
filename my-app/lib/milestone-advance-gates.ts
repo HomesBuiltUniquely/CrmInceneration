@@ -22,6 +22,27 @@ export function isFreshLeadMilestonePosition(
   return false;
 }
 
+/** True when Renovation feedback must stay locked (already assigned and not rolled back to Fresh Lead). */
+export function isRenovationFeedbackLocked(
+  renovationAssigned: boolean | null | undefined,
+  milestoneStage: string | null | undefined,
+  milestoneSubStage: string | null | undefined,
+  milestoneStageCategory: string | null | undefined,
+): boolean {
+  if (!renovationAssigned) return false;
+  // Stage rollback to Fresh Lead should allow Renovation to be selected again.
+  if (
+    isFreshLeadMilestonePosition(
+      milestoneStage,
+      milestoneSubStage,
+      milestoneStageCategory,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function matchesMilestoneStage(
   label: string | null | undefined,
   canonical: string

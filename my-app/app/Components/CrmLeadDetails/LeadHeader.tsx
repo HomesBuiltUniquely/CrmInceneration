@@ -10,6 +10,7 @@ import {
   isPresalesRole,
   isSalesRole,
 } from "@/lib/roleUtils";
+import { isRenovationFeedbackLocked } from "@/lib/milestone-advance-gates";
 
 function WonTrophyIcon({ className }: { className?: string }) {
   return (
@@ -174,8 +175,14 @@ export default function LeadHeader({
               Payment {lead.paymentReceived}
             </span>
           ) : null}
-          {lead.stageBlock?.renovationAssigned ||
-          lead.stageBlock?.milestoneSubStage?.trim().toUpperCase() === "RENOVATION" ? (
+          {lead.stageBlock?.milestoneSubStage?.trim().toUpperCase() ===
+            "RENOVATION" ||
+          isRenovationFeedbackLocked(
+            lead.stageBlock?.renovationAssigned,
+            lead.stageBlock?.milestoneStage,
+            lead.stageBlock?.milestoneSubStage,
+            lead.stageBlock?.milestoneStageCategory,
+          ) ? (
             <span className="inline-flex h-6 max-w-full items-center truncate rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
               Renovation
               {lead.stageBlock?.renovationSalesManager

@@ -82,7 +82,10 @@ import {
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
-import { resolveLeadPropertyGateField } from "@/lib/milestone-advance-gates";
+import {
+  isFreshLeadMilestonePosition,
+  resolveLeadPropertyGateField,
+} from "@/lib/milestone-advance-gates";
 import {
   isMeetingCancelledSubstage,
   isMeetingRescheduledSubstage,
@@ -1440,8 +1443,13 @@ export default function LeadDetailsApiClient({
     return selected?.subStages ?? [];
   }, [rollbackCategories, rollbackCategory]);
 
+  const rollbackIsFreshLead = useMemo(
+    () => isFreshLeadMilestonePosition(rollbackStage, "", ""),
+    [rollbackStage],
+  );
+
   useEffect(() => {
-    if (!rollbackStage.trim()) {
+    if (!rollbackStage.trim() || rollbackIsFreshLead) {
       setRollbackCategory("");
       setRollbackSubStage("");
       return;
@@ -1455,10 +1463,15 @@ export default function LeadDetailsApiClient({
       setRollbackCategory("");
       setRollbackSubStage("");
     }
-  }, [rollbackCategories, rollbackCategory, rollbackStage]);
+  }, [
+    rollbackCategories,
+    rollbackCategory,
+    rollbackIsFreshLead,
+    rollbackStage,
+  ]);
 
   useEffect(() => {
-    if (!rollbackCategory.trim()) {
+    if (rollbackIsFreshLead || !rollbackCategory.trim()) {
       setRollbackSubStage("");
       return;
     }
@@ -1468,7 +1481,12 @@ export default function LeadDetailsApiClient({
     ) {
       setRollbackSubStage("");
     }
-  }, [rollbackCategory, rollbackSubStage, rollbackSubStages]);
+  }, [
+    rollbackCategory,
+    rollbackIsFreshLead,
+    rollbackSubStage,
+    rollbackSubStages,
+  ]);
 
   const viewerRoleKey = useMemo(() => {
     if (salesClosureAuthUser) {
@@ -2585,18 +2603,31 @@ export default function LeadDetailsApiClient({
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
     const toMilestoneStage = rollbackStage.trim();
-    const toMilestoneStageCategory = rollbackCategory.trim();
-    const toMilestoneSubStage = rollbackSubStage.trim();
+    const isFreshLeadTarget = isFreshLeadMilestonePosition(
+      toMilestoneStage,
+      "",
+      "",
+    );
+    // Fresh Lead has no category/sub-stage in the pipeline — persist empty like Complete Task.
+    const toMilestoneStageCategory = isFreshLeadTarget
+      ? ""
+      : rollbackCategory.trim();
+    const toMilestoneSubStage = isFreshLeadTarget
+      ? ""
+      : rollbackSubStage.trim();
     const reason = rollbackReason.trim();
     const currentStage = lead.stageBlock?.milestoneStage?.trim() ?? "";
     const currentCategory =
       lead.stageBlock?.milestoneStageCategory?.trim() ?? "";
     const currentSubStage = lead.stageBlock?.milestoneSubStage?.trim() ?? "";
 
+    if (!toMilestoneStage) {
+      setRollbackError("Select a stage.");
+      return;
+    }
     if (
-      !toMilestoneStage ||
-      !toMilestoneStageCategory ||
-      !toMilestoneSubStage
+      !isFreshLeadTarget &&
+      (!toMilestoneStageCategory || !toMilestoneSubStage)
     ) {
       setRollbackError("Select stage, category, and sub-stage.");
       return;
@@ -3697,42 +3728,53 @@ export default function LeadDetailsApiClient({
                     ))}
                   </select>
                 </label>
-                <label className="block">
-                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                    Stage category *
-                  </span>
-                  <select
-                    value={rollbackCategory}
-                    onChange={(e) => setRollbackCategory(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                    disabled={rollbackBusy || !rollbackStage}
-                  >
-                    <option value="">Select category</option>
-                    {rollbackCategories.map((cat) => (
-                      <option key={cat.stageCategory} value={cat.stageCategory}>
-                        {cat.stageCategory}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                    Sub-stage *
-                  </span>
-                  <select
-                    value={rollbackSubStage}
-                    onChange={(e) => setRollbackSubStage(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                    disabled={rollbackBusy || !rollbackCategory}
-                  >
-                    <option value="">Select sub-stage</option>
-                    {rollbackSubStages.map((sub) => (
-                      <option key={sub} value={sub}>
-                        {sub}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {!rollbackIsFreshLead ? (
+                  <>
+                    <label className="block">
+                      <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                        Stage category *
+                      </span>
+                      <select
+                        value={rollbackCategory}
+                        onChange={(e) => setRollbackCategory(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                        disabled={rollbackBusy || !rollbackStage}
+                      >
+                        <option value="">Select category</option>
+                        {rollbackCategories.map((cat) => (
+                          <option
+                            key={cat.stageCategory}
+                            value={cat.stageCategory}
+                          >
+                            {cat.stageCategory}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                        Sub-stage *
+                      </span>
+                      <select
+                        value={rollbackSubStage}
+                        onChange={(e) => setRollbackSubStage(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                        disabled={rollbackBusy || !rollbackCategory}
+                      >
+                        <option value="">Select sub-stage</option>
+                        {rollbackSubStages.map((sub) => (
+                          <option key={sub} value={sub}>
+                            {sub}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <p className="text-[12px] text-[var(--crm-text-secondary)]">
+                    Fresh Lead has no category or sub-stage.
+                  </p>
+                )}
                 <label className="block">
                   <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
                     Reason *
@@ -3957,45 +3999,53 @@ export default function LeadDetailsApiClient({
                   ))}
                 </select>
               </label>
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Stage category *
-                </span>
-                <select
-                  value={rollbackCategory}
-                  onChange={(e) => setRollbackCategory(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  disabled={rollbackBusy || !rollbackStage.trim()}
-                >
-                  <option value="">Select category</option>
-                  {rollbackCategories.map((category) => (
-                    <option
-                      key={category.stageCategory}
-                      value={category.stageCategory}
+              {!rollbackIsFreshLead ? (
+                <>
+                  <label className="block">
+                    <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                      Stage category *
+                    </span>
+                    <select
+                      value={rollbackCategory}
+                      onChange={(e) => setRollbackCategory(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                      disabled={rollbackBusy || !rollbackStage.trim()}
                     >
-                      {category.stageCategory}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Sub-stage *
-                </span>
-                <select
-                  value={rollbackSubStage}
-                  onChange={(e) => setRollbackSubStage(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  disabled={rollbackBusy || !rollbackCategory.trim()}
-                >
-                  <option value="">Select sub-stage</option>
-                  {rollbackSubStages.map((subStage) => (
-                    <option key={subStage} value={subStage}>
-                      {subStage}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                      <option value="">Select category</option>
+                      {rollbackCategories.map((category) => (
+                        <option
+                          key={category.stageCategory}
+                          value={category.stageCategory}
+                        >
+                          {category.stageCategory}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                      Sub-stage *
+                    </span>
+                    <select
+                      value={rollbackSubStage}
+                      onChange={(e) => setRollbackSubStage(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                      disabled={rollbackBusy || !rollbackCategory.trim()}
+                    >
+                      <option value="">Select sub-stage</option>
+                      {rollbackSubStages.map((subStage) => (
+                        <option key={subStage} value={subStage}>
+                          {subStage}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <p className="text-[12px] text-[var(--crm-text-secondary)]">
+                  Fresh Lead has no category or sub-stage.
+                </p>
+              )}
               <label className="block">
                 <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
                   Reason * (min 5 chars)
