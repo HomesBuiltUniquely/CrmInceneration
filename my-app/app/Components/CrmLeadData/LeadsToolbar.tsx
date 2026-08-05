@@ -35,10 +35,14 @@ import {
   viewerShowsMeetingDateToolbarOption,
   type CrmDateFieldSelection,
 } from "@/lib/crm-date-field-filter";
+import {
+  DEFAULT_BOOKING_DATE_FILTER,
+  type BookingDateFilterState,
+} from "@/lib/booking-token-date-filter";
 import InsightsDropdownFilter, {
   type DropdownOption,
 } from "@/app/Components/Insights/InsightsDropdownFilter";
-import CrmDatePickerField from "@/app/Components/Shared/CrmDatePickerField";
+import InsightsDateFilterPopover from "@/app/Components/Insights/InsightsDateFilterPopover";
 
 function meetingQuoteLeadTypeTiles(
   counts: Record<string, number>,
@@ -578,6 +582,25 @@ export default function LeadsToolbar({
   const dateFilterActive = isToolbarDateFilterActive({ dateField, dateFrom, dateTo });
   const dateFilterDraftPending =
     Boolean(draftDateField) && !dateFilterActive && Boolean(draftDateFrom || draftDateTo);
+
+  const bookingDateFilterValue = useMemo((): BookingDateFilterState => {
+    if (draftDateFrom || draftDateTo) {
+      return {
+        preset: "custom",
+        customFrom: draftDateFrom,
+        customTo: draftDateTo,
+      };
+    }
+    return { ...DEFAULT_BOOKING_DATE_FILTER, preset: "custom", customFrom: "", customTo: "" };
+  }, [draftDateFrom, draftDateTo]);
+
+  const handleBookingDateFilterChange = (next: BookingDateFilterState) => {
+    if (next.preset === "all" || (!next.customFrom && !next.customTo)) {
+      commitDateRange("", "");
+      return;
+    }
+    commitDateRange(next.customFrom || "", next.customTo || "");
+  };
 
   const activeFilterCount = useMemo(() => {
     let c = 0;
@@ -1311,7 +1334,7 @@ export default function LeadsToolbar({
                   </span>
                 ) : null}
               </div>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2">
                 <FilterControl label="Filter by">
                   <InsightsDropdownFilter
                     fullWidth
@@ -1329,24 +1352,17 @@ export default function LeadsToolbar({
                     ]}
                   />
                 </FilterControl>
-                <CrmDatePickerField
-                  label="From"
-                  value={draftDateFrom}
-                  disabled={!dateFilterEnabled}
-                  max={draftDateTo || undefined}
-                  onChange={(next) => {
-                    commitDateRange(next, draftDateTo);
-                  }}
-                />
-                <CrmDatePickerField
-                  label="To"
-                  value={draftDateTo}
-                  disabled={!dateFilterEnabled}
-                  min={draftDateFrom || undefined}
-                  onChange={(next) => {
-                    commitDateRange(draftDateFrom, next);
-                  }}
-                />
+                <FilterControl label="Range">
+                  <InsightsDateFilterPopover
+                    fullWidth
+                    variant="rangeOnly"
+                    disabled={!dateFilterEnabled}
+                    subtitle="Pick start date, then end date"
+                    emptyLabel="Select dates"
+                    value={bookingDateFilterValue}
+                    onChange={handleBookingDateFilterChange}
+                  />
+                </FilterControl>
               </div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BOOKING_DATE_PRESETS,
   bookingDateFilterSummary,
@@ -17,9 +17,19 @@ type Props = {
   fullWidth?: boolean;
   /** Header subtitle under “Date Range Filter”. */
   subtitle?: string;
+  /**
+   * `full` — Insights header (All Time + presets + Apply).
+   * `rangeOnly` — leads calendar: start→end auto-applies (no Apply button).
+   */
+  variant?: "full" | "rangeOnly";
+  /** Button label when no range selected (`rangeOnly`). */
+  emptyLabel?: string;
 };
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+/** Approx popover height for flip above/below. */
+const POPOVER_ESTIMATE_PX = 420;
 
 function parseYmd(value: string): { year: number; month: number; day: number } | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.exec(value)) return null;
@@ -31,42 +41,98 @@ function toYmd(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function ymdToDdMmYyyy(ymd: string): string {
+  const p = parseYmd(ymd);
+  if (!p) return "—";
+  return `${String(p.day).padStart(2, "0")}-${String(p.month).padStart(2, "0")}-${p.year}`;
+}
+
+function emptyCustomDraft(): BookingDateFilterState {
+  return { preset: "custom", customFrom: "", customTo: "" };
+}
+
 export default function InsightsDateFilterPopover({
   value,
   onChange,
   disabled = false,
   fullWidth = false,
   subtitle = "Filter insights by specific period",
+  variant = "full",
+  emptyLabel = "Select dates",
 }: Props) {
+  const rangeOnly = variant === "rangeOnly";
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<BookingDateFilterState>(value);
+  const [draft, setDraft] = useState<BookingDateFilterState>(() =>
+    rangeOnly && value.preset === "all" ? emptyCustomDraft() : value,
+  );
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** `below` = under trigger · `above` = upper when low space below */
+  const [placement, setPlacement] = useState<"below" | "above">("below");
 
-  // Today ISO date
   const todayYmd = useMemo(() => {
     const d = new Date();
     return toYmd(d.getFullYear(), d.getMonth() + 1, d.getDate());
   }, []);
 
-  // Viewport month for the calendar widget
   const [viewMonth, setViewMonth] = useState<{ year: number; month: number }>(() => {
     const parsed = parseYmd(value.customFrom || value.customTo || todayYmd);
-    return parsed ? { year: parsed.year, month: parsed.month } : { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+    return parsed
+      ? { year: parsed.year, month: parsed.month }
+      : { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
   });
 
   useEffect(() => {
     if (!open) {
-      setDraft(value);
+      if (rangeOnly) {
+        if (value.customFrom || value.customTo) {
+          setDraft({
+            preset: "custom",
+            customFrom: value.customFrom,
+            customTo: value.customTo,
+          });
+        } else {
+          setDraft(emptyCustomDraft());
+        }
+      } else {
+        setDraft(value);
+      }
       const parsed = parseYmd(value.customFrom || value.customTo || todayYmd);
       if (parsed) {
         setViewMonth({ year: parsed.year, month: parsed.month });
       }
     }
-  }, [open, value, todayYmd]);
+  }, [open, value, todayYmd, rangeOnly]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+
+  const updatePlacement = () => {
+    const root = rootRef.current;
+    if (!root) return;
+    const rect = root.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const panelH = panelRef.current?.offsetHeight || POPOVER_ESTIMATE_PX;
+    const preferAbove =
+      spaceBelow < panelH + 12 && spaceAbove > spaceBelow && spaceAbove > 160;
+    setPlacement(preferAbove ? "above" : "below");
+  };
+
+  useLayoutEffect(() => {
+    if (!open || disabled) return;
+    updatePlacement();
+    // re-measure after paint (panel has real height)
+    const t = window.requestAnimationFrame(() => updatePlacement());
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.cancelAnimationFrame(t);
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [open, disabled, rangeOnly, draft.preset]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +152,9 @@ export default function InsightsDateFilterPopover({
     };
   }, [open]);
 
-  const active = isBookingDateFilterActive(value);
+  const active = rangeOnly
+    ? Boolean(value.customFrom && value.customTo)
+    : isBookingDateFilterActive(value);
 
   const selectPreset = (preset: BookingDatePresetId) => {
     if (preset !== "custom") {
@@ -106,9 +174,15 @@ export default function InsightsDateFilterPopover({
     }
   };
 
-  const handleAllTime = () => {
-    onChange(DEFAULT_BOOKING_DATE_FILTER);
-    setDraft(DEFAULT_BOOKING_DATE_FILTER);
+  const handleClear = () => {
+    if (rangeOnly) {
+      const cleared = emptyCustomDraft();
+      setDraft(cleared);
+      onChange(cleared);
+    } else {
+      onChange(DEFAULT_BOOKING_DATE_FILTER);
+      setDraft(DEFAULT_BOOKING_DATE_FILTER);
+    }
     setOpen(false);
   };
 
@@ -142,32 +216,36 @@ export default function InsightsDateFilterPopover({
     });
   };
 
+  /**
+   * Range: first click = start, second = end.
+   * `rangeOnly` (leads): auto-applies when both dates set — no Apply button.
+   */
   const handleCellClick = (ymd: string) => {
     if (!ymd) return;
-    if (!draft.customFrom || (draft.customFrom && draft.customTo)) {
-      // Start a new range selection
-      setDraft((prev) => ({
-        ...prev,
-        preset: "custom",
-        customFrom: ymd,
-        customTo: "",
-      }));
+
+    let nextFrom = draft.customFrom;
+    let nextTo = draft.customTo;
+
+    if (!nextFrom || (nextFrom && nextTo)) {
+      nextFrom = ymd;
+      nextTo = "";
+    } else if (ymd < nextFrom) {
+      nextTo = nextFrom;
+      nextFrom = ymd;
     } else {
-      // Complete range selection
-      if (ymd < draft.customFrom) {
-        setDraft((prev) => ({
-          ...prev,
-          preset: "custom",
-          customFrom: ymd,
-          customTo: prev.customFrom,
-        }));
-      } else {
-        setDraft((prev) => ({
-          ...prev,
-          preset: "custom",
-          customTo: ymd,
-        }));
-      }
+      nextTo = ymd;
+    }
+
+    const next: BookingDateFilterState = {
+      preset: "custom",
+      customFrom: nextFrom,
+      customTo: nextTo,
+    };
+    setDraft(next);
+
+    if (rangeOnly && nextFrom && nextTo) {
+      onChange(next);
+      setOpen(false);
     }
   };
 
@@ -179,6 +257,29 @@ export default function InsightsDateFilterPopover({
     }
     setOpen(false);
   };
+
+  const buttonSummary = (() => {
+    if (rangeOnly) {
+      if (value.customFrom && value.customTo) {
+        return `${ymdToDdMmYyyy(value.customFrom)} → ${ymdToDdMmYyyy(value.customTo)}`;
+      }
+      if (value.customFrom) return `${ymdToDdMmYyyy(value.customFrom)} → …`;
+      return emptyLabel;
+    }
+    return active ? bookingDateFilterSummary(value) : "All Time";
+  })();
+
+  const showCalendar = rangeOnly || draft.preset === "custom";
+
+  const rangeHint =
+    draft.customFrom && !draft.customTo
+      ? "Now pick end date — applies automatically"
+      : "Pick start date, then end date — auto applies";
+
+  const panelPositionClass =
+    placement === "above"
+      ? "bottom-full left-0 mb-2 origin-bottom"
+      : "top-full left-0 mt-2 origin-top";
 
   return (
     <div
@@ -220,8 +321,10 @@ export default function InsightsDateFilterPopover({
               d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
             />
           </svg>
-          <span className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[150px] sm:max-w-[200px]"}`}>
-            {active ? bookingDateFilterSummary(value) : "All Time"}
+          <span
+            className={`truncate ${fullWidth ? "min-w-0 flex-1 text-left" : "max-w-[150px] sm:max-w-[200px]"}`}
+          >
+            {buttonSummary}
           </span>
         </span>
         <svg
@@ -239,20 +342,20 @@ export default function InsightsDateFilterPopover({
 
       {open && !disabled ? (
         <div
+          ref={panelRef}
           role="dialog"
           aria-label="Select date range"
-          className="absolute left-0 z-50 mt-2 w-[min(380px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 animate-in fade-in-50 zoom-in-95 duration-150"
+          className={`absolute z-50 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 ${panelPositionClass}`}
         >
-          {/* Header Bar */}
           <div className="flex items-center justify-between border-b border-gray-100 bg-slate-50/90 px-4 py-3">
             <div>
               <p className="text-xs font-bold text-gray-900">Date Range Filter</p>
               <p className="text-[11px] text-gray-500">{subtitle}</p>
             </div>
-            {active ? (
+            {active || (rangeOnly && (draft.customFrom || value.customFrom)) ? (
               <button
                 type="button"
-                onClick={handleAllTime}
+                onClick={handleClear}
                 className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
               >
                 Reset
@@ -261,81 +364,82 @@ export default function InsightsDateFilterPopover({
           </div>
 
           <div className="p-3.5">
-            {/* Quick Presets Grid */}
-            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-              <button
-                type="button"
-                onClick={handleAllTime}
-                className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
-                  draft.preset === "all"
-                    ? "bg-indigo-600 font-semibold text-white shadow-xs"
-                    : "bg-gray-50 text-gray-700 hover:bg-gray-100"
-                }`}
+            {!rangeOnly ? (
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
+                    draft.preset === "all"
+                      ? "bg-indigo-600 font-semibold text-white shadow-xs"
+                      : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  <p className="text-[11px] font-medium">All Time</p>
+                </button>
+
+                {BOOKING_DATE_PRESETS.map((p) => {
+                  const selected = draft.preset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => selectPreset(p.id)}
+                      className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
+                        selected
+                          ? "bg-indigo-600 font-semibold text-white shadow-xs"
+                          : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <p className="text-[11px] font-medium">{p.label}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {showCalendar ? (
+              <div
+                className={`rounded-xl border border-gray-200 bg-white p-3 ${rangeOnly ? "" : "mt-3.5 bg-slate-50/50"}`}
               >
-                <p className="text-[11px] font-medium">All Time</p>
-              </button>
-
-              {BOOKING_DATE_PRESETS.map((p) => {
-                const selected = draft.preset === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => selectPreset(p.id)}
-                    className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
-                      selected
-                        ? "bg-indigo-600 font-semibold text-white shadow-xs"
-                        : "bg-gray-50 text-gray-700 hover:bg-gray-100"
-                    }`}
-                  >
-                    <p className="text-[11px] font-medium">{p.label}</p>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Custom Interactive Calendar Widget */}
-            {draft.preset === "custom" ? (
-              <div className="mt-3.5 rounded-xl border border-gray-200 bg-slate-50/50 p-3">
-                {/* Month Navigator */}
-                <div className="flex items-center justify-between mb-2">
+                <div className="mb-3 flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => shiftMonth(-1)}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 shadow-2xs"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    aria-label="Previous month"
                   >
                     ‹
                   </button>
-                  <span className="text-xs font-bold text-gray-800">{monthTitle}</span>
+                  <span className="text-sm font-bold text-slate-800">{monthTitle}</span>
                   <button
                     type="button"
                     onClick={() => shiftMonth(1)}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 hover:text-gray-900 shadow-2xs"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    aria-label="Next month"
                   >
                     ›
                   </button>
                 </div>
 
-                {/* Weekday headers */}
-                <div className="grid grid-cols-7 text-center mb-1">
+                <div className="mb-1 grid grid-cols-7 text-center">
                   {WEEKDAY_LABELS.map((w) => (
-                    <span key={w} className="text-[10px] font-bold text-gray-400">
+                    <span key={w} className="py-1 text-[10px] font-bold text-gray-400">
                       {w}
                     </span>
                   ))}
                 </div>
 
-                {/* Calendar cell grid */}
                 <div className="grid grid-cols-7 gap-1 text-center">
                   {calendarCells.map((cell, idx) => {
                     if (!cell.day) {
-                      return <div key={`empty-${idx}`} className="h-7 w-full" />;
+                      return <div key={`empty-${idx}`} className="h-8 w-full" />;
                     }
                     const isFrom = draft.customFrom === cell.ymd;
                     const isTo = draft.customTo === cell.ymd;
                     const isInRange =
-                      draft.customFrom &&
-                      draft.customTo &&
+                      Boolean(draft.customFrom) &&
+                      Boolean(draft.customTo) &&
                       cell.ymd >= draft.customFrom &&
                       cell.ymd <= draft.customTo;
                     const isToday = cell.ymd === todayYmd;
@@ -345,14 +449,14 @@ export default function InsightsDateFilterPopover({
                         key={cell.ymd}
                         type="button"
                         onClick={() => handleCellClick(cell.ymd)}
-                        className={`h-7 w-full rounded-md text-[11px] font-medium transition-all ${
+                        className={`h-8 w-full rounded-lg text-[12px] font-medium transition-all ${
                           isFrom || isTo
-                            ? "bg-indigo-600 text-white font-bold shadow-xs"
+                            ? "bg-indigo-600 font-bold text-white shadow-xs"
                             : isInRange
-                            ? "bg-indigo-100 text-indigo-900 font-semibold"
-                            : isToday
-                            ? "bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold"
-                            : "text-gray-700 hover:bg-gray-200/70"
+                              ? "bg-indigo-100 font-semibold text-indigo-900"
+                              : isToday
+                                ? "border border-indigo-300 bg-indigo-50 font-bold text-indigo-700"
+                                : "text-gray-700 hover:bg-gray-100"
                         }`}
                       >
                         {cell.day}
@@ -361,52 +465,61 @@ export default function InsightsDateFilterPopover({
                   })}
                 </div>
 
-                {/* Range Summary & Inputs */}
-                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-200/80 pt-2.5">
+                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-100 pt-2.5">
                   <div>
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">From</span>
-                    <input
-                      type="date"
-                      value={draft.customFrom}
-                      onChange={(e) =>
-                        setDraft((prev) => ({ ...prev, customFrom: e.target.value }))
-                      }
-                      className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-800"
-                    />
+                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                      From
+                    </span>
+                    <p className="mt-0.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] font-semibold tabular-nums text-gray-800">
+                      {draft.customFrom ? ymdToDdMmYyyy(draft.customFrom) : "dd-mm-yyyy"}
+                    </p>
                   </div>
                   <div>
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">To</span>
-                    <input
-                      type="date"
-                      value={draft.customTo}
-                      onChange={(e) =>
-                        setDraft((prev) => ({ ...prev, customTo: e.target.value }))
-                      }
-                      className="mt-0.5 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-800"
-                    />
+                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                      To
+                    </span>
+                    <p className="mt-0.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] font-semibold tabular-nums text-gray-800">
+                      {draft.customTo ? ymdToDdMmYyyy(draft.customTo) : "dd-mm-yyyy"}
+                    </p>
                   </div>
                 </div>
+                {rangeOnly ? (
+                  <p className="mt-2 text-center text-[10px] font-medium text-gray-400">
+                    {rangeHint}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
 
-          {/* Footer Actions */}
-          <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/70 px-3.5 py-2.5">
-            <button
-              type="button"
-              onClick={handleAllTime}
-              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-200/60 hover:text-gray-800 transition-colors"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={applyCustomRange}
-              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs hover:bg-indigo-700 transition-colors"
-            >
-              Apply Filter
-            </button>
-          </div>
+          {rangeOnly ? (
+            <div className="flex items-center border-t border-gray-100 bg-gray-50/70 px-3.5 py-2.5">
+              <button
+                type="button"
+                onClick={handleClear}
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-800"
+              >
+                Clear
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/70 px-3.5 py-2.5">
+              <button
+                type="button"
+                onClick={handleClear}
+                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-800"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-indigo-700"
+              >
+                Apply Filter
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
     </div>
