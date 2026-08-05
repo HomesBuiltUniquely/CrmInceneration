@@ -381,8 +381,8 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
 
   const parts: string[] = [];
 
-  // Customer name — always show first
-  const customerName = raw.customerName ?? "";
+  // Customer/Lead name — always show first
+  const customerName = raw.customerName ?? raw.leadName ?? raw.lead_name ?? "";
   if (customerName) parts.push(customerName);
 
   // Shared paid amount resolver — tries all known field names
