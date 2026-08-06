@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * notification-service.ts
- *
- * Client-side service that fetches meeting notifications from the 4 CRM proxy
- * endpoints, maps Go server payloads → NotificationItem[], aggregates, and
- * sorts newest-first.
- *
- * RBAC filtering is applied per-endpoint on raw items BEFORE they are mapped
- * to NotificationItem.  This keeps all business logic out of the UI layer.
- *
- * Response envelope from Go server:
- *   { "data": [...] }          ← primary
- *   { "items": [...] }         ← fallback
- *   [...]                      ← raw array fallback
- *   {}                         ← empty — returns []
- */
-
 import type { NotificationItem } from "@/app/Components/Notification/Notify";
 import { CRM_LOGIN_USERNAME_KEY, normalizeRole } from "@/lib/auth/api";
 import { applyNotificationRbacFilter } from "@/lib/notification-rbac-filter";
@@ -25,20 +8,6 @@ const LOG_PREFIX = "[notification-service]";
 
 // ─── Go server raw item shape ─────────────────────────────────────────────────
 
-/**
- * Raw notification item as returned by the Go NotifyProject server.
- *
- * Lead-identity fields:
- *   leadIdentifier / lead_identifier — business ID (e.g. "GL-2026-00123").
- *     This is the primary key used by the frontend RBAC filter to look up
- *     ownership in the /api/crm/leads map.
- *
- *   assignedToId / assigned_to_id / salesExecutiveId — numeric user IDs that
- *     the Go server MAY include in future payloads.  The RBAC filter currently
- *     resolves ownership via the lead map, but these fields are preserved here
- *     so that if the Go server starts sending them we can use them directly
- *     without a schema change.
- */
 interface RawMeetingItem {
   // Identity
   id?: string | number;
@@ -52,13 +21,6 @@ interface RawMeetingItem {
   lead_identifier?: string;
   leadName?: string;
   lead_name?: string;
-  /**
-   * Numeric ID of the sales executive assigned to this lead.
-   * The Go server does not currently emit this field; it is declared here so
-   * that future Go-server enrichment can be consumed without a type change.
-   * The RBAC filter resolves ownership via the /api/crm/leads map using
-   * leadIdentifier as the join key.
-   */
   assignedToId?: number;
   assigned_to_id?: number;
   salesExecutiveId?: number;
@@ -70,8 +32,6 @@ interface RawMeetingItem {
   meetingType?: string;
   meeting_type?: string;
   milestone?: string;
-  // Timestamps — arrival time (when the record was inserted into notify_db)
-  // The Go server may use any of these field names. We try all variants.
   timestamp?: string;
   createdAt?: string;
   created_at?: string;
@@ -91,20 +51,6 @@ interface RawMeetingItem {
 
 type MeetingTag = "SCHEDULED" | "RESCHEDULED" | "CANCELLATION" | "SUCCESS";
 
-// ─── Booking raw item shape (matches proto Booking message from Go notify server) ─
-
-/**
- * Raw booking/token item as returned by Go NotifyProject server GET /v1/bookings.
- * 
- * The Go server emits the proto `Booking` message via grpc-gateway, which 
- * translates snake_case proto fields → camelCase JSON by default.
- * 
- * We accept both camelCase and snake_case here for resilience across 
- * grpc-gateway versions and any manual snake_case config.
- * 
- * Also retains Spring booking_token_record field names as fallback in case
- * any legacy Spring data is still in the pipeline during migration.
- */
 interface RawBookingItem {
   // ── Spring booking_token_record fields (camelCase from Spring JSON) ────────
   id?: string;                               // UUID primary key
@@ -195,7 +141,32 @@ function defaultTitle(tag: MeetingTag, leadName?: string): string {
 }
 
 function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): NotificationItem {
-  const id = String(raw.id ?? raw.meeting_id ?? `${tag.toLowerCase()}-${index}`);
+  // Use a stable ID based on meeting_id or id from the backend
+  const meetingId = String(raw.meeting_id ?? raw.id ?? "");
+  
+  // Generate deterministic fallback ID using immutable fields instead of array index
+  let id: string;
+  if (meetingId) {
+    id = `${tag.toLowerCase()}-${meetingId}`;
+  } else {
+    // Build deterministic ID from immutable fields: tag + leadIdentifier + meetingDate + timestamp
+    const leadId = (raw.leadIdentifier ?? raw.lead_identifier ?? "").trim();
+    const meetingDate = (raw.meetingDate ?? raw.meeting_date ?? "").trim();
+    const timestamp = (raw.created_at ?? raw.createdAt ?? raw.timestamp ?? "").trim();
+    
+    // Use a combination of available immutable fields
+    const deterministic = [
+      tag.toLowerCase(),
+      leadId,
+      meetingDate,
+      timestamp,
+    ].filter(Boolean).join("-");
+    
+    // If we have enough immutable data, use it; otherwise fall back to index
+    id = deterministic.length > tag.length + 1
+      ? `${deterministic}`
+      : `${tag.toLowerCase()}-fallback-${index}`;
+  }
 
   const leadName = raw.leadName ?? raw.lead_name ?? "";
 
@@ -224,12 +195,6 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   if (meetingType) parts.push(meetingType.replace(/_/g, " "));
   const description =
     raw.description ?? raw.message ?? (parts.length ? parts.join(" · ") : undefined);
-
-  // ── Arrival timestamp (when this notification entered notify_db) ──────────
-  // Priority: any "created/inserted/notified/arrived" field → fallback to
-  // meeting_date (the scheduled date) → current time as last resort.
-  // We deliberately do NOT use meeting_date as the primary because it is a
-  // future-scheduled date, not when the notification was created.
   const arrivalTimestamp =
     raw.created_at ??
     raw.createdAt ??
@@ -248,16 +213,11 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
     raw.scheduledAt ??
     null;
 
-  // If no arrival time found, fall back to meeting_date so we at least show
-  // something meaningful instead of "just now" (current time).
-  const timestamp =
-    arrivalTimestamp ??
-    raw.meetingDate ??
-    raw.meeting_date ??
-    new Date().toISOString();
+
+  const timestamp = arrivalTimestamp ?? raw.meetingDate ?? raw.meeting_date ?? "";
 
   return {
-    id: `${tag.toLowerCase()}-${id}`,
+    id,
     title: displayTitle,
     description,
     timestamp,
@@ -266,21 +226,6 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   };
 }
 
-// ─── Lead raw item shape (matches proto Lead message) ────────────────────────
-
-/**
- * Raw lead notification item from Go NotifyProject server.
- * Matches the proto `Lead` message exactly.
- *
- *   LeadListResponse.data → Lead[]
- *
- * Proto fields:
- *   lead_identifier string → leadIdentifier
- *   lead_name       string → leadName
- *   lead_type       string → leadType
- *   assigned_to     string → assignedTo
- *   created_at      string → createdAt
- */
 interface RawLeadItem {
   // camelCase (Go JSON default)
   leadIdentifier?: string;
@@ -297,14 +242,6 @@ interface RawLeadItem {
   [key: string]: unknown;
 }
 
-/**
- * Counts response shape from Go NotifyProject server.
- * Matches the proto `CountsResponse` message.
- *
- * Proto fields (all int32):
- *   total_leads, total_scheduled, total_rescheduled,
- *   total_cancelled, total_success, total_bookings
- */
 export interface NotificationCounts {
   totalLeads: number;
   totalScheduled: number;
@@ -376,7 +313,32 @@ function fmt(n: number | string | undefined): string | undefined {
 }
 
 function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem {
-  const id = String(raw.id ?? raw.bookingId ?? raw.booking_id ?? `booking-${index}`);
+  // Use stable ID from backend
+  const bookingId = String(raw.id ?? raw.bookingId ?? raw.booking_id ?? "");
+  
+  // Generate deterministic fallback ID using immutable fields instead of array index
+  let id: string;
+  if (bookingId) {
+    id = `booking-${bookingId}`;
+  } else {
+    // Build deterministic ID from immutable fields: leadIdentifier + quoteId + bookingDate
+    const leadId = (raw.leadIdentifier ?? raw.lead_identifier ?? raw.hubLeadId ?? "").trim();
+    const quoteId = (raw.quoteId ?? "").trim();
+    const bookingDate = (raw.bookingDate ?? raw.createdAt ?? raw.created_at ?? "").trim();
+    
+    const deterministic = [
+      "booking",
+      leadId,
+      quoteId,
+      bookingDate,
+    ].filter(Boolean).join("-");
+    
+    // If we have enough immutable data, use it; otherwise fall back to index
+    id = deterministic.length > "booking-".length
+      ? deterministic
+      : `booking-fallback-${index}`;
+  }
+  
   const title = bookingTitle(raw);
 
   const parts: string[] = [];
@@ -419,10 +381,10 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     raw.bookingDate ??
     raw.submittedAt ??
     raw.cancelledAt ??
-    new Date().toISOString();
+    "";
 
   return {
-    id: `booking-${id}`,
+    id,
     title,
     description,
     timestamp,
@@ -451,11 +413,36 @@ function leadTypeLabel(leadType: string): string {
 }
 
 function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
-  const leadId = raw.leadIdentifier ?? raw.lead_identifier ?? `lead-${index}`;
+  // Use stable ID from backend
+  const leadIdentifier = (raw.leadIdentifier ?? raw.lead_identifier ?? "").trim();
+  
+  // Generate deterministic fallback ID using immutable fields instead of array index
+  let leadId: string;
+  if (leadIdentifier) {
+    leadId = `lead-${leadIdentifier}`;
+  } else {
+    // Build deterministic ID from immutable fields: leadName + leadType + timestamp
+    const leadName = (raw.leadName ?? raw.lead_name ?? "").trim();
+    const leadType = (raw.leadType ?? raw.lead_type ?? "").trim();
+    const timestamp = (raw.createdAt ?? raw.created_at ?? "").trim();
+    
+    const deterministic = [
+      "lead",
+      leadName,
+      leadType,
+      timestamp,
+    ].filter(Boolean).join("-");
+    
+    // If we have enough immutable data, use it; otherwise fall back to index
+    leadId = deterministic.length > "lead-".length
+      ? deterministic
+      : `lead-fallback-${index}`;
+  }
+  
   const leadName = raw.leadName ?? raw.lead_name ?? "";
   const leadType = raw.leadType ?? raw.lead_type ?? "";
   const assignedTo = raw.assignedTo ?? raw.assigned_to ?? "";
-  const timestamp = raw.createdAt ?? raw.created_at ?? new Date().toISOString();
+  const timestamp = raw.createdAt ?? raw.created_at ?? "";
 
   // Description: type · assigned — name already in title, leadIdentifier NOT shown to user
   const parts: string[] = [];
@@ -463,7 +450,7 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
   if (assignedTo) parts.push(`Assigned to: ${assignedTo}`);
 
   return {
-    id: `lead-${leadId}`,
+    id: leadId,
     title: leadName ? `New Lead - ${leadName}` : "New Lead",
     description: parts.length ? parts.join(" · ") : undefined,
     timestamp,
@@ -472,14 +459,7 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
   };
 }
 
-// ─── Scope resolution (preserves existing RBAC passed to Go server) ───────────
 
-/**
- * Returns the `scope` query-param value for a given role:
- *   SUPER_ADMIN / ADMIN / SALES_ADMIN → "all"
- *   SALES_MANAGER / PRESALES_MANAGER / DESIGN_MANAGER / TERRITORY_DESIGN_MANAGER → "team"
- *   everything else (executives, designers) → "own"
- */
 function scopeForRole(role: string): "all" | "team" | "own" {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") return "all";
@@ -636,35 +616,35 @@ async function fetchRawLeadItems(
   authHeader: string,
 ): Promise<RawLeadItem[]> {
   const url = "/api/crm/notifications/leads";
-  console.log(`${LOG_PREFIX} 🔍 [LEAD] fetching from Go notify server: ${url}`);
+  console.log(`${LOG_PREFIX}  [LEAD] fetching from Go notify server: ${url}`);
 
   let res: Response;
   try {
     res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
   } catch (err) {
-    console.error(`${LOG_PREFIX} ❌ [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
+    console.error(`${LOG_PREFIX}  [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
     return [];
   }
 
-  console.log(`${LOG_PREFIX} 📡 [LEAD] response status: ${res.status}`);
+  console.log(`${LOG_PREFIX}  [LEAD] response status: ${res.status}`);
 
   if (!res.ok) {
-    console.warn(`${LOG_PREFIX} ⚠️ [LEAD] upstream ${res.status}`);
+    console.warn(`${LOG_PREFIX}  [LEAD] upstream ${res.status}`);
     return [];
   }
 
   let payload: unknown;
   try { payload = await res.json(); } catch {
-    console.warn(`${LOG_PREFIX} ⚠️ [LEAD] empty or invalid JSON response`);
+    console.warn(`${LOG_PREFIX}  [LEAD] empty or invalid JSON response`);
     return [];
   }
 
   const items = extractLeadItems(payload);
-  console.log(`${LOG_PREFIX} ✅ [LEAD] extracted ${items.length} lead notification items`);
+  console.log(`${LOG_PREFIX}  [LEAD] extracted ${items.length} lead notification items`);
 
   // Log details of each lead notification
   if (items.length > 0) {
-    console.log(`${LOG_PREFIX} 📋 [LEAD] All lead notifications:`, items.map((item, i) => ({
+    console.log(`${LOG_PREFIX}  [LEAD] All lead notifications:`, items.map((item, i) => ({
       index: i,
       leadIdentifier: item.leadIdentifier ?? item.lead_identifier,
       leadName: item.leadName ?? item.lead_name,
@@ -679,10 +659,6 @@ async function fetchRawLeadItems(
 
 // ─── Counts fetch ─────────────────────────────────────────────────────────────
 
-/**
- * Fetch global notification counts from Go /v1/counts.
- * Returns a zeroed object on any failure so callers never throw.
- */
 async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
   const zero: NotificationCounts = {
     totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
@@ -723,48 +699,35 @@ async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Aggregates notifications from all 4 meeting endpoints, applies frontend
- * RBAC filtering, and returns the final sorted list.
- *
- * Filtering happens on raw items (still carrying lead_identifier) so that
- * no UI component types need to be changed.
- *
- * Returns [] if token is missing rather than throwing.
- */
+
 export async function loadNotifications(
   token: string | null,
   role: string,
   username: string,
 ): Promise<NotificationItem[]> {
   console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
-  console.log(`${LOG_PREFIX} 🚀 loadNotifications START`);
+  console.log(`${LOG_PREFIX} loadNotifications START`);
   console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
-  console.log(`${LOG_PREFIX} 📋 Parameters: role=${role}, username=${username}, hasToken=${!!token}`);
+  console.log(`${LOG_PREFIX} Parameters: role=${role}, username=${username}, hasToken=${!!token}`);
 
   if (!token) {
-    console.log(`${LOG_PREFIX} ❌ no token — skipping fetch`);
+    console.log(`${LOG_PREFIX}  no token — skipping fetch`);
     return [];
   }
 
   const authHeader = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
 
-  // loginUsername: the credential stored at login time, matching leadDetails.assigned_to.
-  // Falls back to the display-name `username` param if the new key isn't present
-  // (existing sessions that logged in before CRM_LOGIN_USERNAME_KEY was added).
+
   const loginUsername =
     (typeof window !== "undefined"
       ? window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim()
       : null) || username;
 
-  console.log(`${LOG_PREFIX} 🔑 Login username: "${loginUsername}" (credential for Go backend matching)`);
+  console.log(`${LOG_PREFIX}  Login username: "${loginUsername}" (credential for Go backend matching)`);
 
-  // ── Step 1: Fetch from all endpoints in parallel ──────────────────────────
-  // Meetings: role/username/scope-scoped  →  RBAC-filtered below
-  // Bookings: all roles see all           →  bypass RBAC
-  // Leads:    all roles see all           →  bypass RBAC
 
-  console.log(`${LOG_PREFIX} 📡 Fetching from 6 endpoints in parallel...`);
+
+  console.log(`${LOG_PREFIX}  Fetching from 6 endpoints in parallel...`);
   const fetchStart = Date.now();
 
   const [rawResults, rawBookings, rawLeads] = await Promise.all([
@@ -779,7 +742,7 @@ export async function loadNotifications(
   ]);
 
   const fetchDuration = Date.now() - fetchStart;
-  console.log(`${LOG_PREFIX} ✅ All fetches completed in ${fetchDuration}ms`);
+  console.log(`${LOG_PREFIX}  All fetches completed in ${fetchDuration}ms`);
 
   // Each endpoint returns { tag, items } so we can re-associate after filtering
   type TaggedRaw = { tag: MeetingTag; items: RawMeetingItem[] };
@@ -789,34 +752,25 @@ export async function loadNotifications(
     items: res.status === "fulfilled" ? (res.value ?? []) : [],
   }));
 
-  // ── Step 2: Merge all raw items into a flat array for RBAC filtering ───────
-  // Attach tag to each item so we can re-split after filtering.
   type TaggedItem = RawMeetingItem & { __notifyTag: MeetingTag };
 
   const allRaw: TaggedItem[] = taggedBatches.flatMap(({ tag, items }) =>
     items.map((item) => ({ ...item, __notifyTag: tag })),
   );
 
-  console.log(`${LOG_PREFIX} 📊 Raw items breakdown:`);
+  console.log(`${LOG_PREFIX}  Raw items breakdown:`);
   console.log(`${LOG_PREFIX}   - Meetings (all tags): ${allRaw.length} items`);
   console.log(`${LOG_PREFIX}   - Bookings: ${rawBookings.length} items`);
   console.log(`${LOG_PREFIX}   - Leads: ${rawLeads.length} items`);
   console.log(`${LOG_PREFIX}   - TOTAL before RBAC: ${allRaw.length + rawBookings.length + rawLeads.length}`);
-  console.log(`${LOG_PREFIX} 🔒 Applying RBAC filter to ${allRaw.length} meeting items...`);
-  console.log(`${LOG_PREFIX} 📋 role=${role}, username=${username}, loginUsername=${loginUsername}`);
+  console.log(`${LOG_PREFIX}  Applying RBAC filter to ${allRaw.length} meeting items...`);
+  console.log(`${LOG_PREFIX}  role=${role}, username=${username}, loginUsername=${loginUsername}`);
 
-  // ── Step 3: Apply RBAC filter on raw items (lead_identifier still present) ─
-  // applyNotificationRbacFilter expects FilterableNotificationItem which only
-  // requires { leadIdentifier?: string }.  We satisfy that because RawMeetingItem
-  // has both leadIdentifier and lead_identifier.  We expose the unified key by
-  // normalising before passing in.
   const normalizedRaw = allRaw.map((item) => ({
     ...item,
     // Unified key the filter reads from
     leadIdentifier: (item.leadIdentifier ?? item.lead_identifier ?? "").trim(),
-    // Numeric assignee ID — used as a stronger identity fallback for SALES_EXECUTIVE
-    // when leadIdentifier is blank or the name-based map match fails.
-    // The Go server may emit any of these field names.
+   
     __assignedId:
       item.assignedToId ??
       item.assigned_to_id ??
@@ -827,7 +781,7 @@ export async function loadNotifications(
 
   // Log sample items for debugging
   if (normalizedRaw.length > 0) {
-    console.log(`${LOG_PREFIX} 📋 Sample normalized raw items (first 3):`, normalizedRaw.slice(0, 3).map((item) => ({
+    console.log(`${LOG_PREFIX}  Sample normalized raw items (first 3):`, normalizedRaw.slice(0, 3).map((item) => ({
       id: item.id,
       leadIdentifier: item.leadIdentifier,
       __assignedId: item.__assignedId,
@@ -845,8 +799,8 @@ export async function loadNotifications(
   );
   const rbacDuration = Date.now() - rbacStart;
 
-  console.log(`${LOG_PREFIX} ✅ RBAC filter completed in ${rbacDuration}ms`);
-  console.log(`${LOG_PREFIX} 📊 RBAC Result: ${allRaw.length} → ${filteredRaw.length} meeting items (${allRaw.length - filteredRaw.length} filtered out)`);
+  console.log(`${LOG_PREFIX}  RBAC filter completed in ${rbacDuration}ms`);
+  console.log(`${LOG_PREFIX}  RBAC Result: ${allRaw.length} → ${filteredRaw.length} meeting items (${allRaw.length - filteredRaw.length} filtered out)`);
 
   // ── Step 4: Map filtered raw items → NotificationItem ─────────────────────
   const all: NotificationItem[] = filteredRaw.map((item, i) => {
@@ -861,7 +815,7 @@ export async function loadNotifications(
     leadIdentifier: (item.leadIdentifier ?? item.lead_identifier ?? "").trim(),
   }));
 
-  console.log(`${LOG_PREFIX} 🔒 Applying RBAC filter to ${normalizedLeads.length} lead items...`);
+  console.log(`${LOG_PREFIX}  Applying RBAC filter to ${normalizedLeads.length} lead items...`);
   const rbacLeadsStart = Date.now();
   const filteredLeads = await applyNotificationRbacFilter(
     normalizedLeads,
@@ -870,8 +824,8 @@ export async function loadNotifications(
     username,
   );
   const rbacLeadsDuration = Date.now() - rbacLeadsStart;
-  console.log(`${LOG_PREFIX} ✅ Lead RBAC filter completed in ${rbacLeadsDuration}ms`);
-  console.log(`${LOG_PREFIX} 📊 Lead RBAC Result: ${normalizedLeads.length} → ${filteredLeads.length} lead items (${normalizedLeads.length - filteredLeads.length} filtered out)`);
+  console.log(`${LOG_PREFIX} Lead RBAC filter completed in ${rbacLeadsDuration}ms`);
+  console.log(`${LOG_PREFIX}  Lead RBAC Result: ${normalizedLeads.length} → ${filteredLeads.length} lead items (${normalizedLeads.length - filteredLeads.length} filtered out)`);
 
   // ── Step 4c: Booking items → NotificationItem (no RBAC - all roles see all) ──
   const bookingNotifications = rawBookings.map((item, i) => mapRawBookingItem(item, i));
@@ -879,7 +833,7 @@ export async function loadNotifications(
 
   all.push(...bookingNotifications, ...leadNotifications);
   console.log(
-    `${LOG_PREFIX} 📊 Added booking: ${bookingNotifications.length}, leads: ${leadNotifications.length} (after RBAC)`,
+    `${LOG_PREFIX} Added booking: ${bookingNotifications.length}, leads: ${leadNotifications.length} (after RBAC)`,
   );
 
   // ── Step 5: Deduplicate by id (guard against same item from multiple sources)
@@ -891,21 +845,31 @@ export async function loadNotifications(
   });
 
   if (all.length !== deduped.length) {
-    console.log(`${LOG_PREFIX} ℹ️ Deduplicated: ${all.length} → ${deduped.length} (${all.length - deduped.length} duplicates removed)`);
+    console.log(`${LOG_PREFIX}  Deduplicated: ${all.length} → ${deduped.length} (${all.length - deduped.length} duplicates removed)`);
   }
 
-  // ── Step 6: Sort newest-first ─────────────────────────────────────────────
+  // ── Step 6: Sort newest-first with proper handling of invalid timestamps ─────
   deduped.sort((a, b) => {
     const tA = new Date(a.timestamp).getTime();
     const tB = new Date(b.timestamp).getTime();
-    if (Number.isNaN(tA) || Number.isNaN(tB)) return 0;
+    
+    // Place items with invalid timestamps at the end
+    if (Number.isNaN(tA) && Number.isNaN(tB)) return 0;
+    if (Number.isNaN(tA)) return 1;
+    if (Number.isNaN(tB)) return -1;
+    
+    // Place items with empty timestamps at the end
+    if (!a.timestamp && !b.timestamp) return 0;
+    if (!a.timestamp) return 1;
+    if (!b.timestamp) return -1;
+    
     return tB - tA;
   });
 
   console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
-  console.log(`${LOG_PREFIX} 🎯 loadNotifications COMPLETE`);
-  console.log(`${LOG_PREFIX} 📊 Final result: ${deduped.length} total notifications`);
-  console.log(`${LOG_PREFIX} ⏱️ Total time: ${Date.now() - (fetchStart - fetchDuration)}ms (fetch: ${fetchDuration}ms, rbac: ${rbacDuration}ms)`);
+  console.log(`${LOG_PREFIX}  loadNotifications COMPLETE`);
+  console.log(`${LOG_PREFIX}  Final result: ${deduped.length} total notifications`);
+  console.log(`${LOG_PREFIX}  Total time: ${Date.now() - (fetchStart - fetchDuration)}ms (fetch: ${fetchDuration}ms, rbac: ${rbacDuration}ms)`);
   console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
 
   return deduped;

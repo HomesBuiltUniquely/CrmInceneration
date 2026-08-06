@@ -15,11 +15,13 @@ import Notify, {
   type NotificationItem,
 } from "@/app/Components/Notification/Notify";
 
-// ── Read-state persistence ────────────────────────────────────────────────────
-// Store a Set of notification IDs the user has already read in localStorage
-// so that page reloads don't reset them back to "unread".
+
 
 const READ_IDS_KEY = "crm_read_notification_ids";
+const DELETED_IDS_KEY = "crm_deleted_notification_ids";
+
+// Polling interval for real-time notifications (in milliseconds)
+const NOTIFICATION_POLL_INTERVAL = 30000; // 30 seconds
 
 function getReadIds(username: string): Set<string> {
   try {
@@ -39,6 +41,24 @@ function saveReadIds(ids: Set<string>, username: string): void {
   } catch {}
 }
 
+function getDeletedIds(username: string): Set<string> {
+  try {
+    const key = `${DELETED_IDS_KEY}_${username}`;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedIds(ids: Set<string>, username: string): void {
+  try {
+    const key = `${DELETED_IDS_KEY}_${username}`;
+    window.localStorage.setItem(key, JSON.stringify([...ids]));
+  } catch {}
+}
+
 function applyReadState(
   items: NotificationItem[],
   username: string,
@@ -50,6 +70,19 @@ function applyReadState(
   );
   if (readIds.size === 0) return items;
   return items.map((n) => (readIds.has(n.id) ? { ...n, read: true } : n));
+}
+
+function applyDeletedState(
+  items: NotificationItem[],
+  username: string,
+): NotificationItem[] {
+  const deletedIds = getDeletedIds(username);
+  console.log(
+    `[applyDeletedState] User: ${username}, Deleted IDs from localStorage:`,
+    Array.from(deletedIds),
+  );
+  if (deletedIds.size === 0) return items;
+  return items.filter((n) => !deletedIds.has(n.id));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,24 +130,118 @@ export default function TopNav({
   });
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [previousNotificationIds, setPreviousNotificationIds] = useState<Set<string>>(new Set());
+  const [bellRinging, setBellRinging] = useState(false);
 
-  useEffect(() => {
+  // Play notification sound using Web Audio API (plays once per batch)
+  const playNotificationSound = () => {
+    try {
+      const audioContext = new (
+        window.AudioContext || (window as any).webkitAudioContext
+      )();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
+      oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
+
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(
+        0.01,
+        audioContext.currentTime + 0.3,
+      );
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (err) {
+      console.warn("[TopNav] Could not play notification sound:", err);
+    }
+  };
+
+  // Load notifications from server
+  const fetchNotifications = async () => {
     const token = readStoredCrmToken();
-
+    
+    // Stop polling if user logged out
+    if (!token) {
+      console.log("[TopNav] No token found - user logged out, stopping polling");
+      return;
+    }
+    
     console.log(`[TopNav] Loading notifications for user: ${username}`);
 
-    loadNotifications(token, role, username).then((items) => {
-      console.log(
-        `[TopNav] Received ${items.length} notifications from server`,
-      );
-      const withReadState = applyReadState(items, username);
-      const readCount = withReadState.filter((n) => n.read).length;
-      console.log(
-        `[TopNav] After applying read state: ${readCount} read, ${items.length - readCount} unread`,
-      );
-      setNotifications(withReadState);
-    });
+    const items = await loadNotifications(token, role, username);
+    console.log(`[TopNav] Received ${items.length} notifications from server`);
+    
+    const withDeletedFilter = applyDeletedState(items, username);
+    const withReadState = applyReadState(withDeletedFilter, username);
+    const readCount = withReadState.filter((n) => n.read).length;
+    console.log(
+      `[TopNav] After applying deleted & read state: ${readCount} read, ${withReadState.length - readCount} unread`,
+    );
+    
+    // Detect new notifications for sound (plays once per batch)
+    const currentIds = new Set(withReadState.map(n => n.id));
+    const newNotifications = withReadState.filter(
+      n => !previousNotificationIds.has(n.id) && !n.read
+    );
+    
+    // Only play sound if there are genuinely new notifications (not on initial load)
+    if (previousNotificationIds.size > 0 && newNotifications.length > 0) {
+      console.log(`[TopNav] ${newNotifications.length} new notification(s) - playing sound once and animating bell`);
+      playNotificationSound();
+      setBellRinging(true);
+      setTimeout(() => setBellRinging(false), 700);
+    }
+    
+    setPreviousNotificationIds(currentIds);
+    setNotifications(withReadState);
+  };
+
+  // Initial load
+  useEffect(() => {
+    fetchNotifications();
   }, [role, username]);
+
+  // Real-time polling with tab visibility detection and logout handling
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+
+    const startPolling = () => {
+      console.log("[TopNav] Starting notification polling");
+      intervalId = setInterval(() => {
+        // Only poll if tab is visible and user is logged in
+        if (document.visibilityState === "visible") {
+          console.log("[TopNav] Tab visible - polling for new notifications...");
+          fetchNotifications();
+        } else {
+          console.log("[TopNav] Tab hidden - skipping poll to save resources");
+        }
+      }, NOTIFICATION_POLL_INTERVAL);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        console.log("[TopNav] Tab became visible - fetching notifications immediately");
+        fetchNotifications();
+      }
+    };
+
+    // Start polling
+    startPolling();
+
+    // Resume polling when tab becomes visible
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      console.log("[TopNav] Cleaning up polling interval and event listeners");
+      if (intervalId) clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [role, username, previousNotificationIds]);
 
   const searchActive = search.trim().length > 0;
 
@@ -131,6 +258,7 @@ export default function TopNav({
       saveReadIds(readIds, username);
       return updated;
     });
+    // Note: badge count will automatically update via the updated notifications state
   };
 
   const handleNotificationClick = (id: string) => {
@@ -148,6 +276,7 @@ export default function TopNav({
       );
       return updated;
     });
+    // Note: badge count will automatically update via the updated notifications state
   };
 
   const handleClearAll = (
@@ -167,9 +296,17 @@ export default function TopNav({
       )
     ) {
       setNotifications((prev) => {
+        const deletedIds = getDeletedIds(username);
+        
         if (tabType === "all") {
+          // Mark all notifications as deleted
+          prev.forEach((n) => deletedIds.add(n.id));
+          saveDeletedIds(deletedIds, username);
+          
+          // Also clear read state for deleted notifications
           const key = `${READ_IDS_KEY}_${username}`;
           window.localStorage.removeItem(key);
+          
           return [];
         }
 
@@ -184,15 +321,20 @@ export default function TopNav({
 
           if (shouldRemove) {
             idsToRemove.add(n.id);
+            deletedIds.add(n.id);
           }
         });
 
+        saveDeletedIds(deletedIds, username);
+        
+        // Also remove from read state
         const readIds = getReadIds(username);
         idsToRemove.forEach((id) => readIds.delete(id));
         saveReadIds(readIds, username);
 
         return prev.filter((n) => !idsToRemove.has(n.id));
       });
+      // Note: badge count will automatically update via the updated notifications state
     }
   };
 
@@ -278,6 +420,7 @@ export default function TopNav({
                 onMarkAllRead={handleMarkAllRead}
                 onNotificationClick={handleNotificationClick}
                 onClearAll={handleClearAll}
+                bellRinging={bellRinging}
               />
             </div>
           </div>

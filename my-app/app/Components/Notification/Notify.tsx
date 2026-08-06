@@ -69,36 +69,10 @@ type Props = {
   onMarkAllRead?: () => void;
   onNotificationClick?: (id: string) => void;
   onClearAll?: (tabType: TabType) => void;
+  bellRinging?: boolean;
 };
 
 type TabType = "all" | "leads" | "meetings" | "bookings";
-
-function playNotificationSound() {
-  try {
-    const audioContext = new (
-      window.AudioContext || (window as any).webkitAudioContext
-    )();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-
-    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
-    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
-
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(
-      0.01,
-      audioContext.currentTime + 0.3,
-    );
-
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.3);
-  } catch (err) {
-    console.warn("Could not play notification sound:", err);
-  }
-}
 
 function relativeTime(iso: string): string {
   const date = new Date(iso);
@@ -130,9 +104,18 @@ function relativeTime(iso: string): string {
 
 function sortNotifications(items: NotificationItem[]): NotificationItem[] {
   return items.slice().sort((a, b) => {
+    // First, separate read and unread
     if (a.read !== b.read) return a.read ? 1 : -1;
+    
+    // Then sort by timestamp (newest first)
     const timeA = new Date(a.timestamp).getTime();
     const timeB = new Date(b.timestamp).getTime();
+    
+    // Handle invalid timestamps - place them at the end
+    if (Number.isNaN(timeA) && Number.isNaN(timeB)) return 0;
+    if (Number.isNaN(timeA)) return 1;
+    if (Number.isNaN(timeB)) return -1;
+    
     return timeB - timeA;
   });
 }
@@ -214,6 +197,7 @@ export default function Notify({
   onMarkAllRead,
   onNotificationClick,
   onClearAll,
+  bellRinging = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("all");
@@ -245,17 +229,6 @@ export default function Notify({
           : bookingsUnread;
 
   const prevUnreadRef = useRef(unreadCount);
-  const [ringing, setRinging] = useState(false);
-
-  useEffect(() => {
-    if (unreadCount > prevUnreadRef.current) {
-      setRinging(true);
-      playNotificationSound();
-      const t = setTimeout(() => setRinging(false), 700);
-      return () => clearTimeout(t);
-    }
-    prevUnreadRef.current = unreadCount;
-  }, [unreadCount]);
 
   useEffect(() => {
     if (!open) return;
@@ -337,7 +310,7 @@ export default function Notify({
           <span
             className={cn(
               "inline-flex items-center justify-center",
-              ringing && "bell-ring",
+              bellRinging && "bell-ring",
             )}
           >
             <BellIcon
