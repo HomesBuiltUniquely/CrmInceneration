@@ -29,7 +29,8 @@ type Props = {
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 /** Approx popover height for flip above/below. */
-const POPOVER_ESTIMATE_PX = 420;
+const POPOVER_ESTIMATE_PX = 300;
+const POPOVER_ESTIMATE_RANGE_ONLY_PX = 250;
 
 function parseYmd(value: string): { year: number; month: number; day: number } | null {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.exec(value)) return null;
@@ -114,9 +115,12 @@ export default function InsightsDateFilterPopover({
     const rect = root.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    const panelH = panelRef.current?.offsetHeight || POPOVER_ESTIMATE_PX;
+    const estimate = rangeOnly
+      ? POPOVER_ESTIMATE_RANGE_ONLY_PX
+      : POPOVER_ESTIMATE_PX;
+    const panelH = panelRef.current?.offsetHeight || estimate;
     const preferAbove =
-      spaceBelow < panelH + 12 && spaceAbove > spaceBelow && spaceAbove > 160;
+      spaceBelow < panelH + 12 && spaceAbove > spaceBelow && spaceAbove > 120;
     setPlacement(preferAbove ? "above" : "below");
   };
 
@@ -272,14 +276,16 @@ export default function InsightsDateFilterPopover({
   const showCalendar = rangeOnly || draft.preset === "custom";
 
   const rangeHint =
-    draft.customFrom && !draft.customTo
-      ? "Now pick end date — applies automatically"
-      : "Pick start date, then end date — auto applies";
+    draft.customFrom && !draft.customTo ? "Pick end date" : "Start → end";
 
   const panelPositionClass =
     placement === "above"
-      ? "bottom-full left-0 mb-2 origin-bottom"
-      : "top-full left-0 mt-2 origin-top";
+      ? "bottom-full left-0 mb-1.5 origin-bottom"
+      : "top-full left-0 mt-1.5 origin-top";
+
+  const panelWidth = rangeOnly
+    ? "w-[min(248px,calc(100vw-1.5rem))]"
+    : "w-[min(300px,calc(100vw-2rem))]";
 
   return (
     <div
@@ -345,37 +351,48 @@ export default function InsightsDateFilterPopover({
           ref={panelRef}
           role="dialog"
           aria-label="Select date range"
-          className={`absolute z-50 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 ${panelPositionClass}`}
+          className={`absolute z-50 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg ring-1 ring-black/5 ${panelWidth} ${panelPositionClass}`}
         >
-          <div className="flex items-center justify-between border-b border-gray-100 bg-slate-50/90 px-4 py-3">
-            <div>
-              <p className="text-xs font-bold text-gray-900">Date Range Filter</p>
-              <p className="text-[11px] text-gray-500">{subtitle}</p>
-            </div>
-            {active || (rangeOnly && (draft.customFrom || value.customFrom)) ? (
-              <button
-                type="button"
-                onClick={handleClear}
-                className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+          {/* Compact header */}
+          <div
+            className={`flex items-center justify-between gap-2 border-b border-gray-100 bg-slate-50/90 ${
+              rangeOnly ? "px-2.5 py-1.5" : "px-3 py-2"
+            }`}
+          >
+            <div className="min-w-0">
+              <p
+                className={`font-bold text-gray-900 ${rangeOnly ? "text-[11px]" : "text-xs"}`}
               >
-                Reset
-              </button>
-            ) : null}
+                {rangeOnly ? "Date range" : "Date Range Filter"}
+              </p>
+              {!rangeOnly ? (
+                <p className="text-[10px] text-gray-500">{subtitle}</p>
+              ) : (
+                <p className="text-[9px] font-medium text-gray-400">{rangeHint}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleClear}
+              className="shrink-0 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+            >
+              Clear
+            </button>
           </div>
 
-          <div className="p-3.5">
+          <div className={rangeOnly ? "p-2" : "p-3"}>
             {!rangeOnly ? (
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              <div className="mb-2 grid grid-cols-2 gap-1 sm:grid-cols-3">
                 <button
                   type="button"
                   onClick={handleClear}
-                  className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
+                  className={`rounded-md px-2 py-1 text-left transition-all ${
                     draft.preset === "all"
-                      ? "bg-indigo-600 font-semibold text-white shadow-xs"
+                      ? "bg-indigo-600 font-semibold text-white"
                       : "bg-gray-50 text-gray-700 hover:bg-gray-100"
                   }`}
                 >
-                  <p className="text-[11px] font-medium">All Time</p>
+                  <p className="text-[10px] font-medium">All Time</p>
                 </button>
 
                 {BOOKING_DATE_PRESETS.map((p) => {
@@ -385,13 +402,13 @@ export default function InsightsDateFilterPopover({
                       key={p.id}
                       type="button"
                       onClick={() => selectPreset(p.id)}
-                      className={`rounded-lg px-2.5 py-1.5 text-left transition-all ${
+                      className={`rounded-md px-2 py-1 text-left transition-all ${
                         selected
-                          ? "bg-indigo-600 font-semibold text-white shadow-xs"
+                          ? "bg-indigo-600 font-semibold text-white"
                           : "bg-gray-50 text-gray-700 hover:bg-gray-100"
                       }`}
                     >
-                      <p className="text-[11px] font-medium">{p.label}</p>
+                      <p className="text-[10px] font-medium">{p.label}</p>
                     </button>
                   );
                 })}
@@ -400,40 +417,62 @@ export default function InsightsDateFilterPopover({
 
             {showCalendar ? (
               <div
-                className={`rounded-xl border border-gray-200 bg-white p-3 ${rangeOnly ? "" : "mt-3.5 bg-slate-50/50"}`}
+                className={
+                  rangeOnly
+                    ? ""
+                    : "rounded-lg border border-gray-200 bg-slate-50/40 p-2"
+                }
               >
-                <div className="mb-3 flex items-center justify-between gap-2">
+                <div
+                  className={`flex items-center justify-between gap-1 ${rangeOnly ? "mb-1" : "mb-2"}`}
+                >
                   <button
                     type="button"
                     onClick={() => shiftMonth(-1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    className={`flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 ${
+                      rangeOnly ? "h-6 w-6 text-sm" : "h-7 w-7"
+                    }`}
                     aria-label="Previous month"
                   >
                     ‹
                   </button>
-                  <span className="text-sm font-bold text-slate-800">{monthTitle}</span>
+                  <span
+                    className={`font-bold text-slate-800 ${rangeOnly ? "text-[11px]" : "text-xs"}`}
+                  >
+                    {monthTitle}
+                  </span>
                   <button
                     type="button"
                     onClick={() => shiftMonth(1)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    className={`flex items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 ${
+                      rangeOnly ? "h-6 w-6 text-sm" : "h-7 w-7"
+                    }`}
                     aria-label="Next month"
                   >
                     ›
                   </button>
                 </div>
 
-                <div className="mb-1 grid grid-cols-7 text-center">
+                <div className="mb-0.5 grid grid-cols-7 text-center">
                   {WEEKDAY_LABELS.map((w) => (
-                    <span key={w} className="py-1 text-[10px] font-bold text-gray-400">
+                    <span
+                      key={w}
+                      className={`font-bold text-gray-400 ${rangeOnly ? "py-0.5 text-[9px]" : "py-0.5 text-[10px]"}`}
+                    >
                       {w}
                     </span>
                   ))}
                 </div>
 
-                <div className="grid grid-cols-7 gap-1 text-center">
+                <div className={`grid grid-cols-7 text-center ${rangeOnly ? "gap-0.5" : "gap-0.5"}`}>
                   {calendarCells.map((cell, idx) => {
                     if (!cell.day) {
-                      return <div key={`empty-${idx}`} className="h-8 w-full" />;
+                      return (
+                        <div
+                          key={`empty-${idx}`}
+                          className={rangeOnly ? "h-6 w-full" : "h-7 w-full"}
+                        />
+                      );
                     }
                     const isFrom = draft.customFrom === cell.ymd;
                     const isTo = draft.customTo === cell.ymd;
@@ -449,9 +488,11 @@ export default function InsightsDateFilterPopover({
                         key={cell.ymd}
                         type="button"
                         onClick={() => handleCellClick(cell.ymd)}
-                        className={`h-8 w-full rounded-lg text-[12px] font-medium transition-all ${
+                        className={`${rangeOnly ? "h-6" : "h-7"} w-full rounded-md font-medium transition-all ${
+                          rangeOnly ? "text-[10px]" : "text-[11px]"
+                        } ${
                           isFrom || isTo
-                            ? "bg-indigo-600 font-bold text-white shadow-xs"
+                            ? "bg-indigo-600 font-bold text-white"
                             : isInRange
                               ? "bg-indigo-100 font-semibold text-indigo-900"
                               : isToday
@@ -465,61 +506,68 @@ export default function InsightsDateFilterPopover({
                   })}
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-gray-100 pt-2.5">
-                  <div>
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                {/* Compact From / To strip */}
+                <div
+                  className={`grid grid-cols-2 gap-1.5 border-t border-gray-100 ${
+                    rangeOnly ? "mt-1.5 pt-1.5" : "mt-2 pt-2"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <span className="block text-[8px] font-bold uppercase tracking-wide text-gray-400">
                       From
                     </span>
-                    <p className="mt-0.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] font-semibold tabular-nums text-gray-800">
-                      {draft.customFrom ? ymdToDdMmYyyy(draft.customFrom) : "dd-mm-yyyy"}
+                    <p
+                      className={`truncate font-semibold tabular-nums text-gray-800 ${
+                        rangeOnly
+                          ? "mt-0.5 text-[10px]"
+                          : "mt-0.5 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-[11px]"
+                      }`}
+                    >
+                      {draft.customFrom
+                        ? ymdToDdMmYyyy(draft.customFrom)
+                        : "dd-mm-yyyy"}
                     </p>
                   </div>
-                  <div>
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                  <div className="min-w-0">
+                    <span className="block text-[8px] font-bold uppercase tracking-wide text-gray-400">
                       To
                     </span>
-                    <p className="mt-0.5 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-[11px] font-semibold tabular-nums text-gray-800">
-                      {draft.customTo ? ymdToDdMmYyyy(draft.customTo) : "dd-mm-yyyy"}
+                    <p
+                      className={`truncate font-semibold tabular-nums text-gray-800 ${
+                        rangeOnly
+                          ? "mt-0.5 text-[10px]"
+                          : "mt-0.5 rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-[11px]"
+                      }`}
+                    >
+                      {draft.customTo
+                        ? ymdToDdMmYyyy(draft.customTo)
+                        : "dd-mm-yyyy"}
                     </p>
                   </div>
                 </div>
-                {rangeOnly ? (
-                  <p className="mt-2 text-center text-[10px] font-medium text-gray-400">
-                    {rangeHint}
-                  </p>
-                ) : null}
               </div>
             ) : null}
           </div>
 
-          {rangeOnly ? (
-            <div className="flex items-center border-t border-gray-100 bg-gray-50/70 px-3.5 py-2.5">
+          {/* Full Insights: apply footer; rangeOnly: Clear already in header */}
+          {!rangeOnly ? (
+            <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/70 px-2.5 py-1.5">
               <button
                 type="button"
                 onClick={handleClear}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-800"
-              >
-                Clear
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/70 px-3.5 py-2.5">
-              <button
-                type="button"
-                onClick={handleClear}
-                className="rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-800"
+                className="rounded-md px-2 py-1 text-[11px] font-semibold text-gray-600 transition-colors hover:bg-gray-200/60 hover:text-gray-800"
               >
                 Clear
               </button>
               <button
                 type="button"
                 onClick={applyCustomRange}
-                className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-indigo-700"
+                className="rounded-md bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700"
               >
-                Apply Filter
+                Apply
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
     </div>

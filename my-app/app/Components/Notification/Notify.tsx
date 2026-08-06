@@ -1,22 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 
 function BellIcon({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 100 110"
-      className={cn("h-8 w-8", className)}
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
     >
-      <circle cx="50" cy="10" r="8" fill="currentColor" />
-      <path
-        d="M50 18 C34 18 22 30 20 46 L16 72 Q15 80 22 80 L78 80 Q85 80 84 72 L80 46 C78 30 66 18 50 18 Z"
-        fill="currentColor"
-      />
-      <rect x="30" y="78" width="40" height="6" rx="3" fill="currentColor" />
-      <circle cx="50" cy="91" r="8" fill="currentColor" />
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
     </svg>
   );
 }
@@ -73,6 +73,12 @@ type Props = {
 
 type TabType = "all" | "leads" | "meetings" | "bookings";
 
+type DateGroup = {
+  key: string;
+  label: string;
+  items: NotificationItem[];
+};
+
 function playNotificationSound() {
   try {
     const audioContext = new (
@@ -100,6 +106,23 @@ function playNotificationSound() {
   }
 }
 
+/** Local calendar day key YYYY-MM-DD for grouping. */
+function localDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Match app date style (leads ENQUIRY DATE): en-IN short month. */
+function formatGroupDateLabel(d: Date): string {
+  return d.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function relativeTime(iso: string): string {
   const date = new Date(iso);
   if (isNaN(date.getTime())) return "—";
@@ -107,11 +130,7 @@ function relativeTime(iso: string): string {
   const diff = Date.now() - date.getTime();
 
   if (diff < 5_000) {
-    return date.toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
+    return formatGroupDateLabel(date);
   }
 
   const mins = Math.floor(diff / 60_000);
@@ -121,11 +140,7 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
-  return date.toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatGroupDateLabel(date);
 }
 
 function sortNotifications(items: NotificationItem[]): NotificationItem[] {
@@ -134,6 +149,46 @@ function sortNotifications(items: NotificationItem[]): NotificationItem[] {
     const timeA = new Date(a.timestamp).getTime();
     const timeB = new Date(b.timestamp).getTime();
     return timeB - timeA;
+  });
+}
+
+/**
+ * Group by calendar day from real timestamp.
+ * Order: Today → Yesterday → older (newest day first). Empty groups omitted.
+ */
+function groupNotificationsByDate(items: NotificationItem[]): DateGroup[] {
+  const sorted = sortNotifications(items);
+  const now = new Date();
+  const todayKey = localDayKey(now);
+  const yest = new Date(now);
+  yest.setDate(yest.getDate() - 1);
+  const yesterdayKey = localDayKey(yest);
+
+  const map = new Map<string, NotificationItem[]>();
+  for (const item of sorted) {
+    const d = new Date(item.timestamp);
+    const key = Number.isNaN(d.getTime()) ? "unknown" : localDayKey(d);
+    const bucket = map.get(key);
+    if (bucket) bucket.push(item);
+    else map.set(key, [item]);
+  }
+
+  const keys = [...map.keys()].sort((a, b) => {
+    if (a === "unknown") return 1;
+    if (b === "unknown") return -1;
+    return b.localeCompare(a);
+  });
+
+  return keys.map((key) => {
+    let label: string;
+    if (key === todayKey) label = "Today";
+    else if (key === yesterdayKey) label = "Yesterday";
+    else if (key === "unknown") label = "Earlier";
+    else {
+      const [y, m, day] = key.split("-").map(Number);
+      label = formatGroupDateLabel(new Date(y, m - 1, day));
+    }
+    return { key, label, items: map.get(key) ?? [] };
   });
 }
 
@@ -209,6 +264,14 @@ function getBadgeStyle(tag?: string): {
   };
 }
 
+/** Restart CSS animation class (even mid-flight). */
+function retriggerAnimation(el: HTMLElement | null, className: string) {
+  if (!el) return;
+  el.classList.remove(className);
+  void el.offsetWidth;
+  el.classList.add(className);
+}
+
 export default function Notify({
   notifications = [],
   onMarkAllRead,
@@ -219,6 +282,9 @@ export default function Notify({
   const [activeTab, setActiveTab] = useState<TabType>("all");
   const panelRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const bellIconWrapRef = useRef<HTMLSpanElement>(null);
+  const badgeRef = useRef<HTMLSpanElement>(null);
+  const rippleHostRef = useRef<HTMLSpanElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -234,27 +300,31 @@ export default function Notify({
     bookings,
   };
 
-  let currentItems = tabItems[activeTab];
-  const currentUnreadCount =
-    activeTab === "all"
-      ? unreadCount
-      : activeTab === "leads"
-        ? leadsUnread
-        : activeTab === "meetings"
-          ? meetingsUnread
-          : bookingsUnread;
+  const currentItems = tabItems[activeTab];
+  const dateGroups = useMemo(
+    () => groupNotificationsByDate(currentItems),
+    [currentItems],
+  );
 
   const prevUnreadRef = useRef(unreadCount);
-  const [ringing, setRinging] = useState(false);
 
+  // New incoming: sound + ring (keep existing notify behavior).
   useEffect(() => {
     if (unreadCount > prevUnreadRef.current) {
-      setRinging(true);
+      retriggerAnimation(bellIconWrapRef.current, "bell-ring");
       playNotificationSound();
-      const t = setTimeout(() => setRinging(false), 700);
-      return () => clearTimeout(t);
+      if (badgeRef.current) {
+        retriggerAnimation(badgeRef.current, "badge-pop");
+      }
     }
     prevUnreadRef.current = unreadCount;
+  }, [unreadCount]);
+
+  // Badge pop when count changes (incl. after mark-read).
+  useEffect(() => {
+    if (unreadCount > 0 && badgeRef.current) {
+      retriggerAnimation(badgeRef.current, "badge-pop");
+    }
   }, [unreadCount]);
 
   useEffect(() => {
@@ -271,13 +341,31 @@ export default function Notify({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  const handleClick = (id: string) => {
-    onNotificationClick?.(id);
+  const spawnRipple = () => {
+    const host = rippleHostRef.current;
+    if (!host) return;
+    const ripple = document.createElement("span");
+    ripple.className = "notify-ripple";
+    ripple.setAttribute("aria-hidden", "true");
+    host.appendChild(ripple);
+    const onEnd = () => {
+      ripple.removeEventListener("animationend", onEnd);
+      ripple.remove();
+    };
+    ripple.addEventListener("animationend", onEnd);
   };
 
-  const handleMarkCurrentRead = () => {
-    const idsToMark = currentItems.filter((n) => !n.read).map((n) => n.id);
-    idsToMark.forEach((id) => onNotificationClick?.(id));
+  const handleBellClick = () => {
+    retriggerAnimation(bellIconWrapRef.current, "bell-ring");
+    spawnRipple();
+    if (unreadCount > 0) {
+      retriggerAnimation(badgeRef.current, "badge-pop");
+    }
+    setOpen((v) => !v);
+  };
+
+  const handleClick = (id: string) => {
+    onNotificationClick?.(id);
   };
 
   const handleClearCurrentTab = () => {
@@ -300,22 +388,64 @@ export default function Notify({
 
   const label = unreadCount > 99 ? "99+" : String(unreadCount);
 
+  let visibleRowIndex = 0;
+
   return (
     <>
       <style>{`
         @keyframes bell-ring {
           0%   { transform: rotate(0deg); }
-          15%  { transform: rotate(18deg); }
-          30%  { transform: rotate(-16deg); }
-          45%  { transform: rotate(12deg); }
-          60%  { transform: rotate(-10deg); }
-          75%  { transform: rotate(6deg); }
-          90%  { transform: rotate(-4deg); }
+          18%  { transform: rotate(18deg); }
+          36%  { transform: rotate(-16deg); }
+          52%  { transform: rotate(12deg); }
+          68%  { transform: rotate(-8deg); }
+          84%  { transform: rotate(4deg); }
           100% { transform: rotate(0deg); }
         }
         .bell-ring {
-          animation: bell-ring 0.7s ease-in-out;
+          animation: bell-ring 0.5s cubic-bezier(.22, 1, .36, 1);
           transform-origin: top center;
+        }
+        @keyframes notify-ripple {
+          0%   { transform: scale(0); opacity: 0.55; }
+          100% { transform: scale(6); opacity: 0; }
+        }
+        .notify-ripple {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 10px;
+          height: 10px;
+          margin-left: -5px;
+          margin-top: -5px;
+          border-radius: 9999px;
+          background: rgba(37, 99, 235, 0.35);
+          pointer-events: none;
+          z-index: 0;
+          animation: notify-ripple 0.5s cubic-bezier(.22, 1, .36, 1) forwards;
+        }
+        @keyframes badge-pop {
+          0%   { transform: scale(1); }
+          45%  { transform: scale(1.35); }
+          100% { transform: scale(1); }
+        }
+        .badge-pop {
+          animation: badge-pop 0.35s cubic-bezier(.22, 1, .36, 1);
+        }
+        @keyframes notify-panel-in {
+          0%   { opacity: 0; transform: translateY(-8px) scale(0.97); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .notify-panel-in {
+          animation: notify-panel-in 0.2s cubic-bezier(.22, 1, .36, 1) both;
+          transform-origin: top right;
+        }
+        @keyframes notify-row-in {
+          0%   { opacity: 0; transform: translateY(6px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .notify-row-in {
+          animation: notify-row-in 0.28s cubic-bezier(.22, 1, .36, 1) both;
         }
       `}</style>
 
@@ -326,32 +456,42 @@ export default function Notify({
           aria-label="Notifications"
           aria-haspopup="true"
           aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
+          onClick={handleBellClick}
           className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-xl border transition-all duration-150",
+            "relative flex h-10 w-10 items-center justify-center rounded-[10px] border-0 bg-transparent transition-all duration-150",
             open
-              ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]"
-              : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] text-[var(--crm-text-secondary)] hover:bg-[var(--crm-surface-elevated)] hover:text-[var(--crm-text-primary)]",
+              ? "bg-blue-50 text-blue-600 shadow-[0_0_0_4px_rgba(37,99,235,0.1)]"
+              : "text-slate-600 hover:bg-blue-50 hover:text-blue-600",
           )}
         >
+          {/* Clips ripple only — badge stays outside so it is not cut off */}
           <span
-            className={cn(
-              "inline-flex items-center justify-center",
-              ringing && "bell-ring",
-            )}
+            ref={rippleHostRef}
+            className="pointer-events-none absolute inset-0 overflow-hidden rounded-[10px]"
+            aria-hidden="true"
+          />
+          <span
+            ref={bellIconWrapRef}
+            className="relative z-[1] inline-flex items-center justify-center"
+            onAnimationEnd={(e) => {
+              if (e.animationName === "bell-ring") {
+                e.currentTarget.classList.remove("bell-ring");
+              }
+            }}
           >
-            <BellIcon
-              className={cn(
-                "h-8 w-8",
-                open ? "text-[var(--crm-accent)]" : "text-black",
-              )}
-            />
+            <BellIcon className="h-[23px] w-[23px]" />
           </span>
 
           {unreadCount > 0 && (
             <span
+              ref={badgeRef}
               aria-label={`${unreadCount} unread notification${unreadCount !== 1 ? "s" : ""}`}
-              className="pointer-events-none absolute -right-1.5 -top-1.5 flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white shadow-md"
+              onAnimationEnd={(e) => {
+                if (e.animationName === "badge-pop") {
+                  e.currentTarget.classList.remove("badge-pop");
+                }
+              }}
+              className="pointer-events-none absolute -right-1.5 -top-1.5 z-[2] flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white shadow-md"
             >
               {label}
             </span>
@@ -362,7 +502,7 @@ export default function Notify({
             ref={panelRef}
             role="dialog"
             aria-label="Notifications"
-            className="fixed right-6 top-[64px] z-[99999] w-[440px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
+            className="notify-panel-in fixed right-6 top-[64px] z-[99999] w-[440px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_48px_rgba(15,23,42,0.18)]"
           >
             <div className="flex items-center justify-between border-b border-slate-100 bg-white px-5 py-3.5">
               <span className="text-[15px] font-bold text-slate-900">
@@ -373,7 +513,7 @@ export default function Notify({
                   <button
                     type="button"
                     onClick={onMarkAllRead}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"
                     title="Mark all as read"
                   >
                     <svg
@@ -391,7 +531,7 @@ export default function Notify({
                   <button
                     type="button"
                     onClick={handleClearCurrentTab}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-red-50 hover:border-red-200 hover:text-red-600"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                     title={`Clear ${activeTab === "all" ? "all" : activeTab} notifications`}
                   >
                     <svg
@@ -409,7 +549,7 @@ export default function Notify({
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-2 border-b border-slate-100 bg-white px-4 py-2.5 overflow-x-auto">
+            <div className="flex items-center gap-2 overflow-x-auto border-b border-slate-100 bg-white px-4 py-2.5">
               {(
                 [
                   {
@@ -492,96 +632,120 @@ export default function Notify({
                   </p>
                 </div>
               ) : (
-                <ul>
-                  {sortNotifications(currentItems).map((item) => {
-                    const badgeStyle = getBadgeStyle(item.tag);
+                <div>
+                  {dateGroups.map((group) => {
+                    if (group.items.length === 0) return null;
                     return (
-                      <li key={item.id}>
-                        <button
-                          type="button"
-                          onClick={() => handleClick(item.id)}
-                          className={cn(
-                            "group flex w-full gap-3 border-b border-slate-100 px-4 py-2.5 text-left transition-all duration-150 last:border-b-0",
-                            !item.read
-                              ? "bg-blue-50/40 hover:bg-blue-50/60"
-                              : "hover:bg-slate-50",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "relative mt-1.5 h-2 w-2 shrink-0 rounded-full transition-all duration-200",
-                              item.read ? "bg-transparent" : "bg-blue-600",
-                            )}
-                            aria-hidden="true"
-                          >
-                            {!item.read && (
-                              <span className="absolute inset-0 animate-ping rounded-full bg-blue-600 opacity-75" />
-                            )}
-                          </span>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-3">
-                              <span
-                                className={cn(
-                                  "text-[13px] leading-snug transition-colors",
-                                  item.read
-                                    ? "font-medium text-slate-600 group-hover:text-slate-900"
-                                    : "font-semibold text-slate-900",
-                                )}
+                      <section key={group.key}>
+                        <div className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50/95 px-4 py-1.5 backdrop-blur-[2px]">
+                          <h3 className="text-[11px] font-bold uppercase tracking-[0.05em] text-slate-400">
+                            {group.label}
+                          </h3>
+                        </div>
+                        <ul>
+                          {group.items.map((item) => {
+                            const rowIndex = visibleRowIndex;
+                            visibleRowIndex += 1;
+                            const badgeStyle = getBadgeStyle(item.tag);
+                            return (
+                              <li
+                                key={item.id}
+                                className="notify-row-in"
+                                style={{
+                                  animationDelay: `${Math.min(rowIndex, 24) * 28}ms`,
+                                }}
                               >
-                                {item.title}
-                              </span>
-                              <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-slate-400">
-                                <svg
-                                  viewBox="0 0 16 16"
-                                  className="h-3 w-3"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
+                                <button
+                                  type="button"
+                                  onClick={() => handleClick(item.id)}
+                                  className={cn(
+                                    "group flex w-full gap-3 border-b border-slate-100 px-4 py-2.5 text-left transition-all duration-150 last:border-b-0",
+                                    !item.read
+                                      ? "bg-blue-50/40 hover:bg-blue-50/60"
+                                      : "hover:bg-slate-50",
+                                  )}
                                 >
-                                  <circle cx="8" cy="8" r="6" />
-                                  <path d="M8 4v4l2 2" />
-                                </svg>
-                                {relativeTime(item.timestamp)}
-                              </span>
-                            </div>
+                                  <span
+                                    className={cn(
+                                      "relative mt-1.5 h-2 w-2 shrink-0 rounded-full transition-all duration-200",
+                                      item.read
+                                        ? "bg-transparent"
+                                        : "bg-blue-600",
+                                    )}
+                                    aria-hidden="true"
+                                  >
+                                    {!item.read && (
+                                      <span className="absolute inset-0 animate-ping rounded-full bg-blue-600 opacity-75" />
+                                    )}
+                                  </span>
 
-                            {item.description && (
-                              <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
-                                {item.description}
-                              </p>
-                            )}
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <span
+                                        className={cn(
+                                          "text-[13px] leading-snug transition-colors",
+                                          item.read
+                                            ? "font-medium text-slate-600 group-hover:text-slate-900"
+                                            : "font-semibold text-slate-900",
+                                        )}
+                                      >
+                                        {item.title}
+                                      </span>
+                                      <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-slate-400">
+                                        <svg
+                                          viewBox="0 0 16 16"
+                                          className="h-3 w-3"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="1.5"
+                                        >
+                                          <circle cx="8" cy="8" r="6" />
+                                          <path d="M8 4v4l2 2" />
+                                        </svg>
+                                        {relativeTime(item.timestamp)}
+                                      </span>
+                                    </div>
 
-                            {item.tag && (
-                              <span
-                                className={cn(
-                                  "mt-2 inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold",
-                                  badgeStyle.bg,
-                                  badgeStyle.text,
-                                  badgeStyle.border,
-                                )}
-                              >
-                                {item.tag}
-                              </span>
-                            )}
-                          </div>
+                                    {item.description && (
+                                      <p className="mt-1 text-[12px] leading-relaxed text-slate-500">
+                                        {item.description}
+                                      </p>
+                                    )}
 
-                          <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
-                            <svg
-                              viewBox="0 0 16 16"
-                              className="h-4 w-4 text-slate-400"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                            >
-                              <path d="M6 4l4 4-4 4" />
-                            </svg>
-                          </div>
-                        </button>
-                      </li>
+                                    {item.tag && (
+                                      <span
+                                        className={cn(
+                                          "mt-2 inline-flex rounded-md border px-2 py-0.5 text-[10px] font-semibold",
+                                          badgeStyle.bg,
+                                          badgeStyle.text,
+                                          badgeStyle.border,
+                                        )}
+                                      >
+                                        {item.tag}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+                                    <svg
+                                      viewBox="0 0 16 16"
+                                      className="h-4 w-4 text-slate-400"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                    >
+                                      <path d="M6 4l4 4-4 4" />
+                                    </svg>
+                                  </div>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
                     );
                   })}
-                </ul>
+                </div>
               )}
             </div>
 
