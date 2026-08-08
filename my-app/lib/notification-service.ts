@@ -21,6 +21,8 @@ interface RawMeetingItem {
   lead_identifier?: string;
   leadName?: string;
   lead_name?: string;
+  assignedTo?: string;
+  assigned_to?: string;
   assignedToId?: number;
   assigned_to_id?: number;
   salesExecutiveId?: number;
@@ -105,6 +107,8 @@ interface RawBookingItem {
   payment_date?: string;
   payment_status?: string;
   created_at?: string;
+  assigned_to?: string;
+  assignedTo?: string;
   [key: string]: unknown;
 }
 
@@ -131,12 +135,27 @@ function tagLabel(tag: MeetingTag): string {
   return tag.charAt(0) + tag.slice(1).toLowerCase(); // "Scheduled", "Cancellation" …
 }
 
-function defaultTitle(tag: MeetingTag, leadName?: string): string {
+function buildMeetingTitle(tag: MeetingTag, leadName?: string, assignedTo?: string): string {
+  const lead = leadName?.trim();
+  const by = assignedTo?.trim() ? ` by ${assignedTo.trim()}` : "";
+
   switch (tag) {
-    case "SCHEDULED": return "Meeting Scheduled";
-    case "RESCHEDULED": return "Meeting Rescheduled";
-    case "CANCELLATION": return "Meeting Cancelled";
-    case "SUCCESS": return leadName ? `Meeting Successful with ${leadName}` : "Meeting Successful";
+    case "SCHEDULED":
+      return lead
+        ? `Meeting scheduled with ${lead}${by}`
+        : `Meeting scheduled${by}`;
+    case "RESCHEDULED":
+      return lead
+        ? `Meeting rescheduled with ${lead}${by}`
+        : `Meeting rescheduled${by}`;
+    case "CANCELLATION":
+      return lead
+        ? `Meeting with ${lead} cancelled${by}`
+        : `Meeting cancelled${by}`;
+    case "SUCCESS":
+      return lead
+        ? `Meeting with ${lead} was successful${by}.`
+        : `Meeting was successful${by}.`;
   }
 }
 
@@ -169,15 +188,14 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   }
 
   const leadName = raw.leadName ?? raw.lead_name ?? "";
+  const assignedTo = raw.assignedTo ?? raw.assigned_to ?? "";
 
-  // For SUCCESS, name is baked into the title — no need to repeat in title prefix
-  const title = raw.title ?? defaultTitle(tag, leadName || undefined);
+  // Always build the title from our template so it includes leadName and assignedTo.
+  // raw.title is intentionally ignored — the Go backend sends a legacy value
+  // (e.g. "SCHEDULED meeting with test6") that must not override the formatted message.
+  const title = buildMeetingTitle(tag, leadName || undefined, assignedTo || undefined);
 
-  // For non-SUCCESS tags, append lead name to title if present
-  const displayTitle =
-    tag !== "SUCCESS" && leadName && !raw.title
-      ? `${title} - ${leadName}`
-      : title;
+  const displayTitle = title;
 
   // Build description from available meeting metadata
   const meetingDate = raw.meetingDate ?? raw.meeting_date;
@@ -193,6 +211,31 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   }
   if (slot) parts.push(slot);
   if (meetingType) parts.push(meetingType.replace(/_/g, " "));
+
+  // For SUCCESS (and any tag where meetingDate/slot/meetingType are absent),
+  // fall back to created_at formatted as a readable date + time.
+  if (parts.length === 0 && tag === "SUCCESS") {
+    const fallbackTs =
+      raw.created_at ??
+      raw.createdAt ??
+      raw.inserted_at ??
+      raw.insertedAt ??
+      raw.notified_at ??
+      raw.notifiedAt ??
+      raw.timestamp ??
+      null;
+    if (fallbackTs) {
+      try {
+        const d = new Date(fallbackTs);
+        const datePart = d.toLocaleString("en-IN", { dateStyle: "medium" });
+        const timePart = d.toLocaleString("en-IN", { timeStyle: "short" });
+        parts.push(`${datePart} · ${timePart}`);
+      } catch {
+        parts.push(fallbackTs);
+      }
+    }
+  }
+
   const description =
     raw.description ?? raw.message ?? (parts.length ? parts.join(" · ") : undefined);
   const arrivalTimestamp =
@@ -265,21 +308,26 @@ function extractBookingItems(payload: unknown): RawBookingItem[] {
   return [];
 }
 
-function bookingTitle(raw: RawBookingItem): string {
+function bookingTitle(raw: RawBookingItem, assignedTo?: string): string {
+  const by = assignedTo?.trim() ? ` by ${assignedTo.trim()}` : "";
+  const leadName = (raw.customerName ?? raw.leadName ?? raw.lead_name ?? "").trim();
+  const withLead = leadName ? ` for ${leadName}` : "";
+  const fromLead = leadName ? ` from ${leadName}` : "";
+
   const lt = (raw.listingType ?? "").toString().toLowerCase();
   if (lt === "cancel" || (raw.bookingStatus ?? "").toLowerCase().includes("cancel")) {
-    return "Booking Cancellation";
+       return `Booking Cancellation${withLead}${by}.`;
   }
   if (lt === "booking" || (raw.bookingStatus ?? "").toLowerCase() === "confirmed") {
-    return "Booking Done";
+     return `Booking completed${withLead}${by}.`;
   }
 
   // Token — check if full 10% is received via paymentKind or numeric comparison
   const kind = (
-    raw.paymentKind ??   // Spring camelCase
-    raw.payment_kind ??   // Spring snake_case fallback
-    raw.paymentType ??   // Go proto
-    raw.payment_type ??   // Go proto snake_case
+    raw.paymentKind ??
+    raw.payment_kind ??
+    raw.paymentType ??
+    raw.payment_type ??
     ""
   ).toString().trim();
 
@@ -290,19 +338,17 @@ function bookingTitle(raw: RawBookingItem): string {
   const remaining = Number(raw.remainingAmount ?? raw.remaining_amount ?? 0);
   const quoteAmount = Number(raw.quoteAmount ?? raw.quote_amount ?? 0);
 
-  // Check if full payment is received (remaining is 0 or paid equals quote amount)
-  const isFullPayment = 
-    remaining === 0 || 
+  const isFullPayment =
+    remaining === 0 ||
     (quoteAmount > 0 && paid >= quoteAmount);
 
   const isFullTenPercent =
-    /full[\s_]*10/i.test(kind) ||               // "FULL 10%", "full_10", "full10", etc.
-    kind.toUpperCase() === "BOOKING" ||          // payment_kind = BOOKING
-    (target > 0 && paid >= target);             // numeric: paid >= 10% target
+    /full[\s_]*10/i.test(kind) ||
+    kind.toUpperCase() === "BOOKING" ||
+    (target > 0 && paid >= target);
 
-  // "Booking Done" for both 10% payment and full payment
-  if (isFullPayment || isFullTenPercent) return "Booking Done";
-  return "Token Received";
+if (isFullPayment || isFullTenPercent) return `Booking completed${withLead}${by}.`;
+  return `Token received${fromLead}${by}.`;
 }
 
 function fmt(n: number | string | undefined): string | undefined {
@@ -339,13 +385,10 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
       : `booking-fallback-${index}`;
   }
   
-  const title = bookingTitle(raw);
+  const assignedTo = (raw.assignedTo ?? raw.assigned_to ?? "").trim();
+  const title = bookingTitle(raw, assignedTo || undefined);
 
   const parts: string[] = [];
-
-  // Customer/Lead name — always show first
-  const customerName = raw.customerName ?? raw.leadName ?? raw.lead_name ?? "";
-  if (customerName) parts.push(customerName);
 
   // Shared paid amount resolver — tries all known field names
   const resolvePaid = () =>
@@ -355,11 +398,11 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     (Number(raw.quoteAmount ?? raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0) -
       Number(raw.remainingAmount ?? raw.remaining_amount ?? 0));
 
-  if (title === "Booking Done") {
+  if (title.startsWith("Booking completed")) {
     const paid = resolvePaid() || Number(raw.tenPercentAmount ?? raw.ten_percent_amount ?? 0);
     const fmtPaid = fmt(paid);
     if (fmtPaid && paid > 0) parts.push(`Paid: ${fmtPaid}`);
-  } else if (title === "Token Received") {
+  } else if (title.startsWith("Token received")) {
     // show kind, cumulative paid so far and what's remaining
     const kind = raw.paymentKind ?? raw.payment_kind ?? raw.paymentType ?? raw.payment_type;
     if (kind) parts.push(kind.replace(/_/g, " "));
@@ -369,7 +412,7 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     const fmtRem = fmt(remaining);
     if (fmtPaid) parts.push(`Paid: ${fmtPaid}`);
     if (fmtRem && remaining > 0) parts.push(`Remaining: ${fmtRem}`);
-  } else if (title === "Booking Cancellation" && raw.cancellationReason) {
+  } else if (title.startsWith("Booking Cancellation") && raw.cancellationReason) {
     parts.push(`Reason: ${raw.cancellationReason}`);
   }
 
@@ -523,15 +566,22 @@ async function fetchRawEndpointItems(
 
   const items = extractItems(payload);
   console.log(`${LOG_PREFIX} [${tag}] extracted ${items.length} items`);
-  // Log the first raw item so we can see exactly which timestamp fields the Go server sends
+  // Print the complete first item as-received from the backend so we can verify
+  // exactly which fields (title, assigned_to, lead_name, etc.) the API returns.
   if (items.length > 0) {
     const sample = items[0] as Record<string, unknown>;
-    const tsFields = Object.fromEntries(
-      Object.entries(sample).filter(([k]) =>
-        /time|date|at|stamp/i.test(k)
-      )
+    console.log(
+      `${LOG_PREFIX} [${tag}] ── FULL FIRST ITEM (raw API response) ──`,
+      JSON.stringify(sample, null, 2),
     );
-    console.log(`${LOG_PREFIX} [${tag}] sample timestamp fields:`, tsFields);
+    // Also print the key diagnostic fields explicitly for quick scanning
+    console.log(`${LOG_PREFIX} [${tag}] ── KEY FIELDS ──`, {
+      meeting_id:      sample.meeting_id      ?? sample.id,
+      lead_identifier: sample.lead_identifier ?? sample.leadIdentifier,
+      title:           sample.title,
+      lead_name:       sample.lead_name       ?? sample.leadName,
+      assigned_to:     sample.assigned_to     ?? sample.assignedTo,
+    });
   }
   return items;
 }
@@ -779,11 +829,15 @@ export async function loadNotifications(
       null,
   }));
 
-  // Log sample items for debugging
+  // Log sample items for debugging — include assigned_to and lead_name to verify backend payload
   if (normalizedRaw.length > 0) {
     console.log(`${LOG_PREFIX}  Sample normalized raw items (first 3):`, normalizedRaw.slice(0, 3).map((item) => ({
       id: item.id,
       leadIdentifier: item.leadIdentifier,
+      lead_name: item.lead_name,
+      leadName: item.leadName,
+      assigned_to: item.assigned_to,
+      assignedTo: item.assignedTo,
       __assignedId: item.__assignedId,
       __notifyTag: item.__notifyTag,
       title: item.title,
