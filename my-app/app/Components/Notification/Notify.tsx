@@ -496,11 +496,12 @@ export default function Notify({
                             <div className="flex items-start justify-between gap-3">
                               <span
                                 className={cn(
-                                  "text-[13px] leading-snug transition-colors",
+                                  "block min-w-0 truncate text-[13px] leading-snug transition-colors",
                                   item.read
                                     ? "font-medium text-slate-600 group-hover:text-slate-900"
                                     : "font-semibold text-slate-900",
                                 )}
+                                title={item.title}
                               >
                                 {item.title}
                               </span>
