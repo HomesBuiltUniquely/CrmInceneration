@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
@@ -79,12 +79,37 @@ function readHeaderPersistedState(): HeaderPersistedState {
 export default function Header() {
   const pathname = usePathname() ?? "";
   const router = useRouter();
+  const searchParams = useSearchParams();
   const leadsWorkspace = workspaceFromPathname(pathname);
   const isPresalesLeadsPage = leadsWorkspace === "presales";
+
+  // ── Notification click-to-highlight ──────────────────────────────────────
+  // When TopNav pushes ?highlight=<leadIdentifier>, we read it once, seed the
+  // search box so the API returns that lead, then remove the param from the URL
+  // so refreshing / back-navigation does not re-trigger the highlight.
+  const [highlightLeadIdentifier, setHighlightLeadIdentifier] = useState<string>("");
 
   useEffect(() => {
     persistLeadDetailWorkspace(leadsWorkspace);
   }, [leadsWorkspace]);
+
+  // Consume the ?highlight= query param produced by notification click-to-navigate.
+  useEffect(() => {
+    const leadId = searchParams?.get("highlight")?.trim() ?? "";
+    if (!leadId) return;
+
+    // Seed the search box — the existing search pipeline will fetch the matching lead.
+    setSearch(leadId);
+    // Arm the highlight so LeadsTable can ring the row once the result arrives.
+    setHighlightLeadIdentifier(leadId);
+
+    // Strip the param from the URL so it doesn't re-fire on refresh / back-nav.
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
+    next.delete("highlight");
+    const clean = next.toString();
+    router.replace(clean ? `${pathname}?${clean}` : pathname, { scroll: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams?.get("highlight")]);
 
   const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
@@ -710,6 +735,8 @@ export default function Header() {
                 verificationStatus={listVerificationStatus}
                 leadsWorkspace={leadsWorkspace}
                 crmMonthWindow=""
+                highlightLeadIdentifier={highlightLeadIdentifier}
+                onHighlightConsumed={() => setHighlightLeadIdentifier("")}
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
                   isPresalesManager && presalesSummaryTab === "teamVerified"

@@ -259,6 +259,9 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
 
   const timestamp = arrivalTimestamp ?? raw.meetingDate ?? raw.meeting_date ?? "";
 
+  // Preserve the raw leadIdentifier so TopNav can navigate to the lead on click.
+  const rawLeadIdentifier = (raw.leadIdentifier ?? raw.lead_identifier ?? "").trim();
+
   return {
     id,
     title: displayTitle,
@@ -266,6 +269,7 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
     timestamp,
     read: false,
     tag: tagLabel(tag),
+    ...(rawLeadIdentifier ? { leadIdentifier: rawLeadIdentifier } : {}),
   };
 }
 
@@ -426,6 +430,11 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     raw.cancelledAt ??
     "";
 
+  // Prefer the Hub lead identifier over the booking UUID so TopNav can navigate to the lead.
+  const rawLeadIdentifier = (
+    raw.leadIdentifier ?? raw.lead_identifier ?? raw.hubLeadId ?? ""
+  ).toString().trim();
+
   return {
     id,
     title,
@@ -433,6 +442,7 @@ function mapRawBookingItem(raw: RawBookingItem, index: number): NotificationItem
     timestamp,
     read: false,
     tag: "Booking",
+    ...(rawLeadIdentifier ? { leadIdentifier: rawLeadIdentifier } : {}),
   };
 }
 
@@ -499,6 +509,7 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
     timestamp,
     read: false,
     tag: "Lead",
+    ...(leadIdentifier ? { leadIdentifier } : {}),
   };
 }
 

@@ -10,11 +10,11 @@ import {
   hasDashboardByRole,
 } from "@/lib/auth/api";
 import { readStoredCrmToken } from "@/lib/crm-client-auth";
+import { asCrmLeadType } from "@/lib/leads-filter";
 import { loadNotifications } from "@/lib/notification-service";
 import Notify, {
   type NotificationItem,
 } from "@/app/Components/Notification/Notify";
-
 
 
 const READ_IDS_KEY = "crm_read_notification_ids";
@@ -279,6 +279,77 @@ export default function TopNav({
     // Note: badge count will automatically update via the updated notifications state
   };
 
+  /**
+   * Navigate to the CRM lead listing and highlight the specific lead.
+   * Called by <Notify> when the user clicks a notification that has a leadIdentifier.
+   * The panel is already closed by <Notify> before this fires.
+   */
+  const handleNotificationNavigate = async (item: NotificationItem) => {
+    const { leadIdentifier } = item;
+    if (!leadIdentifier) return;
+
+    console.log("[Notification] leadIdentifier:", leadIdentifier);
+
+    try {
+      // Use existing BFF search to resolve business identifier → numeric Hub id
+      const qs = new URLSearchParams();
+      qs.set("mergeAll", "1");
+      qs.set("search", leadIdentifier.trim());
+      qs.set("page", "0");
+      qs.set("size", "50");
+
+      const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        console.warn(`[TopNav] Lead search failed for ${leadIdentifier}: ${res.status}`);
+        return;
+      }
+
+      const payload = await res.json().catch(() => ({} as any));
+      const rows = Array.isArray(payload.content) ? payload.content : Array.isArray(payload) ? payload : [];
+      const needle = leadIdentifier.trim().toUpperCase();
+
+      const found = rows.find((lead: Record<string, any>) => {
+        const li = String(
+          lead.leadIdentifier ?? lead.lead_identifier ?? lead.leadId ?? lead.uniqueId ?? "",
+        )
+          .trim()
+          .toUpperCase();
+        return li && li === needle;
+      });
+
+      if (!found) {
+        console.warn(`[TopNav] Could not resolve leadIdentifier ${leadIdentifier} to numeric id`);
+        return;
+      }
+
+      // Resolve numeric Hub id (try common fields)
+      let numericLeadId = "";
+      if (found.id !== undefined && found.id !== null) numericLeadId = String(found.id);
+      else if (found.leadId !== undefined && found.leadId !== null) numericLeadId = String(found.leadId);
+      else if ((found as any).hubLeadId !== undefined && (found as any).hubLeadId !== null)
+        numericLeadId = String((found as any).hubLeadId);
+
+      if (!numericLeadId) {
+        console.warn(`[TopNav] No numeric id present on found lead for ${leadIdentifier}`);
+        return;
+      }
+
+      // Resolve leadType from returned row when available, otherwise fallback to formlead
+      const rawLeadType = String(found.leadType ?? found.type ?? "").trim() || undefined;
+      const leadType = asCrmLeadType(rawLeadType, "formlead");
+
+      console.log("[Notification] resolved leadType:", leadType);
+      console.log("[Notification] resolved numeric leadId:", numericLeadId);
+      console.log("[Notification] navigating:", `/Leads/${leadType}/${numericLeadId}`);
+
+      router.push(`/Leads/${leadType}/${numericLeadId}`);
+    } catch (err) {
+      console.error("[TopNav] Error resolving notification leadIdentifier:", err);
+    }
+  };
   const handleClearAll = (
     tabType: "all" | "leads" | "meetings" | "bookings",
   ) => {
@@ -419,6 +490,7 @@ export default function TopNav({
                 notifications={notifications}
                 onMarkAllRead={handleMarkAllRead}
                 onNotificationClick={handleNotificationClick}
+                onNotificationNavigate={handleNotificationNavigate}
                 onClearAll={handleClearAll}
                 bellRinging={bellRinging}
               />
