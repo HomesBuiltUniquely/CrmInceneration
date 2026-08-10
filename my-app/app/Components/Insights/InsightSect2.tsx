@@ -1,14 +1,17 @@
 "use client";
 
 import {
+  formatInsightsChangeAbsolute,
   formatInsightsChangePercent,
   formatInsightsCount,
   formatInsightsInrCompact,
   formatInsightsPercent,
   progressWidthPercent,
   type InsightsDashboard,
+  type InsightsKpiMetric,
 } from "@/lib/crm-insights-api";
 
+/** Optional FE fallback when Hub money KPIs not present (legacy). */
 export type TokenMetricsData = {
   tokenValue: number;
   bookingValue: number;
@@ -20,7 +23,9 @@ export type TokenMetricsData = {
 
 type Props = {
   kpis: InsightsDashboard["kpis"];
+  /** Used only if Hub omits token/booking/gross KPIs. */
   tokenMetrics?: TokenMetricsData;
+  dashboardLoading?: boolean;
 };
 
 function trendClass(positiveIsGood: boolean, value: number | null | undefined) {
@@ -32,15 +37,58 @@ function trendClass(positiveIsGood: boolean, value: number | null | undefined) {
   return good ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
 }
 
-export default function InsightSect2({ kpis, tokenMetrics }: Props) {
-  const isTokenLoading = tokenMetrics?.loading;
+function moneyFromHubOrFe(
+  hub: InsightsKpiMetric | null | undefined,
+  feValue: number | undefined,
+): number {
+  if (hub != null && Number.isFinite(hub.value)) return hub.value;
+  return Number(feValue ?? 0);
+}
+
+export default function InsightSect2({
+  kpis,
+  tokenMetrics,
+  dashboardLoading = false,
+}: Props) {
+  const hasHubMoney =
+    kpis.tokenValue != null ||
+    kpis.bookingValue != null ||
+    kpis.grossBooking != null;
+
+  const isMoneyLoading =
+    dashboardLoading || (!hasHubMoney && Boolean(tokenMetrics?.loading));
+
+  const tokenValue = moneyFromHubOrFe(kpis.tokenValue, tokenMetrics?.tokenValue);
+  const bookingValue = moneyFromHubOrFe(
+    kpis.bookingValue,
+    tokenMetrics?.bookingValue ?? kpis.closedWon.value,
+  );
+  const grossBooking =
+    kpis.grossBooking != null && Number.isFinite(kpis.grossBooking.value)
+      ? kpis.grossBooking.value
+      : tokenValue + bookingValue;
+
+  const tokenTrend =
+    kpis.tokenValue?.changeAbsolute != null
+      ? formatInsightsChangeAbsolute(kpis.tokenValue.changeAbsolute)
+      : tokenMetrics?.tokenCount != null
+        ? `${tokenMetrics.tokenCount} Active Tokens`
+        : "Token deals";
+  const bookingTrend =
+    kpis.bookingValue?.changeAbsolute != null
+      ? formatInsightsChangeAbsolute(kpis.bookingValue.changeAbsolute)
+      : tokenMetrics?.bookingCount != null
+        ? `${tokenMetrics.bookingCount} Booked Deals`
+        : "Booking deals";
 
   const cards = [
     {
       key: "totalLeads",
       label: "Total Leads",
-      display: formatInsightsCount(kpis.totalLeads.value),
-      trend: formatInsightsChangePercent(kpis.totalLeads.changePercent),
+      display: dashboardLoading ? "..." : formatInsightsCount(kpis.totalLeads.value),
+      trend: dashboardLoading
+        ? "…"
+        : formatInsightsChangePercent(kpis.totalLeads.changePercent),
       trendClass: trendClass(true, kpis.totalLeads.changePercent),
       width: progressWidthPercent(kpis.totalLeads.progressRatio),
       barColor: "bg-indigo-500",
@@ -48,32 +96,33 @@ export default function InsightSect2({ kpis, tokenMetrics }: Props) {
     {
       key: "tokenValue",
       label: "Token Value",
-      display: isTokenLoading ? "..." : formatInsightsInrCompact(tokenMetrics?.tokenValue ?? 0),
-      trend: isTokenLoading ? "loading" : `${tokenMetrics?.tokenCount ?? 0} Active Tokens`,
+      display: isMoneyLoading ? "..." : formatInsightsInrCompact(tokenValue),
+      trend: isMoneyLoading ? "…" : tokenTrend,
       trendClass: "bg-amber-100 text-amber-800",
-      width: (tokenMetrics?.tokenValue ?? 0) > 0 ? "70%" : "0%",
+      width: progressWidthPercent(
+        kpis.tokenValue?.progressRatio ?? (tokenValue > 0 ? 0.7 : 0),
+      ),
       barColor: "bg-amber-500",
     },
     {
       key: "bookingValue",
       label: "Booking Value",
-      display: isTokenLoading ? "..." : formatInsightsInrCompact(tokenMetrics?.bookingValue ?? kpis.closedWon.value),
-      trend: isTokenLoading ? "loading" : `${tokenMetrics?.bookingCount ?? 0} Booked Deals`,
+      display: isMoneyLoading ? "..." : formatInsightsInrCompact(bookingValue),
+      trend: isMoneyLoading ? "…" : bookingTrend,
       trendClass: "bg-emerald-100 text-emerald-800",
-      width: "100%",
+      width: progressWidthPercent(kpis.bookingValue?.progressRatio ?? 1),
       barColor: "bg-emerald-500",
     },
     {
       key: "grossBookingValue",
       label: "Gross Booking Value",
-      display: isTokenLoading
-        ? "..."
-        : formatInsightsInrCompact(
-            (tokenMetrics?.tokenValue ?? 0) + (tokenMetrics?.bookingValue ?? 0),
-          ),
-      trend: "Token + Booking",
+      display: isMoneyLoading ? "..." : formatInsightsInrCompact(grossBooking),
+      trend:
+        kpis.grossBooking?.changeAbsolute != null
+          ? formatInsightsChangeAbsolute(kpis.grossBooking.changeAbsolute)
+          : "Token + Booking",
       trendClass: "bg-indigo-100 text-indigo-800",
-      width: "100%",
+      width: progressWidthPercent(kpis.grossBooking?.progressRatio ?? 1),
       barColor: "bg-indigo-600",
     },
     {
@@ -95,7 +144,6 @@ export default function InsightSect2({ kpis, tokenMetrics }: Props) {
             key={card.key}
             className="flex h-full w-full flex-col rounded-2xl border border-gray-200/80 bg-white p-4 shadow-xs transition-all hover:border-gray-300"
           >
-            {/* Fixed header row so long labels (Gross Booking) don't shift values */}
             <div className="flex min-h-[2.75rem] items-start justify-between gap-2">
               <p className="min-w-0 flex-1 text-[11px] font-bold uppercase leading-snug tracking-wider text-gray-400">
                 {card.label}

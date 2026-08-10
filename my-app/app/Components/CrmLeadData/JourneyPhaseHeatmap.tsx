@@ -29,9 +29,11 @@ import {
   milestoneCountsFromLeads,
   presalesSummaryMetricsFromLeads,
   salesJourneySummaryFromMilestoneCounts,
+  toCanonicalSalesMilestone,
   usesAdminLeadsApi,
 } from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
+import { leadMatchesAssigneeScope } from "@/lib/admin-assignee-match";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
 type Phase = {
@@ -47,7 +49,7 @@ export type JourneyPhaseHeatmapProps = {
   /** Query string for `/Leads/crm-milestone-counts-filtered` (no leading `?`), e.g. `leadType=all&search=foo` */
   milestoneFilterQuery?: string;
   currentRole?: string;
-  leadView?: "default" | "my" | "team";
+  leadView?: "default" | "my" | "team" | "combined";
   currentUserName?: string;
   currentUserAliases?: string[];
   currentUserId?: number;
@@ -107,10 +109,14 @@ function mapLeadsToPhases(
   leads: ApiLead[],
   defaults: Phase[],
   getTopLevelStage: (lead: ApiLead) => string,
+  /** Sales: map raw stage into 6 canonical phases (unknown/blank → Fresh Lead). */
+  canonicalizeSales = false,
 ): Phase[] {
   const counts = new Map<string, number>();
   for (const lead of leads) {
-    const stage = getTopLevelStage(lead).trim();
+    const raw = getTopLevelStage(lead).trim();
+    if (!raw && !canonicalizeSales) continue;
+    const stage = canonicalizeSales ? toCanonicalSalesMilestone(raw || "Fresh Lead") : raw;
     if (!stage) continue;
     const key = normalizeStageKey(stage);
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -678,7 +684,19 @@ export default function JourneyPhaseHeatmap({
 
   const assigneeScopedAdminCounts =
     assigneeScope.length > 0 || summaryTotalsOverride != null;
+  /**
+   * Table/leads effect synced journey map (id-merge blank→Fresh).
+   * SM previously; SE/presales exec must use the same path or phase cards diverge
+   * from Lead/Opp/Total (mapLeadsToPhases dropped non-canonical stage labels).
+   */
+  const clientSyncedJourneyCounts =
+    !isAdminHeatmapViewer &&
+    adminMilestoneCounts != null &&
+    Object.keys(adminMilestoneCounts).length > 0;
   const adminCountsEffective = useMemo(() => {
+    if (clientSyncedJourneyCounts) {
+      return adminMilestoneCounts;
+    }
     if (!isAdminHeatmapViewer) return null;
     if (assigneeScopedAdminCounts) {
       if (adminMilestoneCounts && Object.keys(adminMilestoneCounts).length > 0) {
@@ -696,6 +714,7 @@ export default function JourneyPhaseHeatmap({
     assigneeScopedAdminCounts,
     adminCountsLocal,
     adminMilestoneCounts,
+    clientSyncedJourneyCounts,
   ]);
 
   const adminSummaryFromCounts = useMemo(
@@ -752,7 +771,12 @@ export default function JourneyPhaseHeatmap({
     }
     const getStage = usePresalesSummaryUi ? presalesTopLevelStage : crmLeadTopLevelStage;
     const sourceLeads = usePresalesSummaryUi ? presalesPhaseLeads : filteredInsightLeads;
-    const mapped = mapLeadsToPhases(sourceLeads, defaults, getStage);
+    const mapped = mapLeadsToPhases(
+      sourceLeads,
+      defaults,
+      getStage,
+      !usePresalesSummaryUi,
+    );
     if (!usePresalesSummaryUi) return mapped;
     const shareDenominator =
       presalesSummaryTab === "verified"
@@ -807,16 +831,21 @@ export default function JourneyPhaseHeatmap({
   );
   const adminLeadSummaryTotal = adminSummaryFromCountsLocal.lead;
   const adminOppSummaryTotal = adminSummaryFromCountsLocal.opportunity;
+  /** Prefer table-synced summary when present; else phase sums (same inventory after SM/SE sync). */
   const summaryLeadTotal = isAdminHeatmapViewer
     ? usePresalesSummaryUi
       ? leadTotal
       : summaryTotalsOverride?.lead ?? adminLeadSummaryTotal
-    : (summaryTotalsOverride?.lead ?? leadTotal);
+    : clientSyncedJourneyCounts
+      ? summaryTotalsOverride?.lead ?? adminLeadSummaryTotal ?? leadTotal
+      : summaryTotalsOverride?.lead ?? leadTotal;
   const summaryOpportunityTotal = isAdminHeatmapViewer
     ? usePresalesSummaryUi
       ? opportunityTotal
       : summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal
-    : (summaryTotalsOverride?.opportunity ?? opportunityTotal);
+    : clientSyncedJourneyCounts
+      ? summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal ?? opportunityTotal
+      : summaryTotalsOverride?.opportunity ?? opportunityTotal;
   const adminGrandTotal =
     isAdminHeatmapViewer && !usePresalesSummaryUi
       ? summaryTotalsOverride != null
@@ -911,6 +940,12 @@ export default function JourneyPhaseHeatmap({
 
   useEffect(() => {
     if (isAdminHeatmapViewer) return;
+    // Table already synced journey milestone map — do not re-fetch and under-count.
+    if (clientSyncedJourneyCounts) {
+      setLoading(false);
+      setError("");
+      return;
+    }
 
     let cancelled = false;
 
@@ -937,40 +972,67 @@ export default function JourneyPhaseHeatmap({
         query.set("page", "0");
         query.set("size", "500");
         query.set("sort", "updatedAt,desc");
-        const firstRes = await fetch(`/api/crm/leads?${query.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-          headers: getCrmAuthHeaders(),
-        });
-        if (!firstRes.ok) {
-          const text = await firstRes.text();
-          throw new Error(text || `HTTP ${firstRes.status}`);
-        }
-        const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
-        const allLeads: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
-        const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
-        if (totalPages > 1) {
-          const followUps = [];
-          for (let p = 1; p < totalPages; p++) {
-            const nextQuery = new URLSearchParams(query);
-            nextQuery.set("page", String(p));
-            followUps.push(
-              fetch(`/api/crm/leads?${nextQuery.toString()}`, {
-                cache: "no-store",
-                credentials: "include",
-                headers: getCrmAuthHeaders(),
-              }).then(async (r) => {
-                if (!r.ok) return [] as ApiLead[];
-                const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
-                return Array.isArray(json.content) ? json.content : [];
-              })
-            );
+
+        const fetchAllPages = async (base: URLSearchParams): Promise<ApiLead[]> => {
+          const firstRes = await fetch(`/api/crm/leads?${base.toString()}`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders(),
+          });
+          if (!firstRes.ok) {
+            const text = await firstRes.text();
+            throw new Error(text || `HTTP ${firstRes.status}`);
           }
-          const rest = await Promise.all(followUps);
-          for (const chunk of rest) allLeads.push(...chunk);
+          const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
+          const all: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+          const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+          if (totalPages > 1) {
+            const followUps = [];
+            for (let p = 1; p < totalPages; p++) {
+              const nextQuery = new URLSearchParams(base);
+              nextQuery.set("page", String(p));
+              followUps.push(
+                fetch(`/api/crm/leads?${nextQuery.toString()}`, {
+                  cache: "no-store",
+                  credentials: "include",
+                  headers: getCrmAuthHeaders(),
+                }).then(async (r) => {
+                  if (!r.ok) return [] as ApiLead[];
+                  const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
+                  return Array.isArray(json.content) ? json.content : [];
+                }),
+              );
+            }
+            const rest = await Promise.all(followUps);
+            for (const chunk of rest) all.push(...chunk);
+          }
+          return all;
+        };
+
+        const roleKey = roleKeyUi;
+        const useSmCombinedEndpoints =
+          (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") &&
+          (leadView === "combined" || leadView === "default");
+
+        let allLeads: ApiLead[];
+        if (useSmCombinedEndpoints) {
+          // Same Hub membership as My Leads table (my-leads ∪ team-leads).
+          const qMy = new URLSearchParams(query);
+          qMy.set("roleView", "my");
+          const qTeam = new URLSearchParams(query);
+          qTeam.set("roleView", "team");
+          const [myRows, teamRows] = await Promise.all([
+            fetchAllPages(qMy),
+            fetchAllPages(qTeam),
+          ]);
+          allLeads = [...myRows, ...teamRows];
+        } else {
+          if (leadView === "my" || leadView === "team") {
+            query.set("roleView", leadView);
+          }
+          allLeads = await fetchAllPages(query);
         }
         const visibleLeads = mergeLeadsById(allLeads);
-        const roleKey = roleKeyUi;
 
         const myAliases = new Set(
           [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
@@ -1017,7 +1079,14 @@ export default function JourneyPhaseHeatmap({
           for (const alias of aliases) if (presalesTeamSet.has(alias)) return true;
           return false;
         };
-        const roleScopedLeads = visibleLeads.filter((lead) => {
+        /**
+         * REAL BUG FIX: Hub my-leads ∪ team-leads is already the SM membership.
+         * Re-filtering with Header display-name teamSet dropped hundreds of Hub team rows
+         * (usernames / alternate names), so Discovery/phases undercounted vs the table.
+         */
+        const roleScopedLeads = useSmCombinedEndpoints
+          ? visibleLeads
+          : visibleLeads.filter((lead) => {
           if (trustPresalesUpstreamLeadScope(roleKey)) return true;
           if (
             leadsWorkspace === "presales" &&
@@ -1051,15 +1120,14 @@ export default function JourneyPhaseHeatmap({
           return false;
         });
         const scopedLeads =
-          assigneeScopeSet.size === 0
+          assigneeScope.length === 0
             ? roleScopedLeads
-            : roleScopedLeads.filter((lead) => {
-                const aliases = assigneeAliasNorms(lead);
-                for (const alias of aliases) if (assigneeScopeSet.has(alias)) return true;
-                return false;
-              });
+            : roleScopedLeads.filter((lead) =>
+                leadMatchesAssigneeScope(lead, assigneeScope),
+              );
+        const journeyLeads = scopedLeads;
         if (!cancelled) {
-          setPoolLeads(scopedLeads);
+          setPoolLeads(journeyLeads);
         }
       } catch (err) {
         if (!cancelled) {
@@ -1079,6 +1147,7 @@ export default function JourneyPhaseHeatmap({
     };
   }, [
     isAdminHeatmapViewer,
+    clientSyncedJourneyCounts,
     milestoneFilterQuery,
     currentRole,
     leadView,

@@ -18,9 +18,16 @@ const TEAM_VISIBLE_ROWS = 7;
 const TEAM_ROW_HEIGHT_PX = 60;
 const TEAM_SCROLL_MAX_PX = TEAM_VISIBLE_ROWS * TEAM_ROW_HEIGHT_PX;
 
+/**
+ * Payoff stays computed + on the model; set true to show the column again.
+ * Hide-only (not removed) so incentives data still loads.
+ */
+const SHOW_PAYOFF_COLUMN = false;
+
 /** No Value column — closed $ is not shown (Achieved/Payoff cover incentives money). */
-const COLS =
-  "grid-cols-[minmax(180px,1.4fr)_minmax(56px,0.55fr)_minmax(72px,0.6fr)_minmax(80px,0.65fr)_minmax(56px,0.55fr)_minmax(64px,0.55fr)_minmax(88px,0.75fr)_minmax(80px,0.7fr)]";
+const COLS = SHOW_PAYOFF_COLUMN
+  ? "grid-cols-[minmax(180px,1.4fr)_minmax(56px,0.55fr)_minmax(72px,0.6fr)_minmax(80px,0.65fr)_minmax(56px,0.55fr)_minmax(64px,0.55fr)_minmax(88px,0.75fr)_minmax(80px,0.7fr)]"
+  : "grid-cols-[minmax(180px,1.4fr)_minmax(56px,0.55fr)_minmax(72px,0.6fr)_minmax(80px,0.65fr)_minmax(56px,0.55fr)_minmax(64px,0.55fr)_minmax(88px,0.75fr)]";
 
 function convTone(percent: number): string {
   if (percent >= 10) return "bg-green-50 text-green-600";
@@ -49,15 +56,19 @@ export default function InsightSect5({
             </h2>
             <p className="mt-0.5 text-[11px] text-gray-400">
               {incentivesLoading
-                ? "Loading achieved & payoff…"
+                ? SHOW_PAYOFF_COLUMN
+                  ? "Loading achieved & payoff…"
+                  : "Loading achieved…"
                 : incentiveScopeLabel
                   ? `Hub activity · ${incentiveScopeLabel}`
-                  : "Hub activity · Achieved & Payoff follow Insights date filter"}
+                  : SHOW_PAYOFF_COLUMN
+                    ? "Hub activity · Achieved & Payoff follow Insights date filter"
+                    : "Hub activity · Achieved follows Insights date filter"}
             </p>
           </div>
 
           <div className="overflow-x-auto">
-            <div className="min-w-[860px]">
+            <div className={SHOW_PAYOFF_COLUMN ? "min-w-[860px]" : "min-w-[780px]"}>
               <div
                 className={`grid ${COLS} gap-x-2 bg-gray-50/90 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 sm:px-5`}
               >
@@ -68,7 +79,9 @@ export default function InsightSect5({
                 <div className="text-right">Closed</div>
                 <div className="text-right">Conv %</div>
                 <div className="text-right text-sky-600/90">Achieved</div>
-                <div className="text-right text-sky-600/90">Payoff</div>
+                {SHOW_PAYOFF_COLUMN ? (
+                  <div className="text-right text-sky-600/90">Payoff</div>
+                ) : null}
               </div>
 
               <div
@@ -141,15 +154,17 @@ export default function InsightSect5({
                             ? "…"
                             : formatInsightsInrCompact(achieved)}
                         </div>
-                        <div
-                          className={`text-right text-sm font-semibold tabular-nums ${payoffTone(payoff)}`}
-                        >
-                          {incentivePending
-                            ? "…"
-                            : payoff > 0
-                              ? formatInsightsInrCompact(payoff)
-                              : "₹0"}
-                        </div>
+                        {SHOW_PAYOFF_COLUMN ? (
+                          <div
+                            className={`text-right text-sm font-semibold tabular-nums ${payoffTone(payoff)}`}
+                          >
+                            {incentivePending
+                              ? "…"
+                              : payoff > 0
+                                ? formatInsightsInrCompact(payoff)
+                                : "₹0"}
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })

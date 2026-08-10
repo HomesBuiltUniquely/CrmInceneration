@@ -57,6 +57,8 @@ export type SpringPage<T> = {
   totalRowCount?: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
+  /** Journey phase histogram (same inventory as summaryTotals / Total Leads). */
+  milestoneCounts?: Record<string, number>;
   /** SUPER_ADMIN cross-pool search: per-pool match counts (not deduped across pools). */
   salesSearchTotal?: number;
   presalesSearchTotal?: number;
@@ -531,12 +533,19 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
 
   const looksFreshLead = [stage, stageCategory, subStage].some((value) => {
     const normalized = normalizeStageKey(value);
-    return normalized === "fresh lead" || normalized === "fresh leads" || /^fresh\s+leads?$/.test(normalized);
+    return (
+      normalized === "fresh lead" ||
+      normalized === "fresh leads" ||
+      /^fresh\s+leads?$/.test(normalized)
+    );
   });
 
   if (looksFreshLead) return "Fresh Lead";
-  if (stage) return stage;
-  return "Fresh Lead";
+  // Blank / Initial Stage sales milestone → Fresh Lead (heatmap + Insights).
+  if (!stageKey || stageKey === "initial stage" || stageKey === "initial") {
+    return "Fresh Lead";
+  }
+  return stage;
 }
 
 function leadCreatedAtRaw(lead: ApiLead): string {

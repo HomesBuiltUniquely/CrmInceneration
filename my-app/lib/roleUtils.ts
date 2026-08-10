@@ -31,6 +31,27 @@ export function canAccessBookingTokenDashboard(role: string): boolean {
   );
 }
 
+/**
+ * CRM Insights — org leads only (not SE / presales / design).
+ * - SUPER_ADMIN / ADMIN / SALES_ADMIN: branch + all salespeople
+ * - SALES_MANAGER: own team executives only
+ */
+export function canAccessCrmInsights(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    isAdminRole(r) ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "MANAGER"
+  );
+}
+
+/** Org-wide Insights filters (branch + manager hierarchy). SM uses team-only filters. */
+export function canUseInsightsOrgFilters(role: string): boolean {
+  const r = normalizeRole(role);
+  return isAdminRole(r) || r === "SALES_ADMIN";
+}
+
 /** Admin dashboards and dual-pipeline detail (incl. sales admin). */
 export function canViewBothMilestonePipelines(role: string): boolean {
   const r = normalizeRole(role);

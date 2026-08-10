@@ -84,6 +84,30 @@ export function buildAlignedSalesFunnelStages(
   });
 }
 
+/** Hub often omits Fresh Lead — guarantee the bar exists for inventory display. */
+export function ensureFreshLeadInSalesFunnel<
+  T extends { stageKey?: string; stageLabel?: string; count?: number },
+>(stages: T[]): T[] {
+  if (!Array.isArray(stages) || stages.length === 0) {
+    return buildAlignedSalesFunnelStages({}) as unknown as T[];
+  }
+  const hasFresh = stages.some((s) => {
+    const k = resolveFunnelCanonicalKey(String(s.stageKey || s.stageLabel || ""));
+    return k === "fresh_lead";
+  });
+  if (hasFresh) return stages;
+  const fresh = {
+    stageKey: "fresh_lead",
+    stageLabel: "Fresh Lead",
+    count: 0,
+    countLabel: "Leads",
+    value: 0,
+    conversionPercent: 0,
+  } as unknown as T;
+  // After Total synthetic is not here — these are milestone stages only
+  return [fresh, ...stages];
+}
+
 
 function norm(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();

@@ -5,7 +5,6 @@ import {
   BOOKING_DATE_PRESETS,
   bookingDateFilterSummary,
   DEFAULT_BOOKING_DATE_FILTER,
-  isBookingDateFilterActive,
   type BookingDateFilterState,
   type BookingDatePresetId,
 } from "@/lib/booking-token-date-filter";
@@ -24,6 +23,12 @@ type Props = {
   variant?: "full" | "rangeOnly";
   /** Button label when no range selected (`rangeOnly`). */
   emptyLabel?: string;
+  /**
+   * Reset target for “All Time” / Clear on Insights (`full`).
+   * Default `all` for Booking Token; Insights passes `DEFAULT_INSIGHTS_DATE_FILTER`
+   * (this month) so Clear returns to the Insights default, not all-time.
+   */
+  defaultFilter?: BookingDateFilterState;
 };
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -60,6 +65,7 @@ export default function InsightsDateFilterPopover({
   subtitle = "Filter insights by specific period",
   variant = "full",
   emptyLabel = "Select dates",
+  defaultFilter = DEFAULT_BOOKING_DATE_FILTER,
 }: Props) {
   const rangeOnly = variant === "rangeOnly";
   const [open, setOpen] = useState(false);
@@ -158,7 +164,16 @@ export default function InsightsDateFilterPopover({
 
   const active = rangeOnly
     ? Boolean(value.customFrom && value.customTo)
-    : isBookingDateFilterActive(value);
+    : (() => {
+        // No blue highlight when filter equals Insights/Booking default.
+        if (value.preset === defaultFilter.preset) {
+          if (value.preset === "custom") {
+            return Boolean(value.customFrom.trim() || value.customTo.trim());
+          }
+          return false;
+        }
+        return true;
+      })();
 
   const selectPreset = (preset: BookingDatePresetId) => {
     if (preset !== "custom") {
@@ -178,17 +193,27 @@ export default function InsightsDateFilterPopover({
     }
   };
 
-  const handleClear = () => {
+  const handleResetToDefault = () => {
     if (rangeOnly) {
       const cleared = emptyCustomDraft();
       setDraft(cleared);
       onChange(cleared);
     } else {
-      onChange(DEFAULT_BOOKING_DATE_FILTER);
-      setDraft(DEFAULT_BOOKING_DATE_FILTER);
+      onChange(defaultFilter);
+      setDraft(defaultFilter);
     }
     setOpen(false);
   };
+
+  /** Explicit All Time (full inventory) — not the Insights default (this month). */
+  const handleAllTime = () => {
+    const all: BookingDateFilterState = { preset: "all", customFrom: "", customTo: "" };
+    setDraft(all);
+    onChange(all);
+    setOpen(false);
+  };
+
+  const handleClear = handleResetToDefault;
 
   const monthTitle = useMemo(() => {
     return new Date(viewMonth.year, viewMonth.month - 1, 1).toLocaleDateString("en-US", {
@@ -255,7 +280,7 @@ export default function InsightsDateFilterPopover({
 
   const applyCustomRange = () => {
     if (draft.preset === "custom" && !draft.customFrom && !draft.customTo) {
-      onChange(DEFAULT_BOOKING_DATE_FILTER);
+      onChange(defaultFilter);
     } else {
       onChange(draft);
     }
@@ -270,7 +295,7 @@ export default function InsightsDateFilterPopover({
       if (value.customFrom) return `${ymdToDdMmYyyy(value.customFrom)} → …`;
       return emptyLabel;
     }
-    return active ? bookingDateFilterSummary(value) : "All Time";
+    return bookingDateFilterSummary(value);
   })();
 
   const showCalendar = rangeOnly || draft.preset === "custom";
@@ -385,7 +410,7 @@ export default function InsightsDateFilterPopover({
               <div className="mb-2 grid grid-cols-2 gap-1 sm:grid-cols-3">
                 <button
                   type="button"
-                  onClick={handleClear}
+                  onClick={handleAllTime}
                   className={`rounded-md px-2 py-1 text-left transition-all ${
                     draft.preset === "all"
                       ? "bg-indigo-600 font-semibold text-white"
@@ -395,7 +420,7 @@ export default function InsightsDateFilterPopover({
                   <p className="text-[10px] font-medium">All Time</p>
                 </button>
 
-                {BOOKING_DATE_PRESETS.map((p) => {
+                {BOOKING_DATE_PRESETS.filter((p) => p.id !== "currentMonth").map((p) => {
                   const selected = draft.preset === p.id;
                   return (
                     <button

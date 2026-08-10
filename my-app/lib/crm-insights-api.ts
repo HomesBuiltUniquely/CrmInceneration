@@ -98,6 +98,13 @@ export type InsightsDashboard = {
     pipelineValue: InsightsKpiMetric;
     closedWon: InsightsKpiMetric;
     conversionPercent: InsightsKpiMetric;
+    /**
+     * Hub money KPIs — same Scope as totalLeads (branch + people + date).
+     * Prefer over FE booking-token deal recompute.
+     */
+    tokenValue?: InsightsKpiMetric | null;
+    bookingValue?: InsightsKpiMetric | null;
+    grossBooking?: InsightsKpiMetric | null;
   };
   salesFunnel: InsightsFunnelStage[];
   lostFunnel?: {
@@ -328,8 +335,14 @@ function normalizeKpi(raw: unknown): InsightsKpiMetric {
     value: asNum(o.value),
     changePercent: o.changePercent == null ? null : asNum(o.changePercent),
     changeAbsolute: o.changeAbsolute == null ? null : asNum(o.changeAbsolute),
-    progressRatio: o.progressRatio == null ? null : asNum(o.progressRatio),
+    progressRatio: asNum(o.progressRatio),
   };
+}
+
+/** null when Hub omits the field entirely */
+function normalizeOptionalKpi(raw: unknown): InsightsKpiMetric | null {
+  if (raw == null || typeof raw !== "object") return null;
+  return normalizeKpi(raw);
 }
 
 function normalizeLostFunnel(
@@ -387,6 +400,9 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       pipelineValue: normalizeKpi(kpis.pipelineValue),
       closedWon: normalizeKpi(kpis.closedWon),
       conversionPercent: normalizeKpi(kpis.conversionPercent),
+      tokenValue: normalizeOptionalKpi(kpis.tokenValue),
+      bookingValue: normalizeOptionalKpi(kpis.bookingValue),
+      grossBooking: normalizeOptionalKpi(kpis.grossBooking),
     },
     salesFunnel: asArray<Record<string, unknown>>(r.salesFunnel).map((s) => ({
       stageKey: asStr(s.stageKey),
@@ -554,6 +570,9 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
     pipelineValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
     closedWon: { value: 0, changePercent: 0, progressRatio: 0 },
     conversionPercent: { value: 0, changePercent: 0, progressRatio: 0 },
+    tokenValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
+    bookingValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
+    grossBooking: { value: 0, changeAbsolute: 0, progressRatio: 0 },
   },
   salesFunnel: [],
   revenueDistribution: { phases: [], observation: null },

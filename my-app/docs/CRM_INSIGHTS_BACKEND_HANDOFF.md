@@ -201,6 +201,21 @@ Return **raw numbers** (counts, amounts in INR, percentages as numbers). Fronten
       "value": 18.4,
       "changePercent": 0.8,
       "progressRatio": 0.25
+    },
+    "tokenValue": {
+      "value": 660000,
+      "changeAbsolute": 120000,
+      "progressRatio": 0.5
+    },
+    "bookingValue": {
+      "value": 1279000,
+      "changeAbsolute": 80000,
+      "progressRatio": 0.7
+    },
+    "grossBooking": {
+      "value": 1939000,
+      "changeAbsolute": 200000,
+      "progressRatio": 0.65
     }
   },
   "salesFunnel": [

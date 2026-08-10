@@ -25,7 +25,6 @@ import {
 } from "@/lib/lead-presales-milestone-store";
 import {
   computeLeadTypeCountsFromRows,
-  pickMilestoneRepresentativeRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 import {
@@ -109,6 +108,7 @@ import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import {
   filterLeadsByAssigneeScope,
   formatAssigneeAliasSetQuery,
+  formatAssigneeUserIdsQuery,
 } from "@/lib/admin-assignee-match";
 import { leadAssignedToPresalesExecNameSet } from "@/lib/presales-heatmap-helpers";
 import {
@@ -202,10 +202,40 @@ type HierarchyUser = {
   fullName?: string;
   name?: string;
   username?: string;
+  email?: string;
   managerId?: number | null;
   role?: string;
   active?: boolean;
 };
+
+/** Prefer real manager links; auth users-by-role often uses parentId. */
+function readHierarchyManagerId(row: Record<string, unknown> | HierarchyUser): number | null {
+  const r = row as Record<string, unknown>;
+  for (const key of ["managerId", "parentId", "reportingManagerId", "manager_id", "parent_id"]) {
+    const n = Number(r[key] ?? 0);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+function coerceHierarchyUser(row: Record<string, unknown> | HierarchyUser): HierarchyUser {
+  const r = row as Record<string, unknown>;
+  const id = Number(r.id ?? 0);
+  const managerId = readHierarchyManagerId(r);
+  return {
+    id,
+    fullName: String(r.fullName ?? "").trim() || undefined,
+    name: String(r.name ?? "").trim() || undefined,
+    username: String(r.username ?? "").trim() || undefined,
+    email: String(r.email ?? "").trim() || undefined,
+    managerId,
+    role: String(r.role ?? "").trim() || undefined,
+    active:
+      r.active === undefined && r.isActive === undefined && r.enabled === undefined
+        ? true
+        : Boolean(r.active ?? r.isActive ?? r.enabled),
+  };
+}
 
 type AssigneeUser = {
   userId: number;
@@ -270,17 +300,25 @@ async function fetchMergedSalesExecutivesForFilters(
   }
 
   const byId = new Map<number, HierarchyUser>();
+  // REAL BUG: spreading later rows with managerId:null wiped a good byRole/legacy link,
+  // so SA→Kulwant team collapsed to manager-only → Fresh Lead stuck at ~5.
   for (const row of [...byRoleRows, ...legacyRows]) {
-    const id = Number(row.id ?? 0);
+    const next = coerceHierarchyUser(row as HierarchyUser);
+    const id = Number(next.id ?? 0);
     if (id <= 0) continue;
     const prev = byId.get(id);
     byId.set(id, {
       ...prev,
-      ...row,
+      ...next,
       id,
-      fullName: hierarchyUserDisplayName(row) || prev?.fullName,
-      name: row.name ?? prev?.name,
-      username: row.username ?? prev?.username,
+      fullName:
+        hierarchyUserDisplayName(next) ||
+        hierarchyUserDisplayName(prev ?? {}) ||
+        prev?.fullName,
+      name: next.name ?? prev?.name,
+      username: next.username ?? prev?.username,
+      email: next.email ?? prev?.email,
+      managerId: next.managerId ?? prev?.managerId ?? null,
     });
   }
   const merged = [...byId.values()].filter((u) => Number(u.id ?? 0) > 0);
@@ -439,7 +477,20 @@ function resolveHierarchyUsersForFilter<T extends HierarchyUser>(
   );
 }
 
-function buildHierarchyScopedAssignees(args: {
+type HierarchyPersonFetchSeed = {
+  displayName: string;
+  aliases: string[];
+  userId: number;
+};
+
+type HierarchyScopedTeam = {
+  aliases: string[];
+  userIds: number[];
+  /** One Hub assignee query per person — never pin the whole team to the manager name. */
+  personFetchSeeds: HierarchyPersonFetchSeed[];
+};
+
+function buildHierarchyScopedTeam(args: {
   workspace: CrmWorkspace;
   salesManagerFilter: string;
   salesExecFilter: string;
@@ -449,15 +500,17 @@ function buildHierarchyScopedAssignees(args: {
   salesExecs: HierarchyUser[];
   presalesManagers: HierarchyUser[];
   presalesExecs: HierarchyUser[];
-}): string[] {
-  if (args.salesExecFilter.trim() || args.presalesExecFilter.trim()) return [];
+}): HierarchyScopedTeam {
+  const empty: HierarchyScopedTeam = { aliases: [], userIds: [], personFetchSeeds: [] };
+  if (args.salesExecFilter.trim() || args.presalesExecFilter.trim()) return empty;
   const salesManagerName = args.salesManagerFilter.trim();
   const presalesManagerName = args.presalesManagerFilter.trim();
-  if (!salesManagerName && !presalesManagerName) return [];
+  if (!salesManagerName && !presalesManagerName) return empty;
 
   let salesExecUnderManager: HierarchyUser[] = [];
   let presalesMgrUnderManager: HierarchyUser[] = [];
   let presalesExecUnderManager: HierarchyUser[] = [];
+  let selectedPeople: HierarchyUser[] = [];
   const managerNames: string[] = [];
 
   if (salesManagerName) {
@@ -470,12 +523,13 @@ function buildHierarchyScopedAssignees(args: {
       for (const manager of selectedManagers) {
         managerNames.push(...collectHierarchyUserAssigneeAliases(manager));
       }
-      salesExecUnderManager = args.salesExecs.filter(
-        (u) => managerIds.has(Number(u.managerId ?? 0)),
+      salesExecUnderManager = args.salesExecs.filter((u) =>
+        managerIds.has(Number(readHierarchyManagerId(u) ?? 0)),
       );
+      selectedPeople = [...selectedManagers, ...salesExecUnderManager];
       if (args.workspace === "presales") {
-        presalesMgrUnderManager = args.presalesManagers.filter(
-          (u) => managerIds.has(Number(u.managerId ?? 0)),
+        presalesMgrUnderManager = args.presalesManagers.filter((u) =>
+          managerIds.has(Number(readHierarchyManagerId(u) ?? 0)),
         );
         const presalesMgrIds = new Set(
           presalesMgrUnderManager.map((u) => Number(u.id)).filter((id) => id > 0),
@@ -484,6 +538,11 @@ function buildHierarchyScopedAssignees(args: {
           const mid = Number(u.managerId ?? 0);
           return mid > 0 && presalesMgrIds.has(mid);
         });
+        selectedPeople = [
+          ...selectedPeople,
+          ...presalesMgrUnderManager,
+          ...presalesExecUnderManager,
+        ];
       }
     }
   } else if (presalesManagerName) {
@@ -498,13 +557,14 @@ function buildHierarchyScopedAssignees(args: {
       for (const manager of selectedPresalesManagers) {
         managerNames.push(...collectHierarchyUserAssigneeAliases(manager));
       }
-      presalesExecUnderManager = args.presalesExecs.filter(
-        (u) => presalesManagerIds.has(Number(u.managerId ?? 0)),
+      presalesExecUnderManager = args.presalesExecs.filter((u) =>
+        presalesManagerIds.has(Number(readHierarchyManagerId(u) ?? 0)),
       );
+      selectedPeople = [...selectedPresalesManagers, ...presalesExecUnderManager];
     }
   }
 
-  return Array.from(
+  const aliases = Array.from(
     new Set(
       [
         ...managerNames,
@@ -516,10 +576,32 @@ function buildHierarchyScopedAssignees(args: {
       ].filter(Boolean),
     ),
   );
+  const userIds = Array.from(
+    new Set(
+      selectedPeople
+        .map((u) => Number(u.id ?? 0))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  );
+  const personByKey = new Map<string, HierarchyPersonFetchSeed>();
+  for (const u of selectedPeople) {
+    const personAliases = collectHierarchyUserAssigneeAliases(u);
+    const displayName = hierarchyUserDisplayName(u).trim() || personAliases[0] || "";
+    if (!displayName) continue;
+    const userId = Number(u.id ?? 0);
+    const key = userId > 0 ? `id:${userId}` : `name:${displayName.toLowerCase()}`;
+    const prev = personByKey.get(key);
+    const mergedAliases = Array.from(
+      new Set([...(prev?.aliases ?? []), ...personAliases, displayName].filter(Boolean)),
+    );
+    personByKey.set(key, {
+      displayName: prev?.displayName || displayName,
+      aliases: mergedAliases,
+      userId: userId > 0 ? userId : prev?.userId ?? 0,
+    });
+  }
+  return { aliases, userIds, personFetchSeeds: [...personByKey.values()] };
 }
-
-const LEAD_SUMMARY_STAGES = new Set(["fresh lead", "discovery", "connection"]);
-const OPPORTUNITY_SUMMARY_STAGES = new Set(["experience & design", "decision", "closed"]);
 
 function leadStableIdentifier(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
@@ -542,32 +624,74 @@ function dedupeAdminPoolLeads(leads: ApiLead[]): ApiLead[] {
   return [...byId.values()];
 }
 
+/**
+ * Lead / Opportunity card totals — same canonical stage map as journey heatmap phases.
+ * Inventory = id-merged Hub rows; blank milestone counts as Fresh Lead.
+ */
 function computeJourneySummaryCounts(leads: ApiLead[]): { lead: number; opportunity: number } {
-  let lead = 0;
-  let opportunity = 0;
-  for (const item of leads) {
-    const stage = crmLeadTopLevelStage(item).trim().toLowerCase();
-    if (LEAD_SUMMARY_STAGES.has(stage)) {
-      lead += 1;
-      continue;
-    }
-    if (OPPORTUNITY_SUMMARY_STAGES.has(stage)) {
-      opportunity += 1;
-    }
-  }
-  return { lead, opportunity };
+  return salesJourneySummaryFromMilestoneCounts(milestoneCountsFromLeads(leads, "sales"));
 }
 
 function appendAssigneeFilterQuery(
   qs: URLSearchParams,
   assignee: string,
   assigneeAliasSet?: string[],
+  assigneeUserIds?: number[],
+  /**
+   * Optional act-as id. Only sent when caller proved Hub support.
+   * Hub currently ignores this for Sales Admin (filter returns org-wide;
+   * SM my-leads/team return 403) — do not use for SA→SM Fresh parity.
+   */
+  salesManagerId?: number,
 ) {
-  if (assigneeAliasSet && assigneeAliasSet.length > 0) {
-    qs.set("assigneeAliasSet", formatAssigneeAliasSetQuery(assigneeAliasSet));
-  } else if (assignee.trim()) {
+  const smId = Number(salesManagerId ?? 0);
+  if (Number.isFinite(smId) && smId > 0) {
+    qs.set("salesManagerId", String(smId));
+    qs.set("actAsUserId", String(smId));
+    qs.set("managerUserId", String(smId));
+  }
+  // Keep Hub `assignee` pin when present — aliasSet alone forces a full-pool download.
+  // Always send aliases/ids even with salesManagerId: if Hub ignores SM id, BFF can still narrow.
+  if (assignee.trim()) {
     qs.set("assignee", assignee.trim());
   }
+  if (assigneeAliasSet && assigneeAliasSet.length > 0) {
+    qs.set("assigneeAliasSet", formatAssigneeAliasSetQuery(assigneeAliasSet));
+  }
+  if (assigneeUserIds && assigneeUserIds.length > 0) {
+    qs.set("assigneeUserIds", formatAssigneeUserIdsQuery(assigneeUserIds));
+  }
+}
+
+/**
+ * SM my-leads includes blank-assignee Hub rows that assignee-name filters drop.
+ * - Fresh: walk-in queue (WI-*)
+ * - Later stages: other blanks with verificationStatus=VERIFIED
+ */
+function isUnassignedSalesInboxLead(lead: ApiLead): boolean {
+  if (crmLeadAssigneeLabel(lead).trim()) return false;
+  const vs = String(
+    (lead as { verificationStatus?: unknown }).verificationStatus ?? "",
+  )
+    .trim()
+    .toUpperCase();
+  if (vs !== "VERIFIED") return false;
+
+  const stage = crmLeadTopLevelStage(lead).trim() || "Fresh Lead";
+  if (stage === "Fresh Lead") {
+    const leadId = String(
+      (lead as { leadId?: unknown; uniqueId?: unknown }).leadId ??
+        (lead as { uniqueId?: unknown }).uniqueId ??
+        "",
+    )
+      .trim()
+      .toUpperCase();
+    const lt = String(lead.leadType ?? lead.leadSource ?? "")
+      .trim()
+      .toLowerCase();
+    return leadId.startsWith("WI-") || lt.includes("walk");
+  }
+  return true;
 }
 
 async function fetchMergedPage(
@@ -590,10 +714,19 @@ async function fetchMergedPage(
   leadsWorkspace: CrmWorkspace = "sales",
   viewerRole = "",
   assigneeAliasSet?: string[],
+  assigneeUserIds?: number[],
+  salesManagerId?: number,
+  /**
+   * Super Admin with no assignee aliases uses `/admin/sales`, which omits blank-assignee
+   * walk-in / source rows that SM my-leads still returns. Force filter merge for those pulls.
+   */
+  forceFilterMerge = false,
 ): Promise<SpringPage<ApiLead>> {
   const normalizedLeadType = leadType.trim().toLowerCase();
   const normalizedViewerRole = normalizeRole(viewerRole);
   const usesRoleEndpoint = leadView === "my" || leadView === "team";
+  const hubSalesManagerId =
+    Number.isFinite(salesManagerId) && (salesManagerId ?? 0) > 0 ? Number(salesManagerId) : 0;
   const explicitVerification = verificationStatus.trim();
   // Global search must return verified + unverified (IVR intake, etc.).
   // CRM inbox still defaults to verified when the search box is empty.
@@ -682,7 +815,7 @@ async function fetchMergedPage(
       qs.set("size", String(pageSize));
       qs.set("sort", sort);
       if (search.trim()) qs.set("search", search.trim());
-      appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+      appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet, assigneeUserIds, hubSalesManagerId);
       appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
       appendWorkspaceMilestoneFilterQuery(
         qs,
@@ -735,7 +868,7 @@ async function fetchMergedPage(
     qs.set("size", String(size));
     qs.set("sort", sort);
     if (search.trim()) qs.set("search", search.trim());
-    appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+    appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet, assigneeUserIds, hubSalesManagerId);
     appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
     appendWorkspaceMilestoneFilterQuery(
       qs,
@@ -768,7 +901,8 @@ async function fetchMergedPage(
   }
 
   if (
-    (normalizedViewerRole === "SALES_MANAGER" || normalizedViewerRole === "MANAGER") &&
+    ((normalizedViewerRole === "SALES_MANAGER" || normalizedViewerRole === "MANAGER") ||
+      (usesAdminLeadsApi(normalizedViewerRole) && hubSalesManagerId > 0)) &&
     leadView === "combined"
   ) {
     const fetchRoleViewAllPages = async (roleView: "my" | "team"): Promise<ApiLead[]> => {
@@ -785,7 +919,7 @@ async function fetchMergedPage(
         qs.set("milestoneScope", "crm");
         qs.set("roleView", roleView);
         if (search.trim()) qs.set("search", search.trim());
-        appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+        appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet, assigneeUserIds, hubSalesManagerId);
         appendCrmDateFilters(qs, { dateFrom, dateTo, dateField, crmMonthWindow });
         appendWorkspaceMilestoneFilterQuery(
           qs,
@@ -840,10 +974,29 @@ async function fetchMergedPage(
             resolvedVerification,
           )
         : merged;
-    const countBasis =
-      leadsWorkspace === "sales"
-        ? pickPrimarySourceRows(workspaceScoped)
-        : workspaceScoped;
+    /**
+     * Journey inventory = Hub rows after id-merge (same as SQL / Insights blank→Fresh).
+     * Do NOT phone-collapse (`pickMilestoneRepresentativeRows`): that prefers non-blank
+     * milestone siblings and drops blank Fresh rows (DB Fresh 23 → UI ~16).
+     */
+    const fullJourney = workspaceScoped;
+    const hasMilestoneToolbarFilter = Boolean(
+      milestoneStage.trim() ||
+        milestoneStageCategory.trim() ||
+        milestoneSubStage.trim(),
+    );
+    const filteredJourney = hasMilestoneToolbarFilter
+      ? fullJourney.filter((lead) =>
+          leadMatchesWorkspaceMilestoneFilter(
+            lead,
+            leadsWorkspace,
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
+          ),
+        )
+      : fullJourney;
+    const countBasis = filteredJourney;
     const start = Math.max(0, page * size);
     const pageRows = countBasis.slice(start, start + size);
     return {
@@ -855,7 +1008,9 @@ async function fetchMergedPage(
       number: page,
       size,
       sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-      summaryTotals: computeJourneySummaryCounts(countBasis),
+      // Heatmap cards/phases = full journey; table Total Leads = filtered length above.
+      summaryTotals: computeJourneySummaryCounts(fullJourney),
+      milestoneCounts: milestoneCountsFromLeads(fullJourney, leadsWorkspace),
     };
   }
 
@@ -864,10 +1019,19 @@ async function fetchMergedPage(
     leadsWorkspace,
     assigneeAliasSet?.length ?? 0,
   );
+  /**
+   * SA/SuperAdmin/Admin sales inventory: always filter `mergeAll` (never Hub `/admin/sales`).
+   * `/admin/sales` omits walk-in / blank-assignee rows → heatmap Fresh ≫ table after phase click
+   * (e.g. card 30/70 vs Total Leads 13). Same pool as Journey Phase Heatmap + SM my∪team.
+   */
+  const adminTeamScopeUseFilterMerge =
+    usesAdminLeadsApi(normalizedViewerRole) && leadsWorkspace === "sales";
+
   if (
     (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
     !usesRoleEndpoint &&
-    !isDedicatedFilterLeadType(normalizedLeadType)
+    !isDedicatedFilterLeadType(normalizedLeadType) &&
+    !adminTeamScopeUseFilterMerge
   ) {
     const adminGlobalSearchAcrossPools =
       usesAdminLeadsApi(viewerRole) && search.trim().length > 0;
@@ -977,7 +1141,7 @@ async function fetchMergedPage(
   qs.set("milestoneScope", "crm");
   if (isNewCrmGlobalSearchMode) qs.set("newCrmGlobalSearch", "true");
   if (search.trim()) qs.set("search", search.trim());
-  appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet);
+  appendAssigneeFilterQuery(qs, assignee, assigneeAliasSet, assigneeUserIds, hubSalesManagerId);
   appendCrmDateFilters(qs, {
     dateFrom: effectiveDateFrom,
     dateTo: effectiveDateTo,
@@ -1350,6 +1514,8 @@ export default function LeadsDataSection({
   const [salesAdmins, setSalesAdmins] = useState<HierarchyUser[]>([]);
   const [salesManagers, setSalesManagers] = useState<HierarchyUser[]>([]);
   const [salesExecs, setSalesExecs] = useState<HierarchyUser[]>([]);
+  /** Extra execs for selected SM from `/api/sales-executive/all` (authoritative managerId). */
+  const [salesManagerTeamExecs, setSalesManagerTeamExecs] = useState<HierarchyUser[]>([]);
   const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
   const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
@@ -1831,12 +1997,14 @@ export default function LeadsDataSection({
         }
 
         const byRole = new Map<string, HierarchyUser[]>(pairs);
-        const saJ = byRole.get("SALES_ADMIN") ?? [];
-        const smJ = byRole.get("SALES_MANAGER") ?? [];
-        const seJ = byRole.get("SALES_EXECUTIVE") ?? [];
-        const pmJ = byRole.get("PRESALES_MANAGER") ?? [];
-        const peJ = byRole.get("PRESALES_EXECUTIVE") ?? [];
-        const preJ = byRole.get("PRE_SALES") ?? [];
+        const coerceList = (rows: HierarchyUser[]) =>
+          rows.map((u) => coerceHierarchyUser(u as HierarchyUser));
+        const saJ = coerceList(byRole.get("SALES_ADMIN") ?? []);
+        const smJ = coerceList(byRole.get("SALES_MANAGER") ?? []);
+        const seJ = coerceList(byRole.get("SALES_EXECUTIVE") ?? []);
+        const pmJ = coerceList(byRole.get("PRESALES_MANAGER") ?? []);
+        const peJ = coerceList(byRole.get("PRESALES_EXECUTIVE") ?? []);
+        const preJ = coerceList(byRole.get("PRE_SALES") ?? []);
 
         const salesExecList =
           mergedSalesExecs.length > 0
@@ -2130,16 +2298,85 @@ export default function LeadsDataSection({
     effectivePresalesManagerFilter ||
     salesAdminFilter ||
     assignee;
-  const hierarchyScopedAssignees = useMemo(
+
+  // When SA picks a Sales Manager, reload that manager's exec roster from legacy API
+  // (same managerId source Admin Panel uses). users-by-role alone often has no managerId.
+  useEffect(() => {
+    let cancelled = false;
+    const managerName = salesManagerFilter.trim();
+    if (!managerName || !usesAdminLeadsApi(clientScopeRoleKey) || salesExecFilter.trim()) {
+      setSalesManagerTeamExecs([]);
+      return;
+    }
+    const selectedManagers = resolveHierarchyUsersForFilter(managerName, salesManagers).filter(
+      (u) => Number(u.id ?? 0) > 0,
+    );
+    if (selectedManagers.length === 0) {
+      setSalesManagerTeamExecs([]);
+      return;
+    }
+    const managerIds = new Set(selectedManagers.map((u) => Number(u.id)));
+    void (async () => {
+      try {
+        const legacyRes = await fetch(`/api/sales-executive/all`, {
+          cache: "no-store",
+          credentials: "include",
+          headers: getCrmAuthHeaders({ Accept: "application/json" }),
+        });
+        if (!legacyRes.ok || cancelled) return;
+        const j = (await legacyRes.json().catch(() => [])) as unknown;
+        const raw = Array.isArray(j)
+          ? j
+          : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+            ? ((j as { data: unknown[] }).data ?? [])
+            : [];
+        const team: HierarchyUser[] = [];
+        for (const row of raw) {
+          if (!row || typeof row !== "object") continue;
+          const user = coerceHierarchyUser(
+            normalizeLegacyHierarchyUser(row as Record<string, unknown>),
+          );
+          if (Number(user.id ?? 0) <= 0) continue;
+          if (!managerIds.has(Number(readHierarchyManagerId(user) ?? 0))) continue;
+          team.push(user);
+        }
+        if (!cancelled) setSalesManagerTeamExecs(team);
+      } catch {
+        if (!cancelled) setSalesManagerTeamExecs([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [salesManagerFilter, salesExecFilter, salesManagers, clientScopeRoleKey]);
+
+  const salesExecsForHierarchy = useMemo(() => {
+    if (salesManagerTeamExecs.length === 0) return salesExecs;
+    const byId = new Map<number, HierarchyUser>();
+    for (const u of [...salesExecs, ...salesManagerTeamExecs]) {
+      const id = Number(u.id ?? 0);
+      if (id <= 0) continue;
+      const prev = byId.get(id);
+      byId.set(id, {
+        ...prev,
+        ...u,
+        id,
+        managerId: u.managerId ?? prev?.managerId ?? null,
+      });
+    }
+    return [...byId.values()];
+  }, [salesExecs, salesManagerTeamExecs]);
+
+  const hierarchyScopedTeam = useMemo(
     () =>
-      buildHierarchyScopedAssignees({
+      buildHierarchyScopedTeam({
         workspace: leadsWorkspace,
         salesManagerFilter,
         salesExecFilter,
         presalesManagerFilter: effectivePresalesManagerFilter,
         presalesExecFilter: effectivePresalesExecFilter,
         salesManagers,
-        salesExecs,
+        salesExecs: salesExecsForHierarchy,
         presalesManagers,
         presalesExecs,
       }),
@@ -2150,11 +2387,14 @@ export default function LeadsDataSection({
       effectivePresalesManagerFilter,
       effectivePresalesExecFilter,
       salesManagers,
-      salesExecs,
+      salesExecsForHierarchy,
       presalesManagers,
       presalesExecs,
     ],
   );
+  const hierarchyScopedAssignees = hierarchyScopedTeam.aliases;
+  const hierarchyScopedUserIds = hierarchyScopedTeam.userIds;
+  const hierarchyPersonFetchSeeds = hierarchyScopedTeam.personFetchSeeds;
   const singleExecScopedAssignees = useMemo(() => {
     if (hierarchyScopedAssignees.length > 0) return [];
     if (salesExecFilter.trim()) {
@@ -2171,14 +2411,36 @@ export default function LeadsDataSection({
     salesExecs,
     presalesExecs,
   ]);
+  const singleExecScopedUserIds = useMemo(() => {
+    if (hierarchyScopedUserIds.length > 0) return [] as number[];
+    const name = salesExecFilter.trim() || effectivePresalesExecFilter.trim();
+    if (!name) return [] as number[];
+    const pool = salesExecFilter.trim() ? salesExecs : presalesExecs;
+    return resolveHierarchyUsersForFilter(name, pool)
+      .map((u) => Number(u.id ?? 0))
+      .filter((id) => Number.isFinite(id) && id > 0);
+  }, [
+    hierarchyScopedUserIds,
+    salesExecFilter,
+    effectivePresalesExecFilter,
+    salesExecs,
+    presalesExecs,
+  ]);
   const effectiveAssigneeScope = useMemo(
     () =>
       hierarchyScopedAssignees.length > 0
         ? hierarchyScopedAssignees
         : singleExecScopedAssignees.length > 0
           ? singleExecScopedAssignees
-            : EMPTY_ASSIGNEE_SCOPE,
+          : EMPTY_ASSIGNEE_SCOPE,
     [hierarchyScopedAssignees, singleExecScopedAssignees],
+  );
+  const effectiveAssigneeUserIds = useMemo(
+    () =>
+      hierarchyScopedUserIds.length > 0
+        ? hierarchyScopedUserIds
+        : singleExecScopedUserIds,
+    [hierarchyScopedUserIds, singleExecScopedUserIds],
   );
   const effectiveAssigneeScopeKey = effectiveAssigneeScope.join("\0");
   const activeAssigneeScope = useMemo(() => {
@@ -2378,16 +2640,45 @@ export default function LeadsDataSection({
       targetLeadType: string,
       targetSort: string,
     ): Promise<SpringPage<ApiLead>> => {
+      /**
+       * SA → SM inventory (frontend-only until Hub Option A/B).
+       * Do NOT use salesManagerId / act-as: Hub ignores it for SA (org-wide totals)
+       * and SM my-leads/team-leads return 403. That produced wrong Fresh vs SM.
+       * Use hierarchy team roster + unassigned Fresh (blank assignee) that SM inbox includes.
+       */
+      const useTeamPersonFetch =
+        salesHierarchyFilterActive && hierarchyPersonFetchSeeds.length > 0;
+      /** Unassigned Fresh appear in SM my-leads; name/alias filters drop them (Fresh 1 vs 12). */
+      const includeUnassignedFreshForSmParity =
+        salesHierarchyFilterActive &&
+        Boolean(salesManagerFilter.trim()) &&
+        !salesExecFilter.trim() &&
+        leadsWorkspace === "sales";
       const bffAssigneeAliasSet =
-        effectiveAssigneeScope.length > 0 ? effectiveAssigneeScope : undefined;
-      /** Many alias strings for one exec/manager — one fetch + client exact match, not N parallel fetches. */
-      const useUnifiedAssigneeScopeFetch = effectiveAssigneeScope.length > 0;
-      const applyAssigneeScopeFilter = (leads: ApiLead[]) =>
-        activeAssigneeScope.length > 0
-          ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
+        !useTeamPersonFetch && effectiveAssigneeScope.length > 0
+          ? effectiveAssigneeScope
+          : undefined;
+      const useUnifiedAssigneeScopeFetch =
+        !useTeamPersonFetch && effectiveAssigneeScope.length > 0;
+      const assigneeMatchOpts = {
+        userIds: effectiveAssigneeUserIds,
+      };
+      const applyAssigneeScopeFilter = (leads: ApiLead[]) => {
+        return activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0
+          ? filterLeadsByAssigneeScope(leads, activeAssigneeScope, assigneeMatchOpts)
           : leads;
-      const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
+      };
+      const fetchAllPagesForAssignee = async (
+        assigneeName: string,
+        aliasSetForRequest?: string[],
+        userIdsForRequest?: number[],
+        stageOverride?: string,
+        skipAssigneeScopeFilter = false,
+        forceFilterMerge = false,
+      ): Promise<ApiLead[]> => {
         const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
+        const stageForReq =
+          stageOverride !== undefined ? stageOverride : milestoneStage;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2398,20 +2689,25 @@ export default function LeadsDataSection({
           dateFrom,
           dateTo,
           dateField,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
+          stageForReq,
+          stageOverride !== undefined ? "" : milestoneStageCategory,
+          stageOverride !== undefined ? "" : milestoneSubStage,
           reinquiry,
           leadViewKey,
           verificationStatusFromHeader,
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
-          bffAssigneeAliasSet,
+          aliasSetForRequest !== undefined ? aliasSetForRequest : bffAssigneeAliasSet,
+          userIdsForRequest !== undefined ? userIdsForRequest : undefined,
+          0,
+          forceFilterMerge,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
-        if (totalPages <= 1) return applyAssigneeScopeFilter(allLeads);
+        if (totalPages <= 1) {
+          return skipAssigneeScopeFilter ? allLeads : applyAssigneeScopeFilter(allLeads);
+        }
 
         const remainingPages = await Promise.all(
           Array.from({ length: totalPages - 1 }, (_, idx) =>
@@ -2425,16 +2721,19 @@ export default function LeadsDataSection({
               dateFrom,
               dateTo,
               dateField,
-              milestoneStage,
-              milestoneStageCategory,
-              milestoneSubStage,
+              stageForReq,
+              stageOverride !== undefined ? "" : milestoneStageCategory,
+              stageOverride !== undefined ? "" : milestoneSubStage,
               reinquiry,
               leadViewKey,
               verificationStatusFromHeader,
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
-              bffAssigneeAliasSet,
+              aliasSetForRequest !== undefined ? aliasSetForRequest : bffAssigneeAliasSet,
+              userIdsForRequest !== undefined ? userIdsForRequest : undefined,
+              0,
+              forceFilterMerge,
             ),
           ),
         );
@@ -2442,7 +2741,13 @@ export default function LeadsDataSection({
         for (const page of remainingPages) {
           allLeads.push(...(Array.isArray(page.content) ? page.content : []));
         }
-        return applyAssigneeScopeFilter(allLeads);
+        return skipAssigneeScopeFilter ? allLeads : applyAssigneeScopeFilter(allLeads);
+      };
+      const fetchUnassignedSmInboxLeads = async (): Promise<ApiLead[]> => {
+        // No Hub stage filter — blank milestone Fresh must come back (Fresh Lead filter drops them).
+        // forceFilterMerge: Super Admin empty-assignee must not use /admin/sales.
+        const raw = await fetchAllPagesForAssignee("", undefined, undefined, "", true, true);
+        return raw.filter(isUnassignedSalesInboxLead);
       };
       const assigneeFetchSeed =
         effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
@@ -2452,6 +2757,7 @@ export default function LeadsDataSection({
           (leadsWorkspace === "presales" &&
             (clientScopeRoleKey === "SUPER_ADMIN" || clientScopeRoleKey === "ADMIN"));
         const skipClientRoleFilter =
+          useTeamPersonFetch ||
           useUnifiedAssigneeScopeFetch ||
           trustPresalesScope ||
           !requiresClientScopedDataset ||
@@ -2475,6 +2781,21 @@ export default function LeadsDataSection({
             leadAssignedToPresalesExecNameSet(lead, superAdminPresalesPoolSet),
           );
         }
+        if (
+          milestoneStage.trim() ||
+          milestoneStageCategory.trim() ||
+          milestoneSubStage.trim()
+        ) {
+          roleScopedLeads = roleScopedLeads.filter((lead) =>
+            leadMatchesWorkspaceMilestoneFilter(
+              lead,
+              leadsWorkspace,
+              milestoneStage,
+              milestoneStageCategory,
+              milestoneSubStage,
+            ),
+          );
+        }
         const visibleMerged = roleScopedLeads.sort(
           (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
         );
@@ -2482,26 +2803,81 @@ export default function LeadsDataSection({
           leadsWorkspace === "sales"
             ? dedupeAdminPoolLeads(visibleMerged as ApiLead[])
             : visibleMerged;
-        const primaryRows = pickPrimarySourceRows(scopedIdRows);
-        const countBasis = scopedIdRows;
+        /** Id-merge inventory (blank → Fresh); no phone collapse — same as SM Total Leads. */
+        const journeyRows = scopedIdRows;
+        const countBasis = journeyRows;
         const start = targetPage * targetSize;
         return {
-          content: visibleMerged.slice(start, start + targetSize),
+          content: countBasis.slice(start, start + targetSize),
           totalElements: countBasis.length,
-          uniquePrimaryTotal: primaryRows.length,
-          totalRowCount: visibleMerged.length,
+          uniquePrimaryTotal: countBasis.length,
+          totalRowCount: countBasis.length,
           totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
           number: targetPage,
           size: targetSize,
           sourceCounts: computeLeadTypeCountsFromRows(countBasis),
           summaryTotals: computeJourneySummaryCounts(countBasis),
+          // Phase cards for SE/SM: same map as Lead/Opp (id-merge + blank→Fresh + canonical).
+          milestoneCounts: milestoneCountsFromLeads(countBasis, leadsWorkspace),
         };
       };
+      /** SE/SM/PE must always use full id-merge journey (never trust Hub page totalElements while only
+       * filtering the current page content) or Lead/Opp/phase/Total cards diverge (e.g. 308 vs 287 vs 412).
+       */
       const requiresFullyVisiblePage =
         activeAssigneeScope.length > 1 ||
         salesHierarchyFilterActive ||
-        (requiresClientScopedDataset && (isGlobalSearchActive || targetSize >= 500)) ||
+        useTeamPersonFetch ||
+        requiresClientScopedDataset ||
         superAdminPresalesPoolActive;
+
+      if (useTeamPersonFetch) {
+        const teamAliases = effectiveAssigneeScope;
+        const teamUserIds = effectiveAssigneeUserIds;
+        // Per-person Hub pin (name only on Hub; team scope + ids on client/BFF).
+        const hubQueryJobs = hierarchyPersonFetchSeeds.flatMap((person) => {
+          const names = Array.from(
+            new Set(
+              [person.displayName, ...person.aliases]
+                .map((s) => s.trim())
+                .filter(Boolean),
+            ),
+          );
+          const preferred = names.filter(
+            (n, idx) =>
+              idx === 0 ||
+              n.includes("_") ||
+              (!n.includes(" ") && n === n.toLowerCase()),
+          );
+          const queryNames = (preferred.length > 0 ? preferred : names).slice(0, 2);
+          const personIds = person.userId > 0 ? [person.userId] : teamUserIds;
+          return queryNames.map((name) =>
+            // No person-only aliasSet — that dropped id-matched Fresh at BFF.
+            fetchAllPagesForAssignee(name, teamAliases, personIds),
+          );
+        });
+        const [personChunks, teamFilterPool, freshPool, unassignedInbox] = await Promise.all([
+          Promise.all(hubQueryJobs),
+          // Filter-merge (not admin/sales) — blank Fresh lives here for SA JWT.
+          fetchAllPagesForAssignee("", teamAliases, teamUserIds),
+          // Explicit Fresh stage pull — matches SM Fresh Lead card.
+          fetchAllPagesForAssignee("", teamAliases, teamUserIds, "Fresh Lead"),
+          includeUnassignedFreshForSmParity
+            ? fetchUnassignedSmInboxLeads()
+            : Promise.resolve([] as ApiLead[]),
+        ]);
+        const mergedTeamRows = dedupeAdminPoolLeads([
+          ...(personChunks.flat() as ApiLead[]),
+          ...teamFilterPool,
+          ...freshPool,
+          ...unassignedInbox,
+        ]);
+        return buildVisiblePage(
+          mergedTeamRows.sort(
+            (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+          ),
+        );
+      }
 
       if (activeAssigneeScope.length <= 1 || useUnifiedAssigneeScopeFetch) {
         if (!requiresFullyVisiblePage) {
@@ -2525,6 +2901,7 @@ export default function LeadsDataSection({
             leadsWorkspace,
             clientScopeRoleKey,
             bffAssigneeAliasSet,
+            effectiveAssigneeUserIds.length > 0 ? effectiveAssigneeUserIds : undefined,
           );
           if (activeAssigneeScope.length === 0) {
             // Same as origin/main: trust Hub/BFF page meta (full pool totals).
@@ -2550,34 +2927,48 @@ export default function LeadsDataSection({
           const scopedContent = filterLeadsByAssigneeScope(
             Array.isArray(pageJson.content) ? pageJson.content : [],
             activeAssigneeScope,
+            assigneeMatchOpts,
           );
           const scopedIdRows =
             leadsWorkspace === "sales"
               ? dedupeAdminPoolLeads(scopedContent as ApiLead[])
               : scopedContent;
-          const primaryRows = pickPrimarySourceRows(scopedIdRows);
-          const countBasis = scopedIdRows;
+          const journeyRows = scopedIdRows;
+          const countBasis = journeyRows;
           const start = targetPage * targetSize;
           return {
             ...pageJson,
             content: countBasis.slice(start, start + targetSize),
             totalElements: countBasis.length,
-            uniquePrimaryTotal: primaryRows.length,
-            totalRowCount: scopedContent.length,
+            uniquePrimaryTotal: countBasis.length,
+            totalRowCount: countBasis.length,
             totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
             number: targetPage,
             size: targetSize,
             sourceCounts: computeLeadTypeCountsFromRows(countBasis),
             summaryTotals: computeJourneySummaryCounts(countBasis),
+            milestoneCounts: milestoneCountsFromLeads(countBasis, leadsWorkspace),
           };
         }
         const allLeads = await fetchAllPagesForAssignee(assigneeFetchSeed);
+        if (includeUnassignedFreshForSmParity) {
+          const unassignedInbox = await fetchUnassignedSmInboxLeads();
+          return buildVisiblePage(
+            dedupeAdminPoolLeads([...allLeads, ...unassignedInbox]),
+          );
+        }
         return buildVisiblePage(allLeads);
       }
       const chunks = await Promise.all(
         activeAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
       );
       const mergedScopeRows = dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
+      if (includeUnassignedFreshForSmParity) {
+        const unassignedInbox = await fetchUnassignedSmInboxLeads();
+        return buildVisiblePage(
+          dedupeAdminPoolLeads([...mergedScopeRows, ...unassignedInbox]),
+        );
+      }
       return buildVisiblePage(mergedScopeRows);
     },
     [
@@ -2592,6 +2983,10 @@ export default function LeadsDataSection({
       activeAssigneeScope,
       activeAssigneeScopeKey,
       effectiveAssigneeScope,
+      effectiveAssigneeUserIds,
+      hierarchyPersonFetchSeeds,
+      salesManagerFilter,
+      salesExecFilter,
       salesHierarchyFilterActive,
       superAdminPresalesPoolActive,
       superAdminPresalesPoolSet,
@@ -2612,14 +3007,33 @@ export default function LeadsDataSection({
   );
 
   const fetchAllScopedMergedLeads = useCallback(
-    async (targetLeadType: string, targetSort: string): Promise<ApiLead[]> => {
+    async (
+      targetLeadType: string,
+      targetSort: string,
+      opts?: { ignoreMilestoneFilter?: boolean },
+    ): Promise<ApiLead[]> => {
+      /**
+       * SA → SM heatmap: hierarchy team + unassigned Fresh (Hub act-as unusable for SA).
+       */
+      const useTeamPersonFetch =
+        salesHierarchyFilterActive && hierarchyPersonFetchSeeds.length > 0;
+      const includeUnassignedFreshForSmParity =
+        salesHierarchyFilterActive &&
+        Boolean(salesManagerFilter.trim()) &&
+        !salesExecFilter.trim() &&
+        leadsWorkspace === "sales";
       const bffAssigneeAliasSet =
-        effectiveAssigneeScope.length > 0 ? effectiveAssigneeScope : undefined;
-      const useUnifiedAssigneeScopeFetch = effectiveAssigneeScope.length > 0;
-      const applyAssigneeScopeFilter = (leads: ApiLead[]) =>
-        activeAssigneeScope.length > 0
-          ? filterLeadsByAssigneeScope(leads, activeAssigneeScope)
+        !useTeamPersonFetch && effectiveAssigneeScope.length > 0
+          ? effectiveAssigneeScope
+          : undefined;
+      const useUnifiedAssigneeScopeFetch =
+        !useTeamPersonFetch && effectiveAssigneeScope.length > 0;
+      const assigneeMatchOpts = { userIds: effectiveAssigneeUserIds };
+      const applyAssigneeScopeFilter = (leads: ApiLead[]) => {
+        return activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0
+          ? filterLeadsByAssigneeScope(leads, activeAssigneeScope, assigneeMatchOpts)
           : leads;
+      };
       const applySuperAdminPool = (list: ApiLead[]) =>
         superAdminPresalesPoolActive
           ? list.filter((lead) =>
@@ -2628,8 +3042,25 @@ export default function LeadsDataSection({
           : list;
       const assigneeFetchSeed =
         effectiveAssigneeScope[0] ?? activeAssigneeScope[0] ?? effectiveAssignee;
-      const fetchAllPagesForAssignee = async (assigneeName: string): Promise<ApiLead[]> => {
+      const stageForFetch = opts?.ignoreMilestoneFilter ? "" : milestoneStage;
+      const categoryForFetch = opts?.ignoreMilestoneFilter ? "" : milestoneStageCategory;
+      const subStageForFetch = opts?.ignoreMilestoneFilter ? "" : milestoneSubStage;
+      const fetchAllPagesForAssignee = async (
+        assigneeName: string,
+        aliasSetForRequest?: string[],
+        userIdsForRequest?: number[],
+        stageOverride?: string,
+        skipAssigneeScopeFilter = false,
+        forceFilterMerge = false,
+      ): Promise<ApiLead[]> => {
         const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
+        const requestAliasSet =
+          aliasSetForRequest !== undefined ? aliasSetForRequest : bffAssigneeAliasSet;
+        const stageForReq =
+          stageOverride !== undefined ? stageOverride : stageForFetch;
+        const categoryForReq =
+          stageOverride !== undefined ? "" : categoryForFetch;
+        const subForReq = stageOverride !== undefined ? "" : subStageForFetch;
         const firstPage = await fetchMergedPage(
           0,
           500,
@@ -2640,20 +3071,25 @@ export default function LeadsDataSection({
           dateFrom,
           dateTo,
           dateField,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
+          stageForReq,
+          categoryForReq,
+          subForReq,
           reinquiry,
           leadViewKey,
           verificationStatusFromHeader,
           crmMonthWindowProp,
           leadsWorkspace,
           clientScopeRoleKey,
-          bffAssigneeAliasSet,
+          requestAliasSet,
+          userIdsForRequest,
+          0,
+          forceFilterMerge,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
-        if (totalPages <= 1) return applyAssigneeScopeFilter(allLeads);
+        if (totalPages <= 1) {
+          return skipAssigneeScopeFilter ? allLeads : applyAssigneeScopeFilter(allLeads);
+        }
 
         const remainingPages = await Promise.all(
           Array.from({ length: totalPages - 1 }, (_, idx) =>
@@ -2667,16 +3103,19 @@ export default function LeadsDataSection({
               dateFrom,
               dateTo,
               dateField,
-              milestoneStage,
-              milestoneStageCategory,
-              milestoneSubStage,
+              stageForReq,
+              categoryForReq,
+              subForReq,
               reinquiry,
               leadViewKey,
               verificationStatusFromHeader,
               crmMonthWindowProp,
               leadsWorkspace,
               clientScopeRoleKey,
-              bffAssigneeAliasSet,
+              requestAliasSet,
+              userIdsForRequest,
+              0,
+              forceFilterMerge,
             ),
           ),
         );
@@ -2684,20 +3123,86 @@ export default function LeadsDataSection({
         for (const page of remainingPages) {
           allLeads.push(...(Array.isArray(page.content) ? page.content : []));
         }
-        return applyAssigneeScopeFilter(allLeads);
+        return skipAssigneeScopeFilter ? allLeads : applyAssigneeScopeFilter(allLeads);
       };
+      const fetchUnassignedSmInboxLeads = async (): Promise<ApiLead[]> => {
+        const raw = await fetchAllPagesForAssignee("", undefined, undefined, "", true, true);
+        return raw.filter(isUnassignedSalesInboxLead);
+      };
+
       if (superAdminGlobalSearchActive || adminGlobalSearchAcrossPools) {
         return applySuperAdminPool(await fetchAllPagesForAssignee(""));
       }
 
+      if (useTeamPersonFetch) {
+        const teamAliases = effectiveAssigneeScope;
+        const teamUserIds = effectiveAssigneeUserIds;
+        const hubQueryJobs = hierarchyPersonFetchSeeds.flatMap((person) => {
+          const names = Array.from(
+            new Set(
+              [person.displayName, ...person.aliases]
+                .map((s) => s.trim())
+                .filter(Boolean),
+            ),
+          );
+          const preferred = names.filter(
+            (n, idx) =>
+              idx === 0 ||
+              n.includes("_") ||
+              (!n.includes(" ") && n === n.toLowerCase()),
+          );
+          const queryNames = (preferred.length > 0 ? preferred : names).slice(0, 2);
+          const personIds = person.userId > 0 ? [person.userId] : teamUserIds;
+          return queryNames.map((name) =>
+            fetchAllPagesForAssignee(name, teamAliases, personIds),
+          );
+        });
+        const [personChunks, teamFilterPool, freshPool, unassignedInbox] = await Promise.all([
+          Promise.all(hubQueryJobs),
+          fetchAllPagesForAssignee("", teamAliases, teamUserIds),
+          fetchAllPagesForAssignee("", teamAliases, teamUserIds, "Fresh Lead"),
+          includeUnassignedFreshForSmParity
+            ? fetchUnassignedSmInboxLeads()
+            : Promise.resolve([] as ApiLead[]),
+        ]);
+        const mergedTeamRows = dedupeAdminPoolLeads([
+          ...(personChunks.flat() as ApiLead[]),
+          ...teamFilterPool,
+          ...freshPool,
+          ...unassignedInbox,
+        ]);
+        return applySuperAdminPool(
+          mergedTeamRows.sort(
+            (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+          ),
+        );
+      }
+
       if (activeAssigneeScope.length <= 1 || useUnifiedAssigneeScopeFetch) {
-        return applySuperAdminPool(await fetchAllPagesForAssignee(assigneeFetchSeed));
+        const base = await fetchAllPagesForAssignee(assigneeFetchSeed);
+        if (includeUnassignedFreshForSmParity) {
+          const unassignedInbox = await fetchUnassignedSmInboxLeads();
+          return applySuperAdminPool(
+            dedupeAdminPoolLeads([...base, ...unassignedInbox]).sort(
+              (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+            ),
+          );
+        }
+        return applySuperAdminPool(base);
       }
 
       const chunks = await Promise.all(
         activeAssigneeScope.map((assigneeName) => fetchAllPagesForAssignee(assigneeName)),
       );
       const mergedScopeRows = dedupeAdminPoolLeads(chunks.flat() as ApiLead[]);
+      if (includeUnassignedFreshForSmParity) {
+        const unassignedInbox = await fetchUnassignedSmInboxLeads();
+        return applySuperAdminPool(
+          dedupeAdminPoolLeads([...mergedScopeRows, ...unassignedInbox]).sort(
+            (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
+          ),
+        );
+      }
       return applySuperAdminPool(
         mergedScopeRows.sort(
           (a: ApiLead, b: ApiLead) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
@@ -2710,10 +3215,16 @@ export default function LeadsDataSection({
       currentRole,
       dateFrom,
       dateTo,
+      dateField,
       debouncedSearch,
       effectiveAssignee,
       activeAssigneeScope,
       effectiveAssigneeScope,
+      effectiveAssigneeUserIds,
+      hierarchyPersonFetchSeeds,
+      salesManagerFilter,
+      salesExecFilter,
+      salesHierarchyFilterActive,
       leadViewKey,
       milestoneStage,
       milestoneStageCategory,
@@ -2725,6 +3236,7 @@ export default function LeadsDataSection({
       leadsWorkspace,
       superAdminGlobalSearchActive,
       adminGlobalSearchAcrossPools,
+      clientScopeRoleKey,
     ],
   );
 
@@ -2749,13 +3261,20 @@ export default function LeadsDataSection({
         const salesScopedAssigneeFilterActive =
           leadsWorkspace === "sales" && salesHierarchyFilterActive;
         if (salesScopedAssigneeFilterActive) {
-          const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc");
+          // Full journey for heatmap (ignore STAGE toolbar) — blank → Fresh must match SM login.
+          const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc", {
+            ignoreMilestoneFilter: true,
+          });
           if (cancelled) return;
-          const scopedPrimary = pickPrimarySourceRows(scopedRows);
-          const baseCounts = computeLeadTypeCountsFromRows(scopedPrimary);
-          const verifiedCount = scopedPrimary.filter((lead) => isCrmLeadVerified(lead)).length;
-          const summaryTotals = computeJourneySummaryCounts(scopedPrimary);
-          const milestoneMap = milestoneCountsFromLeads(scopedPrimary, "sales");
+          // Same journey inventory as Sales Manager (id-merge rows, blank → Fresh Lead).
+          const journeyRows =
+            leadsWorkspace === "sales"
+              ? dedupeAdminPoolLeads(scopedRows)
+              : scopedRows;
+          const baseCounts = computeLeadTypeCountsFromRows(journeyRows);
+          const verifiedCount = journeyRows.filter((lead) => isCrmLeadVerified(lead)).length;
+          const summaryTotals = computeJourneySummaryCounts(journeyRows);
+          const milestoneMap = milestoneCountsFromLeads(journeyRows, "sales");
           setLeadTypeCountsPrimary(baseCounts);
           setLeadTypeCountsAllRows(baseCounts);
           const adminInsightOpts = salesAdminPoolInsightOpts(
@@ -2770,8 +3289,10 @@ export default function LeadsDataSection({
           );
           const insightPool =
             activeAssigneeScope.length > 0
-              ? filterLeadsByAssigneeScope(scopedPrimary, activeAssigneeScope)
-              : scopedPrimary;
+              ? filterLeadsByAssigneeScope(journeyRows, activeAssigneeScope, {
+                  userIds: effectiveAssigneeUserIds,
+                })
+              : journeyRows;
           const countsWithInsights = roleUsesAdminPoolInsightTiles(roleKey)
             ? mergeSalesPoolInsightCounts(baseCounts, insightPool, adminInsightOpts)
             : { ...baseCounts };
@@ -2779,7 +3300,7 @@ export default function LeadsDataSection({
             ...countsWithInsights,
             verified: verifiedCount,
           });
-          const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${scopedPrimary.length}`;
+          const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${journeyRows.length}`;
           if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
             lastHeatmapSummaryKeyRef.current = summaryKey;
             onHeatmapSummarySyncRef.current?.(summaryTotals);
@@ -2791,6 +3312,12 @@ export default function LeadsDataSection({
             lastAdminMilestoneCountsKeyRef.current = milestoneKey;
             onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
           }
+          setVisibleFilteredTotal(journeyRows.length);
+          // Journey id-merge only — same Total as SM dashboard (no phone-collapse / dual count).
+          setAdminPoolDisplayTotals({
+            uniquePrimary: journeyRows.length,
+            totalRows: journeyRows.length,
+          });
           return;
         }
         const resolvedVerification =
@@ -2883,7 +3410,11 @@ export default function LeadsDataSection({
           summaryLeadTypeRaw === "all"
         ) {
           const customers = uniquePrimaryPool > 0 ? uniquePrimaryPool : poolTotal;
-          const rows = Math.max(poolTotal, customers);
+          // Sales journey inventory is id-merge: Total Leads == phase sum (no dual primary/rows).
+          const rows =
+            leadsWorkspace === "sales"
+              ? customers
+              : Math.max(poolTotal, customers);
           if (customers > 0 || rows > 0) {
             setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
             setVisibleFilteredTotal(customers);
@@ -3053,8 +3584,11 @@ export default function LeadsDataSection({
         /** SALES_ADMIN + Sales Mgr/Exec toolbar: use same scoped pool as heatmap (not manager name only). */
         if (salesHierarchyFilterActive) {
           const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
-          const primaryRows = pickMilestoneRepresentativeRows(scopedRows);
-          leads = primaryRows.filter((lead) =>
+          const inventoryRows =
+            leadsWorkspace === "sales"
+              ? dedupeAdminPoolLeads(scopedRows)
+              : scopedRows;
+          leads = inventoryRows.filter((lead) =>
             leadMatchesWorkspaceMilestoneFilter(
               lead,
               leadsWorkspace,
@@ -3090,11 +3624,17 @@ export default function LeadsDataSection({
 
         if (cancelled) return;
         setAdminMilestoneTableLeads(leads);
-        const primaryRows = pickPrimarySourceRows(leads);
         setVisibleFilteredTotal(total);
-        if (roleKey === "SUPER_ADMIN" || roleKey === "SALES_ADMIN") {
+        if (
+          roleKey === "SUPER_ADMIN" ||
+          roleKey === "SALES_ADMIN" ||
+          roleKey === "ADMIN" ||
+          roleKey === "SALES_MANAGER" ||
+          roleKey === "MANAGER"
+        ) {
+          // Journey inventory is id-merge — same basis as phase cards (not phone primary).
           setAdminPoolDisplayTotals({
-            uniquePrimary: primaryRows.length,
+            uniquePrimary: total,
             totalRows: total,
           });
         }
@@ -3175,8 +3715,10 @@ export default function LeadsDataSection({
           isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
             ? inboxScoped
             : inboxScoped.filter((lead) => canViewLeadByRole(lead, roleKey));
-        const base = computeLeadTypeCountsFromRows(scoped);
-        const summaryTotals = computeJourneySummaryCounts(scoped);
+        const journeyScoped = scoped;
+        const base = computeLeadTypeCountsFromRows(journeyScoped);
+        const summaryTotals = computeJourneySummaryCounts(journeyScoped);
+        const milestoneMap = milestoneCountsFromLeads(journeyScoped, leadsWorkspace);
         // Only update total from this effect when
         // exec/hierarchy scope is active
         // Otherwise load() already set correct total
@@ -3184,15 +3726,22 @@ export default function LeadsDataSection({
           effectiveAssigneeScope.length === 0 &&
           (roleKey === "SALES_MANAGER" || roleKey === "MANAGER")
         ) {
-          // Manager all-team view — load() handles total
+          // Manager all-team view — load() handles total + heatmap summary
           // do not overwrite here
         } else {
-          setVisibleFilteredTotal(scoped.length);
-        }
-        const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}`;
-        if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
-          lastHeatmapSummaryKeyRef.current = summaryKey;
-          onHeatmapSummarySyncRef.current?.(summaryTotals);
+          setVisibleFilteredTotal(journeyScoped.length);
+          const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${journeyScoped.length}`;
+          if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
+            lastHeatmapSummaryKeyRef.current = summaryKey;
+            onHeatmapSummarySyncRef.current?.(summaryTotals);
+          }
+          const milestoneKey = Object.keys(milestoneMap).length
+            ? JSON.stringify(milestoneMap)
+            : "";
+          if (lastAdminMilestoneCountsKeyRef.current !== milestoneKey) {
+            lastAdminMilestoneCountsKeyRef.current = milestoneKey;
+            onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
+          }
         }
 
         if (isPresalesRole(roleKey) || superAdminPresalesPoolActive) {
@@ -3206,7 +3755,7 @@ export default function LeadsDataSection({
         const smMineTeam =
           roleKey === "SALES_MANAGER"
             ? countSalesManagerMineVsTeam(
-                scoped,
+                journeyScoped,
                 currentUserName ?? "",
                 scopedTeam,
               )
@@ -3215,7 +3764,7 @@ export default function LeadsDataSection({
           roleKey === "SALES_ADMIN" ? "SALES_MANAGER" : roleKey;
         const insightLeadViewForRole: "default" | "my" | "team" =
           roleKey === "SALES_ADMIN" ? "default" : insightLeadView;
-        const insightPool = salesInsightCountLeads(scoped);
+        const insightPool = salesInsightCountLeads(journeyScoped);
         const insightCountOpts = {
           viewerRole: insightViewerRole,
           currentUserName: currentUserName ?? "",
@@ -3399,10 +3948,31 @@ export default function LeadsDataSection({
             leadViewKey !== "my" &&
             leadViewKey !== "team"
           ) {
-            applyAdminTotalsFromTablePage(pageJson);
+            // Milestone phase table owns Total Leads (= card count). Do not overwrite with
+            // unscoped merge/admin page totals while STAGE filter is active.
+            const milestoneToolbarActive = Boolean(
+              milestoneStage.trim() ||
+                milestoneStageCategory.trim() ||
+                milestoneSubStage.trim(),
+            );
+            if (!milestoneToolbarActive) {
+              applyAdminTotalsFromTablePage(pageJson);
+            }
           } else {
             setVisibleFilteredTotal(pageJson.totalElements ?? 0);
           }
+        } else if (
+          Boolean(
+            milestoneStage.trim() ||
+              milestoneStageCategory.trim() ||
+              milestoneSubStage.trim(),
+          )
+        ) {
+          // Client-scoped roles: page meta is skipped, but stage filter totals must still update.
+          setVisibleFilteredTotal(Number(pageJson.totalElements ?? 0));
+        } else {
+          // Stage filter cleared — drop stale filtered total; badge uses Hub/full-pool meta.
+          setVisibleFilteredTotal(null);
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
@@ -3432,13 +4002,45 @@ export default function LeadsDataSection({
             lastHeatmapSummaryKeyRef.current = summaryKey;
             onHeatmapSummarySyncRef.current?.(st);
           }
+        } else if (
+          !usePageMetaForUi &&
+          pageJson.summaryTotals &&
+          (roleKeyForLoad === "SALES_MANAGER" || roleKeyForLoad === "MANAGER") &&
+          !superAdminCrossPoolSearch
+        ) {
+          // SM combined page returns journey summary — sync heatmap cards to same totals.
+          const st = pageJson.summaryTotals;
+          const summaryKey = `${st.lead}:${st.opportunity}`;
+          if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
+            lastHeatmapSummaryKeyRef.current = summaryKey;
+            onHeatmapSummarySyncRef.current?.(st);
+          }
+        }
+        // SE / SM / PE: phase cards must use same id-merge milestone map as Lead/Opp/Total.
+        const mc = pageJson.milestoneCounts;
+        if (
+          mc &&
+          Object.keys(mc).length > 0 &&
+          (roleKeyForLoad === "SALES_EXECUTIVE" ||
+            roleKeyForLoad === "SALES_MANAGER" ||
+            roleKeyForLoad === "MANAGER" ||
+            roleKeyForLoad === "PRESALES_EXECUTIVE" ||
+            roleKeyForLoad === "PRESALES_MANAGER" ||
+            roleKeyForLoad === "PRE_SALES")
+        ) {
+          const milestoneKey = JSON.stringify(mc);
+          if (lastAdminMilestoneCountsKeyRef.current !== milestoneKey) {
+            lastAdminMilestoneCountsKeyRef.current = milestoneKey;
+            onAdminMilestoneCountsSyncRef.current?.(mc, leadsWorkspace);
+          }
         }
       };
 
       const usePageMetaForUi =
+        // SE/SM/PE journey pages build client inventory totals — always use them.
+        requiresClientScopedDataset ||
         activeAssigneeScope.length > 1 ||
         salesHierarchyFilterActive ||
-        !requiresClientScopedDataset ||
         isGlobalSearchActive ||
         trustPresalesUpstreamLeadScope(normalizeRole(authRoleProp ?? currentRole));
       const requested = {
@@ -3552,8 +4154,10 @@ export default function LeadsDataSection({
         const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
         if (cancelled) return;
         let pool = salesInsightCountLeads(scopedRows);
-        if (activeAssigneeScope.length > 0) {
-          pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope);
+        if (activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0) {
+          pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope, {
+            userIds: effectiveAssigneeUserIds,
+          });
         }
         setInsightTablePoolLeads(pool);
         setData({
@@ -3817,18 +4421,27 @@ export default function LeadsDataSection({
       ? rows.slice(page * size, page * size + size)
       : rows;
   const ivrCallFilterActive = isIvrCallFilterKey(leadType);
+  /** Stage filter on: prefer filtered pool total (not stale full-pool badge). */
+  const clientSideMilestoneFilterActive =
+    hasMilestoneFilter && !adminMilestoneTableActive && !dedicatedFilterTableView;
   const total =
     insightTableMode !== null
       ? rows.length
       : adminMilestoneTableActive
         ? adminMilestoneTableLeads.length
-        : ivrCallFilterActive
-          ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
-          : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
+        : clientSideMilestoneFilterActive
+          ? Number(
+              visibleFilteredTotal !== null
+                ? visibleFilteredTotal
+                : rows.length,
+            )
+          : ivrCallFilterActive
+            ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
+            : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
   const totalPages =
     insightTableMode !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-      : adminMilestoneTableActive
+      : adminMilestoneTableActive || clientSideMilestoneFilterActive
         ? Math.max(1, Math.ceil(total / Math.max(1, size)))
         : ivrCallFilterActive
           ? Math.max(

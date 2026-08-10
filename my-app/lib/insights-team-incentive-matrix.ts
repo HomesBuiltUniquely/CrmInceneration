@@ -101,6 +101,10 @@ export function formatTeamMatrixIncentiveScope(
   if (dateFilter.preset === "all") {
     return "All time · same engine as Incentives";
   }
+  if (dateFilter.preset === "currentMonth") {
+    const months = monthKeysForInsightsDateFilter(dateFilter);
+    return `${months[0] ?? "This month"} · current month · Incentives`;
+  }
   const months = monthKeysForInsightsDateFilter(dateFilter);
   if (months.length === 0) return "Selected date range · Incentives engine";
   if (months.length === 1) {

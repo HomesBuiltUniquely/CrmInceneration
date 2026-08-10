@@ -469,7 +469,9 @@ export default function LeadsToolbar({
   const showAdminCustomersRowsPill =
     (isSuperAdmin || isSalesAdmin) && adminTotalLeadsDisplay !== undefined;
   const totalLeadsPillLabel = showAdminCustomersRowsPill
-    ? `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
+    ? adminTotalLeadsDisplay.uniquePrimary === adminTotalLeadsDisplay.totalRows
+      ? adminTotalLeadsDisplay.uniquePrimary.toLocaleString()
+      : `${adminTotalLeadsDisplay.uniquePrimary.toLocaleString()} (${adminTotalLeadsDisplay.totalRows.toLocaleString()} rows)`
     : undefined;
   const isSalesExecutive = role === "SALES_EXECUTIVE";
   const isPresalesManager = role === "PRESALES_MANAGER";

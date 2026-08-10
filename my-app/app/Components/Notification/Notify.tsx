@@ -479,7 +479,7 @@ export default function Notify({
               }
             }}
           >
-            <BellIcon className="h-[23px] w-[23px]" />
+            <BellIcon className="h-6 w-6" />
           </span>
 
           {unreadCount > 0 && (

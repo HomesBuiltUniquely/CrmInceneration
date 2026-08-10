@@ -369,6 +369,10 @@ export default function InsightSect3({
   ]);
 
   const lostStages = lostFunnel?.stages ?? [];
+  const hasAlignedLostStages = lostStages.some((s) => {
+    const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+    return k !== "fresh_lead" && k !== "total";
+  });
 
   const lostCountByStageKey = useMemo(() => {
     const map: Record<string, number> = {};
@@ -584,8 +588,9 @@ export default function InsightSect3({
                   const isClosedWonStage = canonicalKey === "closed";
                   const pathBreakdown = stagePathData[canonicalKey];
 
-                  const lostCount =
-                    lostCountByStageKey[canonicalKey] ?? pathBreakdown?.lostTotal ?? 0;
+                  const lostCount = hasAlignedLostStages
+                    ? (lostCountByStageKey[canonicalKey] ?? 0)
+                    : (lostCountByStageKey[canonicalKey] ?? pathBreakdown?.lostTotal ?? 0);
                   const wonCount = pathBreakdown?.wonTotal ?? Math.max(0, stage.count - lostCount);
 
                   let displayCount = stage.count;

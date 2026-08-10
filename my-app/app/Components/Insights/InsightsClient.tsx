@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BOOKING_DATE_PRESETS,
-  DEFAULT_BOOKING_DATE_FILTER,
+  DEFAULT_INSIGHTS_DATE_FILTER,
   resolveBookingDateRange,
   type BookingDateFilterState,
   type BookingDatePresetId,
@@ -24,11 +24,11 @@ import {
   normalizeMilestoneCountsToCanonical,
 } from "@/lib/admin-leads-api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
-import { fetchDashboardDealRows } from "@/lib/booking-token-deals-fetch";
 import {
   buildInsightsQuoteSentCountOpts,
   computeQuoteSentWonCount,
   filterInsightsQuoteSentScopeLeads,
+  filterInsightsScopeLeadsKeepRows,
   listQuoteSentWonLeads,
   resolveInsightsAssigneeAliases,
 } from "@/lib/insights-quote-sent-metrics";
@@ -44,9 +44,20 @@ import {
 import {
   buildAlignedSalesFunnelStages,
   buildInsightsFunnelStagePathData,
+  ensureFreshLeadInSalesFunnel,
   fetchInsightsFunnelStagePathData,
   type FunnelStagePathDataMap,
 } from "@/lib/insights-funnel-stage-paths";
+import { filterLeadsByAssigneeScope } from "@/lib/admin-assignee-match";
+import {
+  fetchInsightsSalesManagerMyTeamLeads,
+} from "@/lib/insights-sales-role-pool";
+import {
+  insightsSalesManagerMilestoneAndTotal,
+  filterApiLeadsByInsightsDateRange,
+} from "@/lib/insights-sm-journey-align";
+import { buildInsightsWeekChartsFromLeads, type InsightsWeekCharts } from "@/lib/insights-week-charts";
+import type { ApiLead } from "@/lib/leads-filter";
 import {
   computeLostSegmentCounts,
   computeLostSegmentDropReasons,
@@ -55,6 +66,7 @@ import {
   salesAdminPoolInsightOpts,
   salesInsightCountLeads,
 } from "@/lib/sales-admin-insight-tiles";
+import { filterLeadsForSalesClientInbox } from "@/lib/crm-workspace";
 import {
   computeTeamMatrixIncentiveMetrics,
   formatTeamMatrixIncentiveScope,
@@ -63,10 +75,19 @@ import {
 } from "@/lib/insights-team-incentive-matrix";
 import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
 import {
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_STORAGE_KEY,
   CRM_USER_ID_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  fetchSalesExecutivesForManager,
   normalizeRole,
 } from "@/lib/auth/api";
+import {
+  canAccessCrmInsights,
+  canUseInsightsOrgFilters,
+} from "@/lib/roleUtils";
+import { collectHierarchyUserAssigneeAliases, hierarchyUserDisplayName } from "@/lib/hierarchy-user-display";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
@@ -78,13 +99,8 @@ import InsightsDateFilterPopover from "./InsightsDateFilterPopover";
 import InsightsDropdownFilter, { type DropdownOption } from "./InsightsDropdownFilter";
 
 function isSalesManagerRole(role: string): boolean {
-  const r = role.trim().toLowerCase().replace(/[_\s]+/g, " ");
-  return (
-    r === "sales manager" ||
-    r === "manager" ||
-    r === "sales_manager" ||
-    r.includes("sales manager")
-  );
+  const r = normalizeRole(role);
+  return r === "SALES_MANAGER" || r === "MANAGER";
 }
 
 type SalesPeopleSelection =
@@ -118,7 +134,7 @@ function salesPeopleSelectValue(sel: SalesPeopleSelection): string {
 
 export default function InsightsClient1() {
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
-    DEFAULT_BOOKING_DATE_FILTER,
+    DEFAULT_INSIGHTS_DATE_FILTER,
   );
   const [branchId, setBranchId] = useState("all");
   const [salesPeople, setSalesPeople] = useState<SalesPeopleSelection>({
@@ -128,6 +144,15 @@ export default function InsightsClient1() {
   const teamPeriod = "monthly" as const;
   const [role, setRole] = useState("");
   const [viewerUserId, setViewerUserId] = useState<number | null>(null);
+  /** SM My Leads parity: self + team hierarchy aliases (username + display). */
+  const [smTeamAliasesWhenAll, setSmTeamAliasesWhenAll] = useState<string[]>([]);
+  /** Journey heatmap-style team names (display + username). */
+  const [smTeamDisplayNames, setSmTeamDisplayNames] = useState<string[]>([]);
+  const [smSelfAliases, setSmSelfAliases] = useState<string[]>([]);
+  const [aliasesByUserId, setAliasesByUserId] = useState<Map<number, string[]>>(
+    () => new Map(),
+  );
+  const [smScopeReady, setSmScopeReady] = useState(false);
 
   const [filterOptions, setFilterOptions] = useState<InsightsFilterOptions>({
     branches: [],
@@ -160,6 +185,125 @@ export default function InsightsClient1() {
     setViewerUserId(Number.isFinite(id) && id > 0 ? id : null);
   }, []);
 
+  /**
+   * Load Sales Manager team the same way as My Leads / notifications:
+   * GET users-by-role SALES_EXECUTIVE (JWT-scoped) + own display/login aliases.
+   */
+  useEffect(() => {
+    if (!role) return;
+    if (!isSalesManagerRole(role)) {
+      setSmTeamAliasesWhenAll([]);
+      setSmTeamDisplayNames([]);
+      setSmSelfAliases([]);
+      setAliasesByUserId(new Map());
+      setSmScopeReady(true);
+      return;
+    }
+    let cancelled = false;
+    setSmScopeReady(false);
+    void (async () => {
+      try {
+        const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY)?.trim() ?? "";
+        const displayName =
+          window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY)?.trim() ?? "";
+        const loginUser =
+          window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim() ?? "";
+        const meAliases = collectHierarchyUserAssigneeAliases({
+          fullName: displayName,
+          name: displayName,
+          username: loginUser || displayName,
+        });
+        const byId = new Map<number, string[]>();
+        if (viewerUserId && viewerUserId > 0) {
+          byId.set(viewerUserId, meAliases);
+        }
+        const all = new Set(meAliases);
+        const teamDisplay: string[] = [];
+        if (token) {
+          const [rawExecs, legacyRes] = await Promise.all([
+            fetchSalesExecutivesForManager(token),
+            fetch(`/api/sales-executive/all`, {
+              cache: "no-store",
+              credentials: "include",
+              headers: getCrmAuthHeaders({ Accept: "application/json" }),
+            }),
+          ]);
+          const addExec = (row: Record<string, unknown>) => {
+            const uid = Number(row.id ?? 0);
+            if (uid) {
+              const aliases = collectHierarchyUserAssigneeAliases({
+                id: uid,
+                fullName: String(row.fullName ?? row.name ?? "").trim() || undefined,
+                name: String(row.name ?? "").trim() || undefined,
+                username: String(row.username ?? "").trim() || undefined,
+                email: String(row.email ?? "").trim() || undefined,
+              });
+              byId.set(uid, aliases);
+              for (const a of aliases) all.add(a);
+            }
+            // Same as Header managerTeamNames — display name only.
+            const display = hierarchyUserDisplayName({
+              fullName: String(row.fullName ?? "").trim() || undefined,
+              name: String(row.name ?? "").trim() || undefined,
+              username: String(row.username ?? "").trim() || undefined,
+            });
+            if (display && !teamDisplay.some((t) => t.toLowerCase() === display.toLowerCase())) {
+              teamDisplay.push(display);
+            }
+          };
+          for (const row of rawExecs) {
+            const mid =
+              row.managerId != null && row.managerId !== ""
+                ? Number(row.managerId)
+                : null;
+            if (
+              viewerUserId &&
+              mid != null &&
+              Number.isFinite(mid) &&
+              mid > 0 &&
+              mid !== viewerUserId
+            ) {
+              continue;
+            }
+            addExec(row);
+          }
+          if (legacyRes.ok) {
+            const j = (await legacyRes.json().catch(() => [])) as unknown;
+            const raw = Array.isArray(j)
+              ? j
+              : j && typeof j === "object" && Array.isArray((j as { data?: unknown }).data)
+                ? ((j as { data: unknown[] }).data ?? [])
+                : [];
+            for (const row of raw) {
+              if (!row || typeof row !== "object") continue;
+              const rec = row as Record<string, unknown>;
+              if (Number(rec.managerId ?? 0) !== Number(viewerUserId ?? 0)) continue;
+              addExec(rec);
+            }
+          }
+        }
+        if (!cancelled) {
+          setAliasesByUserId(byId);
+          setSmTeamAliasesWhenAll([...all]);
+          setSmSelfAliases(meAliases);
+          setSmTeamDisplayNames(teamDisplay);
+          setSmScopeReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setSmTeamAliasesWhenAll([]);
+          setSmTeamDisplayNames([]);
+          setSmSelfAliases([]);
+          setAliasesByUserId(new Map());
+          setSmScopeReady(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [role, viewerUserId]);
+
   const canPickTeamIncentives = useMemo(() => {
     const r = role.toUpperCase();
     return (
@@ -181,6 +325,62 @@ export default function InsightsClient1() {
     [role],
   );
 
+  const isSalesManager = useMemo(() => isSalesManagerRole(role), [role]);
+  /** SUPER_ADMIN / ADMIN / SALES_ADMIN — branch + org-wide people. */
+  const isOrgAdmin = useMemo(() => canUseInsightsOrgFilters(role), [role]);
+  const insightsAllowed = useMemo(
+    () => (role ? canAccessCrmInsights(role) : false),
+    [role],
+  );
+  /** Branch + full people hierarchy only for org admins. */
+  const showBranchFilter = isOrgAdmin;
+  const showManagerPeopleOptions = isOrgAdmin;
+
+  /**
+   * Dashboard people scope:
+   * - Admin/SA: as selected
+   * - Sales Manager: always team (manager = self when "All"); exec pick when selected
+   */
+  const dashboardPeopleParams = useMemo(() => {
+    if (isSalesManager) {
+      if (salesPeople.kind === "executive") {
+        return {
+          salesManagerId: viewerUserId,
+          salesExecutiveId: salesPeople.id,
+        };
+      }
+      return {
+        salesManagerId: viewerUserId,
+        salesExecutiveId: null as number | null,
+      };
+    }
+    return {
+      salesManagerId: salesPeople.kind === "manager" ? salesPeople.id : null,
+      salesExecutiveId: salesPeople.kind === "executive" ? salesPeople.id : null,
+    };
+  }, [isSalesManager, salesPeople, viewerUserId]);
+
+  const effectiveBranchId = showBranchFilter ? branchId : "all";
+
+  const assigneeAliasSet = useMemo(
+    () =>
+      resolveInsightsAssigneeAliases(salesPeople, filterOptions, {
+        forceTeamWhenAll: isSalesManager && salesPeople.kind === "all",
+        teamAliasesWhenAll:
+          isSalesManager && salesPeople.kind === "all"
+            ? smTeamAliasesWhenAll
+            : undefined,
+        aliasesByUserId,
+      }),
+    [
+      salesPeople,
+      filterOptions,
+      isSalesManager,
+      smTeamAliasesWhenAll,
+      aliasesByUserId,
+    ],
+  );
+
   const loadFilters = useCallback(async (selectedBranch: string) => {
     try {
       const options = await fetchInsightsFilterOptions(
@@ -195,16 +395,23 @@ export default function InsightsClient1() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    // Wait for role so unauthorized users never fetch, and SM gets manager id.
+    if (!role) return;
+    if (!canAccessCrmInsights(role)) {
+      setLoading(false);
+      return;
+    }
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) {
+      return;
+    }
     setLoading(true);
     setError("");
     try {
       const data = await fetchInsightsDashboard({
         dateFilter,
-        branchId,
-        salesManagerId:
-          salesPeople.kind === "manager" ? salesPeople.id : null,
-        salesExecutiveId:
-          salesPeople.kind === "executive" ? salesPeople.id : null,
+        branchId: effectiveBranchId,
+        salesManagerId: dashboardPeopleParams.salesManagerId,
+        salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
         teamPeriod,
       });
       setDashboard(data);
@@ -216,68 +423,47 @@ export default function InsightsClient1() {
     } finally {
       setLoading(false);
     }
-  }, [branchId, dateFilter, salesPeople, teamPeriod]);
+  }, [
+    effectiveBranchId,
+    dateFilter,
+    dashboardPeopleParams,
+    teamPeriod,
+    isSalesManager,
+    viewerUserId,
+    role,
+  ]);
 
-  const [tokenMetrics, setTokenMetrics] = useState<TokenMetricsData>({
-    tokenValue: 0,
-    bookingValue: 0,
-    futureConversionValue: 0,
-    tokenCount: 0,
-    bookingCount: 0,
-    loading: true,
-  });
-
-  const loadTokenMetrics = useCallback(async () => {
-    setTokenMetrics((prev) => ({ ...prev, loading: true }));
-    try {
-      const rows = await fetchDashboardDealRows({ tab: "all", dateFilter });
-      const active = rows.filter((r) => r.listingType !== "cancel");
-
-      // Booking deals (full 10% / confirmed booking)
-      const bookingDeals = active.filter((r) => r.listingType === "booking");
-      const bookingValue = bookingDeals.reduce(
-        (sum, r) => sum + (r.tenPercentAmount || r.paidAmount || r.dealValueAmount || 0),
-        0,
-      );
-
-      // Token deals (in token stage)
-      const tokenDeals = active.filter((r) => r.listingType === "token");
-      const tokenValue = tokenDeals.reduce((sum, r) => sum + (r.paidAmount || 0), 0);
-
-      // Future conversion value (potential value remaining to complete 10% booking on token deals)
-      const futureConversionValue = tokenDeals.reduce(
-        (sum, r) => sum + Math.max(0, (r.tenPercentAmount || 0) - (r.paidAmount || 0)),
-        0,
-      );
-
-      setTokenMetrics({
-        tokenValue,
-        bookingValue,
-        futureConversionValue,
-        tokenCount: tokenDeals.length,
-        bookingCount: bookingDeals.length,
-        loading: false,
-      });
-    } catch {
-      setTokenMetrics({
-        tokenValue: 0,
-        bookingValue: 0,
-        futureConversionValue: 0,
-        tokenCount: 0,
-        bookingCount: 0,
-        loading: false,
-      });
-    }
-  }, [dateFilter]);
+  /**
+   * Token / Booking / Gross — Hub KPIs only (same Scope as totalLeads).
+   * Do not recompute via fetchDashboardDealRows (misses branch when people=all).
+   */
+  const tokenMetrics = useMemo((): TokenMetricsData => {
+    const tv = dashboard.kpis.tokenValue?.value ?? 0;
+    const bv = dashboard.kpis.bookingValue?.value ?? 0;
+    return {
+      tokenValue: tv,
+      bookingValue: bv,
+      futureConversionValue: 0,
+      tokenCount: 0,
+      bookingCount: 0,
+      loading: loading,
+    };
+  }, [dashboard.kpis.tokenValue, dashboard.kpis.bookingValue, loading]);
 
   useEffect(() => {
-    void loadFilters(branchId);
-  }, [branchId, loadFilters]);
+    if (!role || !canAccessCrmInsights(role)) return;
+    // SM never scopes filter-options by branch
+    void loadFilters(showBranchFilter ? branchId : "all");
+  }, [branchId, loadFilters, showBranchFilter, role]);
 
   /** Drop people selection if it no longer exists under current branch filter-options. */
   useEffect(() => {
     if (salesPeople.kind === "all") return;
     if (salesPeople.kind === "manager") {
+      if (isSalesManager) {
+        setSalesPeople({ kind: "all" });
+        return;
+      }
       const ok = filterOptions.salesManagers.some((m) => m.id === salesPeople.id);
       if (!ok) setSalesPeople({ kind: "all" });
       return;
@@ -288,15 +474,16 @@ export default function InsightsClient1() {
         (m.executives ?? []).some((e) => e.id === salesPeople.id),
       );
     if (!execOk) setSalesPeople({ kind: "all" });
-  }, [filterOptions, salesPeople]);
+  }, [filterOptions, salesPeople, isSalesManager]);
+
+  // SM: clear branch (not used)
+  useEffect(() => {
+    if (isSalesManager && branchId !== "all") setBranchId("all");
+  }, [isSalesManager, branchId]);
 
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
-
-  useEffect(() => {
-    void loadTokenMetrics();
-  }, [loadTokenMetrics]);
 
   // Achieved + Payoff = same executive-leads API as Incentives page
   useEffect(() => {
@@ -305,6 +492,10 @@ export default function InsightsClient1() {
     // Wait for role from localStorage so admin doesn't take the self-only path first.
     if (!role) {
       setTeamIncentivesLoading(team.length > 0);
+      return;
+    }
+    if (!canAccessCrmInsights(role)) {
+      setTeamIncentivesLoading(false);
       return;
     }
     if (team.length === 0) {
@@ -449,26 +640,40 @@ export default function InsightsClient1() {
 
   const salespeopleOptions = useMemo<DropdownOption[]>(() => {
     const opts: DropdownOption[] = [
-      { value: "all", label: "All Salespeople" },
+      {
+        value: "all",
+        label: isSalesManager ? "All team executives" : "All Salespeople",
+      },
     ];
-    filterOptions.salesManagers.forEach((m) => {
-      opts.push({
-        value: `manager:${m.id}`,
-        label: m.name,
-        sublabel: `Manager · ${m.executives?.length || 0} executives`,
-        category: "Managers / Team Leads",
+    if (showManagerPeopleOptions) {
+      filterOptions.salesManagers.forEach((m) => {
+        opts.push({
+          value: `manager:${m.id}`,
+          label: m.name,
+          sublabel: `Manager · ${m.executives?.length || 0} executives`,
+          category: "Managers / Team Leads",
+        });
       });
-    });
+    }
     executiveOptions.forEach((e) => {
       opts.push({
         value: `exec:${e.id}`,
         label: e.name,
-        sublabel: e.managerName ? `Team: ${e.managerName}` : "Sales Executive",
-        category: "Sales Executives",
+        sublabel: e.managerName
+          ? `Team: ${e.managerName}`
+          : isSalesManager
+            ? "Your executive"
+            : "Sales Executive",
+        category: isSalesManager ? "Your team" : "Sales Executives",
       });
     });
     return opts;
-  }, [filterOptions, executiveOptions]);
+  }, [
+    filterOptions,
+    executiveOptions,
+    isSalesManager,
+    showManagerPeopleOptions,
+  ]);
 
   const branchOptions = useMemo<DropdownOption[]>(() => {
     const opts: DropdownOption[] = [
@@ -487,14 +692,14 @@ export default function InsightsClient1() {
   const salesSelect = salesPeopleSelectValue(salesPeople);
 
   const isAnyFilterActive =
-    dateFilter.preset !== "all" ||
+    dateFilter.preset !== "currentMonth" ||
     salesPeople.kind !== "all" ||
-    branchId !== "all";
+    (showBranchFilter && branchId !== "all");
 
   const clearAllFilters = () => {
-    setDateFilter(DEFAULT_BOOKING_DATE_FILTER);
+    setDateFilter(DEFAULT_INSIGHTS_DATE_FILTER);
     setSalesPeople({ kind: "all" });
-    setBranchId("all");
+    if (showBranchFilter) setBranchId("all");
   };
 
   const [quoteSentWonMetrics, setQuoteSentWonMetrics] = useState<{
@@ -520,6 +725,13 @@ export default function InsightsClient1() {
   const [alignedSalesFunnel, setAlignedSalesFunnel] = useState<
     InsightsDashboard["salesFunnel"] | null
   >(null);
+  /**
+   * Week charts from the same date-scoped inventory (current month → ~4–5 weeks only).
+   * Prefer over Hub `leadsOverTime` / `conversionTrend` when rebuilt.
+   */
+  const [alignedWeekCharts, setAlignedWeekCharts] = useState<InsightsWeekCharts | null>(
+    null,
+  );
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
   useEffect(() => {
@@ -528,7 +740,7 @@ export default function InsightsClient1() {
     void (async () => {
       try {
         const range = resolveBookingDateRange(dateFilter);
-        const assignees = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
+        const assignees = assigneeAliasSet;
         const data = await fetchInsightsFunnelStagePathData({
           dateFrom: range.submittedFrom,
           dateTo: range.submittedTo,
@@ -545,7 +757,7 @@ export default function InsightsClient1() {
     return () => {
       cancelled = true;
     };
-  }, [dateFilter, filterOptions, salesPeople]);
+  }, [dateFilter, assigneeAliasSet]);
 
   const applyInvestmentMetrics = useCallback(
     (
@@ -572,47 +784,114 @@ export default function InsightsClient1() {
     [],
   );
 
-  // Authoritative pool — same as Super Admin Sales Journey Heatmap + Lost Segment
+  // Authoritative pool — SM uses same mergeAll as My Leads; admins use heatmap + scope.
   useEffect(() => {
+    if (!role || !canAccessCrmInsights(role)) return;
+    // SM: wait for hierarchy aliases so we never count without a team scope.
+    if (isSalesManager && !smScopeReady) return;
+    // Allow SM when scope ready even if only self aliases (no execs yet).
+    if (isSalesManager && smSelfAliases.length === 0 && smTeamDisplayNames.length === 0) {
+      setAlignedSalesPoolTotal(0);
+      setAlignedLostFunnel(null);
+      setAlignedDropReasons(null);
+      setAlignedSalesFunnel(null);
+      setAlignedWeekCharts(null);
+      setFunnelMetricsLoading(false);
+      return;
+    }
+
     let cancelled = false;
+    setFunnelMetricsLoading(true);
     (async () => {
       try {
         const range = resolveBookingDateRange(dateFilter);
-        const assigneeAliasSet = resolveInsightsAssigneeAliases(salesPeople, filterOptions);
-        const subStatusQs = new URLSearchParams({ resource: "sub-status", role: "SALES_EXECUTIVE" });
+        const assigneeAliasSetLocal = assigneeAliasSet;
+        const subStatusQs = new URLSearchParams({
+          resource: "sub-status",
+          role: "SALES_EXECUTIVE",
+        });
 
-        const [data, subMapRes] = await Promise.all([
-          fetchAdminLeadsHeatmapData(
+        // SM/MANAGER: same my∪team + id-merge journey as My Leads Total / heatmap phases.
+        // Org admins: sales filter-merge heatmap (not phone-primary).
+        let poolRows: ApiLead[] = [];
+        let smCanViewPool: ApiLead[] | null = null;
+
+        if (isSalesManager) {
+          /**
+           * Full my∪team inventory (no Hub date pin) so All time matches My Leads 1:1.
+           * This month / other presets applied client-side on lead *created* date after id-merge.
+           */
+          const hubMyTeam = await fetchInsightsSalesManagerMyTeamLeads({
+            // Pin Hub only when filtering a single exec; All = full my∪team JWT pool.
+            assigneeAliasSet:
+              salesPeople.kind === "executive" && assigneeAliasSetLocal.length > 0
+                ? assigneeAliasSetLocal
+                : undefined,
+          });
+          let inventory = filterLeadsForSalesClientInbox(hubMyTeam, "verified");
+          if (salesPeople.kind === "executive" && assigneeAliasSetLocal.length > 0) {
+            inventory = filterLeadsByAssigneeScope(inventory, assigneeAliasSetLocal);
+          }
+          inventory = filterApiLeadsByInsightsDateRange(inventory, range);
+          smCanViewPool = inventory;
+          const aligned = insightsSalesManagerMilestoneAndTotal(inventory);
+          poolRows = aligned.pool;
+        } else {
+          // Full sales journey (no date in Hub) then client month/range cut — same as SM accuracy.
+          const data = await fetchAdminLeadsHeatmapData(
             {
               workspace: "sales",
               verificationStatus: "verified",
-              dateFrom: range.submittedFrom,
-              dateTo: range.submittedTo,
-              assigneeAliasSet: assigneeAliasSet.length > 0 ? assigneeAliasSet : undefined,
+              assigneeAliasSet:
+                assigneeAliasSetLocal.length > 0 ? assigneeAliasSetLocal : undefined,
             },
             getCrmAuthHeaders(),
-          ),
-          fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
-            cache: "no-store",
-            headers: getCrmAuthHeaders(),
-          }).catch(() => null),
-        ]);
+          );
+          // Journey id-merge rows (not phone primaryRows) — same as Journey Phase Heatmap.
+          let journeyRows =
+            data.leads.length > 0 ? data.leads : data.primaryRows;
+          if (assigneeAliasSetLocal.length > 0) {
+            journeyRows = filterLeadsByAssigneeScope(journeyRows, assigneeAliasSetLocal);
+          }
+          journeyRows = filterLeadsForSalesClientInbox(journeyRows, "verified");
+          journeyRows = filterApiLeadsByInsightsDateRange(journeyRows, range);
+          const aligned = insightsSalesManagerMilestoneAndTotal(journeyRows);
+          poolRows = aligned.pool;
+        }
+
+        const subMapRes = await fetch(`/api/milestone-count?${subStatusQs.toString()}`, {
+          cache: "no-store",
+          headers: getCrmAuthHeaders(),
+        }).catch(() => null);
+
         if (cancelled) return;
 
-        const scopedLeads = filterInsightsQuoteSentScopeLeads(data.primaryRows, {
-          branchId,
+        const scopedRows = filterInsightsScopeLeadsKeepRows(poolRows, {
+          branchId: effectiveBranchId,
           filterOptions,
         });
-        // Same phone-unique pool used by Leads insight tiles / Lost Segment / Journey heatmap
-        const insightPool = salesInsightCountLeads(scopedLeads);
+        // Lost Segment total uses full canView pool (not stage id-merge only).
+        const lostScopeRows =
+          isSalesManager && smCanViewPool
+            ? filterInsightsScopeLeadsKeepRows(smCanViewPool, {
+                branchId: effectiveBranchId,
+                filterOptions,
+              })
+            : scopedRows;
+
+        // Funnel = id-merged stage inventory (My Leads phases). Lost Segment still phone-primary.
+        const funnelPool = scopedRows;
+        const lostCountPool = salesInsightCountLeads(lostScopeRows);
+
+        // leadView "default" does not re-scope (pool already Hub-scoped / assignee filtered).
         const insightOpts = salesAdminPoolInsightOpts(
           "",
           [],
           range.submittedFrom,
           range.submittedTo,
         );
-        const lostCounts = computeLostSegmentCounts(insightPool, insightOpts);
-        const dropReasonsAligned = computeLostSegmentDropReasons(insightPool, insightOpts);
+        const lostCounts = computeLostSegmentCounts(lostCountPool, insightOpts);
+        const dropReasonsAligned = computeLostSegmentDropReasons(lostCountPool, insightOpts);
         const lostStages: InsightsLostFunnelStage[] = [
           {
             stageKey: "fresh_lead_lost",
@@ -651,8 +930,15 @@ export default function InsightsClient1() {
             dropPercent: 0,
           },
         ];
-        const lostTotal = lostStages.reduce((s, x) => s + x.count, 0);
+        // Lost Total = sum of segment tiles only (exclude zero Fresh Lost shell row).
+        const lostTotal = lostStages
+          .filter((st) => st.stageKey !== "fresh_lead_lost")
+          .reduce((s, x) => s + x.count, 0);
         for (const st of lostStages) {
+          if (st.stageKey === "fresh_lead_lost") {
+            st.dropPercent = 0;
+            continue;
+          }
           st.dropPercent = lostTotal > 0 ? Math.round((st.count / lostTotal) * 100) : 0;
         }
 
@@ -669,34 +955,45 @@ export default function InsightsClient1() {
           }
         }
 
-        const milestoneCounts = normalizeMilestoneCountsToCanonical(
-          milestoneCountsFromLeads(insightPool, "sales"),
+        // Always derive phases from funnelPool so Total === phase sum after any scope.
+        const milestoneCountsScoped = normalizeMilestoneCountsToCanonical(
+          milestoneCountsFromLeads(funnelPool, "sales"),
           "sales",
         );
-        const salesFunnelShell = buildAlignedSalesFunnelStages(milestoneCounts);
+        const salesFunnelShell = buildAlignedSalesFunnelStages(milestoneCountsScoped);
+
+        // Total bar: always id-merge stage sum (= My Leads Total Leads when unfiltered).
+        const stageInventoryTotal = Object.values(milestoneCountsScoped).reduce(
+          (s, n) => s + (Number(n) || 0),
+          0,
+        );
+        const finalTotal =
+          stageInventoryTotal > 0 ? stageInventoryTotal : funnelPool.length;
 
         if (!cancelled) {
-          setAlignedSalesPoolTotal(insightPool.length);
+          setAlignedSalesPoolTotal(finalTotal);
           setAlignedLostFunnel({ total: lostTotal, stages: lostStages });
           setAlignedDropReasons(dropReasonsAligned);
-          setStagePathData(buildInsightsFunnelStagePathData(insightPool, subMappings));
+          setStagePathData(buildInsightsFunnelStagePathData(funnelPool, subMappings));
           setStagePathLoading(false);
           setAlignedSalesFunnel(salesFunnelShell);
+          // This month / custom: only weeks inside the Insights date window (not Hub multi-month weeks).
+          setAlignedWeekCharts(buildInsightsWeekChartsFromLeads(funnelPool, range));
         }
 
         const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
-        const budgetMap = buildLeadBudgetInvestmentMapSync(scopedLeads);
+        const budgetMap = buildLeadBudgetInvestmentMapSync(funnelPool);
         if (cancelled) return;
-        applyInvestmentMetrics(scopedLeads, budgetMap, salesFunnelShell, opts);
+        applyInvestmentMetrics(funnelPool, budgetMap, salesFunnelShell, opts);
         setFunnelMetricsLoading(false);
 
-        const enriched = await enrichInvestmentMapWithQuotes(scopedLeads, budgetMap, {
+        const enriched = await enrichInvestmentMapWithQuotes(funnelPool, budgetMap, {
           deadlineMs: 2000,
           concurrency: 16,
           maxQuoteIds: 120,
         });
         if (cancelled) return;
-        applyInvestmentMetrics(scopedLeads, enriched, salesFunnelShell, opts);
+        applyInvestmentMetrics(funnelPool, enriched, salesFunnelShell, opts);
       } catch {
         if (!cancelled) {
           setQuoteSentWonMetrics({ count: 0, totalValue: 0, loading: false });
@@ -706,13 +1003,62 @@ export default function InsightsClient1() {
           setAlignedLostFunnel(null);
           setAlignedDropReasons(null);
           setAlignedSalesFunnel(null);
+          setAlignedWeekCharts(null);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [applyInvestmentMetrics, branchId, dateFilter, filterOptions, salesPeople]);
+  }, [
+    applyInvestmentMetrics,
+    effectiveBranchId,
+    dateFilter,
+    filterOptions,
+    assigneeAliasSet,
+    role,
+    isSalesManager,
+    smScopeReady,
+    salesPeople.kind,
+    smSelfAliases,
+    smTeamDisplayNames,
+    smTeamAliasesWhenAll,
+    viewerUserId,
+  ]);
+
+  // Role not yet read from storage
+  if (!role) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--crm-app-bg)] text-sm text-gray-500">
+        Loading Insights…
+      </div>
+    );
+  }
+
+  if (!insightsAllowed) {
+    return (
+      <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+        <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName={roleLabel}
+            profileRole={role}
+            profileInitials={roleLabel.slice(0, 2).toUpperCase() || "U"}
+          />
+          <div className="flex min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
+            <h1 className="text-xl font-bold text-gray-900">Access restricted</h1>
+            <p className="max-w-md text-sm text-gray-600">
+              CRM Insights is available for Super Admin, Admin, Sales Admin, and Sales
+              Manager roles only.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
@@ -759,25 +1105,31 @@ export default function InsightsClient1() {
                   <InsightsDateFilterPopover
                     value={dateFilter}
                     onChange={setDateFilter}
+                    defaultFilter={DEFAULT_INSIGHTS_DATE_FILTER}
+                    subtitle="Default: this month · All Time = My Leads full inventory"
                   />
 
                   <InsightsDropdownFilter
                     options={salespeopleOptions}
                     value={salesSelect}
                     onChange={(val) => setSalesPeople(parseSalesPeopleValue(val))}
-                    placeholder="All Salespeople"
+                    placeholder={
+                      isSalesManager ? "All team executives" : "All Salespeople"
+                    }
                     icon="users"
                     ariaLabel="Filter by Salespeople"
                   />
 
-                  <InsightsDropdownFilter
-                    options={branchOptions}
-                    value={branchId}
-                    onChange={setBranchId}
-                    placeholder="Location: All"
-                    icon="location"
-                    ariaLabel="Filter by Branch location"
-                  />
+                  {showBranchFilter ? (
+                    <InsightsDropdownFilter
+                      options={branchOptions}
+                      value={branchId}
+                      onChange={setBranchId}
+                      placeholder="Location: All"
+                      icon="location"
+                      ariaLabel="Filter by Branch location"
+                    />
+                  ) : null}
 
                   {isAnyFilterActive ? (
                     <button
@@ -863,18 +1215,29 @@ export default function InsightsClient1() {
           <InsightSect2
             kpis={{
               ...dashboard.kpis,
+              // Same id-merge journey inventory as Sales Funnel Total / My Leads Total.
               totalLeads: {
                 ...dashboard.kpis.totalLeads,
-                value: alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value,
+                value:
+                  alignedSalesPoolTotal != null
+                    ? alignedSalesPoolTotal
+                    : dashboard.kpis.totalLeads.value,
               },
             }}
             tokenMetrics={tokenMetrics}
+            dashboardLoading={
+              loading || funnelMetricsLoading || (isSalesManager && !smScopeReady)
+            }
           />
       <InsightSect3
-        salesFunnel={alignedSalesFunnel ?? dashboard.salesFunnel}
+        salesFunnel={ensureFreshLeadInSalesFunnel(
+          alignedSalesFunnel ?? dashboard.salesFunnel,
+        )}
         lostFunnel={alignedLostFunnel ?? dashboard.lostFunnel}
         revenueDistribution={dashboard.revenueDistribution}
-        totalLeadsCount={alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value}
+        totalLeadsCount={
+          alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value
+        }
         tokenMetrics={tokenMetrics}
         quotationCount={quoteSentWonMetrics.count}
         quotationValue={quoteSentWonMetrics.totalValue}
@@ -896,9 +1259,15 @@ export default function InsightsClient1() {
             incentivesLoading={teamIncentivesLoading}
           />
           <InsightsSect6
-            leadsOverTime={dashboard.leadsOverTime}
-            conversionTrend={dashboard.conversionTrend}
+            leadsOverTime={
+              alignedWeekCharts?.leadsOverTime ?? dashboard.leadsOverTime
+            }
+            conversionTrend={
+              alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend
+            }
             revenueForecast={dashboard.revenueForecast}
+            dateFilter={dateFilter}
+            weekBars={alignedWeekCharts?.weekBars ?? null}
           />
         </div>
       </div>

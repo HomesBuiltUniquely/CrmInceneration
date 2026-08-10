@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
-import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import { upstreamAuthHeaders, withActAsUserHeaders } from "@/lib/crm-proxy-auth";
 
 export async function GET(req: NextRequest) {
-  const q = req.nextUrl.searchParams.toString();
+  const params = new URLSearchParams(req.nextUrl.searchParams);
+  const actAs = Number(
+    (params.get("actAsUserId") ?? params.get("salesManagerId") ?? params.get("managerUserId") ?? "").trim(),
+  );
+  if (Number.isFinite(actAs) && actAs > 0) {
+    if (!params.get("salesManagerId")) params.set("salesManagerId", String(actAs));
+    if (!params.get("managerUserId")) params.set("managerUserId", String(actAs));
+  }
+  const q = params.toString();
   const url = `${BASE_URL}/v1/leads/sales-manager/team-leads${q ? `?${q}` : ""}`;
   const res = await fetch(url, {
     cache: "no-store",
-    headers: upstreamAuthHeaders(req),
+    headers: withActAsUserHeaders(upstreamAuthHeaders(req), actAs),
   });
   const text = await res.text();
   return new NextResponse(text, {

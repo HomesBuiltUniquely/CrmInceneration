@@ -5,6 +5,7 @@ import {
   isSalesAssigneeRole,
 } from "@/lib/assignment-reassign";
 import {
+  crmLeadTopLevelStage,
   readSalesStageFieldsFromLead,
   SALES_POOL_NO_MILESTONE,
   salesPoolMilestoneStage,
@@ -40,6 +41,12 @@ export function pipelineRoleForWorkspace(workspace: CrmWorkspace): string {
   return workspace === "presales" ? "PRESALES_EXECUTIVE" : "SALES_EXECUTIVE";
 }
 
+/** Fresh Lead UI includes blank milestone (same as Insights / crmLeadTopLevelStage). */
+export function isFreshLeadStageLabel(stage: string): boolean {
+  const key = normalizeStageKey(stage);
+  return key === "fresh lead" || key === "fresh leads" || /^fresh\s+leads?$/.test(key);
+}
+
 export function milestoneFilterQueryForWorkspace(
   workspace: CrmWorkspace,
   stage: string,
@@ -52,6 +59,13 @@ export function milestoneFilterQueryForWorkspace(
     if (stage.trim()) out.presalesMilestoneStage = stage.trim();
     if (category.trim()) out.presalesMilestoneCategory = category.trim();
     if (subStage.trim()) out.presalesMilestoneSubStage = subStage.trim();
+    return out;
+  }
+  /**
+   * Do not send Fresh Lead alone to Hub — Hub exact match drops blank milestone rows.
+   * Client filters with crmLeadTopLevelStage (blank → Fresh Lead).
+   */
+  if (isFreshLeadStageLabel(stage) && !category.trim() && !subStage.trim()) {
     return out;
   }
   if (stage.trim()) out.milestoneStage = stage.trim();
@@ -101,19 +115,20 @@ export function leadMatchesWorkspaceMilestoneFilter(
     return true;
   }
 
-  const poolStage = salesPoolMilestoneStage(lead);
   const { milestoneStageCategory: rawCat, milestoneSubStage: rawSub } =
     readSalesStageFieldsFromLead(lead);
 
   if (st) {
     if (isSalesPoolNoMilestoneFilter(st)) {
+      const poolStage = salesPoolMilestoneStage(lead);
       if (poolStage.trim() !== "") return false;
       if (cat.trim() && rawCat.trim()) return false;
       if (sub.trim() && rawSub.trim()) return false;
       return true;
     }
-    const want = normalizeStageKey(st);
-    if (normalizeStageKey(poolStage) !== want) return false;
+    // Blank milestone → Fresh Lead (Insights / heatmap / journey column).
+    const top = crmLeadTopLevelStage(lead);
+    if (normalizeStageKey(top) !== normalizeStageKey(st)) return false;
   }
   if (cat && normalizeStageKey(rawCat) !== normalizeStageKey(cat)) return false;
   if (sub && normalizeStageKey(rawSub) !== normalizeStageKey(sub)) return false;

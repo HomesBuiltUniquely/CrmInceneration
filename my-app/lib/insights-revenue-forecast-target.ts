@@ -23,6 +23,10 @@ export function monthKeysForInsightsDateFilter(filter: BookingDateFilterState): 
     return [currentSalesTargetMonth()];
   }
 
+  if (filter.preset === "currentMonth") {
+    return [currentSalesTargetMonth()];
+  }
+
   const range = resolveBookingDateRange(filter);
   const fromMs = range.submittedFrom ? Date.parse(range.submittedFrom) : NaN;
   const toMs = range.submittedTo ? Date.parse(range.submittedTo) : NaN;
