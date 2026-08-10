@@ -1,4 +1,5 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { formatCrmDateTime } from "@/lib/date-time-format";
 
 function authJson(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json", Accept: "application/json" });
@@ -202,7 +203,7 @@ export async function fetchDesignerAppointments(designerName: string): Promise<u
   return Array.isArray(data) ? data : [];
 }
 
-export async function createAppointment(body: CreateAppointmentBody): Promise<CreateAppointmentResponse> {
+function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     designerName: body.designerName,
     description: body.description,
@@ -217,17 +218,16 @@ export async function createAppointment(body: CreateAppointmentBody): Promise<Cr
     payload.date = body.date;
     payload.slotId = body.slotId;
   }
-  const res = await fetch("/api/crm/appointment", {
-    method: "POST",
-    credentials: "include",
-    headers: authJson(),
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
-  const text = await res.text();
+  return payload;
+}
+
+async function parseAppointmentWriteResponse(
+  res: Response,
+  text: string,
+): Promise<CreateAppointmentResponse> {
   let parsed: CreateAppointmentResponse = {};
   try {
-    parsed = JSON.parse(text) as CreateAppointmentResponse;
+    parsed = text ? (JSON.parse(text) as CreateAppointmentResponse) : {};
   } catch {
     throw new Error(text || `HTTP ${res.status}`);
   }
@@ -238,6 +238,39 @@ export async function createAppointment(body: CreateAppointmentBody): Promise<Cr
     throw new Error(parsed.error);
   }
   return parsed;
+}
+
+export async function createAppointment(body: CreateAppointmentBody): Promise<CreateAppointmentResponse> {
+  const res = await fetch("/api/crm/appointment", {
+    method: "POST",
+    credentials: "include",
+    headers: authJson(),
+    body: JSON.stringify(buildAppointmentPayload(body)),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  return parseAppointmentWriteResponse(res, text);
+}
+
+/** Update existing appointment — PUT /v1/Appointment/{id} (true reschedule). */
+export async function updateAppointment(
+  id: number | string,
+  body: CreateAppointmentBody,
+  options: { rescheduleReason?: string } = {},
+): Promise<CreateAppointmentResponse> {
+  const payload = buildAppointmentPayload(body);
+  if (options.rescheduleReason?.trim()) {
+    payload.rescheduleReason = options.rescheduleReason.trim();
+  }
+  const res = await fetch(`/api/crm/appointment/${encodeURIComponent(String(id))}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: authJson(),
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  return parseAppointmentWriteResponse(res, text);
 }
 
 export type AppointmentRow = {
@@ -330,20 +363,56 @@ function appointmentMatchesLead(row: AppointmentRow, leadId: number | string): b
   return String(row.leadId) === target;
 }
 
+function sortAppointmentsNewestFirst(rows: AppointmentRow[]): AppointmentRow[] {
+  return [...rows].sort((a, b) => {
+    const aKey = String(a.startTime ?? a.createdAt ?? "");
+    const bKey = String(b.startTime ?? b.createdAt ?? "");
+    return bKey.localeCompare(aKey);
+  });
+}
+
 function pickLatestAppointmentForLead(
   rows: AppointmentRow[],
   leadId: number | string,
 ): AppointmentRow | null {
   const matches = rows.filter((row) => appointmentMatchesLead(row, leadId));
   if (matches.length === 0) return null;
+  return sortAppointmentsNewestFirst(matches)[0] ?? null;
+}
 
-  matches.sort((a, b) => {
-    const aKey = String(a.createdAt ?? a.startTime ?? "");
-    const bKey = String(b.createdAt ?? b.startTime ?? "");
-    return bKey.localeCompare(aKey);
-  });
+/** All Hub appointments linked to a lead (deduped by id, newest first). */
+export async function findAllAppointmentsForLead(
+  leadId: number | string,
+  options: { designerName?: string } = {},
+): Promise<AppointmentRow[]> {
+  const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
+  const byId = new Map<number, AppointmentRow>();
 
-  return matches[0] ?? null;
+  const addRows = (rows: AppointmentRow[]) => {
+    for (const row of rows) {
+      if (!appointmentMatchesLead(row, leadId) || row.id == null) continue;
+      byId.set(row.id, row);
+    }
+  };
+
+  if (designerName) {
+    addRows(await fetchAppointmentsByDesigner(designerName));
+  }
+  addRows(parseAppointmentRows(await fetchMyAppointments()));
+
+  return sortAppointmentsNewestFirst(Array.from(byId.values()));
+}
+
+/** Short label for cancel-meeting picker UI. */
+export function formatAppointmentCancelLabel(row: AppointmentRow): string {
+  const parts: string[] = [];
+  if (row.designerName?.trim()) parts.push(row.designerName.trim());
+  if (row.startTime?.trim()) parts.push(formatCrmDateTime(row.startTime));
+  if (row.meetingType?.trim()) {
+    parts.push(row.meetingType.trim().replace(/_/g, " "));
+  }
+  if (row.id != null) parts.push(`#${row.id}`);
+  return parts.length > 0 ? parts.join(" · ") : `Appointment #${row.id ?? "?"}`;
 }
 
 /** Existing API: GET /v1/Appointment/designer/{designerName} */
@@ -401,16 +470,17 @@ export async function resolveMeetingTypeForLead(
 export type AppointmentContextForLead = {
   meetingType: string | null;
   designerName: string | null;
+  appointmentId: number | null;
 };
 
 /**
- * Resolve meeting type + designer from appointment GET APIs (no dedicated lead endpoint).
+ * Latest Hub appointment for a lead (by leadId field or description "Lead ID: …").
  * Prefers designer-scoped list when designerName is known; otherwise GET /v1/Appointment.
  */
-export async function resolveAppointmentContextForLead(
+export async function findLatestAppointmentForLead(
   leadId: number | string,
   options: { designerName?: string } = {},
-): Promise<AppointmentContextForLead> {
+): Promise<AppointmentRow | null> {
   const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
   let rows: AppointmentRow[] = [];
   if (designerName) {
@@ -421,8 +491,53 @@ export async function resolveAppointmentContextForLead(
     rows = parseAppointmentRows(await fetchMyAppointments());
     latest = pickLatestAppointmentForLead(rows, leadId);
   }
+  return latest;
+}
+
+/**
+ * Resolve meeting type + designer from appointment GET APIs (no dedicated lead endpoint).
+ * Prefers designer-scoped list when designerName is known; otherwise GET /v1/Appointment.
+ */
+export async function resolveAppointmentContextForLead(
+  leadId: number | string,
+  options: { designerName?: string } = {},
+): Promise<AppointmentContextForLead> {
+  const latest = await findLatestAppointmentForLead(leadId, options);
   return {
     meetingType: latest?.meetingType?.trim() || null,
     designerName: latest?.designerName?.trim() || null,
+    appointmentId: latest?.id ?? null,
   };
+}
+
+/**
+ * Fetch upcoming appointments for a specific lead (today onwards).
+ * Uses the dedicated backend endpoint GET /v1/Appointment/lead/{leadId}/upcoming
+ * which filters startTime >= today midnight — no past meetings are returned.
+ *
+ * This is the primary source-of-truth for duplicate-meeting detection before scheduling.
+ */
+export async function fetchUpcomingAppointmentsForLead(
+  leadId: number | string,
+): Promise<AppointmentRow[]> {
+  const id = String(leadId).trim();
+  if (!id) return [];
+
+  const res = await fetch(`/api/crm/appointment/lead/${encodeURIComponent(id)}/upcoming`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+
+  // Gracefully return empty list on auth/not-found rather than throwing
+  if (!res.ok) return [];
+
+  let data: unknown;
+  try {
+    const text = await res.text();
+    data = text ? JSON.parse(text) : [];
+  } catch {
+    return [];
+  }
+  return parseAppointmentRows(Array.isArray(data) ? data : []);
 }

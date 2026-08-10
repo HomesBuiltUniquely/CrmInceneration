@@ -28,7 +28,7 @@ import {
   workspaceFromPathname,
 } from "@/lib/crm-workspace";
 import {
-  hierarchyUserDisplayName,
+  collectHierarchyUserAssigneeAliases,
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
@@ -211,8 +211,8 @@ export default function Header() {
 
   const adminMilestoneCountsKeyRef = useRef("");
   const handleAdminMilestoneCountsSync = useCallback(
-    (_counts: Record<string, number> | undefined) => {
-      const next = _counts ?? null;
+    (counts: Record<string, number> | undefined, _workspace?: string) => {
+      const next = counts ?? null;
       const key = next ? JSON.stringify(next) : "";
       if (adminMilestoneCountsKeyRef.current === key) return;
       adminMilestoneCountsKeyRef.current = key;
@@ -393,8 +393,11 @@ export default function Header() {
         if (cancelled) return;
         const names = new Set<string>();
         for (const u of users) {
-          const n = hierarchyUserDisplayName(u as { fullName?: string; name?: string; username?: string });
-          if (n) names.add(n);
+          for (const alias of collectHierarchyUserAssigneeAliases(
+            u as { fullName?: string; name?: string; username?: string; email?: string },
+          )) {
+            if (alias) names.add(alias);
+          }
         }
         if (legacyRes.ok) {
           const j = (await legacyRes.json().catch(() => [])) as unknown;
@@ -407,8 +410,11 @@ export default function Header() {
             if (!row || typeof row !== "object") continue;
             const rec = row as Record<string, unknown>;
             if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
-            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
-            if (n) names.add(n);
+            for (const alias of collectHierarchyUserAssigneeAliases(
+              normalizeLegacyHierarchyUser(rec),
+            )) {
+              if (alias) names.add(alias);
+            }
           }
         }
         setManagerTeamNames([...names]);
@@ -522,9 +528,10 @@ export default function Header() {
     appendWorkspaceMilestoneFilterQuery(
       q,
       leadsWorkspace,
-      milestoneStage,
-      milestoneStageCategory,
-      milestoneSubStage,
+      // Heatmap always shows full journey — stage filter is table-only.
+      "",
+      "",
+      "",
     );
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     // Global search shows all leads (verified + unverified) in CRM and Presales.
@@ -537,9 +544,6 @@ export default function Header() {
     dateFrom,
     dateTo,
     dateField,
-    milestoneStage,
-    milestoneStageCategory,
-    milestoneSubStage,
     forcedAssignee,
     forcedLeadType,
     heatmapToolbarAssignee,
@@ -697,7 +701,7 @@ export default function Header() {
                 adminMilestoneCounts={adminMilestoneCounts}
                 adminPresalesSummary={adminPresalesSummary}
                 currentRole={currentRole}
-                leadView="default"
+                leadView={isSalesManager ? "combined" : "default"}
                 currentUserName={currentUserName}
                 currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}

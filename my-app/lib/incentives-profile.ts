@@ -137,17 +137,21 @@ export function buildIncentiveProfile(
   member: IncentiveMemberRef,
   options?: BuildIncentiveProfileOptions,
 ): IncentiveProfile {
-  const monthlyTarget = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
-  const target = periodTargetFromMonthly(monthlyTarget) || DEFAULT_INCENTIVE_PERIOD_TARGET_INR;
+  const numbers = computeIncentivePeriodNumbers(member, options);
+  const target = numbers.periodTargetInr;
+  const revenueAchieved = numbers.revenueAchievedInr;
+  const achievementPct = numbers.achievementPct;
+  const incentiveEarned = numbers.incentiveEarnedInr;
+  const eligible = eligibleSlabForAchievement(achievementPct);
+  const activeSlabPct = eligible?.targetPct ?? 0;
+
   const monthLeads = options?.bookingLeads ?? [];
   const historyLeads = options?.allBookingLeads ?? monthLeads;
   const incrementalByRecord = computeIncrementalWeightsByRecordId(historyLeads);
-
   const sortedLeads = [...monthLeads].sort(
     (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime(),
   );
 
-  let totalWeighted = 0;
   const dealLedger: DealLedgerRow[] = [];
   for (const lead of sortedLeads) {
     const weight = incrementalByRecord.get(lead.id) ?? {
@@ -157,7 +161,6 @@ export function buildIncentiveProfile(
       label: "Not eligible",
     };
     if (weight.incrementalInr <= 0) continue;
-    totalWeighted += weight.incrementalInr;
     dealLedger.push({
       id: lead.id,
       initials: initialsFromName(lead.customerName),
@@ -172,13 +175,6 @@ export function buildIncentiveProfile(
       contributionPct: 0,
     });
   }
-
-  const revenueAchieved = totalWeighted;
-  const achievementPct =
-    target > 0 ? Math.round((revenueAchieved / target) * 1000) / 10 : 0;
-  const eligible = eligibleSlabForAchievement(achievementPct);
-  const activeSlabPct = eligible?.targetPct ?? 0;
-  const incentiveEarned = calculateSlabIncentive(target, achievementPct);
 
   if (revenueAchieved > 0) {
     for (const row of dealLedger) {
@@ -214,7 +210,7 @@ export function buildIncentiveProfile(
       onSpotBonus: formatInr(0),
       nextSlabGap: nextSlabGapAmount(target, revenueAchieved, achievementPct),
       currentSlabLabel: eligible ? `${activeSlabPct}%` : "—",
-      totalWeighted: formatInr(totalWeighted),
+      totalWeighted: formatInr(revenueAchieved),
     },
     slabs,
     payoutMath: {
@@ -233,6 +229,45 @@ export function buildIncentiveProfile(
       totalSpeedBonus: formatInr(0),
     },
     dealLedger,
+  };
+}
+
+/**
+ * Raw 15-day incentive numbers — same engine as `/incentives` (weighted revenue + slabs).
+ * Use for Team Performance Matrix so Target / Achieved / Payoff match Incentives exactly.
+ */
+export type IncentivePeriodNumbers = {
+  periodTargetInr: number;
+  revenueAchievedInr: number;
+  incentiveEarnedInr: number;
+  achievementPct: number;
+};
+
+export function computeIncentivePeriodNumbers(
+  member: IncentiveMemberRef,
+  options?: BuildIncentiveProfileOptions,
+): IncentivePeriodNumbers {
+  const monthlyTarget = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const target = periodTargetFromMonthly(monthlyTarget) || DEFAULT_INCENTIVE_PERIOD_TARGET_INR;
+  const monthLeads = options?.bookingLeads ?? [];
+  const historyLeads = options?.allBookingLeads ?? monthLeads;
+  const incrementalByRecord = computeIncrementalWeightsByRecordId(historyLeads);
+
+  let totalWeighted = 0;
+  for (const lead of monthLeads) {
+    const weight = incrementalByRecord.get(lead.id);
+    if (weight && weight.incrementalInr > 0) {
+      totalWeighted += weight.incrementalInr;
+    }
+  }
+
+  const achievementPct =
+    target > 0 ? Math.round((totalWeighted / target) * 1000) / 10 : 0;
+  return {
+    periodTargetInr: target,
+    revenueAchievedInr: totalWeighted,
+    incentiveEarnedInr: calculateSlabIncentive(target, achievementPct),
+    achievementPct,
   };
 }
 

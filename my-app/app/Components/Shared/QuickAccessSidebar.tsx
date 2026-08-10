@@ -9,7 +9,11 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
-import { canAccessBookingTokenDashboard, isAdminRole } from "@/lib/roleUtils";
+import {
+  canAccessBookingTokenDashboard,
+  canAccessCrmInsights,
+  isAdminRole,
+} from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
 import ThemeToggle from "./ThemeToggle";
 
@@ -19,7 +23,9 @@ function pathnameMatchesSidebarHref(pathname: string, href: string): boolean {
   const base = href.trim();
   if (!base) return false;
   if (base === "/") return path === "/" || path === "";
-  return path === base || path.startsWith(`${base}/`);
+  const normPath = path.toLowerCase();
+  const normBase = base.toLowerCase();
+  return normPath === normBase || normPath.startsWith(`${normBase}/`);
 }
 
 function sidebarHrefMatchLength(href: string): number {
@@ -574,6 +580,9 @@ export default function QuickAccessSidebar({
           if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
           if (item.id === "crm-booking-token") {
             return canAccessBookingTokenDashboard(currentRole || profileRole);
+          }
+          if (item.id === "crm-insights") {
+            return canAccessCrmInsights(currentRole || profileRole);
           }
           return true;
         }),

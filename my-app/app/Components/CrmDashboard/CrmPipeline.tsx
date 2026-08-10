@@ -307,16 +307,41 @@ export default function CrmPipeline({ filters, workspace = "sales" }: Props) {
     const lostItems: MilestonePathItem[] = [];
     let wi = 0;
     let li = 0;
-    for (const m of subMappings ?? []) {
+    const effectiveMappings = [...(subMappings ?? [])];
+    if (
+      workspace !== "presales" &&
+      !effectiveMappings.some((m) => norm(m.subStageName) === "renovation")
+    ) {
+      let insertIdx = effectiveMappings.length;
+      for (let i = 0; i < effectiveMappings.length; i++) {
+        if (norm(effectiveMappings[i].stage) === "discovery") {
+          insertIdx = i + 1;
+        }
+      }
+      effectiveMappings.splice(insertIdx, 0, {
+        stage: "Discovery",
+        stageCategory: "Discovery Won",
+        subStageName: "Renovation",
+      });
+    }
+
+    for (const m of effectiveMappings) {
       if (!isTotalLeads && norm(m.stage) !== norm(selectedStage)) continue;
       const count = bySub.get(norm(m.subStageName)) ?? 0;
+      
+      const isWon = isWonCategory(m.stageCategory) || norm(m.subStageName) === "renovation";
+      const isLost = isLostCategory(m.stageCategory) && !isWon;
+
+      if (!isWon && !isLost) continue;
+
       const item: MilestonePathItem = {
         title: m.subStageName.toUpperCase(),
         value: count,
-        leftAccent: isWonCategory(m.stageCategory) ? leftAccent(wi++) : leftAccent(li++),
+        leftAccent: isWon ? leftAccent(wi++) : leftAccent(li++),
       };
-      if (isWonCategory(m.stageCategory)) wonItems.push(item);
-      if (isLostCategory(m.stageCategory)) lostItems.push(item);
+
+      if (isWon) wonItems.push(item);
+      else if (isLost) lostItems.push(item);
     }
     if (
       !isTotalLeads &&

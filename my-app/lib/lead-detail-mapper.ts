@@ -23,6 +23,7 @@ import {
   readPropertyNotesFromRawPropertyDetails,
 } from "@/lib/lead-field-persistence";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
+import { isRenovationFeedbackLocked } from "@/lib/milestone-advance-gates";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -499,15 +500,38 @@ export function extractStage(detail: Record<string, unknown>) {
       ? (st.substage as { substage?: string | null }).substage
       : undefined;
   const ps = readPresalesMilestoneFromDetail(detail);
+  const milestoneStage =
+    (st?.milestoneStage as string | null | undefined) ?? null;
+  const milestoneStageCategory =
+    (st?.milestoneStageCategory as string | null | undefined) ?? null;
+  const milestoneSubStage =
+    (st?.milestoneSubStage as string | null | undefined) ?? null;
+  const rawRenovationAssigned =
+    (st?.renovationAssigned as boolean | undefined) ?? false;
+  // After Discovery → Fresh Lead rollback, Hub may still send renovationAssigned.
+  // Treat Fresh Lead as unlocked so Renovation can be assigned again.
+  const renovationAssigned = isRenovationFeedbackLocked(
+    rawRenovationAssigned,
+    milestoneStage,
+    milestoneSubStage,
+    milestoneStageCategory,
+  );
   return {
-    milestoneStage: (st?.milestoneStage as string | null | undefined) ?? null,
-    milestoneStageCategory: (st?.milestoneStageCategory as string | null | undefined) ?? null,
-    milestoneSubStage: (st?.milestoneSubStage as string | null | undefined) ?? null,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
     presalesMilestoneStage: ps.stage || null,
     presalesMilestoneCategory: ps.category || null,
     presalesMilestoneSubStage: ps.subStage || null,
     legacyStage: (st?.stage as string | null | undefined) ?? null,
     legacySubstage: substage ?? null,
+    renovationAssigned,
+    renovationSalesManager: renovationAssigned
+      ? ((st?.renovationSalesManager as string | undefined) ?? null)
+      : null,
+    renovationSalesExecutive: renovationAssigned
+      ? ((st?.renovationSalesExecutive as string | undefined) ?? null)
+      : null,
   };
 }
 
@@ -649,6 +673,9 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       presalesMilestoneSubStage: st.presalesMilestoneSubStage,
       stage: st.legacyStage ?? "Initial Stage",
       substage: { substage: st.legacySubstage ?? null },
+      renovationAssigned: st.renovationAssigned,
+      renovationSalesManager: st.renovationSalesManager,
+      renovationSalesExecutive: st.renovationSalesExecutive,
     },
     branch: pickStr(detail, "experienceCenter", "experience_center", "branch", "branchName", "branch_name", "office", "officeName", "territory", "region") || undefined,
     previousAssignee: pickStr(detail, "previousAssignee", "previous_assignee") || undefined,

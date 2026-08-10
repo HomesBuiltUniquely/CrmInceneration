@@ -65,5 +65,14 @@ export function milestoneSubStageOptionsForCategory(
     seen.add(key);
     out.push(s);
   }
+  
+  if (
+    stage.trim().toLowerCase() === "discovery" &&
+    category.trim().toLowerCase() === "discovery won" &&
+    !seen.has("renovation")
+  ) {
+    out.push("Renovation");
+  }
+
   return out;
 }

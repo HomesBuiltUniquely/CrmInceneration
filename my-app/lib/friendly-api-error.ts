@@ -43,9 +43,13 @@ export function sanitizeErrorMessage(message: string, fallback: string): string 
   return cleanMessage;
 }
 
-/** User-facing copy when design/New CRM has not produced a quote yet. */
+/** User-facing copy when the Prolance project exists but has no quote yet. */
 export const QUOTE_NOT_READY_USER_MESSAGE =
-  "Quote is not generated yet on the design side. Please generate the quote there first, then try Get Quote again.";
+  "Quote not created yet. Please contact your designer.";
+
+/** User-facing copy when the designer has not created the lead in Prolance. */
+export const QUOTE_PROJECT_NOT_CREATED_USER_MESSAGE =
+  "The designer has not created this lead's project in Prolance yet. Please contact your designer.";
 
 /**
  * Hub often returns "Failed to resolve internal quote link" both when the quote
@@ -60,9 +64,21 @@ const QUOTE_RESOLVE_FAILED_PATTERNS: RegExp[] = [
   /internal\s+quote\s+link/i,
 ];
 
+const QUOTE_PROJECT_NOT_CREATED_PATTERNS: RegExp[] = [
+  /^lead not found for externalLeadId$/i,
+  /(?:no|missing)\s+prolance\s+project/i,
+  /no\s+project\s+(?:found|created|available)/i,
+  /prolance\s+project\s+(?:not\s+found|missing|does\s+not\s+exist|has\s+not\s+been\s+created)/i,
+  /project\s+(?:not\s+found|missing|does\s+not\s+exist|has\s+not\s+been\s+created)/i,
+  /(?:no|could\s+not\s+find)\s+project\s+(?:for|mapped\s+to|linked\s+to).*(?:lead|customer|external)/i,
+  /(?:lead|customer|external).*(?:not\s+mapped|not\s+linked).*(?:project|prolance)/i,
+];
+
 const QUOTE_NOT_READY_PATTERNS: RegExp[] = [
+  /^no quote found for this lead yet$/i,
+  /no\s+quote\s+(?:created|found|generated|available)/i,
+  /quote\s+(?:not\s+created|does\s+not\s+exist)/i,
   /quote\s+(?:link\s+)?(?:not\s+found|not\s+ready|not\s+available|unavailable|missing)/i,
-  /no\s+quote\s+(?:found|generated|available)/i,
   /quote\s+(?:has\s+)?not\s+(?:been\s+)?generated/i,
   /customer\s+(?:quote\s+)?link\s+(?:missing|not\s+found|unavailable)/i,
 ];
@@ -77,6 +93,9 @@ export function toFriendlyQuoteErrorMessage(
 ): string {
   const clean = message.trim();
   if (!clean) return fallback;
+  if (QUOTE_PROJECT_NOT_CREATED_PATTERNS.some((pattern) => pattern.test(clean))) {
+    return QUOTE_PROJECT_NOT_CREATED_USER_MESSAGE;
+  }
   if (QUOTE_RESOLVE_FAILED_PATTERNS.some((pattern) => pattern.test(clean))) {
     return QUOTE_RESOLVE_FAILED_USER_MESSAGE;
   }
@@ -84,6 +103,19 @@ export function toFriendlyQuoteErrorMessage(
     return QUOTE_NOT_READY_USER_MESSAGE;
   }
   return sanitizeErrorMessage(clean, fallback);
+}
+
+/**
+ * Prefer actionable quote errors while fallback lead IDs are attempted.
+ * A confirmed project with no quote is strongest; otherwise prefer a clear
+ * missing-project response over a generic lookup/transport error.
+ */
+export function quoteErrorMessagePriority(message: string): number {
+  const friendly = toFriendlyQuoteErrorMessage(message);
+  if (friendly === QUOTE_NOT_READY_USER_MESSAGE) return 3;
+  if (friendly === QUOTE_PROJECT_NOT_CREATED_USER_MESSAGE) return 2;
+  if (friendly === QUOTE_RESOLVE_FAILED_USER_MESSAGE) return 1;
+  return 0;
 }
 
 export async function getFriendlyApiErrorMessage(

@@ -28,6 +28,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
         icon: "receipt",
         href: "/booking-token",
       },
+      {
+        id: "crm-insights",
+        label: "Insights",
+        description: "Sales performance & pipeline insights",
+        icon: "chart",
+        href: "/Insights",
+      },
     ],
   },
   {

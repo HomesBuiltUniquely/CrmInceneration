@@ -25,6 +25,13 @@ export type InsightsFunnelStage = {
   conversionPercent: number;
 };
 
+export type InsightsLostFunnelStage = {
+  stageKey: string;
+  stageLabel: string;
+  count: number;
+  dropPercent: number;
+};
+
 export type InsightsRevenuePhase = {
   phaseKey: string;
   phaseLabel: string;
@@ -38,10 +45,13 @@ export type InsightsDropReason = {
   percent: number;
 };
 
+/** Hub stage-velocity hop (persisted transition history). FE displays only — do not recompute. */
 export type InsightsStageVelocity = {
   fromStage: string;
   toStage: string;
+  /** Mean days for completions in the current filter window (1 decimal). */
   avgDays: number;
+  /** currentAvg − previousPeriodAvg; negative = faster (good). */
   trendDays: number;
 };
 
@@ -55,6 +65,12 @@ export type InsightsTeamMember = {
   closed: number;
   closedValue: number;
   conversionPercent: number;
+  /** Hub optional row active flag (P0 matrix). */
+  active?: boolean;
+  /** FE Incentives only (prefer); Hub usually omits. */
+  targetIncentive?: number;
+  achievedIncentive?: number;
+  payoff?: number;
 };
 
 export type InsightsChartPoint = {
@@ -72,14 +88,29 @@ export type InsightsDashboard = {
     salesManagerId?: number | null;
     salesExecutiveId?: number | null;
     teamPeriod?: string | null;
+    /** Hub frozen rule echo (P0) e.g. lead.assignee ⇄ User.fullName|username */
+    assigneeRule?: string | null;
+    /** Hub frozen field for branch scope e.g. User.branch */
+    branchField?: string | null;
   };
   kpis: {
     totalLeads: InsightsKpiMetric;
     pipelineValue: InsightsKpiMetric;
     closedWon: InsightsKpiMetric;
     conversionPercent: InsightsKpiMetric;
+    /**
+     * Hub money KPIs — same Scope as totalLeads (branch + people + date).
+     * Prefer over FE booking-token deal recompute.
+     */
+    tokenValue?: InsightsKpiMetric | null;
+    bookingValue?: InsightsKpiMetric | null;
+    grossBooking?: InsightsKpiMetric | null;
   };
   salesFunnel: InsightsFunnelStage[];
+  lostFunnel?: {
+    total: number;
+    stages: InsightsLostFunnelStage[];
+  };
   revenueDistribution: {
     phases: InsightsRevenuePhase[];
     observation?: string | null;
@@ -149,16 +180,11 @@ export function formatInsightsInrCompact(amount: number | null | undefined): str
   const sign = n < 0 ? "-" : "";
   if (abs >= 10_000_000) {
     const cr = abs / 10_000_000;
-    return `${sign}₹${cr >= 10 ? cr.toFixed(1) : cr.toFixed(2).replace(/\.?0+$/, "")}Cr`;
+    return `${sign}₹${cr.toFixed(2).replace(/\.?0+$/, "")}Cr`;
   }
   if (abs >= 100_000) {
     const lakh = abs / 100_000;
-    /** UI mock used ₹84.2M style for large pipeline; keep M for ≥1e6 */
-    if (abs >= 1_000_000) {
-      const m = abs / 1_000_000;
-      return `${sign}₹${m.toFixed(1).replace(/\.0$/, "")}M`;
-    }
-    return `${sign}₹${lakh.toFixed(1).replace(/\.0$/, "")}L`;
+    return `${sign}₹${lakh.toFixed(2).replace(/\.?0+$/, "")}L`;
   }
   if (abs >= 1_000) {
     return `${sign}₹${(abs / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
@@ -309,8 +335,30 @@ function normalizeKpi(raw: unknown): InsightsKpiMetric {
     value: asNum(o.value),
     changePercent: o.changePercent == null ? null : asNum(o.changePercent),
     changeAbsolute: o.changeAbsolute == null ? null : asNum(o.changeAbsolute),
-    progressRatio: o.progressRatio == null ? null : asNum(o.progressRatio),
+    progressRatio: asNum(o.progressRatio),
   };
+}
+
+/** null when Hub omits the field entirely */
+function normalizeOptionalKpi(raw: unknown): InsightsKpiMetric | null {
+  if (raw == null || typeof raw !== "object") return null;
+  return normalizeKpi(raw);
+}
+
+function normalizeLostFunnel(
+  raw: unknown,
+): InsightsDashboard["lostFunnel"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const stages = asArray<Record<string, unknown>>(o.stages).map((s) => ({
+    stageKey: asStr(s.stageKey),
+    stageLabel: asStr(s.stageLabel, asStr(s.stageKey)),
+    count: asNum(s.count),
+    dropPercent: asNum(s.dropPercent),
+  }));
+  if (stages.length === 0) return undefined;
+  const total = asNum(o.total, stages.reduce((sum, s) => sum + s.count, 0));
+  return { total, stages };
 }
 
 /** Normalize Hub payload so UI can rely on a stable shape. */
@@ -352,6 +400,9 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       pipelineValue: normalizeKpi(kpis.pipelineValue),
       closedWon: normalizeKpi(kpis.closedWon),
       conversionPercent: normalizeKpi(kpis.conversionPercent),
+      tokenValue: normalizeOptionalKpi(kpis.tokenValue),
+      bookingValue: normalizeOptionalKpi(kpis.bookingValue),
+      grossBooking: normalizeOptionalKpi(kpis.grossBooking),
     },
     salesFunnel: asArray<Record<string, unknown>>(r.salesFunnel).map((s) => ({
       stageKey: asStr(s.stageKey),
@@ -361,6 +412,7 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       value: asNum(s.value),
       conversionPercent: asNum(s.conversionPercent),
     })),
+    lostFunnel: normalizeLostFunnel(r.lostFunnel),
     revenueDistribution: {
       phases: asArray<Record<string, unknown>>(revenue.phases).map((p) => ({
         phaseKey: asStr(p.phaseKey),
@@ -396,6 +448,20 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
         closed: asNum(m.closed),
         closedValue: asNum(m.closedValue),
         conversionPercent: asNum(m.conversionPercent),
+        active:
+          typeof m.active === "boolean"
+            ? m.active
+            : m.active == null
+              ? undefined
+              : Boolean(m.active),
+        targetIncentive: m.targetIncentive != null ? asNum(m.targetIncentive) : undefined,
+        achievedIncentive: m.achievedIncentive != null ? asNum(m.achievedIncentive) : undefined,
+        payoff:
+          m.payoff != null
+            ? asNum(m.payoff)
+            : m.incentivePayout != null
+              ? asNum(m.incentivePayout)
+              : undefined,
       }),
     ),
     leadsOverTime: {
@@ -504,6 +570,9 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
     pipelineValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
     closedWon: { value: 0, changePercent: 0, progressRatio: 0 },
     conversionPercent: { value: 0, changePercent: 0, progressRatio: 0 },
+    tokenValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
+    bookingValue: { value: 0, changeAbsolute: 0, progressRatio: 0 },
+    grossBooking: { value: 0, changeAbsolute: 0, progressRatio: 0 },
   },
   salesFunnel: [],
   revenueDistribution: { phases: [], observation: null },

@@ -9,129 +9,175 @@ import {
 
 type Props = {
   team: InsightsTeamMember[];
-  teamPeriod: "daily" | "monthly";
-  onTeamPeriodChange: (period: "daily" | "monthly") => void;
+  /** e.g. All time · Insights date filter */
+  incentiveScopeLabel?: string;
+  incentivesLoading?: boolean;
 };
+
+const TEAM_VISIBLE_ROWS = 7;
+const TEAM_ROW_HEIGHT_PX = 60;
+const TEAM_SCROLL_MAX_PX = TEAM_VISIBLE_ROWS * TEAM_ROW_HEIGHT_PX;
+
+/**
+ * Payoff stays computed + on the model; set true to show the column again.
+ * Hide-only (not removed) so incentives data still loads.
+ */
+const SHOW_PAYOFF_COLUMN = false;
+
+/** No Value column — closed $ is not shown (Achieved/Payoff cover incentives money). */
+const COLS = SHOW_PAYOFF_COLUMN
+  ? "grid-cols-[minmax(180px,1.4fr)_minmax(56px,0.55fr)_minmax(72px,0.6fr)_minmax(80px,0.65fr)_minmax(56px,0.55fr)_minmax(64px,0.55fr)_minmax(88px,0.75fr)_minmax(80px,0.7fr)]"
+  : "grid-cols-[minmax(180px,1.4fr)_minmax(56px,0.55fr)_minmax(72px,0.6fr)_minmax(80px,0.65fr)_minmax(56px,0.55fr)_minmax(64px,0.55fr)_minmax(88px,0.75fr)]";
+
+function convTone(percent: number): string {
+  if (percent >= 10) return "bg-green-50 text-green-600";
+  return "bg-red-50 text-red-600";
+}
+
+function payoffTone(payoff: number): string {
+  if (payoff > 0) return "text-emerald-700";
+  return "text-gray-400";
+}
 
 export default function InsightSect5({
   team,
-  teamPeriod,
-  onTeamPeriodChange,
+  incentiveScopeLabel,
+  incentivesLoading = false,
 }: Props) {
+  const needsScroll = team.length > TEAM_VISIBLE_ROWS;
+
   return (
     <main className="px-4 lg:px-0">
-      <div className="mt-10 flex justify-center">
-        <div className="w-full max-w-[1290px] rounded-2xl border border-gray-100 bg-white shadow-md">
-          <div className="flex flex-col gap-4 border-b border-gray-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-            <h2 className="text-xl font-bold text-gray-800 sm:text-2xl">
+      <div className="mt-8 flex justify-center">
+        <div className="w-full max-w-[1320px] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-md">
+          <div className="border-b border-gray-100 px-4 py-3.5 sm:px-6">
+            <h2 className="text-lg font-bold leading-tight text-gray-900 sm:text-xl">
               Team Performance Matrix
             </h2>
-
-            <div className="flex overflow-hidden rounded-lg border border-gray-200 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={() => onTeamPeriodChange("daily")}
-                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  teamPeriod === "daily"
-                    ? "bg-slate-900 text-white"
-                    : "bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                Daily
-              </button>
-              <button
-                type="button"
-                onClick={() => onTeamPeriodChange("monthly")}
-                className={`px-4 py-2 text-sm font-medium transition-colors ${
-                  teamPeriod === "monthly"
-                    ? "bg-slate-900 text-white"
-                    : "bg-white text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                Monthly
-              </button>
-            </div>
+            <p className="mt-0.5 text-[11px] text-gray-400">
+              {incentivesLoading
+                ? SHOW_PAYOFF_COLUMN
+                  ? "Loading achieved & payoff…"
+                  : "Loading achieved…"
+                : incentiveScopeLabel
+                  ? `Hub activity · ${incentiveScopeLabel}`
+                  : SHOW_PAYOFF_COLUMN
+                    ? "Hub activity · Achieved & Payoff follow Insights date filter"
+                    : "Hub activity · Achieved follows Insights date filter"}
+            </p>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[1000px] w-full">
-              <thead className="bg-gray-50">
-                <tr className="text-left text-xs uppercase tracking-wider text-gray-400">
-                  <th className="px-8 py-4">Salesperson</th>
-                  <th className="py-4">Leads</th>
-                  <th className="py-4">Meetings</th>
-                  <th className="py-4">Proposals</th>
-                  <th className="py-4">Closed</th>
-                  <th className="py-4">Value</th>
-                  <th className="py-4">Conv %</th>
-                </tr>
-              </thead>
-              <tbody>
+            <div className={SHOW_PAYOFF_COLUMN ? "min-w-[860px]" : "min-w-[780px]"}>
+              <div
+                className={`grid ${COLS} gap-x-2 bg-gray-50/90 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400 sm:px-5`}
+              >
+                <div className="text-left">Salesperson</div>
+                <div className="text-right">Leads</div>
+                <div className="text-right">Meetings</div>
+                <div className="text-right">Proposals</div>
+                <div className="text-right">Closed</div>
+                <div className="text-right">Conv %</div>
+                <div className="text-right text-sky-600/90">Achieved</div>
+                {SHOW_PAYOFF_COLUMN ? (
+                  <div className="text-right text-sky-600/90">Payoff</div>
+                ) : null}
+              </div>
+
+              <div
+                className={`insights-table-scroll ${
+                  needsScroll
+                    ? "overflow-y-auto overscroll-contain"
+                    : "overflow-visible"
+                }`}
+                style={
+                  needsScroll
+                    ? { maxHeight: `${TEAM_SCROLL_MAX_PX}px` }
+                    : undefined
+                }
+              >
                 {team.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="border-b border-gray-100 px-8 py-6 text-sm text-gray-500"
-                    >
-                      No team performance rows for this filter.
-                    </td>
-                  </tr>
+                  <div className="px-5 py-8 text-center text-sm text-gray-500">
+                    No team performance rows for this filter.
+                  </div>
                 ) : (
                   team.map((member) => {
-                    const good = member.conversionPercent >= 10;
+                    const leads = Number(member.leads) || 0;
+                    const closed = Number(member.closed) || 0;
+                    const conversionPercent =
+                      Number(member.conversionPercent) || 0;
+                    const incentivePending =
+                      member.achievedIncentive == null && member.payoff == null;
+                    const achieved = Number(member.achievedIncentive) || 0;
+                    const payoff = Number(member.payoff) || 0;
+
                     return (
-                      <tr
+                      <div
                         key={String(member.userId || member.name)}
-                        className="transition-colors hover:bg-gray-50"
+                        className={`group grid ${COLS} gap-x-2 items-center border-b border-gray-50 px-4 py-2.5 transition-colors duration-150 hover:bg-slate-50/80 sm:px-5`}
                       >
-                        <td className="border-b border-gray-100 px-8 py-5">
-                          <div className="flex items-center gap-4">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-base font-bold text-slate-700 sm:h-12 sm:w-12 sm:text-lg">
-                              {(member.name || "?").charAt(0)}
-                            </div>
-                            <div>
-                              <h3 className="font-semibold text-gray-800">
-                                {member.name}
-                              </h3>
-                              <p className="text-xs uppercase tracking-wide text-gray-400">
-                                {member.role}
-                              </p>
-                            </div>
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-700">
+                            {(member.name || "?").charAt(0).toUpperCase()}
                           </div>
-                        </td>
-                        <td className="border-b border-gray-100 font-medium text-gray-700">
-                          {formatInsightsCount(member.leads)}
-                        </td>
-                        <td className="border-b border-gray-100 font-medium text-gray-700">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-gray-800">
+                              {member.name || "—"}
+                            </p>
+                            <p className="truncate text-[10px] uppercase tracking-wide text-gray-400">
+                              {member.role || "Sales Executive"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right text-sm font-medium tabular-nums text-gray-700">
+                          {formatInsightsCount(leads)}
+                        </div>
+                        <div className="text-right text-sm font-medium tabular-nums text-gray-700">
                           {formatInsightsCount(member.meetings)}
-                        </td>
-                        <td className="border-b border-gray-100 font-medium text-gray-700">
+                        </div>
+                        <div className="text-right text-sm font-medium tabular-nums text-gray-700">
                           {formatInsightsCount(member.proposals)}
-                        </td>
-                        <td className="border-b border-gray-100 font-semibold text-gray-900">
-                          {formatInsightsCount(member.closed)}
-                        </td>
-                        <td className="border-b border-gray-100 font-semibold text-gray-900">
-                          {formatInsightsInrCompact(member.closedValue)}
-                        </td>
-                        <td className="border-b border-gray-100">
+                        </div>
+                        <div className="text-right text-sm font-semibold tabular-nums text-gray-900">
+                          {formatInsightsCount(closed)}
+                        </div>
+                        <div className="flex justify-end">
                           <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                              good
-                                ? "bg-green-50 text-green-600"
-                                : "bg-red-50 text-red-600"
-                            }`}
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${convTone(conversionPercent)}`}
                           >
-                            {formatInsightsPercent(member.conversionPercent)}
+                            {formatInsightsPercent(conversionPercent)}
                           </span>
-                        </td>
-                      </tr>
+                        </div>
+                        <div className="text-right text-sm font-semibold tabular-nums text-slate-800">
+                          {incentivePending
+                            ? "…"
+                            : formatInsightsInrCompact(achieved)}
+                        </div>
+                        {SHOW_PAYOFF_COLUMN ? (
+                          <div
+                            className={`text-right text-sm font-semibold tabular-nums ${payoffTone(payoff)}`}
+                          >
+                            {incentivePending
+                              ? "…"
+                              : payoff > 0
+                                ? formatInsightsInrCompact(payoff)
+                                : "₹0"}
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })
                 )}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
+
+          {needsScroll ? (
+            <p className="border-t border-gray-50 px-4 py-2 text-center text-[10px] font-medium text-gray-400">
+              Scroll · {formatInsightsCount(team.length)} members
+            </p>
+          ) : null}
         </div>
       </div>
     </main>

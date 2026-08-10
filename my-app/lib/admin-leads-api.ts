@@ -186,7 +186,21 @@ const PRESALES_CANONICAL_PHASES = ["Fresh Data", "Data Discovery", "Data Convers
 
 function canonicalSalesMilestoneLabel(raw: string): (typeof SALES_CANONICAL_PHASES)[number] {
   const key = normalizeStageKey(raw);
-  if (!key) return "Fresh Lead";
+  // Hub /counts empty, null, and legacy "no milestone" → Fresh (current sales inbox).
+  if (
+    !key ||
+    key === "null" ||
+    key === "undefined" ||
+    key === "none" ||
+    key === "n/a" ||
+    key === "na" ||
+    key.includes("no milestone") ||
+    key === "unassigned" ||
+    key === "initial stage" ||
+    key === "initial"
+  ) {
+    return "Fresh Lead";
+  }
   for (const phase of SALES_CANONICAL_PHASES) {
     if (normalizeStageKey(phase) === key) return phase;
   }
@@ -199,6 +213,11 @@ function canonicalSalesMilestoneLabel(raw: string): (typeof SALES_CANONICAL_PHAS
   if (key.includes("experience") || key.includes("design")) return "Experience & Design";
   if (key.includes("decision")) return "Decision";
   return "Fresh Lead";
+}
+
+/** Public: map any raw stage → one of 6 sales journey phases (heatmap + cards + table). */
+export function toCanonicalSalesMilestone(raw: string): string {
+  return canonicalSalesMilestoneLabel(raw);
 }
 
 function canonicalPresalesMilestoneLabel(raw: string): (typeof PRESALES_CANONICAL_PHASES)[number] {
@@ -279,8 +298,21 @@ export function milestoneCountForPhase(
 }
 
 function asMilestoneCountRecord(raw: unknown): Record<string, number> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const out: Record<string, number> = {};
+  if (!raw) return out;
+  // Hub sometimes returns `[{ key, count }]` instead of a map.
+  if (Array.isArray(raw)) {
+    for (const row of raw) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+      const o = row as Record<string, unknown>;
+      const stage = String(o.key ?? o.stage ?? o.name ?? o.milestoneStage ?? "").trim();
+      const n = Number(o.count ?? o.value ?? o.total);
+      if (!stage || !Number.isFinite(n)) continue;
+      out[stage] = (out[stage] ?? 0) + n;
+    }
+    return out;
+  }
+  if (typeof raw !== "object") return out;
   for (const [stage, value] of Object.entries(raw as Record<string, unknown>)) {
     const n = Number(value);
     if (Number.isFinite(n)) out[stage] = n;
@@ -340,11 +372,23 @@ export function milestoneCountsFromLeads(
 
 function leadStableIdentifier(lead: ApiLead): string {
   const row = lead as Record<string, unknown>;
-  return String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "")
+  const fromFields = String(
+    row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? row.uniqueId ?? "",
+  )
     .trim()
     .toLowerCase();
+  if (fromFields) return fromFields;
+  if (lead.id !== undefined && lead.id !== null && String(lead.id).trim()) {
+    return String(lead.id).trim();
+  }
+  return "";
 }
 
+/**
+ * Journey inventory for admin heatmap (SA / Admin / Super Admin).
+ * Id-merge only — same as SM My Leads. Do not phone-collapse:
+ * pickMilestoneRepresentativeRows drops blank-milestone Fresh siblings.
+ */
 function mergeLeadsById(leads: ApiLead[]): ApiLead[] {
   const byId = new Map<string, ApiLead>();
   let noIdSeq = 0;
@@ -405,18 +449,86 @@ export async function fetchAllAdminLeads(
   return { leads: rows, totalElements };
 }
 
-/** Milestone buckets: one customer per phone using current milestone row (latest with stage). */
-function milestoneCountsFromPrimarySourceRows(
+/**
+ * Full sales CRM inventory for Super Admin / SA / Admin journey heatmap.
+ * Hub `/admin/sales` omits walk-in & blank-assignee rows, so Fresh can be ~9 while a single
+ * manager filter (using filter merge) shows Fresh ~16. Always use filter mergeAll for sales.
+ */
+export async function fetchAllSalesFilterMergeLeads(
+  input: AdminLeadsFilterInput,
+  headers?: HeadersInit,
+  maxPages = 80,
+): Promise<{ leads: ApiLead[]; totalElements: number }> {
+  const pageSize = 500;
+  const leads: ApiLead[] = [];
+  let totalElements = 0;
+  let page = 0;
+  let totalPages = 1;
+
+  while (page < maxPages && page < totalPages) {
+    const qs = new URLSearchParams();
+    qs.set("mergeAll", "1");
+    qs.set("page", String(page));
+    qs.set("size", String(pageSize));
+    const lt = (input.leadType ?? "all").trim().toLowerCase() || "all";
+    qs.set("leadType", hubLeadTypeForFilterKey(lt) || "all");
+    appendAdminLeadsFilters(qs, {
+      ...input,
+      workspace: "sales",
+      crmMilestoneScope: true,
+    });
+    if (!qs.get("sort")) {
+      qs.set("sort", (input.sort ?? "updatedAt,desc").trim() || "updatedAt,desc");
+    }
+
+    const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Sales filter merge failed (HTTP ${res.status})`);
+    }
+    const json = (await res.json().catch(() => ({}))) as SpringPage<ApiLead>;
+    const chunk = Array.isArray(json.content) ? json.content : [];
+    if (page === 0) {
+      totalElements = Number(json.totalElements ?? chunk.length);
+      totalPages = Math.max(1, Number(json.totalPages ?? 1));
+    }
+    if (chunk.length === 0) break;
+    leads.push(...chunk);
+    if (chunk.length < pageSize) break;
+    page += 1;
+  }
+
+  return {
+    leads,
+    totalElements: Math.max(totalElements, leads.length),
+  };
+}
+
+/**
+ * Sales: id-merged journey inventory (blank → Fresh Lead).
+ * Presales: phone representative still used for month cards parity.
+ */
+function milestoneCountsFromJourneyRows(
   leads: ApiLead[],
   workspace: CrmWorkspace,
 ): Record<string, number> {
+  const inventory =
+    workspace === "sales" ? mergeLeadsById(leads) : pickMilestoneRepresentativeRows(leads);
   return normalizeMilestoneCountsToCanonical(
-    milestoneCountsFromLeads(pickMilestoneRepresentativeRows(leads), workspace),
+    milestoneCountsFromLeads(inventory, workspace),
     workspace,
   );
 }
 
-/** Full admin pool + milestone filter on primary-source rows (heatmap card = table rows). */
+/**
+ * Milestone phase click for Super Admin / Sales Admin / Admin:
+ * same inventory as journey heatmap (sales = filter mergeAll id-merge; blank→Fresh).
+ * Hub `/admin/sales` alone under-counts Fresh (e.g. card 70 / 30 vs table 13).
+ */
 export async function fetchAdminLeadsMilestoneFiltered(
   input: AdminLeadsFilterInput,
   stage: string,
@@ -424,9 +536,26 @@ export async function fetchAdminLeadsMilestoneFiltered(
   subStage: string,
   headers?: HeadersInit,
 ): Promise<{ leads: ApiLead[]; total: number }> {
-  const { leads } = await fetchAllAdminLeads(input, headers);
-  const primaryRows = pickMilestoneRepresentativeRows(leads);
-  const filtered = primaryRows.filter((lead) =>
+  let inventory: ApiLead[];
+  if (input.workspace === "sales") {
+    try {
+      const merged = await fetchAllSalesFilterMergeLeads(input, headers);
+      inventory = mergeLeadsById(merged.leads);
+    } catch {
+      const admin = await fetchAllAdminLeads(input, headers);
+      inventory = mergeLeadsById(admin.leads);
+    }
+  } else {
+    const admin = await fetchAllAdminLeads(input, headers);
+    inventory = admin.leads;
+  }
+  const vs = (input.verificationStatus ?? "").trim().toLowerCase();
+  if (vs === "verified") {
+    inventory = inventory.filter((lead) => isCrmLeadVerified(lead));
+  } else if (vs === "unverified") {
+    inventory = inventory.filter((lead) => !isCrmLeadVerified(lead));
+  }
+  const filtered = inventory.filter((lead) =>
     leadMatchesWorkspaceMilestoneFilter(lead, input.workspace, stage, category, subStage),
   );
   return { leads: filtered, total: filtered.length };
@@ -531,18 +660,48 @@ export async function fetchAdminLeadsHeatmapData(
       countsJson = null;
     }
 
-    const { leads, totalElements } = await fetchAllAdminLeads(poolInput, headers);
+    /**
+     * Sales journey inventory must come from filter mergeAll (includes walk-in /
+     * blank-assignee Fresh). Hub `/admin/sales` alone under-counts Fresh (e.g.
+     * global Fresh 9 while Kulwanth-filter shows Fresh 16).
+     */
+    let leads: ApiLead[] = [];
+    let totalElements = 0;
+    if (input.workspace === "sales") {
+      try {
+        const merged = await fetchAllSalesFilterMergeLeads(poolInput, headers);
+        leads = merged.leads;
+        totalElements = merged.totalElements;
+      } catch {
+        const admin = await fetchAllAdminLeads(poolInput, headers);
+        leads = admin.leads;
+        totalElements = admin.totalElements;
+      }
+      const vs = (poolInput.verificationStatus ?? "").trim().toLowerCase();
+      if (vs === "verified") {
+        leads = leads.filter((lead) => isCrmLeadVerified(lead));
+      } else if (vs === "unverified") {
+        leads = leads.filter((lead) => !isCrmLeadVerified(lead));
+      }
+      totalElements = leads.length;
+    } else {
+      const admin = await fetchAllAdminLeads(poolInput, headers);
+      leads = admin.leads;
+      totalElements = admin.totalElements;
+    }
+
     const pool = buildAdminPoolDualCounts(leads);
     const authoritativeTotal = Math.max(
       Number(countsJson?.totalElements ?? 0),
       totalElements,
       pool.totalRows,
     );
-    const milestonePrimaryRows = pickMilestoneRepresentativeRows(leads);
-    const milestoneCountsFromRows = normalizeMilestoneCountsToCanonical(
-      milestoneCountsFromLeads(milestonePrimaryRows, input.workspace),
-      input.workspace,
-    );
+    /** Sales journey uses id-merge (not phone) so blank milestone stays Fresh Lead. */
+    const salesJourneyRows =
+      input.workspace === "sales" ? mergeLeadsById(leads) : pickMilestoneRepresentativeRows(leads);
+    const milestonePrimaryRows =
+      input.workspace === "sales" ? salesJourneyRows : pickMilestoneRepresentativeRows(leads);
+    const milestoneCountsFromRows = milestoneCountsFromJourneyRows(leads, input.workspace);
     const hubMilestoneRaw = countsJson
       ? milestoneCountsFromAdminResponse(countsJson, input.workspace)
       : {};
@@ -553,18 +712,18 @@ export async function fetchAdminLeadsHeatmapData(
     const hubMilestoneTotal = totalFromMilestoneCountMap(hubMilestoneCounts);
     const rowMilestoneTotal = totalFromMilestoneCountMap(milestoneCountsFromRows);
     const rowSummaryTotal = salesJourneySummaryTotalFromMilestoneCounts(milestoneCountsFromRows);
-    const hubSummaryTotal = salesJourneySummaryTotalFromMilestoneCounts(hubMilestoneCounts);
+    /**
+     * Sales Admin / Super Admin / Admin: always bucket journey from list rows
+     * (id-merge, blank/Initial → Fresh). Hub `/counts` only counts exact
+     * "Fresh Lead" labels and freezes Fresh low.
+     */
     const milestoneCounts =
       input.workspace === "sales"
-        ? rowSummaryTotal >= pool.uniquePrimaryTotal
+        ? rowSummaryTotal > 0
           ? milestoneCountsFromRows
-          : hubSummaryTotal >= pool.uniquePrimaryTotal
+          : hubMilestoneTotal > 0
             ? hubMilestoneCounts
-            : rowMilestoneTotal >= hubMilestoneTotal
-              ? milestoneCountsFromRows
-              : hubMilestoneTotal > 0
-                ? hubMilestoneCounts
-                : milestoneCountsFromRows
+            : milestoneCountsFromRows
         : hubMilestoneTotal >= pool.uniquePrimaryTotal
           ? hubMilestoneCounts
           : rowMilestoneTotal >= hubMilestoneTotal
@@ -572,7 +731,9 @@ export async function fetchAdminLeadsHeatmapData(
             : hubMilestoneTotal > 0
               ? hubMilestoneCounts
               : milestoneCountsFromRows;
-    const fromRowsTypes = computeLeadTypeCountsFromRows(leads);
+    const fromRowsTypes = computeLeadTypeCountsFromRows(
+      input.workspace === "sales" ? salesJourneyRows : leads,
+    );
     const leadTypeCounts =
       countsJson?.byLeadType && Object.keys(countsJson.byLeadType).length > 0
         ? adminByLeadTypeToSourceCounts(countsJson.byLeadType, authoritativeTotal)
@@ -583,11 +744,23 @@ export async function fetchAdminLeadsHeatmapData(
         leadTypeCounts[t] = fromRowsTypes[t];
       }
     }
-    const verifiedPrimary = pool.primaryRows.filter((l) => isCrmLeadVerified(l)).length;
+    // Prefer journey-row type counts for sales so source tiles match heatmap inventory.
+    if (input.workspace === "sales" && fromRowsTypes.all > 0) {
+      leadTypeCounts.all = fromRowsTypes.all;
+      for (const t of CRM_LEAD_TYPES) {
+        leadTypeCounts[t] = fromRowsTypes[t];
+      }
+    }
+    const verifiedPrimary =
+      input.workspace === "sales"
+        ? salesJourneyRows.filter((l) => isCrmLeadVerified(l)).length
+        : pool.primaryRows.filter((l) => isCrmLeadVerified(l)).length;
 
     let leadTypeCountsForUi = leadTypeCounts;
-    let leadTypeAllRowsForUi = pool.leadTypeAllRows;
-    let leadTypePrimaryForUi = pool.leadTypePrimaryUnique;
+    let leadTypeAllRowsForUi =
+      input.workspace === "sales" ? fromRowsTypes : pool.leadTypeAllRows;
+    let leadTypePrimaryForUi =
+      input.workspace === "sales" ? fromRowsTypes : pool.leadTypePrimaryUnique;
     const dateFrom = (poolInput.dateFrom ?? "").trim();
     const dateTo = (poolInput.dateTo ?? "").trim();
     const externalLeadCtx = {
@@ -618,40 +791,56 @@ export async function fetchAdminLeadsHeatmapData(
       ],
     };
     try {
-      let augmented = await augmentLeadSourceCountsWithWalkIn(leadTypeCounts, externalLeadCtx);
-      augmented = await augmentLeadSourceCountsWithWhatsapp(augmented, externalLeadCtx);
-      leadTypeCountsForUi = augmented;
-      leadTypeAllRowsForUi = mergeWhatsappCountIntoSourceCounts(
-        mergeWalkInCountIntoSourceCounts(pool.leadTypeAllRows, augmented.walkinlead),
-        augmented.whatsapplead,
-      );
-      leadTypePrimaryForUi = mergeWhatsappCountIntoSourceCounts(
-        mergeWalkInCountIntoSourceCounts(pool.leadTypePrimaryUnique, augmented.walkinlead),
-        augmented.whatsapplead,
-      );
+      // Sales filter-merge already includes walk-in / WhatsApp rows — do not double-count.
+      if (input.workspace !== "sales") {
+        let augmented = await augmentLeadSourceCountsWithWalkIn(leadTypeCounts, externalLeadCtx);
+        augmented = await augmentLeadSourceCountsWithWhatsapp(augmented, externalLeadCtx);
+        leadTypeCountsForUi = augmented;
+        leadTypeAllRowsForUi = mergeWhatsappCountIntoSourceCounts(
+          mergeWalkInCountIntoSourceCounts(pool.leadTypeAllRows, augmented.walkinlead),
+          augmented.whatsapplead,
+        );
+        leadTypePrimaryForUi = mergeWhatsappCountIntoSourceCounts(
+          mergeWalkInCountIntoSourceCounts(pool.leadTypePrimaryUnique, augmented.walkinlead),
+          augmented.whatsapplead,
+        );
+      }
     } catch {
       // Walk-in / WhatsApp augment is optional; admin pool must still load.
     }
 
-    const displayTotal = Math.max(
-      authoritativeTotal,
-      leadTypeCountsForUi.all,
-      leadTypePrimaryForUi.all,
-      leadTypeAllRowsForUi.all,
-    );
+    const journeyTotal =
+      input.workspace === "sales"
+        ? Math.max(
+            salesJourneyRows.length,
+            totalFromMilestoneCountMap(milestoneCounts),
+          )
+        : 0;
+    // Sales: Total Leads = journey inventory only (same basis as milestones).
+    // Do not max with Hub `/admin/sales` or `/counts` (those omit WI/blank-assignee).
+    const displayTotal =
+      input.workspace === "sales"
+        ? Math.max(journeyTotal, leadTypeCountsForUi.all || 0)
+        : Math.max(
+            authoritativeTotal,
+            leadTypeCountsForUi.all,
+            leadTypePrimaryForUi.all,
+            leadTypeAllRowsForUi.all,
+          );
 
     return finalizeAdminHeatmapData(
       milestoneCounts,
       input.workspace,
       displayTotal,
-      pool.uniquePrimaryTotal,
-      countsJson?.verifiedCount !== undefined
+      // Sales: id-merge journey length (= phase sum). Not phone primary (under-counts rows).
+      input.workspace === "sales" ? salesJourneyRows.length : pool.uniquePrimaryTotal,
+      countsJson?.verifiedCount !== undefined && input.workspace !== "sales"
         ? Number(countsJson.verifiedCount)
         : verifiedPrimary,
       leadTypeCountsForUi,
       leadTypeAllRowsForUi,
       leadTypePrimaryForUi,
-      leads,
+      input.workspace === "sales" ? salesJourneyRows : leads,
       milestonePrimaryRows,
       countsJson ? "counts" : "list",
     );

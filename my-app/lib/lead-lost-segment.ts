@@ -180,6 +180,94 @@ export function computeLostSegmentCounts(
   return counts;
 }
 
+/**
+ * Drop Reason Analysis from the same lost-segment leads as Lost Funnel Total
+ * (grouped by milestone substage — totals match exactly).
+ */
+export function computeLostSegmentDropReasons(
+  leads: ApiLead[],
+  opts: InsightCountOpts,
+): { total: number; items: Array<{ reason: string; count: number; percent: number }> } {
+  const byReason = new Map<string, { reason: string; count: number }>();
+  let total = 0;
+
+  for (const lead of leads) {
+    if (!leadMatchesInsightAssigneeScope(lead, opts)) continue;
+    if (!classifyLostSegment(lead)) continue;
+    total += 1;
+
+    const sales = readSalesStageFieldsFromLead(lead);
+    const rawSub = String(sales.milestoneSubStage ?? "").trim();
+    const reason = rawSub || "Unspecified / Other";
+    const key = reason.trim().toLowerCase().replace(/\s+/g, " ");
+    const existing = byReason.get(key);
+    if (existing) existing.count += 1;
+    else byReason.set(key, { reason, count: 1 });
+  }
+
+  const items = [...byReason.values()].sort(
+    (a, b) => b.count - a.count || a.reason.localeCompare(b.reason),
+  );
+
+  return {
+    total,
+    items: items.map((row) => ({
+      reason: row.reason,
+      count: row.count,
+      percent: total > 0 ? (row.count / total) * 100 : 0,
+    })),
+  };
+}
+
+const OTHER_DROP_REASON = "Other / Unspecified";
+
+/**
+ * Ensure listed reasons sum to the authoritative total (Lost Funnel Total).
+ * Any gap becomes "Other / Unspecified" so nothing is silently missing.
+ */
+export function reconcileDropReasonsToTotal(
+  drop: { total: number; items: Array<{ reason: string; count: number; percent: number }> },
+  authoritativeTotal?: number | null,
+): { total: number; items: Array<{ reason: string; count: number; percent: number }> } {
+  const cleaned = drop.items
+    .filter((i) => (Number(i.count) || 0) > 0)
+    .map((i) => ({
+      reason: String(i.reason ?? "").trim() || OTHER_DROP_REASON,
+      count: Number(i.count) || 0,
+      percent: Number(i.percent) || 0,
+    }));
+
+  const withoutOther = cleaned.filter(
+    (i) => i.reason.trim().toLowerCase() !== OTHER_DROP_REASON.toLowerCase(),
+  );
+  const itemsSum = withoutOther.reduce((s, i) => s + i.count, 0);
+  const declaredOther = cleaned
+    .filter((i) => i.reason.trim().toLowerCase() === OTHER_DROP_REASON.toLowerCase())
+    .reduce((s, i) => s + i.count, 0);
+
+  const targetTotal = Math.max(
+    Number(authoritativeTotal) || 0,
+    Number(drop.total) || 0,
+    itemsSum + declaredOther,
+  );
+
+  const gap = targetTotal - itemsSum;
+  const items =
+    gap > 0
+      ? [...withoutOther, { reason: OTHER_DROP_REASON, count: gap, percent: 0 }]
+      : withoutOther;
+
+  return {
+    total: targetTotal,
+    items: items
+      .map((row) => ({
+        ...row,
+        percent: targetTotal > 0 ? (row.count / targetTotal) * 100 : 0,
+      }))
+      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
+  };
+}
+
 export function filterLeadsForLostSegmentMode(
   leads: ApiLead[],
   mode: LostSegmentMode,
