@@ -1600,11 +1600,11 @@ export default function CompleteTaskModal({
                 {renovationFeedbackLocked ? (
                   <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
                     Renovation already assigned
-                    {lead.stageBlock.renovationSalesManager
+                    {lead.stageBlock?.renovationSalesManager
                       ? ` · Manager: ${lead.stageBlock.renovationSalesManager}`
                       : ""}
-                    {lead.stageBlock.renovationSalesExecutive || lead.assignee
-                      ? ` · Exec: ${lead.stageBlock.renovationSalesExecutive || lead.assignee}`
+                    {lead.stageBlock?.renovationSalesExecutive || lead.assignee
+                      ? ` · Exec: ${lead.stageBlock?.renovationSalesExecutive || lead.assignee}`
                       : ""}
                     . Re-selecting Renovation is disabled.
                   </p>
