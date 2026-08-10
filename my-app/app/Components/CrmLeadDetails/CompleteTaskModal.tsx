@@ -682,6 +682,8 @@ export default function CompleteTaskModal({
           ? `${subStageName} (${stage})`
           : subStageName || stage
         : subStageName || stage;
+      // Hidden from UI (not deleted from backend) — remove comment to restore
+      if (label.toLowerCase().includes("renovation")) continue;
       const key = `${stage}||${stageCategory}||${label}`;
       if (seen.has(key)) continue;
       seen.add(key);
