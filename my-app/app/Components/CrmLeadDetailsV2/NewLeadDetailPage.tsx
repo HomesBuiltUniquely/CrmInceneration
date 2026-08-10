@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  isEmptySpaceDoubleClickTarget,
+  requestLeadDetailOverlayClose,
+} from "@/lib/lead-detail-overlay-close";
 import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
@@ -32,10 +37,6 @@ import {
   discoveryFieldLabels,
   registerLeadDetailPendingFlush,
 } from "@/lib/lead-detail-pending-flush";
-import {
-  isEmptySpaceDoubleClickTarget,
-  requestLeadDetailOverlayClose,
-} from "@/lib/lead-detail-overlay-close";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import {
   createDefaultRequirements,
@@ -130,6 +131,7 @@ const phaseItems: PhaseItem[] = [
 
 export default function NewLeadDetailPage({ leadType, leadId }: Props) {
   const { lead } = useLeadDetailV2();
+  const router = useRouter();
   const activityPanelRef = useRef<ActivityHistoryHandle>(null);
   const currentPhaseId = resolveLeadDetailUiPhase(lead);
 
@@ -139,6 +141,39 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
 
   return (
     <main className="min-h-screen bg-[#eef1f5] px-3 py-4 font-sans md:px-4">
+      {/* Top-right Close button — visible above content and works for overlay or routed page */}
+      <button
+        type="button"
+        onClick={() => {
+          try {
+            // Prefer overlay close event which is handled by CrmFullscreenOverlayModal
+            requestLeadDetailOverlayClose();
+          } catch {}
+
+          // If opened via route (URL contains /Leads/<type>/<id>), use router.back()
+          try {
+            const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+            const routedDetail = /^\/Leads\/[a-zA-Z0-9_-]+\/[0-9]+/.test(pathname);
+            if (routedDetail) {
+              router.back();
+              return;
+            }
+          } catch {}
+
+          // Fallback: if dialog remains, try router.back after a short delay
+          setTimeout(() => {
+            if (typeof document !== "undefined" && document.querySelector('[role="dialog"]')) {
+              router.back();
+            }
+          }, 120);
+        }}
+        aria-label="Close Lead information"
+        className="fixed right-4 top-4 z-[120] inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e0e5ec] bg-white text-[#475467] shadow-sm transition hover:bg-[#f8fafc] hover:text-[#101828]"
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      </button>
       <div className="mx-auto max-w-[1480px]">
         <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
           <DealControlSidebar onActivityClick={openActivityPanel} />

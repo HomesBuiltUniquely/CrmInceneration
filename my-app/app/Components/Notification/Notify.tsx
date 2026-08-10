@@ -62,12 +62,20 @@ export type NotificationItem = {
   timestamp: string;
   read: boolean;
   tag?: string;
+  /** Lead identifier (e.g. "AL-A77LRS30RU") used for click-to-navigate. Present on all notification types that belong to a lead. */
+  leadIdentifier?: string;
 };
 
 type Props = {
   notifications?: NotificationItem[];
   onMarkAllRead?: () => void;
   onNotificationClick?: (id: string) => void;
+  /**
+   * Called when user clicks a notification that has a leadIdentifier.
+   * Receives the full item so the caller can navigate to the correct lead page.
+   * The panel closes automatically when this fires.
+   */
+  onNotificationNavigate?: (item: NotificationItem) => void;
   onClearAll?: (tabType: TabType) => void;
   bellRinging?: boolean;
 };
@@ -196,6 +204,7 @@ export default function Notify({
   notifications = [],
   onMarkAllRead,
   onNotificationClick,
+  onNotificationNavigate,
   onClearAll,
   bellRinging = false,
 }: Props) {
@@ -246,6 +255,12 @@ export default function Notify({
 
   const handleClick = (id: string) => {
     onNotificationClick?.(id);
+    // If the notification belongs to a lead, close the panel and trigger navigation.
+    const item = notifications.find((n) => n.id === id);
+    if (item?.leadIdentifier) {
+      setOpen(false);
+      onNotificationNavigate?.(item);
+    }
   };
 
   const handleMarkCurrentRead = () => {

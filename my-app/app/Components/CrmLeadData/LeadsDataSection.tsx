@@ -192,6 +192,13 @@ type Props = {
   onClearSearch?: () => void;
   /** Route workspace: sales `/Leads` vs presales `/presales-leads`. */
   leadsWorkspace?: CrmWorkspace;
+  /**
+   * leadIdentifier coming from a notification click (e.g. "AL-A77LRS30RU").
+   * LeadsDataSection forwards it to LeadsTable which scrolls to + highlights the row.
+   */
+  highlightLeadIdentifier?: string;
+  /** Called by LeadsTable once the highlight animation has been armed, so Header can reset the value. */
+  onHighlightConsumed?: () => void;
 };
 
 type SubStatusResp = {
@@ -1267,6 +1274,8 @@ export default function LeadsDataSection({
   superAdminPresalesAssigneeNames,
   onResetAll,
   onClearSearch,
+  highlightLeadIdentifier,
+  onHighlightConsumed,
 }: Props) {
   const persistedView = readLeadsViewPersistedState();
   const [page, setPage] = useState(
@@ -4281,6 +4290,32 @@ export default function LeadsDataSection({
     insightTableMode === "overdueClosure" ||
     insightTableMode === "callDelayed";
 
+  // ── Notification highlight: resolve Hub numeric id from ApiLead pool ──────
+  // LeadRowModel only carries the numeric Hub id. The leadIdentifier (e.g. "AL-A77LRS30RU")
+  // is on the raw ApiLead under lead_identifier / leadIdentifier / leadId / uniqueId.
+  // We resolve it here while we still have the ApiLead pool, then pass the numeric id
+  // to LeadsTable so it can scroll to and ring the correct row.
+  const highlightRowId = useMemo(() => {
+    if (!highlightLeadIdentifier) return "";
+    const needle = highlightLeadIdentifier.trim().toUpperCase();
+    // Search the visible content pool (ApiLead[])
+    const pool = adminMilestoneTableActive
+      ? (adminMilestoneTableLeads ?? [])
+      : content;
+    const found = pool.find((lead) => {
+      const raw = lead as Record<string, unknown>;
+      const li = String(
+        raw.leadIdentifier ??
+        raw.lead_identifier ??
+        raw.leadId ??
+        raw.uniqueId ??
+        "",
+      ).trim().toUpperCase();
+      return li && li === needle;
+    });
+    return found ? String(found.id ?? "") : "";
+  }, [highlightLeadIdentifier, content, adminMilestoneTableActive, adminMilestoneTableLeads]);
+
   return (
     <>
       {insightBannerText ? (
@@ -4568,6 +4603,8 @@ export default function LeadsDataSection({
         onAssignRow={canBulkAssign ? (row) => void openRowAssignModal(row) : undefined}
         leadsWorkspace={leadsWorkspace}
         searchQuery={debouncedSearch}
+        highlightRowId={highlightRowId}
+        onHighlightConsumed={onHighlightConsumed}
       />
       {rowAssignModalOpen && rowAssignLead ? (
         <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgba(9,14,30,0.55)] backdrop-blur-[4px] px-3 py-4">
