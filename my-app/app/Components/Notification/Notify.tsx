@@ -62,13 +62,23 @@ export type NotificationItem = {
   timestamp: string;
   read: boolean;
   tag?: string;
+  /** Lead identifier (e.g. "AL-A77LRS30RU") used for click-to-navigate. Present on all notification types that belong to a lead. */
+  leadIdentifier?: string;
 };
 
 type Props = {
   notifications?: NotificationItem[];
   onMarkAllRead?: () => void;
   onNotificationClick?: (id: string) => void;
+  /**
+   * Called when user clicks a notification that has a leadIdentifier.
+   * Receives the full item so the caller can navigate to the correct lead page.
+   * The panel closes automatically when this fires.
+   */
+  onNotificationNavigate?: (item: NotificationItem) => void;
   onClearAll?: (tabType: TabType) => void;
+  /** Parent-controlled ring (e.g. TopNav when a new notification arrives). */
+  bellRinging?: boolean;
 };
 
 type TabType = "all" | "leads" | "meetings" | "bookings";
@@ -145,9 +155,18 @@ function relativeTime(iso: string): string {
 
 function sortNotifications(items: NotificationItem[]): NotificationItem[] {
   return items.slice().sort((a, b) => {
+    // First, separate read and unread
     if (a.read !== b.read) return a.read ? 1 : -1;
+
+    // Then sort by timestamp (newest first)
     const timeA = new Date(a.timestamp).getTime();
     const timeB = new Date(b.timestamp).getTime();
+
+    // Handle invalid timestamps - place them at the end
+    if (Number.isNaN(timeA) && Number.isNaN(timeB)) return 0;
+    if (Number.isNaN(timeA)) return 1;
+    if (Number.isNaN(timeB)) return -1;
+
     return timeB - timeA;
   });
 }
@@ -276,7 +295,9 @@ export default function Notify({
   notifications = [],
   onMarkAllRead,
   onNotificationClick,
+  onNotificationNavigate,
   onClearAll,
+  bellRinging = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("all");
@@ -319,6 +340,13 @@ export default function Notify({
     }
     prevUnreadRef.current = unreadCount;
   }, [unreadCount]);
+
+  // Parent-driven ring (TopNav bellRinging prop).
+  useEffect(() => {
+    if (bellRinging) {
+      retriggerAnimation(bellIconWrapRef.current, "bell-ring");
+    }
+  }, [bellRinging]);
 
   // Badge pop when count changes (incl. after mark-read).
   useEffect(() => {
@@ -366,6 +394,12 @@ export default function Notify({
 
   const handleClick = (id: string) => {
     onNotificationClick?.(id);
+    // If the notification belongs to a lead, close the panel and trigger navigation.
+    const item = notifications.find((n) => n.id === id);
+    if (item?.leadIdentifier) {
+      setOpen(false);
+      onNotificationNavigate?.(item);
+    }
   };
 
   const handleClearCurrentTab = () => {
@@ -683,11 +717,12 @@ export default function Notify({
                                     <div className="flex items-start justify-between gap-3">
                                       <span
                                         className={cn(
-                                          "text-[13px] leading-snug transition-colors",
+                                          "block min-w-0 truncate text-[13px] leading-snug transition-colors",
                                           item.read
                                             ? "font-medium text-slate-600 group-hover:text-slate-900"
                                             : "font-semibold text-slate-900",
                                         )}
+                                        title={item.title}
                                       >
                                         {item.title}
                                       </span>
