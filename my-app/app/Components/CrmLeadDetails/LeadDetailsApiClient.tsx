@@ -67,7 +67,9 @@ import CompleteTaskModal, {
   type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
 import {
+  CONFIGURATION_SCOPE_UPDATED_EVENT,
   RESUME_MEETING_SCHEDULE_EVENT,
+  type ConfigurationScopeUpdatedDetail,
   type ResumeMeetingScheduleDetail,
 } from "@/lib/configuration-scope-events";
 import {
@@ -2820,6 +2822,31 @@ export default function LeadDetailsApiClient({
     };
     window.addEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
     return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
+  }, [leadId, leadType]);
+
+  /** Apply BHK / property name / booking saved from Configuration Scope into lead UI state. */
+  useEffect(() => {
+    const onScopeUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeUpdatedDetail>).detail;
+      if (!detail) return;
+      if (detail.leadId && detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setLead((prev) => {
+        const next = { ...prev };
+        if (detail.configuration?.trim()) {
+          next.configuration = detail.configuration.trim();
+        }
+        if (detail.propertyName?.trim()) {
+          next.propertyLocation = detail.propertyName.trim();
+        }
+        if (detail.bookingType?.trim()) {
+          next.bookingType = detail.bookingType.trim();
+        }
+        return next;
+      });
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+    return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
   }, [leadId, leadType]);
 
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */

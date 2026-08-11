@@ -52,7 +52,6 @@ export function sanitizeLeadTypeForRole(
 
 export function getLeadTypeFilterOptions(
   role: string,
-  includeVerified = false,
 ): Array<{ value: LeadTypeFilterKey; label: string }> {
   if (isPresalesRole(role)) {
     return [
@@ -77,6 +76,5 @@ export function getLeadTypeFilterOptions(
     { value: "websitelead", label: "Website Lead" },
     { value: "walkinlead", label: "Walk-in Lead" },
     { value: "whatsapplead", label: "WhatsApp" },
-    ...(includeVerified ? [{ value: "verified" as const, label: "Verified Leads" }] : []),
   ];
 }

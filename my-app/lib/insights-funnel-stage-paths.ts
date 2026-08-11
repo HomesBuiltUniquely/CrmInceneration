@@ -12,8 +12,10 @@ export type SubStatusMapping = {
 export type FunnelStagePathBreakdown = {
   wonTotal: number;
   lostTotal: number;
+  holdTotal: number;
   wonSubstages: Array<{ title: string; count: number }>;
   lostSubstages: Array<{ title: string; count: number }>;
+  holdSubstages: Array<{ title: string; count: number }>;
 };
 
 export type FunnelStagePathDataMap = Record<string, FunnelStagePathBreakdown>;
@@ -160,6 +162,26 @@ function isLostCategory(s: string): boolean {
   return /\blost\b/i.test(s);
 }
 
+/** Hold path: substage or category labels containing "Hold" (not Won/Lost categories). */
+export function isHoldPathLabel(subStageName: string, stageCategory = ""): boolean {
+  const sub = (subStageName ?? "").trim();
+  const cat = (stageCategory ?? "").trim();
+  if (/\bhold\b/i.test(sub)) return true;
+  if (/\bhold\b/i.test(cat) && !isWonCategory(cat) && !isLostCategory(cat)) return true;
+  return false;
+}
+
+function emptyPathBreakdown(): FunnelStagePathBreakdown {
+  return {
+    wonTotal: 0,
+    lostTotal: 0,
+    holdTotal: 0,
+    wonSubstages: [],
+    lostSubstages: [],
+    holdSubstages: [],
+  };
+}
+
 /** Map funnel stage key / label to canonical bucket used in Insights funnel bars. */
 export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
   const key = norm(stageKeyOrLabel);
@@ -275,6 +297,7 @@ function buildPathBreakdownForStage(
 ): FunnelStagePathBreakdown {
   const wonSubstages: Array<{ title: string; count: number }> = [];
   const lostSubstages: Array<{ title: string; count: number }> = [];
+  const holdSubstages: Array<{ title: string; count: number }> = [];
 
   for (const m of subMappings) {
     if (!stagesMatch(m.stage, selectedStage)) continue;
@@ -283,12 +306,18 @@ function buildPathBreakdownForStage(
     if (!subName) continue;
 
     const count = lookupSubCount(bySub, subName);
-    const isWon = isWonCategory(m.stageCategory) || norm(subName) === "renovation";
-    const isLost = isLostCategory(m.stageCategory) && !isWon;
-    if (!isWon && !isLost) continue;
+    const isHold = isHoldPathLabel(subName, m.stageCategory);
+    const isWon =
+      !isHold && (isWonCategory(m.stageCategory) || norm(subName) === "renovation");
+    const isLost = !isHold && isLostCategory(m.stageCategory) && !isWon;
+    if (!isWon && !isLost && !isHold) continue;
 
     const item = { title: subName, count };
-    if (isWon) {
+    if (isHold) {
+      if (!holdSubstages.some((x) => norm(x.title) === norm(subName))) {
+        holdSubstages.push(item);
+      }
+    } else if (isWon) {
       if (!wonSubstages.some((x) => norm(x.title) === norm(subName))) {
         wonSubstages.push(item);
       }
@@ -299,15 +328,22 @@ function buildPathBreakdownForStage(
     }
   }
 
+  // No invented Hold rows: only pipeline mapping Hold category/substage under this milestone.
+
   return {
     wonTotal: wonSubstages.reduce((s, i) => s + i.count, 0),
     lostTotal: lostSubstages.reduce((s, i) => s + i.count, 0),
+    holdTotal: holdSubstages.reduce((s, i) => s + i.count, 0),
     wonSubstages,
     lostSubstages,
+    holdSubstages,
   };
 }
 
-const FALLBACK_SUBSTAGES: Record<string, { won: string[]; lost: string[] }> = {
+const FALLBACK_SUBSTAGES: Record<
+  string,
+  { won: string[]; lost: string[]; hold: string[] }
+> = {
   discovery: {
     won: [
       "No Immediate Requirement",
@@ -324,6 +360,7 @@ const FALLBACK_SUBSTAGES: Record<string, { won: string[]; lost: string[] }> = {
       "Wrong Number",
       "Appointment Requested, No Response",
     ],
+    hold: [], // Hold only from pipeline mappings — never invent
   },
   connection: {
     won: [
@@ -337,14 +374,17 @@ const FALLBACK_SUBSTAGES: Record<string, { won: string[]; lost: string[] }> = {
       "Connection Lost - Unreachable",
       "Connection Lost - Not Interested",
     ],
+    hold: [],
   },
   exp_design: {
     won: ["Proposal Shared", "Quotation Shared", "Presentation Completed"],
     lost: ["Budget Out", "Competitor Chosen", "Design Mismatch"],
+    hold: [],
   },
   decision: {
     won: ["Final Negotiation", "Contract Shared"],
     lost: ["Decision Lost - Budget", "Decision Lost - Postponed"],
+    hold: [],
   },
   closed: {
     won: ["Booking Done", "Token Done"],
@@ -353,19 +393,21 @@ const FALLBACK_SUBSTAGES: Record<string, { won: string[]; lost: string[] }> = {
       "Project Cancelled After Booking",
       "Refund Processed",
     ],
+    hold: [],
   },
 };
 
 function applyFallbackCatalog(map: FunnelStagePathDataMap, bySub: Map<string, number>) {
   for (const [key, catalog] of Object.entries(FALLBACK_SUBSTAGES)) {
-    const existing = map[key] ?? {
-      wonTotal: 0,
-      lostTotal: 0,
-      wonSubstages: [],
-      lostSubstages: [],
-    };
+    const existing = map[key] ?? emptyPathBreakdown();
     const won = [...existing.wonSubstages];
     const lost = [...existing.lostSubstages];
+    // Hold: never invent from static catalog — only Hub pipeline mappings
+    // (already present in existing.holdSubstages from buildPathBreakdownForStage).
+    const hold = existing.holdSubstages.map((h) => ({
+      title: h.title,
+      count: lookupSubCount(bySub, h.title),
+    }));
     for (const title of catalog.won) {
       if (!won.some((x) => norm(x.title) === norm(title))) {
         won.push({ title, count: lookupSubCount(bySub, title) });
@@ -379,11 +421,54 @@ function applyFallbackCatalog(map: FunnelStagePathDataMap, bySub: Map<string, nu
     map[key] = {
       wonTotal: won.reduce((s, i) => s + i.count, 0),
       lostTotal: lost.reduce((s, i) => s + i.count, 0),
+      holdTotal: hold.reduce((s, i) => s + i.count, 0),
       wonSubstages: won,
       lostSubstages: lost,
+      holdSubstages: hold,
     };
   }
   return map;
+}
+
+/** True when pipeline catalog defines Hold category/substage under this funnel stage. */
+export function funnelStageHasHoldPath(
+  path: FunnelStagePathBreakdown | undefined | null,
+): boolean {
+  return Boolean(path?.holdSubstages && path.holdSubstages.length > 0);
+}
+
+type HubHoldPathStage = {
+  holdTotal?: number;
+  substages?: Array<{ title?: string; subStageKey?: string; count?: number }>;
+};
+
+/**
+ * Prefer Hub `holdPathByStage` over client Hold heuristics when dashboard has it.
+ */
+export function mergeHubHoldPathByStage(
+  map: FunnelStagePathDataMap,
+  holdPathByStage: Record<string, HubHoldPathStage> | null | undefined,
+): FunnelStagePathDataMap {
+  if (!holdPathByStage || Object.keys(holdPathByStage).length === 0) return map;
+  const out: FunnelStagePathDataMap = { ...map };
+  for (const [rawKey, hub] of Object.entries(holdPathByStage)) {
+    const key = resolveFunnelCanonicalKey(rawKey);
+    const existing = out[key] ?? emptyPathBreakdown();
+    const holdSubstages = (hub.substages ?? []).map((s) => ({
+      title: (s.title || s.subStageKey || "").trim(),
+      count: Number(s.count) || 0,
+    })).filter((s) => s.title);
+    const holdTotal =
+      hub.holdTotal != null && Number.isFinite(Number(hub.holdTotal))
+        ? Number(hub.holdTotal)
+        : holdSubstages.reduce((sum, row) => sum + row.count, 0);
+    out[key] = {
+      ...existing,
+      holdTotal,
+      holdSubstages,
+    };
+  }
+  return out;
 }
 
 /** Build won/lost path map from Hub pre-aggregated substage counts (fast path). */

@@ -492,7 +492,7 @@ export default function LeadsToolbar({
   const meetingQuoteTiles = showMeetingQuoteTiles
     ? meetingQuoteLeadTypeTiles(leadTypeCounts)
     : [];
-  const leadTypeOptions = getLeadTypeFilterOptions(role, isSalesExecutive);
+  const leadTypeOptions = getLeadTypeFilterOptions(role);
 
   const milestoneStageOptions = useMemo(() => {
     if (isPresalesWorkspace) {

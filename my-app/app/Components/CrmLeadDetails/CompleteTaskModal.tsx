@@ -54,8 +54,14 @@ import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { getConfigurationScopeRequirements, createDefaultRequirements } from "@/lib/configuration-scope-client";
-import { notifyOpenConfigurationScope, RESUME_MEETING_SCHEDULE_EVENT, type ResumeMeetingScheduleDetail } from "@/lib/configuration-scope-events";
+import { getConfigurationScopeRequirements, createDefaultRequirements, withCoherentPropertyNameFields } from "@/lib/configuration-scope-client";
+import {
+  CONFIGURATION_SCOPE_UPDATED_EVENT,
+  notifyOpenConfigurationScope,
+  RESUME_MEETING_SCHEDULE_EVENT,
+  type ConfigurationScopeUpdatedDetail,
+  type ResumeMeetingScheduleDetail,
+} from "@/lib/configuration-scope-events";
 import {
   configurationScopeValidationSummary,
   hasLeadFloorPlan,
@@ -63,6 +69,8 @@ import {
 } from "@/lib/configuration-scope-validation";
 import { REQUIRED_FIELD_HINTS } from "@/lib/required-field-hints";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { getLeadDetail } from "@/lib/lead-details-client";
+import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -483,6 +491,25 @@ export default function CompleteTaskModal({
     presalesMode,
     resumeMeetingSchedule,
   ]);
+
+  // After Configuration Scope finalize, apply BHK / booking so Meeting gate does not use stale modal state.
+  useEffect(() => {
+    if (!open) return;
+    const onScopeUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeUpdatedDetail>).detail;
+      if (!detail) return;
+      const expectedLeadId = (leadId ?? lead.id ?? "").trim();
+      if (detail.leadId && expectedLeadId && detail.leadId !== expectedLeadId) return;
+      if (detail.configuration?.trim()) {
+        setModalConfiguration(detail.configuration.trim());
+      }
+      if (detail.bookingType?.trim()) {
+        setModalBookingType(detail.bookingType.trim());
+      }
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+    return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+  }, [lead.id, leadId, open]);
 
   useEffect(() => {
     if (!open) {
@@ -917,10 +944,38 @@ export default function CompleteTaskModal({
         requirements = null;
       }
 
+      // BHK lives on the lead row (not configuration-scope). Re-fetch so a just-saved
+      // Configuration Scope finalize is visible even if parent lead props are still stale.
+      let configuration =
+        (modalConfiguration || lead.configuration || "").trim();
+      let bookingType =
+        (modalBookingType || lead.bookingType || requirements?.bookingType || "").trim();
+      try {
+        const detailJson = await getLeadDetail(
+          resolvedConfigLeadType,
+          resolvedConfigLeadId,
+        );
+        const mapped = detailJsonToLead(detailJson, resolvedConfigLeadType);
+        if (mapped.configuration?.trim()) {
+          configuration = mapped.configuration.trim();
+          setModalConfiguration(configuration);
+        }
+        if (mapped.bookingType?.trim()) {
+          bookingType = mapped.bookingType.trim();
+          setModalBookingType(bookingType);
+        }
+      } catch {
+        /* keep modal / lead values */
+      }
+
+      const coherent = withCoherentPropertyNameFields(
+        requirements ?? createDefaultRequirements(),
+      );
+
       const issues = validateConfigurationScopeForMeeting({
-        requirements: requirements ?? createDefaultRequirements(),
-        configuration: modalConfiguration || lead.configuration,
-        bookingType: modalBookingType || lead.bookingType || requirements?.bookingType,
+        requirements: coherent,
+        configuration,
+        bookingType: bookingType || coherent.bookingType,
         hasFloorPlan: hasLeadFloorPlan(lead),
       });
 

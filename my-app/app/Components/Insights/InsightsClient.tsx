@@ -726,8 +726,8 @@ export default function InsightsClient1() {
     InsightsDashboard["salesFunnel"] | null
   >(null);
   /**
-   * Week charts from the same date-scoped inventory (current month → ~4–5 weeks only).
-   * Prefer over Hub `leadsOverTime` / `conversionTrend` when rebuilt.
+   * Volume charts from the same date-scoped inventory.
+   * Short range → weeks → days; All time / multi-month → months → weeks → days.
    */
   const [alignedWeekCharts, setAlignedWeekCharts] = useState<InsightsWeekCharts | null>(
     null,
@@ -1234,6 +1234,8 @@ export default function InsightsClient1() {
           alignedSalesFunnel ?? dashboard.salesFunnel,
         )}
         lostFunnel={alignedLostFunnel ?? dashboard.lostFunnel}
+        holdFunnel={dashboard.holdFunnel}
+        holdPathByStage={dashboard.holdPathByStage}
         revenueDistribution={dashboard.revenueDistribution}
         totalLeadsCount={
           alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value
@@ -1267,6 +1269,7 @@ export default function InsightsClient1() {
             }
             revenueForecast={dashboard.revenueForecast}
             dateFilter={dateFilter}
+            volumeCharts={alignedWeekCharts}
             weekBars={alignedWeekCharts?.weekBars ?? null}
           />
         </div>

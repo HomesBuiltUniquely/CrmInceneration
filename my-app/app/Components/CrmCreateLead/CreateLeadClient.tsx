@@ -254,6 +254,8 @@ export default function CreateLeadClient() {
   } | null>(null);
   const [isPending, startTransition] = useTransition();
   const minFollowUpDate = getTodayStartDateTimeLocal();
+  /** Create Lead: pincode required only for Sales Executive — other roles unchanged. */
+  const isSalesExecutive = role === "SALES_EXECUTIVE";
 
   const selectedFeedback = FEEDBACK_OPTIONS.find(
     (option) => option.substage === form.feedbackSubstage,
@@ -318,6 +320,18 @@ export default function CreateLeadClient() {
     if (!/^\d{10}$/.test(form.phoneNumber.trim())) {
       setError("Phone number must be exactly 10 digits.");
       return;
+    }
+
+    if (isSalesExecutive) {
+      const pin = form.propertyPincode.trim();
+      if (!pin) {
+        setError("Property pincode is required when creating a lead as Sales Executive.");
+        return;
+      }
+      if (!/^\d{6}$/.test(pin)) {
+        setError("Property pincode must be exactly 6 digits.");
+        return;
+      }
     }
 
     if (
@@ -563,13 +577,24 @@ export default function CreateLeadClient() {
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required={isSalesExecutive}>
                             Property Pincode
                           </CreateLeadFieldLabel>
                           <Input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder={
+                              isSalesExecutive
+                                ? "6-digit pincode (required)"
+                                : "6-digit pincode"
+                            }
                             value={form.propertyPincode}
                             onChange={(e) =>
-                              updateField("propertyPincode", e.target.value)
+                              updateField(
+                                "propertyPincode",
+                                e.target.value.replace(/\D/g, "").slice(0, 6),
+                              )
                             }
                             className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />

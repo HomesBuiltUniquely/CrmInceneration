@@ -32,6 +32,28 @@ export type InsightsLostFunnelStage = {
   dropPercent: number;
 };
 
+/** Hub Hold funnel bar (catalog-gated milestones only). */
+export type InsightsHoldFunnelStage = {
+  stageKey: string;
+  stageLabel: string;
+  count: number;
+  sharePercent: number;
+};
+
+export type InsightsHoldSubstage = {
+  subStageKey: string;
+  title: string;
+  count: number;
+};
+
+export type InsightsHoldPathStage = {
+  holdTotal: number;
+  substages: InsightsHoldSubstage[];
+};
+
+/** Keys: discovery | connection | exp_design | decision | … */
+export type InsightsHoldPathByStage = Record<string, InsightsHoldPathStage>;
+
 export type InsightsRevenuePhase = {
   phaseKey: string;
   phaseLabel: string;
@@ -111,6 +133,13 @@ export type InsightsDashboard = {
     total: number;
     stages: InsightsLostFunnelStage[];
   };
+  /** Authoritative On Hold funnel from LeadMilestones Hold catalog (Hub). */
+  holdFunnel?: {
+    total: number;
+    stages: InsightsHoldFunnelStage[];
+  };
+  /** Exact Hold substage path breakdown per milestone (Hub). */
+  holdPathByStage?: InsightsHoldPathByStage;
   revenueDistribution: {
     phases: InsightsRevenuePhase[];
     observation?: string | null;
@@ -361,6 +390,47 @@ function normalizeLostFunnel(
   return { total, stages };
 }
 
+function normalizeHoldFunnel(
+  raw: unknown,
+): InsightsDashboard["holdFunnel"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const stages = asArray<Record<string, unknown>>(o.stages).map((s) => ({
+    stageKey: asStr(s.stageKey),
+    stageLabel: asStr(s.stageLabel, asStr(s.stageKey)),
+    count: asNum(s.count),
+    sharePercent: asNum(s.sharePercent),
+  }));
+  if (stages.length === 0) return undefined;
+  const total = asNum(o.total, stages.reduce((sum, s) => sum + s.count, 0));
+  return { total, stages };
+}
+
+function normalizeHoldPathByStage(
+  raw: unknown,
+): InsightsDashboard["holdPathByStage"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: InsightsHoldPathByStage = {};
+  for (const [rawKey, value] of Object.entries(raw as Record<string, unknown>)) {
+    const key = asStr(rawKey).trim();
+    if (!key || !value || typeof value !== "object") continue;
+    const o = value as Record<string, unknown>;
+    const substages = asArray<Record<string, unknown>>(o.substages).map((s) => ({
+      subStageKey: asStr(s.subStageKey, asStr(s.title)),
+      title: asStr(s.title, asStr(s.subStageKey)),
+      count: asNum(s.count),
+    }));
+    out[key] = {
+      holdTotal: asNum(
+        o.holdTotal,
+        substages.reduce((sum, row) => sum + row.count, 0),
+      ),
+      substages,
+    };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 /** Normalize Hub payload so UI can rely on a stable shape. */
 export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -413,6 +483,8 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       conversionPercent: asNum(s.conversionPercent),
     })),
     lostFunnel: normalizeLostFunnel(r.lostFunnel),
+    holdFunnel: normalizeHoldFunnel(r.holdFunnel),
+    holdPathByStage: normalizeHoldPathByStage(r.holdPathByStage),
     revenueDistribution: {
       phases: asArray<Record<string, unknown>>(revenue.phases).map((p) => ({
         phaseKey: asStr(p.phaseKey),

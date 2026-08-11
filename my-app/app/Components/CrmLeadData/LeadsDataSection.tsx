@@ -2239,6 +2239,30 @@ export default function LeadsDataSection({
   const managerTeamRoster =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   const salesExecOptionsResolved = useMemo(() => {
+    const uniqueCaseInsensitive = (names: string[]) => {
+      // Prefer longer / Title-case display when "meghana" vs "Meghana" collide
+      const map = new Map<string, string>();
+      for (const raw of names) {
+        const t = raw.trim();
+        if (!t) continue;
+        const key = t.toLowerCase();
+        const prev = map.get(key);
+        if (!prev) {
+          map.set(key, t);
+          continue;
+        }
+        const prefer =
+          t.length > prev.length ||
+          (t.length === prev.length && t[0] === t[0]?.toUpperCase() && prev[0] === prev[0]?.toLowerCase())
+            ? t
+            : prev;
+        map.set(key, prefer);
+      }
+      return Array.from(map.values()).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base" }),
+      );
+    };
+
     const fromHierarchy = salesExecs.map(userName).filter(Boolean);
     const fromAssigneeUsers = assigneeUsers
       .filter((u) => u.role === "SALES_EXECUTIVE")
@@ -2255,20 +2279,39 @@ export default function LeadsDataSection({
       clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER";
     const isAdminScope = isHierarchyAdminRole(clientScopeRoleKey);
 
-    if (isSalesManagerScope || isAdminScope) {
-      return Array.from(
-        new Set([
-          ...fromUsers,
-          ...(isSalesManagerScope ? managerTeamRoster : []),
-          ...(isAdminScope ? assigneeOptions : []),
-        ]),
-      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    // SM only: one label per team executive (never dump alias strings into the filter UI).
+    // Matching still expands aliases when filtering leads — separate path.
+    if (isSalesManagerScope) {
+      const underManager = currentUserId
+        ? salesExecs.filter((u) => Number(u.managerId ?? 0) === Number(currentUserId))
+        : [];
+      // Prefer under-manager hierarchy display names; fall back to team roster (display labels).
+      const labels =
+        underManager.length > 0
+          ? underManager.map(userName).filter(Boolean)
+          : managerTeamRoster;
+      // If both exist, union by display name (id-backed list wins first, roster fills gaps)
+      if (underManager.length > 0 && managerTeamRoster.length > 0) {
+        return uniqueCaseInsensitive([...labels, ...managerTeamRoster]);
+      }
+      return uniqueCaseInsensitive(labels);
     }
 
-    if (fromUsers.length > 0) return fromUsers;
-    if (fromAssigneeUsers.length > 0) return fromAssigneeUsers;
-    return assigneeOptions;
-  }, [salesExecs, assigneeUsers, managerTeamRoster, clientScopeRoleKey, assigneeOptions]);
+    if (isAdminScope) {
+      return uniqueCaseInsensitive([...fromUsers, ...assigneeOptions]);
+    }
+
+    if (fromUsers.length > 0) return uniqueCaseInsensitive(fromUsers);
+    if (fromAssigneeUsers.length > 0) return uniqueCaseInsensitive(fromAssigneeUsers);
+    return uniqueCaseInsensitive(assigneeOptions);
+  }, [
+    salesExecs,
+    assigneeUsers,
+    managerTeamRoster,
+    clientScopeRoleKey,
+    assigneeOptions,
+    currentUserId,
+  ]);
   const requiresClientScopedDataset =
     clientScopeRoleKey === "SALES_MANAGER" ||
     clientScopeRoleKey === "MANAGER" ||
