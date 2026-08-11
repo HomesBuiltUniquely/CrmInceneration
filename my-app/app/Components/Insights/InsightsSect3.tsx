@@ -11,6 +11,8 @@ import {
 import type { TokenMetricsData } from "./InsightSect2";
 import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
 import {
+  funnelStageHasHoldPath,
+  mergeHubHoldPathByStage,
   resolveFunnelCanonicalKey,
   type FunnelStagePathDataMap,
 } from "@/lib/insights-funnel-stage-paths";
@@ -18,6 +20,8 @@ import {
 type Props = {
   salesFunnel: InsightsFunnelStage[];
   lostFunnel?: InsightsDashboard["lostFunnel"];
+  holdFunnel?: InsightsDashboard["holdFunnel"];
+  holdPathByStage?: InsightsDashboard["holdPathByStage"];
   revenueDistribution: InsightsDashboard["revenueDistribution"];
   totalLeadsCount?: number;
   tokenMetrics?: TokenMetricsData;
@@ -52,6 +56,16 @@ const LOST_FUNNEL_BAR_COLORS = [
   "bg-[#F87171] text-gray-950",
 ];
 
+const HOLD_FUNNEL_BAR_COLORS = [
+  "bg-[#78350F] text-white",
+  "bg-[#92400E] text-white",
+  "bg-[#B45309] text-white",
+  "bg-[#D97706] text-white",
+  "bg-[#F59E0B] text-gray-950",
+  "bg-[#FBBF24] text-gray-950",
+  "bg-[#FCD34D] text-gray-950",
+];
+
 /**
  * Perfect centered pyramid widths (equal inset both sides).
  * Strong even steps so All / Won / Lost all read as a funnel.
@@ -77,7 +91,7 @@ function SubstageList({
   loading,
 }: {
   items: SubstageItem[];
-  pathTone: "won" | "lost";
+  pathTone: "won" | "lost" | "hold";
   loading?: boolean;
 }) {
   const sorted = useMemo(() => [...items].sort((a, b) => b.count - a.count), [items]);
@@ -85,11 +99,15 @@ function SubstageList({
   const topAccent =
     pathTone === "won"
       ? "border-emerald-300/80 bg-gradient-to-br from-emerald-50 to-white shadow-[0_10px_28px_rgba(16,185,129,0.14)] ring-1 ring-emerald-200/80"
-      : "border-red-300/80 bg-gradient-to-br from-red-50 to-white shadow-[0_10px_28px_rgba(239,68,68,0.12)] ring-1 ring-red-200/80";
+      : pathTone === "hold"
+        ? "border-amber-300/80 bg-gradient-to-br from-amber-50 to-white shadow-[0_10px_28px_rgba(245,158,11,0.14)] ring-1 ring-amber-200/80"
+        : "border-red-300/80 bg-gradient-to-br from-red-50 to-white shadow-[0_10px_28px_rgba(239,68,68,0.12)] ring-1 ring-red-200/80";
   const topBadge =
     pathTone === "won"
       ? "bg-emerald-100 text-emerald-700"
-      : "bg-red-100 text-red-700";
+      : pathTone === "hold"
+        ? "bg-amber-100 text-amber-800"
+        : "bg-red-100 text-red-700";
 
   if (loading) {
     return (
@@ -183,13 +201,15 @@ function SubstageModal({
   funnelTab,
   wonSubstages,
   lostSubstages,
+  holdSubstages,
   loading,
   onClose,
 }: {
   stageLabel: string;
-  funnelTab: "all" | "won" | "lost";
+  funnelTab: "all" | "won" | "lost" | "hold";
   wonSubstages: SubstageItem[];
   lostSubstages: SubstageItem[];
+  holdSubstages: SubstageItem[];
   loading?: boolean;
   onClose: () => void;
 }) {
@@ -211,16 +231,25 @@ function SubstageModal({
 
   const showWon = funnelTab === "all" || funnelTab === "won";
   const showLost = funnelTab === "all" || funnelTab === "lost";
+  const showHold = funnelTab === "all" || funnelTab === "hold";
 
   const pathFilterLabel =
-    funnelTab === "all" ? "All paths" : funnelTab === "won" ? "Won path" : "Lost path";
+    funnelTab === "all"
+      ? "All paths"
+      : funnelTab === "won"
+        ? "Won path"
+        : funnelTab === "hold"
+          ? "On Hold path"
+          : "Lost path";
 
   const pathFilterClass =
     funnelTab === "won"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80"
       : funnelTab === "lost"
         ? "bg-red-50 text-red-700 ring-red-200/80"
-        : "bg-slate-100 text-slate-700 ring-slate-200/80";
+        : funnelTab === "hold"
+          ? "bg-amber-50 text-amber-800 ring-amber-200/80"
+          : "bg-slate-100 text-slate-700 ring-slate-200/80";
 
   return (
     <div
@@ -295,6 +324,20 @@ function SubstageModal({
                 <SubstageList items={lostSubstages} pathTone="lost" loading={loading} />
               </div>
             ) : null}
+
+            {showHold ? (
+              <div>
+                {funnelTab === "all" ? (
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                      On Hold substages
+                    </h4>
+                  </div>
+                ) : null}
+                <SubstageList items={holdSubstages} pathTone="hold" loading={loading} />
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -305,6 +348,8 @@ function SubstageModal({
 export default function InsightSect3({
   salesFunnel,
   lostFunnel,
+  holdFunnel,
+  holdPathByStage,
   revenueDistribution,
   totalLeadsCount,
   tokenMetrics,
@@ -313,12 +358,18 @@ export default function InsightSect3({
   quotationMetricsLoading,
   funnelStageValues,
   funnelMetricsLoading,
-  stagePathData = {},
+  stagePathData: stagePathDataProp = {},
   stagePathLoading = false,
   useCurrentStageInventory = false,
 }: Props) {
-  const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost">("all");
+  const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost" | "hold">("all");
   const [selectedStagePopup, setSelectedStagePopup] = useState<string | null>(null);
+
+  /** Hub holdPathByStage wins over client Hold heuristics. */
+  const stagePathData = useMemo(
+    () => mergeHubHoldPathByStage(stagePathDataProp, holdPathByStage),
+    [stagePathDataProp, holdPathByStage],
+  );
 
   const fullSalesFunnel = useMemo(() => {
     // Authoritative inventory: never replace Fresh Lead with pool total
@@ -374,6 +425,9 @@ export default function InsightSect3({
     return k !== "fresh_lead" && k !== "total";
   });
 
+  const holdStages = holdFunnel?.stages ?? [];
+  const hasHubHoldFunnel = holdStages.length > 0;
+
   const lostCountByStageKey = useMemo(() => {
     const map: Record<string, number> = {};
     for (const s of lostStages) {
@@ -382,6 +436,30 @@ export default function InsightSect3({
     }
     return map;
   }, [lostStages]);
+
+  const holdCountByStageKey = useMemo(() => {
+    const map: Record<string, number> = {};
+    if (hasHubHoldFunnel) {
+      for (const s of holdStages) {
+        const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+        map[k] = s.count;
+      }
+      return map;
+    }
+    for (const [key, path] of Object.entries(stagePathData)) {
+      map[key] = path.holdTotal ?? 0;
+    }
+    return map;
+  }, [hasHubHoldFunnel, holdStages, stagePathData]);
+
+  const holdShareByStageKey = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const s of holdStages) {
+      const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+      map[k] = Number(s.sharePercent) || 0;
+    }
+    return map;
+  }, [holdStages]);
 
   const wonSegmentTotal = useMemo(() => {
     let sum = 0;
@@ -411,20 +489,44 @@ export default function InsightSect3({
     return sum;
   }, [activeSalesFunnel, stagePathData, lostCountByStageKey]);
 
+  const holdSegmentTotal = useMemo(() => {
+    if (holdFunnel?.total != null && Number.isFinite(holdFunnel.total) && hasHubHoldFunnel) {
+      return holdFunnel.total;
+    }
+    return Object.values(holdCountByStageKey).reduce((sum, n) => sum + (Number(n) || 0), 0);
+  }, [holdFunnel?.total, hasHubHoldFunnel, holdCountByStageKey]);
+
   /**
    * Display funnel:
-   * - Total bar always (All / Won / Lost)
-   * - Fresh Lead bar only on All (hidden on Won / Lost)
+   * - Total bar always (All / Won / Lost / Hold)
+   * - Fresh Lead bar only on All (hidden on Won / Lost / Hold)
    * - Won Total = sum of won-path stage counts
    * - Lost Total = sum of Lost Segment stage counts
+   * - Hold Total = Hub holdFunnel (prefer) or mapped On Hold path
    */
   const displaySalesFunnel = useMemo(() => {
-    const milestoneStages =
-      funnelTab === "all"
-        ? activeSalesFunnel
-        : activeSalesFunnel.filter(
-            (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
-          );
+    // Hold tab: Hub catalog-gated stages only when holdFunnel is present.
+    const milestoneStages: InsightsFunnelStage[] =
+      funnelTab === "hold" && hasHubHoldFunnel
+        ? holdStages.map((s) => ({
+            stageKey: s.stageKey,
+            stageLabel: s.stageLabel,
+            count: s.count,
+            countLabel: "On Hold",
+            value: 0,
+            conversionPercent: Number(s.sharePercent) || 0,
+          }))
+        : funnelTab === "hold"
+          ? activeSalesFunnel.filter((s) => {
+              const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+              if (key === "fresh_lead" || key === "total") return false;
+              return funnelStageHasHoldPath(stagePathData[key]);
+            })
+          : funnelTab === "all"
+            ? activeSalesFunnel
+            : activeSalesFunnel.filter(
+                (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
+              );
 
     const poolTotal =
       totalLeadsCount != null && totalLeadsCount > 0
@@ -452,6 +554,9 @@ export default function InsightSect3({
     } else if (funnelTab === "lost") {
       totalCount = lostSegmentTotal;
       countLabel = "Lost Leads";
+    } else if (funnelTab === "hold") {
+      totalCount = holdSegmentTotal;
+      countLabel = "On Hold Leads";
     }
 
     const totalStage: InsightsFunnelStage = {
@@ -463,6 +568,11 @@ export default function InsightSect3({
       conversionPercent: 100,
     };
 
+    // Hub Hold bars already carry sharePercent — don't recompute from sales inventory.
+    if (funnelTab === "hold" && hasHubHoldFunnel) {
+      return [totalStage, ...milestoneStages];
+    }
+
     // Percents for milestone bars stay based on inventory (exclude Total from recalculation)
     const withPercents = useCurrentStageInventory
       ? recalcFunnelSharePercents(milestoneStages)
@@ -472,8 +582,13 @@ export default function InsightSect3({
   }, [
     activeSalesFunnel,
     funnelTab,
+    hasHubHoldFunnel,
+    holdCountByStageKey,
+    holdSegmentTotal,
+    holdStages,
     lostFunnel?.stages,
     lostFunnel?.total,
+    stagePathData,
     totalLeadsCount,
     useCurrentStageInventory,
     wonSegmentTotal,
@@ -524,6 +639,7 @@ export default function InsightSect3({
       stageLabel: label,
       wonSubstages: path?.wonSubstages ?? [],
       lostSubstages: path?.lostSubstages ?? [],
+      holdSubstages: path?.holdSubstages ?? [],
     };
   }, [selectedStagePopup, displaySalesFunnel, stagePathData]);
 
@@ -541,7 +657,7 @@ export default function InsightSect3({
             </div>
 
             <div className="flex items-center gap-1 self-start rounded-lg border border-gray-200 bg-gray-100 p-0.5 sm:self-auto">
-              {(["all", "won", "lost"] as const).map((tab) => (
+              {(["all", "won", "lost", "hold"] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -549,21 +665,25 @@ export default function InsightSect3({
                     setFunnelTab(tab);
                     setSelectedStagePopup(null);
                   }}
-                  className={`min-w-[4.75rem] cursor-pointer rounded-md px-3 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out ${
+                  className={`min-w-[3.75rem] cursor-pointer rounded-md px-2.5 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out sm:min-w-[4.5rem] sm:px-3 ${
                     funnelTab === tab
                       ? tab === "won"
                         ? "bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-500 hover:shadow-md hover:brightness-110"
                         : tab === "lost"
                           ? "bg-red-600 font-bold text-white shadow-xs hover:bg-red-500 hover:shadow-md hover:brightness-110"
-                          : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
+                          : tab === "hold"
+                            ? "bg-amber-500 font-bold text-white shadow-xs hover:bg-amber-400 hover:shadow-md hover:brightness-110"
+                            : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
                       : tab === "won"
                         ? "text-gray-600 hover:bg-emerald-100 hover:text-emerald-700 hover:shadow-xs"
                         : tab === "lost"
                           ? "text-gray-600 hover:bg-red-100 hover:text-red-700 hover:shadow-xs"
-                          : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
+                          : tab === "hold"
+                            ? "text-gray-600 hover:bg-amber-100 hover:text-amber-800 hover:shadow-xs"
+                            : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
                   }`}
                 >
-                  {tab === "all" ? "All" : tab === "won" ? "Won" : "Lost"}
+                  {tab === "all" ? "All" : tab === "won" ? "Won" : tab === "hold" ? "Hold" : "Lost"}
                 </button>
               ))}
             </div>
@@ -591,19 +711,28 @@ export default function InsightSect3({
                   const lostCount = hasAlignedLostStages
                     ? (lostCountByStageKey[canonicalKey] ?? 0)
                     : (lostCountByStageKey[canonicalKey] ?? pathBreakdown?.lostTotal ?? 0);
+                  const holdCount = hasHubHoldFunnel
+                    ? (holdCountByStageKey[canonicalKey] ?? 0)
+                    : (holdCountByStageKey[canonicalKey] ?? pathBreakdown?.holdTotal ?? 0);
                   const wonCount = pathBreakdown?.wonTotal ?? Math.max(0, stage.count - lostCount);
 
                   let displayCount = stage.count;
                   if (!isTotal) {
                     if (funnelTab === "won") displayCount = wonCount;
                     else if (funnelTab === "lost") displayCount = lostCount;
+                    else if (funnelTab === "hold") displayCount = holdCount;
                   }
 
                   const useLostStyle = funnelTab === "lost";
-                  const palette = useLostStyle ? LOST_FUNNEL_BAR_COLORS : WON_FUNNEL_BAR_COLORS;
+                  const useHoldStyle = funnelTab === "hold";
+                  const palette = useLostStyle
+                    ? LOST_FUNNEL_BAR_COLORS
+                    : useHoldStyle
+                      ? HOLD_FUNNEL_BAR_COLORS
+                      : WON_FUNNEL_BAR_COLORS;
                   let barColor =
                     palette[Math.min(index, palette.length - 1)] ?? palette[palette.length - 1]!;
-                  if (isClosedWonStage && !useLostStyle) {
+                  if (isClosedWonStage && !useLostStyle && !useHoldStyle) {
                     barColor = "bg-[#22C55E] text-gray-950";
                   }
 
@@ -619,11 +748,15 @@ export default function InsightSect3({
                         ? `${formatInsightsCount(displayCount)} Lost Leads`
                         : funnelTab === "won"
                           ? `${formatInsightsCount(displayCount)} Won Leads`
-                          : `${formatInsightsCount(displayCount)} Leads`;
-                  } else if (isClosedWonStage && funnelTab !== "lost") {
+                          : funnelTab === "hold"
+                            ? `${formatInsightsCount(displayCount)} On Hold Leads`
+                            : `${formatInsightsCount(displayCount)} Leads`;
+                  } else if (isClosedWonStage && funnelTab !== "lost" && funnelTab !== "hold") {
                     countText = `${formatInsightsCount(displayCount)} Leads`;
                   } else if (funnelTab === "lost") {
                     countText = `${formatInsightsCount(displayCount)} Lost Leads`;
+                  } else if (funnelTab === "hold") {
+                    countText = `${formatInsightsCount(displayCount)} On Hold`;
                   }
 
                   const stageValue =
@@ -634,12 +767,12 @@ export default function InsightSect3({
                   const isClickable = !isFreshLead && !isTotal;
                   const isDimmed = Boolean(selectedStagePopup) && !isPopupOpen;
 
-                  const showWonLostBadge =
+                  const showPathBadge =
                     funnelTab === "all" && !isFreshLead && !isTotal;
 
                   const wonLostBadgeClass = isClosedWonStage
-                    ? "inline-flex h-5 items-center rounded-md bg-black/15 px-1.5 text-[9px] font-semibold whitespace-nowrap text-gray-950 sm:h-6 sm:px-2 sm:text-[10px]"
-                    : "inline-flex h-5 items-center rounded-md bg-white/20 px-1.5 text-[9px] font-semibold whitespace-nowrap text-white/90 sm:h-6 sm:px-2 sm:text-[10px]";
+                    ? "inline-flex h-5 max-w-[11rem] items-center truncate rounded-md bg-black/15 px-1.5 text-[9px] font-semibold whitespace-nowrap text-gray-950 sm:h-6 sm:max-w-none sm:px-2 sm:text-[10px]"
+                    : "inline-flex h-5 max-w-[11rem] items-center truncate rounded-md bg-white/20 px-1.5 text-[9px] font-semibold whitespace-nowrap text-white/90 sm:h-6 sm:max-w-none sm:px-2 sm:text-[10px]";
 
                   const percentLabel = isTotal
                     ? formatInsightsPercent(100)
@@ -656,10 +789,21 @@ export default function InsightSect3({
                         ? formatInsightsPercent(
                             wonSegmentTotal > 0 ? (wonCount / wonSegmentTotal) * 100 : 0,
                           )
-                        : formatInsightsPercent(stage.conversionPercent);
+                        : funnelTab === "hold"
+                          ? formatInsightsPercent(
+                              holdShareByStageKey[canonicalKey] ??
+                                (holdSegmentTotal > 0
+                                  ? (holdCount / holdSegmentTotal) * 100
+                                  : 0),
+                              0,
+                            )
+                          : formatInsightsPercent(stage.conversionPercent);
 
                   const metricsText =
-                    funnelTab !== "lost" && !isTotal && !isFreshLead
+                    funnelTab !== "lost" &&
+                    funnelTab !== "hold" &&
+                    !isTotal &&
+                    !isFreshLead
                       ? `${countText} | ${
                           funnelMetricsLoading ? "…" : formatInsightsInrCompact(stageValue)
                         }`
@@ -702,10 +846,11 @@ export default function InsightSect3({
                               <span className="text-right text-[11px] font-bold whitespace-nowrap tabular-nums sm:text-sm">
                                 {metricsText}
                               </span>
-                              {showWonLostBadge ? (
-                                <span className={wonLostBadgeClass}>
+                              {showPathBadge ? (
+                                <span className={wonLostBadgeClass} title={`${wonCount} won · ${lostCount} lost · ${holdCount} hold`}>
                                   {formatInsightsCount(wonCount)} won ·{" "}
-                                  {formatInsightsCount(lostCount)} lost
+                                  {formatInsightsCount(lostCount)} lost ·{" "}
+                                  {formatInsightsCount(holdCount)} hold
                                 </span>
                               ) : null}
                             </div>
@@ -732,6 +877,7 @@ export default function InsightSect3({
               funnelTab={funnelTab}
               wonSubstages={activeStagePopupDetails.wonSubstages}
               lostSubstages={activeStagePopupDetails.lostSubstages}
+              holdSubstages={activeStagePopupDetails.holdSubstages}
               loading={stagePathLoading}
               onClose={() => setSelectedStagePopup(null)}
             />

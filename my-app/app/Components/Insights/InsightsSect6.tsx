@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   formatInsightsChangePercent,
   formatInsightsInrCompact,
   type InsightsDashboard,
 } from "@/lib/crm-insights-api";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
-import type { InsightsWeekBarPoint } from "@/lib/insights-week-charts";
+import type {
+  InsightsMonthBarPoint,
+  InsightsWeekBarPoint,
+  InsightsWeekCharts,
+} from "@/lib/insights-week-charts";
 import { intensityFromCounts } from "@/lib/insights-week-charts";
 
 type Props = {
@@ -16,7 +20,9 @@ type Props = {
   revenueForecast: InsightsDashboard["revenueForecast"];
   /** Same date filter as Insights header — only used for labels/copy. */
   dateFilter?: BookingDateFilterState;
-  /** Month-scoped weeks with daily drill-down (FE rebuild). */
+  /** FE-rebuilt volume series (week or month root + nested drill-down). */
+  volumeCharts?: InsightsWeekCharts | null;
+  /** @deprecated use volumeCharts.weekBars */
   weekBars?: InsightsWeekBarPoint[] | null;
 };
 
@@ -69,14 +75,20 @@ function isWeekSeriesLabels(points: { label?: string }[]): boolean {
 
 type VolumeIntensity = "high" | "medium" | "low" | "none";
 
+/** Months shown at once on All time / multi-month (arrows for the rest). */
+const MONTH_PAGE_SIZE = 6;
+
+/** Shared Leads-over-time bar geometry (month / week / day stay matched). */
+const LEAD_VOLUME_BAR_SHAPE = "w-full max-w-[36px] rounded-md";
+
 function barFillClass(intensity: VolumeIntensity): string {
   switch (intensity) {
     case "high":
-      return "bg-emerald-500";
+      return "bg-[#16B981]";
     case "medium":
-      return "bg-amber-400";
+      return "bg-[#F59E0B]";
     case "low":
-      return "bg-sky-400";
+      return "bg-[#EF4444]";
     default:
       return "bg-slate-200";
   }
@@ -85,13 +97,26 @@ function barFillClass(intensity: VolumeIntensity): string {
 function barSoftClass(intensity: VolumeIntensity): string {
   switch (intensity) {
     case "high":
-      return "bg-emerald-50 text-emerald-700 ring-emerald-100";
+      return "bg-emerald-50 text-[#16B981] ring-emerald-100";
     case "medium":
-      return "bg-amber-50 text-amber-800 ring-amber-100";
+      return "bg-amber-50 text-[#F59E0B] ring-amber-100";
     case "low":
-      return "bg-sky-50 text-sky-700 ring-sky-100";
+      return "bg-red-50 text-[#EF4444] ring-red-100";
     default:
       return "bg-slate-50 text-slate-500 ring-slate-100";
+  }
+}
+
+function barCountTextClass(intensity: VolumeIntensity, count = 1): string {
+  switch (intensity) {
+    case "high":
+      return "text-[#16B981]";
+    case "medium":
+      return "text-[#F59E0B]";
+    case "low":
+      return count > 0 ? "text-[#EF4444]" : "text-slate-400";
+    default:
+      return "text-slate-400";
   }
 }
 
@@ -108,158 +133,420 @@ function intensityLabel(intensity: VolumeIntensity): string {
   }
 }
 
-function WeekDaySheet({
-  week,
-  onClose,
+type VolumeBarItem = {
+  key: string;
+  count: number;
+  intensity: VolumeIntensity;
+  primaryLabel: string;
+  secondaryLabel?: string;
+  title?: string;
+  onClick?: () => void;
+};
+
+/** Shorten "1 May–7 May" → "1–7 May" so week columns stay aligned. */
+function compactRangeLabel(range: string): string {
+  const raw = range.trim();
+  const sameMonth = raw.match(
+    /^(\d{1,2})\s+([A-Za-z]{3,})\s*[–-]\s*(\d{1,2})\s+\2$/i,
+  );
+  if (sameMonth) {
+    return `${sameMonth[1]}–${sameMonth[3]} ${sameMonth[2]}`;
+  }
+  return raw;
+}
+
+function VolumeBarRow({
+  items,
+  maxCount,
+  maxHeightPx,
+  showIntensityBadge = false,
+  compact = false,
+  /** When true, secondary label (e.g. "10 Aug") stays visible; High/Med/Low still hover-only. */
+  alwaysShowSecondary = false,
 }: {
-  week: InsightsWeekBarPoint;
-  onClose: () => void;
+  items: VolumeBarItem[];
+  maxCount: number;
+  /** Max bar height only (count + axis labels sit outside this track). */
+  maxHeightPx?: number;
+  /** Kept for call sites; High/Med/Low only show on hover. */
+  showIntensityBadge?: boolean;
+  /** Tighter track for sheets (still no scroll). */
+  compact?: boolean;
+  alwaysShowSecondary?: boolean;
 }) {
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
-  const maxDay = Math.max(1, ...week.days.map((d) => d.count));
-  const highDays = week.days.filter((d) => d.intensity === "high" && d.count > 0);
-  const lowDays = week.days.filter((d) => d.intensity === "low" && d.count > 0);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const max = Math.max(1, maxCount);
+  const barMaxPx = maxHeightPx ?? (compact ? 96 : showIntensityBadge ? 104 : 116);
+  const trackPx = barMaxPx;
+
+  return (
+    <div className="mt-1 w-full overflow-hidden">
+      <div className="flex w-full items-start justify-between gap-1 sm:gap-1.5">
+        {items.map((item) => {
+          const heightPx = Math.max(
+            item.count > 0 ? 10 : 5,
+            Math.round((item.count / max) * barMaxPx),
+          );
+          const active = activeKey === item.key;
+          const interactive = Boolean(item.onClick);
+          const shellClass = `group flex min-w-0 flex-1 flex-col items-center px-0.5 py-0.5 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            interactive
+              ? "cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 active:scale-[0.97]"
+              : "cursor-default"
+          } ${active ? "scale-[1.03]" : ""}`;
+
+          const tip =
+            item.title ??
+            `${item.primaryLabel}${
+              item.secondaryLabel ? ` (${item.secondaryLabel})` : ""
+            }: ${item.count} leads · ${intensityLabel(item.intensity)}`;
+
+          const content = (
+            <>
+              <span
+                className={`mb-1 flex h-5 w-full shrink-0 items-end justify-center text-[11px] font-bold leading-none tabular-nums ${
+                  item.count > 0
+                    ? barCountTextClass(item.intensity, item.count)
+                    : "text-slate-400"
+                }`}
+              >
+                {item.count}
+              </span>
+              <div
+                className="relative flex w-full shrink-0 flex-col items-center justify-end"
+                style={{ height: trackPx }}
+              >
+                <div
+                  className={`${LEAD_VOLUME_BAR_SHAPE} shadow-sm transition-[height,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    active
+                      ? "scale-y-105 opacity-100 shadow-md"
+                      : "opacity-90 group-hover:opacity-100"
+                  } ${barFillClass(item.intensity)}`}
+                  style={{ height: heightPx, transformOrigin: "bottom center" }}
+                />
+              </div>
+              <div className="mt-1.5 flex w-full shrink-0 flex-col items-center justify-start text-center">
+                {/* Primary (W1 / Sat / May) always visible */}
+                <span className="w-full truncate text-[10px] font-semibold leading-tight tracking-wide text-slate-700 sm:text-[11px]">
+                  {item.primaryLabel}
+                </span>
+                {/* Day sheet: date always on. Week/month: date with hover */}
+                {item.secondaryLabel ? (
+                  alwaysShowSecondary ? (
+                    <span
+                      className="mt-0.5 w-full truncate text-[9px] font-medium leading-tight tabular-nums text-slate-400"
+                      title={item.secondaryLabel}
+                    >
+                      {item.secondaryLabel}
+                    </span>
+                  ) : (
+                    <span
+                      className={`mt-0.5 w-full truncate text-[9px] font-medium leading-tight tabular-nums text-slate-400 transition-all duration-200 ease-out ${
+                        active
+                          ? "max-h-6 translate-y-0 opacity-100"
+                          : "pointer-events-none max-h-0 -translate-y-1 opacity-0"
+                      }`}
+                      title={item.secondaryLabel}
+                      aria-hidden={!active}
+                    >
+                      {item.secondaryLabel}
+                    </span>
+                  )
+                ) : null}
+                {/* High / Medium / Low — hover/focus only */}
+                <span
+                  className={`mt-1 rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ring-1 transition-all duration-200 ease-out ${barSoftClass(item.intensity)} ${
+                    active
+                      ? "max-h-6 translate-y-0 scale-100 opacity-100"
+                      : "pointer-events-none max-h-0 -translate-y-1 scale-95 overflow-hidden opacity-0"
+                  }`}
+                  aria-hidden={!active}
+                >
+                  {intensityLabel(item.intensity)}
+                </span>
+              </div>
+            </>
+          );
+
+          if (interactive) {
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={item.onClick}
+                title={tip}
+                onMouseEnter={() => setActiveKey(item.key)}
+                onMouseLeave={() => setActiveKey(null)}
+                onFocus={() => setActiveKey(item.key)}
+                onBlur={() => setActiveKey(null)}
+                className={shellClass}
+              >
+                {content}
+              </button>
+            );
+          }
+
+          return (
+            <div
+              key={item.key}
+              title={tip}
+              onMouseEnter={() => setActiveKey(item.key)}
+              onMouseLeave={() => setActiveKey(null)}
+              className={shellClass}
+            >
+              {content}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const IOS_EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
+
+function IosSheetCard({
+  title,
+  subtitle,
+  eyebrow,
+  chips,
+  children,
+  onClose,
+  className = "",
+  style,
+}: {
+  title: string;
+  subtitle?: string;
+  eyebrow?: string;
+  chips?: ReactNode;
+  children: ReactNode;
+  onClose: () => void;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <div
+      className={`h-full overflow-hidden rounded-[28px] border border-white/80 bg-white p-5 shadow-2xl shadow-slate-900/18 backdrop-blur-xl sm:p-6 ${className}`}
+      style={style}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
+      <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200/90 sm:hidden" />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {eyebrow ? (
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              {eyebrow}
+            </p>
+          ) : null}
+          <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+            {title}
+          </h3>
+          {subtitle ? (
+            <p className="mt-1 text-sm leading-snug text-slate-500">{subtitle}</p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-95"
+          aria-label="Close sheet"
+        >
+          ✕
+        </button>
+      </div>
+      {chips ? <div className="mt-3 flex flex-wrap gap-2">{chips}</div> : null}
+      <div className="mt-4 overflow-hidden">{children}</div>
+      <p className="mt-4 text-center text-[11px] text-slate-400">
+        Green = high · Amber = medium · Red = low
+      </p>
+    </div>
+  );
+}
+
+/**
+ * iOS-style drill stage:
+ * - Single panel centered
+ * - Week + day open together: week on left, day on right, pair centered
+ * - Close day → week recenters smoothly
+ */
+function VolumeDrillStage({
+  weekPanel,
+  dayPanel,
+  onDismissBackdrop,
+}: {
+  weekPanel: ReactNode | null;
+  dayPanel: ReactNode | null;
+  onDismissBackdrop: () => void;
+}) {
+  const hasWeek = Boolean(weekPanel);
+  const hasDay = Boolean(dayPanel);
+  const open = hasWeek || hasDay;
+  const pairMode = hasWeek && hasDay;
+
+  const [entered, setEntered] = useState(false);
+  const [dayVisible, setDayVisible] = useState(false);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
+    if (!open) {
+      setEntered(false);
+      setDayVisible(false);
+      return;
+    }
+    const raf = requestAnimationFrame(() => setEntered(true));
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
+      cancelAnimationFrame(raf);
       document.body.style.overflow = prev;
     };
-  }, [onClose]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!hasDay) {
+      setDayVisible(false);
+      return;
+    }
+    const t = window.setTimeout(() => setDayVisible(true), 40);
+    return () => window.clearTimeout(t);
+  }, [hasDay, dayPanel]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onDismissBackdrop();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onDismissBackdrop]);
+
+  if (!open) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center sm:items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${week.shortLabel} daily leads`}
+      className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-5"
+      role="presentation"
     >
+      {/* Backdrop — click outside sheet closes week + day / month popups */}
       <button
         type="button"
-        className="absolute inset-0 bg-slate-900/35 backdrop-blur-[2px] transition-opacity"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div
-        className="relative z-10 w-full max-w-md animate-[slideUp_0.28s_ease-out] rounded-t-[28px] border border-white/60 bg-white/95 p-5 shadow-2xl shadow-slate-900/15 backdrop-blur-xl sm:rounded-[28px] sm:p-6"
+        className="absolute inset-0 cursor-default bg-slate-900/40"
         style={{
-          // lightweight keyframe without global CSS file
-          animationName: "none",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          opacity: entered ? 1 : 0,
+          transition: `opacity 0.4s ${IOS_EASE}`,
+        }}
+        aria-label="Close popup"
+        onClick={onDismissBackdrop}
+      />
+
+      {/* pointer-events-none so empty area / gutter clicks hit the backdrop */}
+      <div
+        className="pointer-events-none relative z-10 flex w-full max-w-[56rem] flex-col items-stretch justify-center gap-3 px-3 pb-4 pt-2 sm:flex-row sm:items-stretch sm:justify-center sm:gap-4 sm:p-0"
+        style={{
+          opacity: entered ? 1 : 0,
+          transition: `opacity 0.35s ${IOS_EASE}`,
         }}
       >
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              Daily breakdown
-            </p>
-            <h3 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
-              {week.shortLabel}
-              <span className="ml-2 text-base font-medium text-slate-500">
-                {week.rangeLabel}
-              </span>
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              {week.count} lead{week.count === 1 ? "" : "s"} this week · tap a day
-            </p>
+        {weekPanel ? (
+          <div
+            className="pointer-events-auto w-full min-w-0"
+            style={{
+              flex: pairMode ? "1 1 0" : "0 1 28rem",
+              maxWidth: pairMode ? "26rem" : "28rem",
+              marginLeft: pairMode ? 0 : "auto",
+              marginRight: pairMode ? 0 : "auto",
+              transform: entered
+                ? "translate3d(0,0,0) scale(1)"
+                : "translate3d(0,20px,0) scale(0.97)",
+              transition: `transform 0.5s ${IOS_EASE}, max-width 0.5s ${IOS_EASE}, flex 0.5s ${IOS_EASE}, margin 0.5s ${IOS_EASE}`,
+              willChange: "transform",
+            }}
+          >
+            {weekPanel}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-95"
-            aria-label="Close sheet"
+        ) : null}
+
+        {hasDay ? (
+          <div
+            className="pointer-events-auto w-full min-w-0"
+            style={{
+              flex: pairMode ? "1 1 0" : "0 1 28rem",
+              maxWidth: pairMode ? "26rem" : "28rem",
+              marginLeft: pairMode ? 0 : "auto",
+              marginRight: pairMode ? 0 : "auto",
+              transform: dayVisible
+                ? "translate3d(0,0,0) scale(1)"
+                : pairMode
+                  ? "translate3d(36px,0,0) scale(0.96)"
+                  : "translate3d(0,16px,0) scale(0.97)",
+              opacity: dayVisible ? 1 : 0,
+              transition: `transform 0.52s ${IOS_EASE}, opacity 0.42s ${IOS_EASE}, max-width 0.5s ${IOS_EASE}, flex 0.5s ${IOS_EASE}`,
+              pointerEvents: dayVisible ? "auto" : "none",
+              willChange: "transform, opacity",
+            }}
           >
-            ✕
-          </button>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <span
-            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${barSoftClass(week.intensity)}`}
-          >
-            Week · {intensityLabel(week.intensity)} volume
-          </span>
-          {highDays[0] ? (
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-100">
-              Peak · {highDays[0].day} {highDays[0].monthShort}
-            </span>
-          ) : null}
-          {lowDays[0] && week.count > 0 ? (
-            <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-100">
-              Quiet · {lowDays[0].day} {lowDays[0].monthShort}
-            </span>
-          ) : null}
-        </div>
-
-        <div className="mt-6 flex items-end justify-between gap-1.5 sm:gap-2">
-          {week.days.map((day) => {
-            const heightPx = Math.max(
-              day.count > 0 ? 12 : 6,
-              Math.round((day.count / maxDay) * 140),
-            );
-            const hovered = hoveredKey === day.dateKey;
-            return (
-              <button
-                key={day.dateKey}
-                type="button"
-                className={`group flex min-w-0 flex-1 flex-col items-center rounded-2xl px-0.5 py-2 transition-all duration-200 ease-out ${
-                  hovered
-                    ? "bg-slate-50 scale-[1.04] shadow-md shadow-slate-200/80"
-                    : "hover:bg-slate-50/80"
-                }`}
-                onMouseEnter={() => setHoveredKey(day.dateKey)}
-                onMouseLeave={() => setHoveredKey(null)}
-                onFocus={() => setHoveredKey(day.dateKey)}
-                onBlur={() => setHoveredKey(null)}
-              >
-                <span
-                  className={`mb-1.5 text-[11px] font-bold tabular-nums transition-colors ${
-                    day.intensity === "high"
-                      ? "text-emerald-600"
-                      : day.intensity === "low" && day.count > 0
-                        ? "text-sky-600"
-                        : "text-slate-600"
-                  }`}
-                >
-                  {day.count}
-                </span>
-                <div
-                  className={`w-full max-w-[36px] rounded-full transition-all duration-200 ease-out ${barFillClass(day.intensity)} ${
-                    hovered ? "opacity-100 shadow-sm" : "opacity-90"
-                  }`}
-                  style={{ height: `${heightPx}px` }}
-                />
-                <span className="mt-2 text-[10px] font-semibold text-slate-700">
-                  {day.weekdayShort}
-                </span>
-                <span className="text-[10px] tabular-nums text-slate-400">
-                  {day.day} {day.monthShort}
-                </span>
-                {hovered ? (
-                  <span
-                    className={`mt-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${barSoftClass(day.intensity)}`}
-                  >
-                    {intensityLabel(day.intensity)}
-                  </span>
-                ) : (
-                  <span className="mt-1.5 h-[18px]" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <p className="mt-5 text-center text-[11px] text-slate-400">
-          Green = high · Amber = medium · Blue = low
-        </p>
+            {dayPanel}
+          </div>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function WeekDaySheetContent({ week }: { week: InsightsWeekBarPoint }) {
+  const maxDay = Math.max(1, ...week.days.map((d) => d.count), 0);
+  return (
+    <VolumeBarRow
+      maxCount={maxDay}
+      maxHeightPx={88}
+      compact
+      alwaysShowSecondary
+      items={week.days.map((day) => ({
+        key: day.dateKey,
+        count: day.count,
+        intensity: day.intensity,
+        primaryLabel: day.weekdayShort,
+        secondaryLabel: `${day.day} ${day.monthShort}`,
+        title: `${day.weekdayLong} ${day.day} ${day.monthLong}: ${day.count} leads · ${intensityLabel(day.intensity)}`,
+      }))}
+    />
+  );
+}
+
+function MonthWeekSheetContent({
+  month,
+  onPickWeek,
+}: {
+  month: InsightsMonthBarPoint;
+  onPickWeek: (week: InsightsWeekBarPoint) => void;
+}) {
+  const maxWeek = Math.max(1, ...month.weeks.map((w) => w.count), 0);
+  if (month.weeks.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-slate-500">
+        No week breakdown for this month.
+      </p>
+    );
+  }
+  return (
+    <VolumeBarRow
+      maxCount={maxWeek}
+      maxHeightPx={88}
+      compact
+      showIntensityBadge
+      items={month.weeks.map((week) => ({
+        key: `${month.monthKey}-${week.shortLabel}`,
+        count: week.count,
+        intensity: week.intensity,
+        primaryLabel: week.shortLabel,
+        secondaryLabel: compactRangeLabel(week.rangeLabel),
+        title: `${week.shortLabel} (${week.rangeLabel}): ${week.count} — tap for days`,
+        onClick: () => onPickWeek(week),
+      }))}
+    />
   );
 }
 
@@ -268,25 +555,80 @@ export default function InsightsSect6({
   conversionTrend,
   revenueForecast,
   dateFilter,
-  weekBars,
+  volumeCharts,
+  weekBars: weekBarsProp,
 }: Props) {
-  const [selectedWeek, setSelectedWeek] = useState<InsightsWeekBarPoint | null>(
+  const rootLevel = volumeCharts?.rootLevel ?? (weekBarsProp?.length ? "week" : null);
+  const weekBars = volumeCharts?.weekBars?.length
+    ? volumeCharts.weekBars
+    : weekBarsProp ?? [];
+  const monthBars = volumeCharts?.monthBars ?? [];
+
+  const [selectedMonth, setSelectedMonth] = useState<InsightsMonthBarPoint | null>(
     null,
   );
+  const [selectedWeek, setSelectedWeek] = useState<InsightsWeekBarPoint | null>(null);
+  const [weekFromMonth, setWeekFromMonth] = useState<InsightsMonthBarPoint | null>(
+    null,
+  );
+  /** Page of months for All time / multi-month (6 per page). */
+  const [monthPage, setMonthPage] = useState(0);
+
+  const monthPageCount = Math.max(1, Math.ceil(monthBars.length / MONTH_PAGE_SIZE));
+  const monthPageClamped = Math.min(monthPage, monthPageCount - 1);
+  const visibleMonthBars = useMemo(() => {
+    if (monthBars.length <= MONTH_PAGE_SIZE) return monthBars;
+    const start = monthPageClamped * MONTH_PAGE_SIZE;
+    return monthBars.slice(start, start + MONTH_PAGE_SIZE);
+  }, [monthBars, monthPageClamped]);
+  const canPageMonths = monthBars.length > MONTH_PAGE_SIZE;
+  const canMonthPrev = canPageMonths && monthPageClamped > 0;
+  const canMonthNext = canPageMonths && monthPageClamped < monthPageCount - 1;
+  const monthWindowLabel =
+    visibleMonthBars.length > 0
+      ? visibleMonthBars.length === 1
+        ? visibleMonthBars[0]!.rangeLabel
+        : `${visibleMonthBars[0]!.shortLabel} ${visibleMonthBars[0]!.yearLabel} – ${visibleMonthBars[visibleMonthBars.length - 1]!.shortLabel} ${visibleMonthBars[visibleMonthBars.length - 1]!.yearLabel}`
+      : "";
+
+  // Reset drill stack when date scope or chart grain changes.
+  useEffect(() => {
+    setSelectedMonth(null);
+    setSelectedWeek(null);
+    setWeekFromMonth(null);
+  }, [dateFilter?.preset, dateFilter?.customFrom, dateFilter?.customTo, rootLevel]);
+
+  // Default to the latest 6 months when data loads / date filter changes.
+  useEffect(() => {
+    if (monthBars.length === 0) {
+      setMonthPage(0);
+      return;
+    }
+    setMonthPage(Math.max(0, Math.ceil(monthBars.length / MONTH_PAGE_SIZE) - 1));
+  }, [monthBars, dateFilter?.preset, dateFilter?.customFrom, dateFilter?.customTo]);
+
+  // Keep page in range if bars shrink.
+  useEffect(() => {
+    setMonthPage((p) => Math.min(p, Math.max(0, monthPageCount - 1)));
+  }, [monthPageCount]);
 
   const leadPoints = leadsOverTime.points ?? [];
   const maxLeadCount = useMemo(() => {
-    if (weekBars && weekBars.length > 0) {
+    if (rootLevel === "month" && monthBars.length > 0) {
+      // Full-series max so bar scale stays comparable across arrow pages.
+      return Math.max(1, ...monthBars.map((m) => m.count), 0);
+    }
+    if (rootLevel === "week" && weekBars.length > 0) {
       return Math.max(1, ...weekBars.map((w) => w.count), 0);
     }
     const counts = leadPoints.map((p) => Number(p.count ?? 0));
     return Math.max(1, ...counts, 0);
-  }, [leadPoints, weekBars]);
+  }, [leadPoints, monthBars, rootLevel, weekBars]);
 
   const legacyIntensities = useMemo(() => {
-    if (weekBars && weekBars.length > 0) return [];
+    if (rootLevel === "week" || rootLevel === "month") return [];
     return intensityFromCounts(leadPoints.map((p) => Number(p.count ?? 0)));
-  }, [leadPoints, weekBars]);
+  }, [leadPoints, rootLevel]);
 
   const conversionPoints = conversionTrend.points ?? [];
 
@@ -346,31 +688,69 @@ export default function InsightsSect6({
   const forecastMax = Math.max(1, target, actual, projected);
   const bar = (v: number) => Math.max(8, Math.round((v / forecastMax) * 144));
 
-  const interactive = Boolean(weekBars && weekBars.length > 0);
+  const openWeek = (week: InsightsWeekBarPoint, month?: InsightsMonthBarPoint | null) => {
+    setWeekFromMonth(month ?? null);
+    setSelectedWeek(week);
+  };
+
+  const closeWeek = () => {
+    setSelectedWeek(null);
+    setWeekFromMonth(null);
+  };
+
+  const closeMonth = () => {
+    setSelectedMonth(null);
+    setSelectedWeek(null);
+    setWeekFromMonth(null);
+  };
+
+  /** Click outside / Escape — close week daily sheet and month week sheet. */
+  const closeAllDrill = () => {
+    setSelectedMonth(null);
+    setSelectedWeek(null);
+    setWeekFromMonth(null);
+  };
+
+  const helperCopy =
+    rootLevel === "month"
+      ? "Color = high / med / low volume"
+      : rootLevel === "week"
+        ? isCalendarMonthPreset(dateFilter)
+          ? "Weeks of this month · color = high / med / low"
+          : "Weeks in range · color = high / med / low"
+        : "Volume in selected range · color = high / med / low";
+
+  const weekClickHint =
+    rootLevel === "month"
+      ? "Click a month for weeks · click a week for day-wise data"
+      : rootLevel === "week"
+        ? "Click a week to see day-wise lead data"
+        : null;
+
+  const highDay = selectedWeek?.days.find((d) => d.intensity === "high" && d.count > 0);
+  const lowDay = selectedWeek?.days.find((d) => d.intensity === "low" && d.count > 0);
 
   return (
     <main className="px-4 lg:px-0">
       <div className="mt-10 flex justify-center pb-10">
         <div className="grid w-full max-w-[1290px] grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {/* A) Leads over time */}
-          <div className="w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
+          <div className="w-full overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
             <div className="mb-4 flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-800">Leads over time</h2>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
-                  {isCalendarMonthPreset(dateFilter)
-                    ? "Weeks of this month · color = high / med / low"
-                    : "Volume in selected range · color = high / med / low"}
+                  {helperCopy}
                 </p>
-                {interactive ? (
-                  <p className="mt-1 text-[10px] font-medium text-emerald-600/90">
-                    Tap a week for Mon–Sun breakdown
+                {weekClickHint ? (
+                  <p className="mt-1 text-[10px] font-normal leading-snug text-slate-400">
+                    {weekClickHint}
                   </p>
                 ) : null}
               </div>
               <span
                 className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(leadsOverTime.changePercent)}`}
-                title="Latest week with data vs the week before it"
+                title="Latest period with data vs the one before it"
               >
                 {changeArrow(leadsOverTime.changePercent)}
                 {formatInsightsChangePercent(leadsOverTime.changePercent)}
@@ -379,95 +759,131 @@ export default function InsightsSect6({
 
             <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold">
               <span className="inline-flex items-center gap-1 text-slate-500">
-                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> High
+                <span className="inline-block h-2 w-2 rounded-full bg-[#16B981]" /> High
               </span>
               <span className="inline-flex items-center gap-1 text-slate-500">
-                <span className="inline-block h-2 w-2 rounded-full bg-amber-400" /> Med
+                <span className="inline-block h-2 w-2 rounded-full bg-[#F59E0B]" /> Med
               </span>
               <span className="inline-flex items-center gap-1 text-slate-500">
-                <span className="inline-block h-2 w-2 rounded-full bg-sky-400" /> Low
+                <span className="inline-block h-2 w-2 rounded-full bg-[#EF4444]" /> Low
               </span>
             </div>
 
-            {interactive && weekBars ? (
-              <div className="mt-1 flex h-56 items-end justify-between gap-1 sm:gap-1.5">
-                {weekBars.map((week) => {
-                  const heightPx = Math.max(
-                    week.count > 0 ? 10 : 4,
-                    Math.round((week.count / maxLeadCount) * 160),
-                  );
-                  return (
+            {rootLevel === "month" && monthBars.length > 0 ? (
+              <div className="relative">
+                <div className="flex items-center gap-1">
+                  {canPageMonths ? (
                     <button
-                      key={week.shortLabel}
                       type="button"
-                      onClick={() => setSelectedWeek(week)}
-                      className="group flex min-w-0 flex-1 flex-col items-center rounded-xl py-1 transition-transform duration-200 ease-out hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/50 active:scale-[0.98]"
-                      title={`${week.shortLabel} (${week.rangeLabel}): ${week.count} · ${intensityLabel(week.intensity)} — click for days`}
+                      aria-label="Older months"
+                      disabled={!canMonthPrev}
+                      onClick={() => setMonthPage((p) => Math.max(0, p - 1))}
+                      className={`flex h-9 w-8 shrink-0 items-center justify-center rounded-full text-slate-600 transition ${
+                        canMonthPrev
+                          ? "bg-slate-100 hover:bg-slate-200 active:scale-95"
+                          : "cursor-not-allowed bg-slate-50 text-slate-300"
+                      }`}
                     >
-                      <span
-                        className={`mb-1 text-[10px] font-bold tabular-nums ${
-                          week.intensity === "high"
-                            ? "text-emerald-600"
-                            : week.intensity === "medium"
-                              ? "text-amber-600"
-                              : week.intensity === "low"
-                                ? "text-sky-600"
-                                : "text-slate-400"
-                        }`}
-                      >
-                        {week.count}
-                      </span>
-                      <div
-                        className={`w-full max-w-[40px] rounded-2xl shadow-sm transition-all duration-200 ease-out group-hover:shadow-md ${barFillClass(week.intensity)}`}
-                        style={{ height: `${heightPx}px` }}
-                      />
-                      <span className="mt-1.5 text-center text-[10px] font-semibold tracking-wide text-slate-600 sm:text-[11px]">
-                        {week.shortLabel}
-                      </span>
-                      <span
-                        className={`mt-0.5 rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide ${barSoftClass(week.intensity)}`}
-                      >
-                        {intensityLabel(week.intensity)}
-                      </span>
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
+                        <path
+                          d="M12 4L6 10l6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </button>
-                  );
-                })}
+                  ) : null}
+                  <div className="min-w-0 flex-1">
+                    <VolumeBarRow
+                      maxCount={maxLeadCount}
+                      showIntensityBadge
+                      items={visibleMonthBars.map((month) => ({
+                        key: month.monthKey,
+                        count: month.count,
+                        intensity: month.intensity,
+                        primaryLabel: month.shortLabel,
+                        secondaryLabel: month.yearLabel,
+                        title: `${month.rangeLabel}: ${month.count} leads — tap for weeks`,
+                        onClick: () => {
+                          setSelectedMonth(month);
+                          setSelectedWeek(null);
+                          setWeekFromMonth(null);
+                        },
+                      }))}
+                    />
+                  </div>
+                  {canPageMonths ? (
+                    <button
+                      type="button"
+                      aria-label="Newer months"
+                      disabled={!canMonthNext}
+                      onClick={() =>
+                        setMonthPage((p) => Math.min(monthPageCount - 1, p + 1))
+                      }
+                      className={`flex h-9 w-8 shrink-0 items-center justify-center rounded-full text-slate-600 transition ${
+                        canMonthNext
+                          ? "bg-slate-100 hover:bg-slate-200 active:scale-95"
+                          : "cursor-not-allowed bg-slate-50 text-slate-300"
+                      }`}
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
+                        <path
+                          d="M8 4l6 6-6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+                {canPageMonths ? (
+                  <div className="mt-2 flex items-center justify-center gap-2 text-[10px] font-medium text-slate-400">
+                    <span className="tabular-nums text-slate-500">{monthWindowLabel}</span>
+                    <span className="text-slate-300">·</span>
+                    <span className="tabular-nums">
+                      {monthPageClamped + 1}/{monthPageCount}
+                    </span>
+                  </div>
+                ) : null}
               </div>
+            ) : rootLevel === "week" && weekBars.length > 0 ? (
+              <VolumeBarRow
+                maxCount={maxLeadCount}
+                showIntensityBadge
+                items={weekBars.map((week) => ({
+                  key: `${week.shortLabel}-${week.rangeLabel}`,
+                  count: week.count,
+                  intensity: week.intensity,
+                  primaryLabel: week.shortLabel,
+                  secondaryLabel: week.rangeLabel,
+                  title: `${week.shortLabel} (${week.rangeLabel}): ${week.count} · ${intensityLabel(week.intensity)} — click for days`,
+                  onClick: () => openWeek(week),
+                }))}
+              />
             ) : leadPoints.length === 0 ? (
               <p className="mt-8 text-sm text-gray-500">
                 No leads-over-time points for this filter.
               </p>
             ) : (
-              <div className="mt-2 flex h-56 items-end justify-between gap-1 sm:gap-1.5">
-                {leadPoints.map((item, index) => {
+              <VolumeBarRow
+                maxCount={maxLeadCount}
+                items={leadPoints.map((item, index) => {
                   const count = Number(item.count ?? 0);
-                  const heightPx = Math.max(
-                    count > 0 ? 8 : 4,
-                    Math.round((count / maxLeadCount) * 168),
-                  );
                   const intensity =
                     legacyIntensities[index] ?? ("none" as VolumeIntensity);
-                  const short = shortChartLabel(item.label, index);
-                  return (
-                    <div
-                      key={`${item.label}-${index}`}
-                      className="flex min-w-0 flex-1 flex-col items-center"
-                      title={`${item.label}: ${count} leads (${intensityLabel(intensity)})`}
-                    >
-                      <span className="mb-1 text-[10px] font-semibold tabular-nums text-gray-600">
-                        {count}
-                      </span>
-                      <div
-                        className={`w-full max-w-[40px] rounded-2xl ${barFillClass(intensity)}`}
-                        style={{ height: `${heightPx}px` }}
-                      />
-                      <span className="mt-1.5 text-center text-[10px] font-semibold tracking-wide text-gray-600 sm:text-[11px]">
-                        {short}
-                      </span>
-                    </div>
-                  );
+                  return {
+                    key: `${item.label}-${index}`,
+                    count,
+                    intensity,
+                    primaryLabel: shortChartLabel(item.label, index),
+                    title: `${item.label}: ${count} leads (${intensityLabel(intensity)})`,
+                  };
                 })}
-              </div>
+              />
             )}
           </div>
 
@@ -477,17 +893,19 @@ export default function InsightsSect6({
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-800">Conversion trend</h2>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
-                  Closed ÷ leads % for each week in the range
+                  {rootLevel === "month"
+                    ? "Closed ÷ leads % for each month in the range"
+                    : "Closed ÷ leads % for each week in the range"}
                 </p>
                 {isWeekSeriesLabels(conversionPoints) ? (
                   <p className="mt-1 text-[10px] font-medium text-gray-400">
-                    Badge = last week − first week
+                    Badge = last period − first period
                   </p>
                 ) : null}
               </div>
               <span
                 className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(conversionTrend.changePercent)}`}
-                title="Last week conversion % minus first week conversion %"
+                title="Last period conversion % minus first period conversion %"
               >
                 {changeArrow(conversionTrend.changePercent)}
                 {formatInsightsChangePercent(conversionTrend.changePercent)}
@@ -532,7 +950,7 @@ export default function InsightsSect6({
                     return (
                       <span
                         key={`${p.label}-${i}`}
-                        className="min-w-0 flex-1 text-center text-[10px] font-semibold text-gray-600 sm:text-[11px]"
+                        className="min-w-[2rem] flex-1 text-center text-[10px] font-semibold text-gray-600 sm:text-[11px]"
                         title={`${p.label}: ${pct.toFixed(1)}%`}
                       >
                         <span className="block tabular-nums text-gray-500">
@@ -603,9 +1021,85 @@ export default function InsightsSect6({
         </div>
       </div>
 
-      {selectedWeek ? (
-        <WeekDaySheet week={selectedWeek} onClose={() => setSelectedWeek(null)} />
-      ) : null}
+      <VolumeDrillStage
+        onDismissBackdrop={closeAllDrill}
+        weekPanel={
+          selectedMonth ? (
+            <IosSheetCard
+              onClose={closeMonth}
+              eyebrow="Weekly breakdown"
+              title={selectedMonth.rangeLabel}
+              subtitle={`${selectedMonth.count} lead${selectedMonth.count === 1 ? "" : "s"} this month · tap a week`}
+              chips={
+                <>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${barSoftClass(selectedMonth.intensity)}`}
+                  >
+                    Month · {intensityLabel(selectedMonth.intensity)} volume
+                  </span>
+                  <span className="rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-100">
+                    {selectedMonth.weeks.length} week
+                    {selectedMonth.weeks.length === 1 ? "" : "s"}
+                  </span>
+                </>
+              }
+            >
+              <p className="mb-2 text-center text-[10px] font-normal text-slate-400">
+                Click a week to get day-wise data
+              </p>
+              <MonthWeekSheetContent
+                month={selectedMonth}
+                onPickWeek={(week) => openWeek(week, selectedMonth)}
+              />
+            </IosSheetCard>
+          ) : null
+        }
+        dayPanel={
+          selectedWeek ? (
+            <IosSheetCard
+              onClose={closeAllDrill}
+              eyebrow={
+                weekFromMonth
+                  ? `${weekFromMonth.rangeLabel} · Daily breakdown`
+                  : "Daily breakdown"
+              }
+              title={selectedWeek.shortLabel}
+              subtitle={`${selectedWeek.rangeLabel} · ${selectedWeek.count} lead${selectedWeek.count === 1 ? "" : "s"} this week`}
+              chips={
+                <>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${barSoftClass(selectedWeek.intensity)}`}
+                  >
+                    Week · {intensityLabel(selectedWeek.intensity)} volume
+                  </span>
+                  {highDay ? (
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-[#16B981] ring-1 ring-emerald-100">
+                      Peak · {highDay.day} {highDay.monthShort}
+                    </span>
+                  ) : null}
+                  {lowDay && selectedWeek.count > 0 ? (
+                    <span className="rounded-full bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-[#EF4444] ring-1 ring-red-100">
+                      Quiet · {lowDay.day} {lowDay.monthShort}
+                    </span>
+                  ) : null}
+                  {weekFromMonth ? (
+                    <button
+                      type="button"
+                      onClick={closeWeek}
+                      className="rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-100 transition hover:bg-slate-100"
+                    >
+                      ← Weeks
+                    </button>
+                  ) : null}
+                </>
+              }
+            >
+              <WeekDaySheetContent week={selectedWeek} />
+            </IosSheetCard>
+          ) : null
+        }
+      />
+
     </main>
   );
 }

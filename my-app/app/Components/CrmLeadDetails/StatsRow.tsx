@@ -28,7 +28,7 @@ export default function StatsRow({
     {
       icon: "📍",
       label: "Property Pincode",
-      value: lead.pincode,
+      value: lead.pincode?.trim() ? lead.pincode.trim() : "—",
       iconBg: "bg-[rgba(79,158,248,0.15)]",
       iconColor: "text-[#4f9ef8]",
     },

@@ -28,7 +28,7 @@ import {
   workspaceFromPathname,
 } from "@/lib/crm-workspace";
 import {
-  collectHierarchyUserAssigneeAliases,
+  hierarchyUserDisplayName,
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
@@ -392,12 +392,13 @@ export default function Header() {
         ]);
         if (cancelled) return;
         const names = new Set<string>();
+        // Filter dropdown + roster labels: one primary display name per SE.
+        // Assignee aliases stay expanded only when matching leads (see LeadsDataSection scope).
         for (const u of users) {
-          for (const alias of collectHierarchyUserAssigneeAliases(
+          const n = hierarchyUserDisplayName(
             u as { fullName?: string; name?: string; username?: string; email?: string },
-          )) {
-            if (alias) names.add(alias);
-          }
+          );
+          if (n) names.add(n);
         }
         if (legacyRes.ok) {
           const j = (await legacyRes.json().catch(() => [])) as unknown;
@@ -410,11 +411,8 @@ export default function Header() {
             if (!row || typeof row !== "object") continue;
             const rec = row as Record<string, unknown>;
             if (Number(rec.managerId ?? 0) !== Number(currentUserId)) continue;
-            for (const alias of collectHierarchyUserAssigneeAliases(
-              normalizeLegacyHierarchyUser(rec),
-            )) {
-              if (alias) names.add(alias);
-            }
+            const n = hierarchyUserDisplayName(normalizeLegacyHierarchyUser(rec));
+            if (n) names.add(n);
           }
         }
         setManagerTeamNames([...names]);

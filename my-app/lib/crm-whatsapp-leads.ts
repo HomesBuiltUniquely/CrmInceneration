@@ -1,14 +1,16 @@
 /**
  * WhatsApp lead source — Hub contract (MSG91-only inbound):
  * - Inbound: MSG91 webhook → BFF `POST /api/crm/whatsapp-leads/inbound` → Hub `POST /v1/WhatsappLead`
- * - CRM UI lists: `GET /v1/leads/filter?leadType=whatsapplead` (never poll Hub customer API)
- * - Verify / details: `/v1/WhatsappLead/verify/{id}`, `/v1/WhatsappLead/details/{id}`
+ * - Dual path (pincode auto-verify): pin present → VERIFIED + sales RR; pin missing → UNVERIFIED + presales
+ * - CRM UI lists: `GET /v1/leads/filter?leadType=whatsapplead&verificationStatus=unverified|verified`
+ * - Manual verify (no-pin path only): `POST /v1/WhatsappLead/verify/{id}` with required pincode
+ * - Details: `/v1/WhatsappLead/details/{id}`
  */
 
 import type { NextRequest } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, CrmLeadType, LeadSourceCounts, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES, normalizeLeadSortFields } from "@/lib/leads-filter";
+import { isCrmLeadVerified, normalizeLeadSortFields } from "@/lib/leads-filter";
 import { emptyLeadSourceCounts } from "@/lib/primary-source-leads";
 import { LEAD_TYPE_TO_BASE } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
@@ -21,6 +23,7 @@ import {
   parseCrmDateField,
   rawInInclusiveDateRange,
 } from "@/lib/crm-date-field-filter";
+import { getLeadDisplayPincode } from "@/lib/lead-display";
 
 export const WHATSAPP_CRM_LEAD_TYPE: CrmLeadType = "whatsapplead";
 
@@ -344,6 +347,62 @@ export async function fetchWhatsappLeadsForMerge(ctx: WhatsappFetchContext): Pro
 
 export function isWhatsappLeadTypeKey(raw: string): boolean {
   return normalizeLeadTypeKey(raw) === WHATSAPP_CRM_LEAD_TYPE;
+}
+
+/**
+ * Show Verify CTA only when Hub status is still UNVERIFIED (no-pin path or pending pin).
+ * Auto-verified WhatsApp leads (propertyPin at inbound) must not show Verify.
+ */
+export function shouldShowWhatsappVerifyCta(
+  lead: Pick<ApiLead, "verified" | "verificationStatus"> | Record<string, unknown>,
+): boolean {
+  return !isCrmLeadVerified(lead as ApiLead);
+}
+
+/** Resolve pincode from list/detail/create payloads (Hub aliases). */
+export function resolveWhatsappPropertyPin(
+  lead: ApiLead | Record<string, unknown> | null | undefined,
+): string {
+  if (!lead || typeof lead !== "object") return "";
+  return getLeadDisplayPincode(lead as Record<string, unknown>).trim();
+}
+
+export type WhatsappCreateToast = {
+  title: string;
+  description?: string;
+  verified: boolean;
+};
+
+/**
+ * Optional toast text after create / inbound-style responses that include verified + assignee.
+ * Never assume verified:false — pin auto-verify returns sales assignee + verified:true.
+ */
+export function describeWhatsappCreateOutcome(
+  body: unknown,
+): WhatsappCreateToast {
+  const rec =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const verified = isCrmLeadVerified(rec as ApiLead);
+  const assignee = String(rec.assignee ?? "").trim();
+  const pin = resolveWhatsappPropertyPin(rec);
+  if (verified) {
+    return {
+      title: assignee
+        ? `Verified & assigned to ${assignee}`
+        : "Verified & assigned to sales",
+      description: pin
+        ? `Property pincode ${pin} — appears in verified / sales queue.`
+        : "Appears in verified / sales queue.",
+      verified: true,
+    };
+  }
+  return {
+    title: assignee
+      ? `Assigned to ${assignee} (presales)`
+      : "Assigned to presales — verify when pin is available",
+    description: "Unverified until pincode is collected and verified.",
+    verified: false,
+  };
 }
 
 export function mergeWhatsappCountIntoSourceCounts(

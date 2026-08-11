@@ -30,7 +30,9 @@ import {
   putConfigurationScopeAestheticNotes,
   putConfigurationScopeRequirements,
   joinProjectUnderstanding,
-  splitProjectUnderstanding,
+  resolveFamilySizeDetails,
+  resolvePropertyNameSite,
+  withCoherentPropertyNameFields,
   TIMELINE_EXPECTATION_OPTIONS,
   toPutRequirementsBody,
   REFERENCE_ACCEPT,
@@ -477,6 +479,7 @@ export default function NewConfigurationScopePage({
               familyContactName: toSave.familyContactName,
               familyContactRelationship: toSave.familyContactRelationship,
               familyContactPhone: toSave.familyContactPhone,
+              propertyName: toSave.propertyName,
               bookingType: toSave.bookingType,
               projectUnderstanding: toSave.projectUnderstanding,
               designStylePreference: toSave.designStylePreference,
@@ -687,21 +690,52 @@ export default function NewConfigurationScopePage({
     }
     setFinalizing(true);
     try {
-      const ok = await flushAllSaves();
-      if (!ok) return;
+      const coherentRequirements = withCoherentPropertyNameFields(requirements);
+      const requirementsOk = await saveRequirements(coherentRequirements);
+      const notesOk = await saveAestheticNotes(true);
+      if (!requirementsOk || !notesOk) return;
+
+      const nextConfiguration = leadConfiguration.trim();
+      const nextPropertyName = resolvePropertyNameSite(
+        coherentRequirements.propertyName,
+        coherentRequirements.projectUnderstanding,
+      );
+      const nextBookingType = (
+        bookingType.trim() ||
+        coherentRequirements.bookingType?.trim() ||
+        ""
+      ).trim();
+
       if (baseDetail && validLeadType) {
         const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
-        const nextConfiguration = leadConfiguration.trim();
         const currentConfiguration = (leadSnapshot.configuration ?? "").trim();
-        if (nextConfiguration && nextConfiguration !== currentConfiguration) {
-          const leadForSave = { ...leadSnapshot, configuration: nextConfiguration };
+        const currentProperty = (leadSnapshot.propertyLocation ?? "").trim();
+        const currentBooking = (leadSnapshot.bookingType ?? "").trim();
+        const needsLeadPut =
+          (nextConfiguration && nextConfiguration !== currentConfiguration) ||
+          (nextPropertyName && nextPropertyName !== currentProperty) ||
+          (nextBookingType && nextBookingType !== currentBooking);
+
+        if (needsLeadPut) {
+          const leadForSave = {
+            ...leadSnapshot,
+            configuration: nextConfiguration || leadSnapshot.configuration,
+            propertyLocation: nextPropertyName || leadSnapshot.propertyLocation,
+            bookingType: nextBookingType || leadSnapshot.bookingType,
+          };
           const body = mergeLeadIntoDetail(baseDetail, leadForSave);
           const updated = await putLeadDetail(validLeadType, leadId, body);
           setBaseDetail(updated);
         }
       }
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
-      notifyConfigurationScopeUpdated();
+      notifyConfigurationScopeUpdated({
+        leadType: validLeadType,
+        leadId,
+        configuration: nextConfiguration,
+        propertyName: nextPropertyName,
+        bookingType: nextBookingType,
+      });
 
       // Final push to Design after full config scope finalize
       if (baseDetail) {
@@ -713,8 +747,9 @@ export default function NewConfigurationScopePage({
             ...leadSnapshot,
             floorPlanPublicLink:
               floorPlanPublicLink || leadSnapshot.floorPlanPublicLink,
-            bookingType: requirements.bookingType || leadSnapshot.bookingType,
-            configuration: leadConfiguration || leadSnapshot.configuration,
+            bookingType: nextBookingType || leadSnapshot.bookingType,
+            configuration: nextConfiguration || leadSnapshot.configuration,
+            propertyLocation: nextPropertyName || leadSnapshot.propertyLocation,
           },
           baseDetail,
           designerName: leadSnapshot.designerName,
@@ -745,16 +780,16 @@ export default function NewConfigurationScopePage({
     bookingType,
     finalizing,
     floorPlanPublicLink,
-    flushAllSaves,
     frontendPrefs,
     hasFloorPlanUploaded,
     leadConfiguration,
     leadId,
     notifyError,
     notifySuccess,
-    onClose,
     onSavedAndClose,
     requirements,
+    saveAestheticNotes,
+    saveRequirements,
     showFinalizeCelebration,
     validLeadType,
   ]);
@@ -769,9 +804,11 @@ export default function NewConfigurationScopePage({
 
   const basicUnderstandingFields = useMemo(
     () => ({
-      propertyNameSite: requirements?.propertyName?.trim() ?? "",
-      familySizeDetails: splitProjectUnderstanding(requirements?.projectUnderstanding)
-        .familySizeDetails,
+      propertyNameSite: resolvePropertyNameSite(
+        requirements?.propertyName,
+        requirements?.projectUnderstanding,
+      ),
+      familySizeDetails: resolveFamilySizeDetails(requirements?.projectUnderstanding),
     }),
     [requirements?.propertyName, requirements?.projectUnderstanding],
   );
@@ -1136,23 +1173,26 @@ export default function NewConfigurationScopePage({
                   : undefined
               }
               onPropertyNameSiteChange={(value) => {
-                patchRequirements((prev) => ({
-                  ...prev,
-                  propertyName: value.trim() || null,
-                }));
+                patchRequirements((prev) => {
+                  const family = resolveFamilySizeDetails(prev.projectUnderstanding);
+                  return withCoherentPropertyNameFields({
+                    ...prev,
+                    propertyName: value.trim() || null,
+                    projectUnderstanding: joinProjectUnderstanding(value, family),
+                  });
+                });
               }}
               onFamilySizeDetailsChange={(value) => {
                 patchRequirements((prev) => {
-                  const { propertyNameSite } = splitProjectUnderstanding(
+                  const property = resolvePropertyNameSite(
+                    prev.propertyName,
                     prev.projectUnderstanding,
                   );
-                  return {
+                  return withCoherentPropertyNameFields({
                     ...prev,
-                    projectUnderstanding: joinProjectUnderstanding(
-                      propertyNameSite,
-                      value,
-                    ),
-                  };
+                    propertyName: property || null,
+                    projectUnderstanding: joinProjectUnderstanding(property, value),
+                  });
                 });
               }}
               onBookingTypeChange={handleBookingTypeChange}

@@ -67,7 +67,9 @@ import CompleteTaskModal, {
   type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
 import {
+  CONFIGURATION_SCOPE_UPDATED_EVENT,
   RESUME_MEETING_SCHEDULE_EVENT,
+  type ConfigurationScopeUpdatedDetail,
   type ResumeMeetingScheduleDetail,
 } from "@/lib/configuration-scope-events";
 import {
@@ -1597,6 +1599,7 @@ export default function LeadDetailsApiClient({
 
   const canVerifyCurrentLead = useMemo(() => {
     if (!canVerifyRole) return false;
+    // WhatsApp (and all sources): never show Verify once Hub marks verified (pin auto-verify included).
     if (isCrmLeadVerified(verifyLeadRecord)) return false;
     if (viewerRoleKey === "SUPER_ADMIN") return true;
 
@@ -2821,6 +2824,31 @@ export default function LeadDetailsApiClient({
     return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
   }, [leadId, leadType]);
 
+  /** Apply BHK / property name / booking saved from Configuration Scope into lead UI state. */
+  useEffect(() => {
+    const onScopeUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeUpdatedDetail>).detail;
+      if (!detail) return;
+      if (detail.leadId && detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setLead((prev) => {
+        const next = { ...prev };
+        if (detail.configuration?.trim()) {
+          next.configuration = detail.configuration.trim();
+        }
+        if (detail.propertyName?.trim()) {
+          next.propertyLocation = detail.propertyName.trim();
+        }
+        if (detail.bookingType?.trim()) {
+          next.bookingType = detail.bookingType.trim();
+        }
+        return next;
+      });
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+    return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+  }, [leadId, leadType]);
+
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
     () =>
@@ -2875,6 +2903,9 @@ export default function LeadDetailsApiClient({
   const handlePresalesVerifyFromCompleteTask = useCallback(
     async (args: PresalesVerifyFromCompleteTaskPayload) => {
       if (!validLeadType) return;
+      if (isCrmLeadVerified(verifyLeadRecord)) {
+        throw new Error("This lead is already verified.");
+      }
       const pincode = args.pincode.trim();
       if (!pincode) {
         throw new Error("Pincode is required to verify this lead.");
@@ -2953,6 +2984,7 @@ export default function LeadDetailsApiClient({
       salesClosureAuthUser,
       salesExecutiveOptions,
       validLeadType,
+      verifyLeadRecord,
     ],
   );
 

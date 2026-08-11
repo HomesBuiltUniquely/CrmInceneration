@@ -94,6 +94,7 @@ export function dashboardPathByRole(role: string): string {
 
 export function hasDashboardByRole(role: string): boolean {
   const r = normalizeRole(role);
+  // Not for SALES_EXECUTIVE — sidebar + / gate SE off dashboard.
   return r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN";
 }
 

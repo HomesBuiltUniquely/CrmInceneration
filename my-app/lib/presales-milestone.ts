@@ -28,12 +28,26 @@ export function shouldUsePresalesListDisplay(
   return !isLeadHandedOffToSales(lead);
 }
 
-/** `/presales-leads` vs `/Leads` controls row badge + journey (not viewer role alone). */
+/**
+ * `/presales-leads` vs `/Leads` controls row badge + journey (not viewer role alone).
+ *
+ * Exception — WhatsApp dual path (pin auto-verify): row uses Hub `verified` so
+ * auto-verified WA (sales) never renders as Presales pipeline on mixed admin filters,
+ * and unverified WA (presales, no pin) never renders as Sales pipeline.
+ */
 export function usePresalesListDisplayForWorkspace(
   workspace: CrmWorkspace,
   lead: ApiLead | Record<string, unknown>,
   userRole: string,
 ): boolean {
+  const lt = String(
+    (lead as ApiLead).leadType ?? (lead as { lead_type?: string }).lead_type ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  if (lt === "whatsapplead" || lt === "whatsapp") {
+    return !isLeadHandedOffToSales(lead);
+  }
   if (workspace === "presales") return true;
   if (workspace === "sales") return false;
   return shouldUsePresalesListDisplay(lead, userRole);
