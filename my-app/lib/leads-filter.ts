@@ -5,12 +5,14 @@ import {
   isClosedWonCustomerSubstage,
   isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
-import { getLeadDisplayName } from "@/lib/lead-display";
+import {
+  getLeadDisplayName,
+  getLeadDisplaySource,
+} from "@/lib/lead-display";
 import {
   formatAdditionalLeadSourcesLabel,
   isCrmLeadReinquiry,
 } from "@/lib/lead-source-utils";
-import { getLeadDisplaySource } from "@/lib/lead-display";
 import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
 import {
   formatPresalesListStatusLabel,
@@ -96,6 +98,11 @@ export type ApiLead = {
   createdOn?: string;
   firstCallAt?: string | null;
   verified?: boolean | null;
+  /** Property pincode — WhatsApp may set this on inbound and auto-verify. */
+  propertyPin?: string | null;
+  propertyPincode?: string | null;
+  pincode?: string | null;
+  pinCode?: string | null;
   /**
    * Backend truth for New CRM list/detail and `verificationStatus=verified` filters.
    * Optional: `presalesTrackingReadOnly` (when API sends it) — detail UX only; does not redefine “verified”.

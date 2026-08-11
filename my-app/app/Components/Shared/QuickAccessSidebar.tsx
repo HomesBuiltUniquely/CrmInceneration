@@ -574,6 +574,8 @@ export default function QuickAccessSidebar({
           if (item.id === "design-create-user") return isTerritoryDesignManager || isDesignManager;
           if (item.id === "crm-sales-managers") return isSalesAdmin || isSalesManager;
           if (item.id === "crm-presales-executives") return isPresalesManager;
+          // Sales executives use My Leads only — no CRM dashboard (/).
+          if (isSalesExecutive && item.id === "crm-dashboard") return false;
           if ((isSalesExecutive || isPresalesExecutive) && item.id === "crm-import-leads") return false;
           if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
           if (isSalesExecutive && item.id === "crm-presales-executives") return false;

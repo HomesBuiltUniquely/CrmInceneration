@@ -155,6 +155,15 @@ export default function LeadHeader({
         <div className="flex flex-wrap items-center gap-2.5">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
+          {lead.verified ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-800">
+              Verified
+            </span>
+          ) : (
+            <span className="inline-flex h-6 items-center rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
+              Unverified
+            </span>
+          )}
           <span className="inline-flex h-6 items-center rounded-full border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-800">
             <span>🕐</span>
             <span>Created {lead.createdAt}</span>

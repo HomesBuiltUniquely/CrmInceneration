@@ -221,8 +221,9 @@ function buildLeadsExtraParams(
 }
 
 /**
- * Walk-in / WhatsApp in merged `leadType=all` normally use per-source verification defaults
- * (e.g. admins browsing the WhatsApp tile see unverified rows).
+ * Walk-in / WhatsApp in merged `leadType=all` normally use per-source verification defaults.
+ * WhatsApp dual path: sales → verified (includes pin auto-verified); presales → unverified;
+ * admins may get an empty filter to see both buckets.
  * When the caller pins `verificationStatus` (sales inbox / heatmap = verified), keep it —
  * clearing it for dedicated sources inflated Fresh (card 70 vs real verified ~30 / table).
  */

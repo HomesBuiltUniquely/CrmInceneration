@@ -1597,6 +1597,7 @@ export default function LeadDetailsApiClient({
 
   const canVerifyCurrentLead = useMemo(() => {
     if (!canVerifyRole) return false;
+    // WhatsApp (and all sources): never show Verify once Hub marks verified (pin auto-verify included).
     if (isCrmLeadVerified(verifyLeadRecord)) return false;
     if (viewerRoleKey === "SUPER_ADMIN") return true;
 
@@ -2875,6 +2876,9 @@ export default function LeadDetailsApiClient({
   const handlePresalesVerifyFromCompleteTask = useCallback(
     async (args: PresalesVerifyFromCompleteTaskPayload) => {
       if (!validLeadType) return;
+      if (isCrmLeadVerified(verifyLeadRecord)) {
+        throw new Error("This lead is already verified.");
+      }
       const pincode = args.pincode.trim();
       if (!pincode) {
         throw new Error("Pincode is required to verify this lead.");
@@ -2953,6 +2957,7 @@ export default function LeadDetailsApiClient({
       salesClosureAuthUser,
       salesExecutiveOptions,
       validLeadType,
+      verifyLeadRecord,
     ],
   );
 

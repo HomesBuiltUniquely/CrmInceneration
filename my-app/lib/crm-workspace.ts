@@ -224,7 +224,11 @@ export function isDedicatedFilterLeadType(leadType: string): boolean {
 
 /**
  * Per-source verification default when user picks a lead-type tile.
- * WhatsApp new leads are unverified — avoid sales `verified` default hiding them for admins.
+ *
+ * WhatsApp dual path (pincode auto-verify):
+ * - Pin present → VERIFIED + sales (sales workspace → `verified`)
+ * - Pin missing → UNVERIFIED + presales (presales workspace → `unverified`)
+ * - Admins need both buckets so pin and no-pin rows stay visible → no default filter.
  */
 export function defaultVerificationForLeadTypeFilter(
   leadType: string,

@@ -1,9 +1,7 @@
 "use client";
-import { useState, useEffect, ChangeEvent } from "react";
-import { leadLimitsApi } from "@/lib/lead-limits-api";
-import { adminPanelApi } from "@/lib/admin-panel-api";
-import { mergeUserRowsById, pickNumber } from "@/lib/api-normalize";
-import { cn } from "@/lib/cn";
+import { useState, useEffect, useRef, ChangeEvent } from "react";
+import { extractLeadLimitUsers, leadLimitsApi } from "@/lib/lead-limits-api";
+import { pickNumber } from "@/lib/api-normalize";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
@@ -61,11 +59,14 @@ function normalizedUserRole(u: Record<string, unknown>): string {
 
 function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: number): UserLimit {
   const userId = Number(u.userId ?? u.id ?? idx);
-  const limit = pickNumber(u, ["renovationLimit"]) ?? fallbackLimit;
-  const current = pickNumber(u, ["renovationAssignedThisMonth"]) ?? 0;
-  const remaining = pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
+  const limit =
+    pickNumber(u, ["renovationLimit", "limit", "monthlyLimit"]) ?? fallbackLimit;
+  const current =
+    pickNumber(u, ["renovationAssignedThisMonth", "current", "used", "currentCount"]) ?? 0;
+  const remaining =
+    pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
   const pct =
-    pickNumber(u, ["renovationUsagePercent"]) ??
+    pickNumber(u, ["renovationUsagePercent", "usagePercent", "pct"]) ??
     (limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0);
   return {
     userId,
@@ -82,6 +83,7 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
 export default function RenovationLeadLimitDashboard() {
   const { notifySuccess, notifyError } = useGlobalNotifier();
   const [viewerRole, setViewerRole] = useState("");
+  const loadGen = useRef(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -90,54 +92,56 @@ export default function RenovationLeadLimitDashboard() {
   }, []);
 
   const canManageLeadLimits = viewerRole === "SUPER_ADMIN" || viewerRole === "SALES_ADMIN";
-  
+
   const [defaultLimit, setDefaultLimit] = useState<string>("20");
   const [users, setUsers] = useState<UserLimit[]>([]);
   const [limitsLoading, setLimitsLoading] = useState(false);
-  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
-  
+
   // Single edit modal state
   const [showModal, setShowModal] = useState(false);
   const [currentEditingUser, setCurrentEditingUser] = useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
 
-  const loadLimits = () => {
+  /**
+   * Fast path: single GET /v1/lead-limits/renovation.
+   * Previous implementation also fired 5 users-by-role calls and blocked the UI — very slow.
+   */
+  const loadLimits = (opts?: { force?: boolean }) => {
+    if (!canManageLeadLimits) return;
+    const gen = ++loadGen.current;
     setLimitsLoading(true);
-    void Promise.all([
-      leadLimitsApi.getRenovationLimits().catch(() => null),
-      // We also need all users from PRESALES and SALES
-      adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("PRESALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("SALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("SALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
-    ])
-      .then(([apiResult, presalesExec, preSales, presalesMgr, salesExec, salesMgr]) => {
-        // Renovation limit covers all standard users.
-        const combined = [...presalesExec, ...preSales, ...presalesMgr, ...salesExec, ...salesMgr];
-        
-        // Use the returned API array to map to `users`. If `apiResult` has the right shape, we merge.
-        // Assuming API returns `{ users: [...], defaultLimit: 20 }` or similar structure.
+
+    void leadLimitsApi
+      .getRenovationLimits({ force: opts?.force })
+      .then((apiResult) => {
+        if (gen !== loadGen.current) return;
         const apiData = (apiResult ?? {}) as Record<string, unknown>;
-        const rawUsers = [
-          ...(Array.isArray(apiData.salesManagers) ? apiData.salesManagers : []),
-          ...(Array.isArray(apiData.salesExecutives) ? apiData.salesExecutives : []),
-          ...(Array.isArray(apiData.users) ? apiData.users : [])
-        ];
-        const d = pickNumber(apiData, ["defaultRenovationLimit", "defaultLimit", "limit", "value", "default"]);
+        const rawUsers = extractLeadLimitUsers(apiData);
+        const d = pickNumber(apiData, [
+          "defaultRenovationLimit",
+          "defaultLimit",
+          "limit",
+          "value",
+          "default",
+        ]);
         const finalDefault = d !== undefined ? d : 20;
         if (d !== undefined) setDefaultLimit(String(d));
-        
-        const merged = mergeUserRowsById(combined, rawUsers as Array<Record<string, unknown>>);
-        setUsers(merged.map((r, i) => mapLimitUser(r, i, finalDefault)));
+        setUsers(rawUsers.map((r, i) => mapLimitUser(r, i, finalDefault)));
       })
-      .catch(() => setUsers([]))
-      .finally(() => setLimitsLoading(false));
+      .catch(() => {
+        if (gen !== loadGen.current) return;
+        setUsers([]);
+      })
+      .finally(() => {
+        if (gen !== loadGen.current) return;
+        setLimitsLoading(false);
+      });
   };
 
   useEffect(() => {
     if (!canManageLeadLimits) return;
     loadLimits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load on role gate only
   }, [canManageLeadLimits]);
 
   if (!canManageLeadLimits) {
@@ -151,7 +155,20 @@ export default function RenovationLeadLimitDashboard() {
   }
 
   return (
-    <div>      <div style={{ background: C.tabGrad, borderRadius: 16, padding: "20px 24px", marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24, flexWrap: "wrap" }}>
+    <div>
+      <div
+        style={{
+          background: C.tabGrad,
+          borderRadius: 16,
+          padding: "20px 24px",
+          marginBottom: 24,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 24,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
           <p style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, margin: 0 }}>
             Default monthly Renovation limit for users
@@ -165,19 +182,42 @@ export default function RenovationLeadLimitDashboard() {
             type="number"
             value={defaultLimit}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setDefaultLimit(e.target.value)}
-            style={{ width: 80, padding: "8px 14px", borderRadius: 8, border: "none", fontSize: 14, fontWeight: 700, textAlign: "center", outline: "none", background: C.card, color: C.text }}
+            style={{
+              width: 80,
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "none",
+              fontSize: 14,
+              fontWeight: 700,
+              textAlign: "center",
+              outline: "none",
+              background: C.card,
+              color: C.text,
+            }}
           />
           <button
-            style={{ background: C.success, color: "white", padding: "8px 18px", borderRadius: 8, border: "none", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+            style={{
+              background: C.success,
+              color: "white",
+              padding: "8px 18px",
+              borderRadius: 8,
+              border: "none",
+              fontWeight: 600,
+              cursor: "pointer",
+              fontSize: 13,
+            }}
             onClick={() => {
               const n = Number(defaultLimit);
               if (Number.isNaN(n)) return;
-              void leadLimitsApi.setRenovationDefault(n)
+              void leadLimitsApi
+                .setRenovationDefault(n)
                 .then(() => {
-                  loadLimits();
+                  loadLimits({ force: true });
                   notifySuccess("Default renovation lead limit updated.");
                 })
-                .catch((e) => notifyError(e instanceof Error ? e.message : "Failed to update default limit."));
+                .catch((e) =>
+                  notifyError(e instanceof Error ? e.message : "Failed to update default limit."),
+                );
             }}
           >
             Update Default
@@ -190,9 +230,16 @@ export default function RenovationLeadLimitDashboard() {
           {limitsLoading ? "Loading…" : `${users.length} users`}
         </span>
         <button
-          onClick={loadLimits}
+          onClick={() => loadLimits({ force: true })}
           style={{
-            background: C.accent, color: "white", padding: "7px 16px", borderRadius: "8px", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer"
+            background: C.accent,
+            color: "white",
+            padding: "7px 16px",
+            borderRadius: "8px",
+            fontSize: 13,
+            fontWeight: 600,
+            border: "none",
+            cursor: "pointer",
           }}
         >
           ↻ Refresh
@@ -203,40 +250,123 @@ export default function RenovationLeadLimitDashboard() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ borderBottom: `2px solid ${C.border}` }}>
             <tr style={{ background: C.surface }}>
-              {["Name", "Role", "Branch", "Current", "Limit", "Remaining", "Usage", "Action"].map((c) => (
-                <th key={c} style={{ padding: "12px 14px", textAlign: "left", fontSize: 12, fontWeight: 700, color: C.muted, textTransform: "uppercase" }}>
-                  {c}
-                </th>
-              ))}
+              {["Name", "Role", "Branch", "Current", "Limit", "Remaining", "Usage", "Action"].map(
+                (c) => (
+                  <th
+                    key={c}
+                    style={{
+                      padding: "12px 14px",
+                      textAlign: "left",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: C.muted,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {c}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>
-            {limitsLoading ? (
-              <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>Loading renovation limits…</td></tr>
+            {limitsLoading && users.length === 0 ? (
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  Loading renovation limits…
+                </td>
+              </tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>No users found for renovation limit.</td></tr>
+              <tr>
+                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
+                  No users found for renovation limit.
+                </td>
+              </tr>
             ) : (
               users.map((u, i) => {
-                const barColor = u.pct === 0 ? C.borderStrong : u.pct < 50 ? C.success : u.pct < 80 ? "var(--crm-warning-text)" : C.danger;
+                const barColor =
+                  u.pct === 0
+                    ? C.borderStrong
+                    : u.pct < 50
+                      ? C.success
+                      : u.pct < 80
+                        ? "var(--crm-warning-text)"
+                        : C.danger;
                 return (
-                  <tr key={u.userId} style={{ background: u.limit === 0 ? C.dangerBg : i % 2 === 0 ? C.card : C.surface, color: C.text }}>
+                  <tr
+                    key={u.userId}
+                    style={{
+                      background: u.limit === 0 ? C.dangerBg : i % 2 === 0 ? C.card : C.surface,
+                      color: C.text,
+                      opacity: limitsLoading ? 0.72 : 1,
+                    }}
+                  >
                     <td style={{ padding: "12px 14px", fontWeight: 600, fontSize: 14 }}>{u.name}</td>
-                    <td style={{ padding: "12px 14px" }}><span style={{ background: C.badgeBg, color: C.badgeText, padding: "2px 8px", borderRadius: 12, fontSize: 12, fontWeight: 600 }}>{u.role}</span></td>
+                    <td style={{ padding: "12px 14px" }}>
+                      <span
+                        style={{
+                          background: C.badgeBg,
+                          color: C.badgeText,
+                          padding: "2px 8px",
+                          borderRadius: 12,
+                          fontSize: 12,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {u.role}
+                      </span>
+                    </td>
                     <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.branch}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14, color: u.current === 0 ? C.danger : C.text, fontWeight: 600 }}>{u.current}</td>
+                    <td
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: 14,
+                        color: u.current === 0 ? C.danger : C.text,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {u.current}
+                    </td>
                     <td style={{ padding: "12px 14px", fontSize: 14, fontWeight: 600 }}>{u.limit}</td>
-                    <td style={{ padding: "12px 14px", fontSize: 14, color: u.remaining === 0 ? C.danger : C.success, fontWeight: 600 }}>{u.remaining}</td>
+                    <td
+                      style={{
+                        padding: "12px 14px",
+                        fontSize: 14,
+                        color: u.remaining === 0 ? C.danger : C.success,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {u.remaining}
+                    </td>
                     <td style={{ padding: "12px 14px", minWidth: 140 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ flex: 1, height: 6, background: C.borderStrong, borderRadius: 3 }}>
-                          <div style={{ width: `${u.pct}%`, height: "100%", background: barColor, borderRadius: 3 }} />
+                          <div
+                            style={{
+                              width: `${Math.min(100, Math.max(0, u.pct))}%`,
+                              height: "100%",
+                              background: barColor,
+                              borderRadius: 3,
+                            }}
+                          />
                         </div>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: barColor, minWidth: 38 }}>{u.pct}%</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: barColor, minWidth: 38 }}>
+                          {u.pct}%
+                        </span>
                       </div>
                     </td>
                     <td style={{ padding: "12px 14px" }}>
                       <button
-                        style={{ background: C.primary, color: "white", padding: "5px 12px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                        style={{
+                          background: C.primary,
+                          color: "white",
+                          padding: "5px 12px",
+                          borderRadius: 8,
+                          border: "none",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
                         onClick={() => {
                           setCurrentEditingUser(u);
                           setCurrentEditingLimit(String(u.limit) || "");
@@ -255,36 +385,101 @@ export default function RenovationLeadLimitDashboard() {
       </div>
 
       {showModal && currentEditingUser && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: C.overlay }}>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: C.overlay,
+          }}
+        >
           <div style={{ width: "90%", maxWidth: 500, background: C.card, borderRadius: 12, overflow: "hidden" }}>
-            <div style={{ background: C.tabGrad, padding: "16px 20px", color: "white", fontWeight: "bold", display: "flex", justifyContent: "space-between" }}>
+            <div
+              style={{
+                background: C.tabGrad,
+                padding: "16px 20px",
+                color: "white",
+                fontWeight: "bold",
+                display: "flex",
+                justifyContent: "space-between",
+              }}
+            >
               <span>Set Renovation Monthly Limit</span>
-              <button onClick={() => setShowModal(false)} style={{ background: "transparent", border: "none", color: "white", cursor: "pointer", fontSize: 16 }}>✕</button>
+              <button
+                onClick={() => setShowModal(false)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "white",
+                  cursor: "pointer",
+                  fontSize: 16,
+                }}
+              >
+                ✕
+              </button>
             </div>
             <div style={{ padding: 24 }}>
-              <p style={{ margin: "0 0 16px 0", color: C.text, fontWeight: 600 }}>Setting limit for: <strong>{currentEditingUser.name}</strong></p>
+              <p style={{ margin: "0 0 16px 0", color: C.text, fontWeight: 600 }}>
+                Setting limit for: <strong>{currentEditingUser.name}</strong>
+              </p>
               <input
                 type="number"
                 value={currentEditingLimit}
                 onChange={(e) => setCurrentEditingLimit(e.target.value)}
-                style={{ width: "100%", padding: "12px", borderRadius: 8, border: `2px solid ${C.primary}`, fontSize: 16, boxSizing: "border-box", background: C.surface, color: C.text }}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  borderRadius: 8,
+                  border: `2px solid ${C.primary}`,
+                  fontSize: 16,
+                  boxSizing: "border-box",
+                  background: C.surface,
+                  color: C.text,
+                }}
                 autoFocus
               />
               <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
-                <button onClick={() => setShowModal(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: C.surface, color: C.text, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                <button
+                  onClick={() => setShowModal(false)}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: C.surface,
+                    color: C.text,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
                 <button
                   onClick={() => {
                     const lim = Number(currentEditingLimit);
                     if (Number.isNaN(lim)) return;
-                    void leadLimitsApi.setUserRenovationLimit(currentEditingUser.userId, lim)
+                    void leadLimitsApi
+                      .setUserRenovationLimit(currentEditingUser.userId, lim)
                       .then(() => {
                         setShowModal(false);
-                        loadLimits();
+                        loadLimits({ force: true });
                         notifySuccess("Renovation limit updated.");
                       })
-                      .catch(e => notifyError(e instanceof Error ? e.message : "Failed to update limit."));
+                      .catch((e) =>
+                        notifyError(e instanceof Error ? e.message : "Failed to update limit."),
+                      );
                   }}
-                  style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: C.success, color: "white", fontWeight: 600, cursor: "pointer" }}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: C.success,
+                    color: "white",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
                 >
                   Save Limit
                 </button>

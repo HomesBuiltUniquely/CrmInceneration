@@ -2,6 +2,7 @@
 import {
   useState,
   useEffect,
+  useRef,
   ReactNode,
   CSSProperties,
   ChangeEvent,
@@ -26,6 +27,74 @@ import {
   isPresalesExecutiveRole,
   isUserActive,
 } from "@/lib/user-active";
+
+/**
+ * Defer mounting heavy admin sections until near the viewport (or forced via nav click).
+ * Prevents a thundering herd of API calls when /admin-panel first opens.
+ */
+function LazySection({
+  id,
+  force,
+  children,
+  minHeight = 160,
+}: {
+  id: string;
+  force?: boolean;
+  children: ReactNode;
+  minHeight?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(Boolean(force));
+
+  useEffect(() => {
+    if (force) setReady(true);
+  }, [force]);
+
+  useEffect(() => {
+    if (ready) return;
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setReady(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setReady(true);
+          io.disconnect();
+        }
+      },
+      { root: null, rootMargin: "120px 0px", threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ready]);
+
+  return (
+    <div id={id} ref={ref}>
+      {ready ? (
+        children
+      ) : (
+        <div
+          style={{
+            minHeight,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--crm-text-muted)",
+            fontSize: 13,
+            border: "1px solid var(--crm-border)",
+            borderRadius: 16,
+            background: "var(--crm-surface)",
+          }}
+        >
+          Scroll to load…
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -2719,34 +2788,41 @@ function LeadLimitSection() {
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
   const [limitsLoading, setLimitsLoading] = useState(false);
   const [mainTab, setMainTab] = useState<"standard" | "renovation">("standard");
+  const loadGen = useRef(0);
 
-  const loadLimits = () => {
+  /**
+   * Fast path: only lead-limits endpoints (2 parallel GETs).
+   * Extra users-by-role merges used to block the table on 4 slow round-trips;
+   * those were removed so Standard + Renovation paint as soon as limits return.
+   */
+  const loadLimits = (opts?: { force?: boolean }) => {
+    if (!canManageLeadLimits) return;
+    const gen = ++loadGen.current;
     setLimitsLoading(true);
     void Promise.all([
-      leadLimitsApi.listUsers(),
-      leadLimitsApi.getDefault(),
-      adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
+      leadLimitsApi.listUsers({ force: opts?.force }),
+      leadLimitsApi.getDefault().catch(() => ({} as Record<string, unknown>)),
     ])
-      .then(([rows, def, presalesExecRows, preSalesRows]) => {
-        const dedupedRows = mergeUserRowsById(
-          presalesExecRows as Array<Record<string, unknown>>,
-          preSalesRows as Array<Record<string, unknown>>,
-          rows as Array<Record<string, unknown>>,
-        );
-        setUsers(dedupedRows.map((r, i) => mapLimitUser(r, i)));
+      .then(([rows, def]) => {
+        if (gen !== loadGen.current) return;
+        setUsers((rows as Array<Record<string, unknown>>).map((r, i) => mapLimitUser(r, i)));
         const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
         if (d !== undefined) setDefaultLimit(String(d));
       })
       .catch(() => {
+        if (gen !== loadGen.current) return;
         setUsers([]);
       })
-      .finally(() => setLimitsLoading(false));
+      .finally(() => {
+        if (gen !== loadGen.current) return;
+        setLimitsLoading(false);
+      });
   };
 
   useEffect(() => {
     if (!canManageLeadLimits) return;
-    loadLimits();
+    loadLimits({ force: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load on role gate only
   }, [canManageLeadLimits]);
 
   const toggleRole = (r: string) =>
@@ -2900,7 +2976,7 @@ function LeadLimitSection() {
               void leadLimitsApi
                 .setDefault(n)
                 .then(() => {
-                  loadLimits();
+                  loadLimits({ force: true });
                   notifySuccess("Default lead limit updated.");
                 })
                 .catch((e) => {
@@ -2943,7 +3019,11 @@ function LeadLimitSection() {
             onClick={() => setLimitTab("role")}
           />
         </div>
-        <Btn color={C.accent} style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
+        <Btn
+          color={C.accent}
+          style={{ fontSize: 13, padding: "7px 16px" }}
+          onClick={() => loadLimits({ force: true })}
+        >
           ↻ Refresh
         </Btn>
       </div>
@@ -3175,7 +3255,7 @@ function LeadLimitSection() {
                 </tr>
               </thead>
               <tbody>
-                {limitsLoading ? (
+                {limitsLoading && users.length === 0 ? (
                   <tr>
                     <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
                       Loading lead limits…
@@ -3208,6 +3288,7 @@ function LeadLimitSection() {
                               ? C.card
                               : C.surface,
                         color: C.text,
+                        opacity: limitsLoading ? 0.72 : 1,
                       }}
                     >
                       <td style={{ padding: "12px 14px", textAlign: "center" }}>
@@ -3413,7 +3494,7 @@ function LeadLimitSection() {
                   .bulkRoles({ roles, limit: lim })
                   .then(() => {
                     setRoleLimit("");
-                    loadLimits();
+                    loadLimits({ force: true });
                     notifySuccess("Role limits updated.");
                   })
                   .catch((e) => {
@@ -3645,7 +3726,7 @@ function LeadLimitSection() {
                       setCurrentEditingUser(null);
                       setCurrentEditingLimit("");
                       setShowModal(false);
-                      loadLimits();
+                      loadLimits({ force: true });
                       notifySuccess("User lead limit updated.");
                     })
                     .catch((e) => {
@@ -3658,7 +3739,7 @@ function LeadLimitSection() {
                       setShowModal(false);
                       setBulkLimit("");
                       setSelectedUserIds([]);
-                      loadLimits();
+                      loadLimits({ force: true });
                       notifySuccess("Bulk user limits updated.");
                     })
                     .catch((e) => {
@@ -3751,11 +3832,27 @@ const SECTIONS: Section[] = [
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
 export default function AdminPanelContent() {
   const [viewerRole, setViewerRole] = useState("");
+  const [forceSection, setForceSection] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
+  }, []);
+
+  // Warm lead-limits cache after paint so the table is often ready when scrolled into view.
+  useEffect(() => {
+    const role = normalizeRole(
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""
+        : "",
+    );
+    if (role !== "SUPER_ADMIN" && role !== "SALES_ADMIN") return;
+    const t = window.setTimeout(() => {
+      void leadLimitsApi.listUsers().catch(() => undefined);
+      void leadLimitsApi.getDefault().catch(() => undefined);
+    }, 400);
+    return () => window.clearTimeout(t);
   }, []);
 
   const isAdmin = viewerRole === "ADMIN";
@@ -3792,9 +3889,13 @@ export default function AdminPanelContent() {
   });
 
   const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
+    setForceSection(id);
+    // Allow LazySection to mount before scrolling into view.
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     });
   };
 
@@ -3817,46 +3918,46 @@ export default function AdminPanelContent() {
         ))}
       </div>
 
-      {/* Sections */}
+      {/* Sections — lazy-mounted so lead limits aren’t queued behind every other module */}
       <div className="flex flex-col gap-6">
         {!isManagerScopedRole && !isPresalesExecutive ? (
           <>
-            <div id="adminUser">
+            <LazySection id="adminUser" force={forceSection === "adminUser"} minHeight={220}>
               <AdminUserSection />
-            </div>
-            <div id="assign">
+            </LazySection>
+            <LazySection id="assign" force={forceSection === "assign"} minHeight={180}>
               <AssignSection />
-            </div>
+            </LazySection>
             {isSuperAdmin || isAdmin || isSalesAdmin ? (
-              <div id="managers">
+              <LazySection id="managers" force={forceSection === "managers"} minHeight={200}>
                 <ManagersSection />
-              </div>
+              </LazySection>
             ) : null}
-            <div id="branch">
+            <LazySection id="branch" force={forceSection === "branch"} minHeight={200}>
               <BranchTransferSection />
-            </div>
+            </LazySection>
             {isSuperAdmin ? (
-              <div id="allUsers">
+              <LazySection id="allUsers" force={forceSection === "allUsers"} minHeight={220}>
                 <AllUsersSection />
-              </div>
+              </LazySection>
             ) : null}
-            <div id="salesExec">
+            <LazySection id="salesExec" force={forceSection === "salesExec"} minHeight={220}>
               <SalesExecSection />
-            </div>
+            </LazySection>
             {isSuperAdmin || isAdmin || isSalesAdmin ? (
-              <div id="presalesExec">
+              <LazySection id="presalesExec" force={forceSection === "presalesExec"} minHeight={220}>
                 <PresalesExecSection />
-              </div>
+              </LazySection>
             ) : null}
             {canSeeLeadLimit ? (
-              <div id="leadLimit">
+              <LazySection id="leadLimit" force={forceSection === "leadLimit"} minHeight={320}>
                 <LeadLimitSection />
-              </div>
+              </LazySection>
             ) : null}
             {canSeeLeadLimit ? (
-              <div id="salesTarget">
+              <LazySection id="salesTarget" force={forceSection === "salesTarget"} minHeight={280}>
                 <SalesTargetSection />
-              </div>
+              </LazySection>
             ) : null}
           </>
         ) : (
