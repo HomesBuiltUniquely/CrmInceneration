@@ -3,6 +3,7 @@
 import type { NotificationItem } from "@/app/Components/Notification/Notify";
 import { CRM_LOGIN_USERNAME_KEY, normalizeRole } from "@/lib/auth/api";
 import { applyNotificationRbacFilter } from "@/lib/notification-rbac-filter";
+import { isCrmLeadReinquiry } from "@/lib/lead-source-utils";
 
 const LOG_PREFIX = "[notification-service]";
 
@@ -280,12 +281,14 @@ interface RawLeadItem {
   leadType?: string;
   assignedTo?: string;
   createdAt?: string;
+  additionalLeadSources?: string | string[] | null;
   // snake_case fallback
   lead_identifier?: string;
   lead_name?: string;
   lead_type?: string;
   assigned_to?: string;
   created_at?: string;
+  additional_lead_sources?: string | string[] | null;
   [key: string]: unknown;
 }
 
@@ -497,6 +500,15 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
   const assignedTo = raw.assignedTo ?? raw.assigned_to ?? "";
   const timestamp = raw.createdAt ?? raw.created_at ?? "";
 
+  // Check if this is a re-inquiry lead using the existing function
+  const isReinquiry = isCrmLeadReinquiry({
+    additionalLeadSources: raw.additionalLeadSources ?? raw.additional_lead_sources,
+  });
+
+  // Use "🔴 Re-inquiry Lead" prefix for re-inquiry leads, "New Lead" otherwise
+  const titlePrefix = isReinquiry ? "🔴 Re-inquiry Lead" : "New Lead";
+  const title = leadName ? `${titlePrefix} - ${leadName}` : titlePrefix;
+
   // Description: type · assigned — name already in title, leadIdentifier NOT shown to user
   const parts: string[] = [];
   if (leadType) parts.push(leadTypeLabel(leadType));
@@ -504,7 +516,7 @@ function mapRawLeadItem(raw: RawLeadItem, index: number): NotificationItem {
 
   return {
     id: leadId,
-    title: leadName ? `New Lead - ${leadName}` : "New Lead",
+    title,
     description: parts.length ? parts.join(" · ") : undefined,
     timestamp,
     read: false,
