@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -877,22 +878,27 @@ export default function QuickAccessSidebar({
               type="button"
               title="Hows ERP"
               className={cn(
-                "flex shrink-0 items-center justify-center rounded-2xl border border-black/10 bg-white/80 text-black/80 shadow-[0_3px_12px_rgba(0,0,0,0.12)] backdrop-blur-[6px] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
-                "hover:-translate-y-0.5 hover:bg-white/95 hover:shadow-[0_8px_20px_rgba(0,0,0,0.16)]",
-                isCollapsed ? "h-[42px] w-[42px]" : "h-[60px] w-[60px]",
+                "flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent transition-all duration-300",
+                isCollapsed ? "h-[42px] w-[42px]" : "h-[52px] w-[52px]",
               )}
               aria-label="Hows ERP"
             >
-              <ClassicSidebarIcon
-                name="layout-dashboard"
+              <Image
+                src="/logo-final-02.png"
+                alt="Hows ERP logo"
+                width={260}
+                height={260}
                 className={cn(
-                  "transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
-                  isCollapsed ? "h-[20px] w-[20px]" : "h-[24px] w-[24px]",
+                  "object-contain transition-transform duration-300",
+                  isCollapsed
+                    ? "h-[78px] w-[78px] scale-[1.5]"
+                    : "h-[168px] w-[168px] scale-[2.15]",
                 )}
+                priority
               />
             </button>
             {!isCollapsed ? (
-              <div className="ml-1.5 min-w-0 truncate font-sans text-[17px] font-bold leading-none tracking-[-0.02em] text-[var(--crm-text-primary)]">
+              <div className="ml-2 min-w-0 truncate text-[17px] font-bold leading-none tracking-[-0.02em] text-[var(--crm-text-primary)] [text-shadow:none]">
                 Hows ERP
               </div>
             ) : null}
