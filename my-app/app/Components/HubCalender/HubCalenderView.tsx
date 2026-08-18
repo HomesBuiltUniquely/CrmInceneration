@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -375,12 +376,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
   if (!mounted) return null;
 
   return (
-    <div
-      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
-      style={{
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       {/* Event Details Popup — Google Calendar style (matches Design Module) */}
       {modalEvent && (
         <div
@@ -501,17 +497,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
         </div>
 
         <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
-          <div className="flex items-center gap-3 border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-6 py-3">
-            <div className="w-9 h-9 rounded-md overflow-hidden flex flex-col items-center justify-center bg-[var(--crm-danger)] text-white flex-shrink-0">
-              <span className="text-[7px] font-bold uppercase tracking-wide bg-[var(--crm-danger-text)] w-full text-center leading-tight py-px">
-                {MONTHS[today.getMonth()].substring(0, 3)}
-              </span>
-              <span className="text-base font-bold leading-tight">{today.getDate()}</span>
-            </div>
-            <h1 className="text-lg font-semibold text-[var(--crm-text-primary)]">
-              HUB Calendar
-            </h1>
-          </div>
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
             {!isAuthorized ? (

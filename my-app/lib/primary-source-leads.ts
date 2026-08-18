@@ -5,7 +5,6 @@
 
 import type { ApiLead, CrmLeadType, LeadSourceCounts } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES, leadHasRawSalesMilestone } from "@/lib/leads-filter";
-import { countIvrCallLeads } from "@/lib/ivr-lead-source";
 
 export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   const compact = String(raw ?? "")
@@ -15,6 +14,7 @@ export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   if (compact === "glead" || compact === "googleads") return "glead";
   if (compact === "mlead" || compact === "metaads") return "mlead";
   if (compact === "addlead" || compact === "alead") return "addlead";
+  if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
   if (compact === "websitelead" || compact === "wlead") return "websitelead";
   if (compact === "walkinlead" || compact === "walkin") return "walkinlead";
   if (compact === "whatsapplead" || compact === "whatsapp") return "whatsapplead";
@@ -127,25 +127,13 @@ export function pickMilestoneRepresentativeRows(leads: ApiLead[]): ApiLead[] {
   return primary;
 }
 
-export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts & {
-  ivr_call: number;
-} {
-  const counts: LeadSourceCounts & { ivr_call: number } = {
-    all: leads.length,
-    formlead: 0,
-    glead: 0,
-    mlead: 0,
-    addlead: 0,
-    websitelead: 0,
-    walkinlead: 0,
-    whatsapplead: 0,
-    ivr_call: 0,
-  };
+export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts {
+  const counts = emptyLeadSourceCounts();
+  counts.all = leads.length;
   for (const lead of leads) {
     const type = normalizeLeadTypeKey(lead.leadType);
     counts[type] += 1;
   }
-  counts.ivr_call = countIvrCallLeads(leads);
   return counts;
 }
 

@@ -239,7 +239,7 @@ export function defaultVerificationForLeadTypeFilter(
   if (explicit?.trim()) return explicit.trim();
   const lt = leadType.trim().toLowerCase();
   if (lt === "verified") return "verified";
-  if (lt === "ivr_call") {
+  if (lt === "ivr_call" || lt === "ivrlead") {
     return defaultLeadsVerificationStatus(workspace, explicit, viewerRole);
   }
   if (lt === "whatsapplead") {

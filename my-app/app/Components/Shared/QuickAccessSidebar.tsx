@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -16,6 +15,9 @@ import {
 } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
 import ThemeToggle from "./ThemeToggle";
+import { useOptionalActiveModule } from "./ActiveModuleContext";
+import { useSmoothRouter } from "@/lib/use-smooth-router";
+import { CrmSidebarIcon as ClassicSidebarIcon } from "./CrmSidebarIcons";
 
 /** `/` must not match every route via `startsWith` (e.g. `/presales-leads`). */
 function pathnameMatchesSidebarHref(pathname: string, href: string): boolean {
@@ -86,6 +88,50 @@ function roleDisplayName(role: string): string {
   if (r === "DESIGN_MANAGER") return "Design Manager";
   if (r === "DESIGNER") return "Designer";
   return "";
+}
+
+function SidebarRailToggle({
+  collapsed,
+  onToggle,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-black",
+        "transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+        "hover:-translate-y-0.5 hover:scale-110",
+        "active:scale-95",
+      )}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        className={cn(
+          "h-4 w-4 transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+          collapsed ? "rotate-180" : "rotate-0",
+        )}
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M10 7.2L14.8 12L10 16.8"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
 }
 
 function SidebarIcon({
@@ -526,8 +572,12 @@ export default function QuickAccessSidebar({
   logoutLabel = "Logout",
   onSelectionChange,
 }: QuickAccessSidebarProps) {
-  const router = useRouter();
+  const router = useSmoothRouter();
   const pathname = usePathname();
+  const activeModule = useOptionalActiveModule();
+  const activeModuleId = activeModule?.activeModuleId ?? null;
+  const moduleHydrated = activeModule?.hydrated ?? true;
+  const clearActiveModule = activeModule?.clearActiveModule;
   const initialParentId = sections[0]?.id ?? "";
   const [openParentId, setOpenParentId] = useState(initialParentId);
   const [activeSubItemId, setActiveSubItemId] = useState("");
@@ -554,6 +604,8 @@ export default function QuickAccessSidebar({
 
     return sections
       .filter((section) => {
+        // Google-style: only the chosen module’s menus in the sidebar.
+        if (activeModuleId && section.id !== activeModuleId) return false;
         if (section.id === "presales") {
           return isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive;
         }
@@ -590,7 +642,10 @@ export default function QuickAccessSidebar({
         }),
       }))
       .filter((section) => section.items.length > 0);
-  }, [currentRole, profileRole, sections]);
+  }, [activeModuleId, currentRole, profileRole, sections]);
+
+  // Hub mode: no module selected → hide sidebar entirely.
+  const hideSidebar = Boolean(activeModule) && moduleHydrated && !activeModuleId;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -661,6 +716,11 @@ export default function QuickAccessSidebar({
   }, [pathname]);
 
   useEffect(() => {
+    if (!activeModuleId) return;
+    setOpenParentId(activeModuleId);
+  }, [activeModuleId]);
+
+  useEffect(() => {
     if (!filteredSections.length || !openParent) {
       return;
     }
@@ -726,10 +786,27 @@ export default function QuickAccessSidebar({
       window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
       window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
       window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      clearActiveModule?.();
       router.replace("/login");
       setLogoutBusy(false);
     }
   };
+
+  const handleSwitchModules = () => {
+    clearActiveModule?.();
+    setIsMobileOpen(false);
+  };
+
+  // Until a module is chosen, keep the rail completely hidden.
+  if (hideSidebar) {
+    return null;
+  }
+
+  const moduleMode = Boolean(activeModuleId);
+  const activeModuleSection =
+    moduleMode
+      ? filteredSections.find((s) => s.id === activeModuleId) ?? filteredSections[0]
+      : null;
 
   return (
     <>
@@ -758,14 +835,14 @@ export default function QuickAccessSidebar({
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden border-r border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-lg)] transition-all duration-300 ease-out xl:static xl:z-auto xl:translate-x-0",
-          isCollapsed ? "xl:w-[72px]" : "xl:w-[320px]",
-          isMobileOpen ? "translate-x-0 w-[min(88vw,360px)]" : "-translate-x-full w-[min(88vw,360px)]",
+          isCollapsed ? "xl:w-[70px]" : "xl:w-[286px]",
+          isMobileOpen ? "translate-x-0 w-[min(84vw,320px)]" : "-translate-x-full w-[min(84vw,320px)]",
         )}
       >
         <div
           className={cn(
             "border-b border-[var(--crm-border)] transition-all duration-300",
-            isCollapsed ? "px-1 py-2" : "px-2 py-1.5",
+            isCollapsed ? "px-1 py-2" : "px-3 py-2.5",
           )}
         >
           <div className="mb-4 flex items-center justify-between xl:hidden">
@@ -790,46 +867,173 @@ export default function QuickAccessSidebar({
             </button>
           </div>
 
-          <div className="flex items-center justify-center">
+          <div
+            className={cn(
+              "flex items-center transition-all duration-300",
+              isCollapsed ? "justify-center px-0 py-1" : "min-h-[68px] justify-start gap-0",
+            )}
+          >
             <button
               type="button"
-              onClick={() => setIsCollapsed((prev) => !prev)}
-              title={`${appName} ${appTagline}`.trim()}
+              title="Hows ERP"
               className={cn(
-                "flex items-center justify-center overflow-hidden rounded-2xl transition-all duration-300",
-                isCollapsed ? "h-[44px] w-[44px]" : "h-[112px] w-[112px]",
+                "flex shrink-0 items-center justify-center rounded-2xl border border-black/10 bg-white/80 text-black/80 shadow-[0_3px_12px_rgba(0,0,0,0.12)] backdrop-blur-[6px] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+                "hover:-translate-y-0.5 hover:bg-white/95 hover:shadow-[0_8px_20px_rgba(0,0,0,0.16)]",
+                isCollapsed ? "h-[42px] w-[42px]" : "h-[60px] w-[60px]",
               )}
-              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label="Hows ERP"
             >
-              <Image
-                src="/logo-final-02.png"
-                alt={`${appName} logo`}
-                width={260}
-                height={260}
+              <ClassicSidebarIcon
+                name="layout-dashboard"
                 className={cn(
-                  "object-contain transition-transform duration-300",
-                  isCollapsed
-                    ? "h-[78px] w-[78px] scale-[1.5]"
-                    : "h-[220px] w-[220px] scale-[1.58]",
+                  "transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+                  isCollapsed ? "h-[20px] w-[20px]" : "h-[24px] w-[24px]",
                 )}
-                priority
               />
             </button>
+            {!isCollapsed ? (
+              <div className="ml-1.5 min-w-0 truncate font-sans text-[17px] font-bold leading-none tracking-[-0.02em] text-[var(--crm-text-primary)]">
+                Hows ERP
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div
           className={cn(
-            "flex-1 overflow-y-auto bg-[var(--crm-app-bg)] py-5 transition-all duration-300",
-            isCollapsed ? "px-1.5" : "px-3 pt-3",
+            "flex-1 overflow-y-auto bg-[var(--crm-app-bg)] py-1.5 transition-all duration-300 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            isCollapsed ? "px-1.5" : "px-2.5 pt-2",
           )}
         >
-          <div className="space-y-2.5">
-            {filteredSections.map((section) => {
+          <div className="space-y-1">
+            {moduleMode && activeModuleSection ? (
+              <>
+                {!isCollapsed ? (
+                  <div className="mb-2 px-1 pb-2">
+                    <button
+                      type="button"
+                      onClick={handleSwitchModules}
+                      className="group flex w-full items-center gap-2.5 rounded-xl border border-black/10 bg-white/70 px-2.5 py-2 text-left shadow-[0_2px_10px_rgba(0,0,0,0.12)] backdrop-blur-[6px] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 hover:bg-white/90 hover:shadow-[0_6px_16px_rgba(0,0,0,0.16)]"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center text-black/70">
+                        <ClassicSidebarIcon name="grid" className="h-[18px] w-[18px]" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-black/40">
+                          All modules
+                        </span>
+                        <span className="block truncate text-[15px] font-semibold leading-tight text-black">
+                          {activeModuleSection.label}
+                        </span>
+                      </span>
+                      <svg
+                        viewBox="0 0 24 24"
+                        className="h-4 w-4 shrink-0 text-black/70 transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M10 7.2L14.8 12L10 16.8"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mb-2 pb-2">
+                    <button
+                      type="button"
+                      onClick={handleSwitchModules}
+                      title="All modules"
+                      aria-label="All modules"
+                      className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl border border-black/10 bg-white/70 text-black/70 shadow-[0_2px_10px_rgba(0,0,0,0.12)] backdrop-blur-[6px] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5 hover:bg-white/90 hover:shadow-[0_6px_16px_rgba(0,0,0,0.16)]"
+                    >
+                      <ClassicSidebarIcon name="grid" className="h-[18px] w-[18px]" />
+                    </button>
+                  </div>
+                )}
+
+                <div className={cn("space-y-0.5", !isCollapsed && "px-1")}>
+                  {activeModuleSection.items.map((item) => {
+                    const isActive = item.id === activeSubItemId;
+                    const isImportLeads = item.id === "crm-import-leads";
+                    return (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "relative flex items-center transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5",
+                          isCollapsed ? "justify-center" : "gap-0.5",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleSubItemClick(item)}
+                          title={item.label}
+                          className={cn(
+                            "group relative flex w-full items-center gap-3 rounded-xl text-left transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
+                            isCollapsed ? "justify-center px-0 py-1.5" : "min-h-[2.25rem] px-2.5 py-1.5",
+                            isActive
+                              ? "bg-[linear-gradient(135deg,#dbe9ff_0%,#cddfff_100%)] text-[#274690] ring-1 ring-[#c4d8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]"
+                              : "text-[#374151] hover:bg-[#eef2f7] hover:shadow-[0_6px_14px_rgba(15,23,42,0.06)]",
+                          )}
+                        >
+                          {isActive && !isCollapsed && !isImportLeads ? (
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#5b8def] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]"
+                            />
+                          ) : null}
+                          <div
+                            className={cn(
+                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-300",
+                              isActive
+                                ? "bg-white/45 text-[#4b74d8]"
+                                : "bg-transparent text-black group-hover:text-[#111827]",
+                            )}
+                          >
+                            <ClassicSidebarIcon name={item.icon} className="h-5 w-5" />
+                          </div>
+                          {!isCollapsed ? (
+                            <div className={cn("min-w-0 flex-1", isImportLeads ? "pr-0" : "pr-5")}>
+                              <div
+                                className={cn(
+                                  "truncate text-[0.92rem] font-semibold leading-tight",
+                                  isActive ? "text-[#274690]" : "text-[#374151]",
+                                )}
+                              >
+                                {item.label}
+                              </div>
+                            </div>
+                          ) : null}
+                        </button>
+                        {isImportLeads ? (
+                          <div
+                            className={cn(
+                              isCollapsed
+                                ? "absolute -right-0.5 top-1/2 z-20 -translate-y-1/2"
+                                : "shrink-0",
+                            )}
+                          >
+                            <SidebarRailToggle
+                              collapsed={isCollapsed}
+                              onToggle={() => setIsCollapsed((prev) => !prev)}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              filteredSections.map((section) => {
               const isOpen = section.id === openParentId;
 
               return (
-                <div key={section.id} className="space-y-3">
+                <div key={section.id} className="space-y-2">
                   <div
                     role="button"
                     tabIndex={0}
@@ -841,19 +1045,19 @@ export default function QuickAccessSidebar({
                       }
                     }}
                     className={cn(
-                      "flex w-full rounded-[22px] border text-left shadow-[0_8px_24px_rgba(15,23,42,0.05)] transition-all duration-200",
+                      "flex w-full rounded-xl border text-left transition-all duration-200",
                       isCollapsed
-                        ? "items-center justify-center px-0 py-3.5"
-                        : "min-h-[5.25rem] items-center gap-3 px-4 py-3.5",
+                        ? "items-center justify-center px-0 py-3"
+                        : "min-h-[2.8rem] items-center gap-2.5 px-2.5 py-2",
                       isOpen
-                        ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]"
-                        : "border-[var(--crm-border)] bg-[var(--crm-surface)] hover:border-[var(--crm-border-strong)]",
+                        ? "border-[#c1cad8] bg-[#e8edf5]"
+                        : "border-[var(--crm-border)] bg-[var(--crm-surface)] hover:bg-[#eef2f7]",
                     )}
                   >
                     <button
                       type="button"
                       title={section.label}
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)] transition-transform duration-200 hover:scale-[1.03]"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#edf1f6] text-[#4b5563] transition-transform duration-200 hover:scale-[1.03]"
                       onClick={(e) => {
                         e.stopPropagation();
                         setIsCollapsed((prev) => {
@@ -865,15 +1069,15 @@ export default function QuickAccessSidebar({
                         });
                       }}
                     >
-                      <SidebarIcon name={section.icon} className="h-5 w-5" />
+                      <ClassicSidebarIcon name={section.icon} className="h-[21px] w-[21px]" />
                     </button>
                     {!isCollapsed ? (
                       <>
                         <div className="min-w-0 flex-1">
-                          <div className="text-[1.05rem] font-extrabold leading-tight tracking-[-0.03em] text-[var(--crm-text-primary)]">
+                          <div className="text-[0.95rem] font-semibold leading-tight text-[var(--crm-text-primary)]">
                             {section.label}
                           </div>
-                          <div className="mt-0.5 line-clamp-2 text-[0.65rem] font-semibold leading-snug tracking-wide text-[var(--crm-text-muted)]">
+                          <div className="mt-0.5 line-clamp-1 text-[0.67rem] font-medium leading-snug text-[var(--crm-text-muted)]">
                             {section.subtitle}
                           </div>
                         </div>
@@ -891,8 +1095,8 @@ export default function QuickAccessSidebar({
                             }}
                             aria-label={isOpen ? `Close ${section.label}` : `Open ${section.label}`}
                             className={cn(
-                              "flex h-8 w-8 items-center justify-center rounded-full bg-[var(--crm-surface-elevated)] text-[var(--crm-text-muted)] shadow-[0_2px_8px_rgba(15,23,42,0.06)] transition-all duration-200",
-                              isOpen ? "rotate-180 text-[var(--crm-accent)]" : "",
+                              "flex h-7 w-7 items-center justify-center rounded-full bg-[var(--crm-surface-elevated)] text-[#6b7280] transition-all duration-200",
+                              isOpen ? "rotate-180 text-[#111827]" : "",
                             )}
                           >
                             <svg
@@ -916,7 +1120,7 @@ export default function QuickAccessSidebar({
                   </div>
 
                   {!isCollapsed && isOpen && section.items.length > 0 ? (
-                    <div className="space-y-2.5 px-2">
+                    <div className="space-y-1 px-2">
                       {section.items.map((item) => {
                         const isActive = item.id === activeSubItemId;
 
@@ -926,32 +1130,36 @@ export default function QuickAccessSidebar({
                             type="button"
                             onClick={() => handleSubItemClick(item)}
                             className={cn(
-                              "relative flex w-full min-h-[3.25rem] items-center gap-3 rounded-[18px] border px-4 py-2.5 text-left transition-all duration-200",
+                          "group relative flex w-full min-h-[2.2rem] items-center gap-3 rounded-xl px-2.5 py-1.5 text-left transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5",
                               isActive
-                                ? "border-[var(--crm-accent-ring)] bg-[var(--crm-surface-elevated)] shadow-[0_10px_24px_rgba(37,99,235,0.08)]"
-                                : "border-[var(--crm-border)] bg-[var(--crm-surface)] opacity-85 hover:border-[var(--crm-border-strong)] hover:opacity-100",
+                                ? "bg-[linear-gradient(135deg,#dbe9ff_0%,#cddfff_100%)] text-[#274690] ring-1 ring-[#c4d8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]"
+                                : "text-[#374151] hover:bg-[#eef2f7] hover:shadow-[0_6px_14px_rgba(15,23,42,0.06)]",
                             )}
                           >
                             {isActive ? (
                               <span
                                 aria-hidden="true"
-                                className="pointer-events-none absolute right-[2px] top-1/2 h-[64%] w-[4px] -translate-y-1/2 rounded-full bg-[var(--crm-accent)]"
+                                className="pointer-events-none absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#5b8def]"
                               />
                             ) : null}
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--crm-accent-soft)] text-[var(--crm-accent)]">
-                              <SidebarIcon name={item.icon} className="h-4 w-4" />
+                            <div
+                              className={cn(
+                                "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-300",
+                                isActive
+                                  ? "bg-white/45 text-[#4b74d8]"
+                                  : "bg-transparent text-[#4b5563] group-hover:text-[#111827]",
+                              )}
+                            >
+                              <ClassicSidebarIcon name={item.icon} className="h-5 w-5" />
                             </div>
-                            <div className="min-w-0 flex-1">
+                            <div className="min-w-0 flex-1 pr-5">
                               <div
                                 className={cn(
-                                  "truncate text-[0.9rem] font-semibold leading-tight",
-                                  isActive ? "text-[var(--crm-accent)]" : "text-[var(--crm-text-secondary)]",
+                                  "truncate text-[0.92rem] font-semibold leading-tight",
+                                  isActive ? "text-[#274690]" : "text-[#374151]",
                                 )}
                               >
                                 {item.label}
-                              </div>
-                              <div className="mt-0.5 line-clamp-1 text-[0.72rem] leading-snug text-[var(--crm-text-muted)]">
-                                {item.description}
                               </div>
                             </div>
                           </button>
@@ -961,21 +1169,22 @@ export default function QuickAccessSidebar({
                   ) : null}
                 </div>
               );
-            })}
+            })
+            )}
           </div>
         </div>
 
         <div
           className={cn(
             "border-t border-[var(--crm-border)] transition-all duration-300",
-            isCollapsed ? "px-1 py-3" : "px-3.5 py-3",
+            isCollapsed ? "px-1 py-2" : "px-3 py-2",
           )}
         >
           {!isCollapsed ? (
             <>
-              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-2.5 shadow-[var(--crm-shadow-sm)]">
-                <div className="flex items-center gap-2.5 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-2.5 py-2">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--crm-accent-soft)] text-[0.76rem] font-bold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]">
+              <div className="hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-2 shadow-[var(--crm-shadow-sm)] min-[900px]:block">
+                <div className="flex items-center gap-2 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-2 py-1.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--crm-accent-soft)] text-[0.72rem] font-bold text-[var(--crm-accent)] ring-1 ring-[var(--crm-accent-ring)]">
                     {currentInitials}
                   </div>
                   <div className="min-w-0">
@@ -989,19 +1198,33 @@ export default function QuickAccessSidebar({
                   <div className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--crm-success)]" />
                 </div>
 
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <ThemeToggle className="h-10 w-full justify-center rounded-xl border-[var(--crm-border)] px-0 py-0" compact />
+                <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                  <ThemeToggle className="h-9 w-full justify-center rounded-xl border-[var(--crm-border)] px-0 py-0" compact />
                   <button
                     type="button"
                     onClick={handleLogoutClick}
                     disabled={logoutBusy}
-                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[var(--crm-danger)] px-3 text-[0.82rem] font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-transform duration-200 hover:-translate-y-px hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-[var(--crm-danger)] px-3 text-[0.78rem] font-semibold text-white shadow-[var(--crm-shadow-sm)] transition-transform duration-200 hover:-translate-y-px hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                       <path d="M14 7V5.5C14 4.67 13.33 4 12.5 4H7.5C6.67 4 6 4.67 6 5.5V18.5C6 19.33 6.67 20 7.5 20H12.5C13.33 20 14 19.33 14 18.5V17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       <path d="M10 12H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       <path d="M17 8.5L20.5 12L17 15.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
+                    {logoutBusy ? "Signing..." : "Logout"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-[900px]:hidden">
+                <div className="flex items-center justify-center gap-2">
+                  <ThemeToggle className="h-8 w-8 justify-center rounded-lg border-[var(--crm-border)] px-0 py-0" compact />
+                  <button
+                    type="button"
+                    onClick={handleLogoutClick}
+                    disabled={logoutBusy}
+                    className="inline-flex h-8 items-center justify-center rounded-lg bg-[var(--crm-danger)] px-3 text-[0.72rem] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
                     {logoutBusy ? "Signing..." : "Logout"}
                   </button>
                 </div>

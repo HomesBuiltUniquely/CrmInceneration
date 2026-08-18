@@ -113,7 +113,7 @@ export function canAccessDesignerDashboard(role: string): boolean {
 export function landingPathByRole(role: string): string {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") {
-    return dashboardPathByRole(r);
+    return "/Leads";
   }
   if (
     r === "TERRITORY_DESIGN_MANAGER" ||

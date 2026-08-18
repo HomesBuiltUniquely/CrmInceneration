@@ -13,7 +13,7 @@ import {
   formatAdditionalLeadSourcesLabel,
   isCrmLeadReinquiry,
 } from "@/lib/lead-source-utils";
-import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
+import { isIvrCallLeadSource, isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import {
   formatPresalesListStatusLabel,
   getListDisplayMilestone,
@@ -33,6 +33,7 @@ export const CRM_LEAD_TYPES = [
   "glead",
   "mlead",
   "addlead",
+  "ivrlead",
   "websitelead",
   "walkinlead",
   "whatsapplead",
@@ -442,7 +443,9 @@ function leadDisplayName(lead: ApiLead): string {
 }
 
 function companyFallback(lead: ApiLead): string {
-  return lead.companyName ?? "—";
+  const row = lead as Record<string, unknown>;
+  const humanId = String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "").trim();
+  return lead.companyName?.trim() || humanId || "—";
 }
 
 /** Legacy filter bucket — only rows with no milestone fields at all. */
@@ -593,9 +596,20 @@ function formatRelativeTime(iso?: string): string {
 
 export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): CrmLeadType {
   const t = (raw ?? "").trim().toLowerCase();
-  if (t === "formlead" || t === "glead" || t === "mlead" || t === "addlead" || t === "websitelead" || t === "walkinlead" || t === "whatsapplead") {
+  if (
+    t === "formlead" ||
+    t === "glead" ||
+    t === "mlead" ||
+    t === "addlead" ||
+    t === "ivrlead" ||
+    t === "websitelead" ||
+    t === "walkinlead" ||
+    t === "whatsapplead"
+  ) {
     return t;
   }
+  const compact = t.replace(/[^a-z0-9]/g, "");
+  if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
   return fallback;
 }
 
@@ -642,7 +656,9 @@ export function mapApiLeadToRow(
     statusLabel,
     leadSource: (() => {
       const source = getLeadDisplaySource({ ...lead, leadType: lead.leadType ?? sourceLeadType });
-      return isIvrCallLeadSource(source) ? "IVR Call" : undefined;
+      return isIvrCallLeadSource(source) || isIvrLeadTypeKey(lead.leadType ?? sourceLeadType)
+        ? "IVR Call"
+        : undefined;
     })(),
     verificationTag: normalizeVerificationTag(lead),
     reinquiry: hasReinquiry(lead),

@@ -6,6 +6,7 @@ export const LEAD_TYPE_TO_BASE: Record<CrmLeadType, string> = {
   glead: "/v1/Home1",
   mlead: "/v1/MetaLead",
   addlead: "/v1/AddLead",
+  ivrlead: "/v1/IvrLead",
   websitelead: "/v1/WebsiteLead",
   walkinlead: "/v1/WalkinLead",
   whatsapplead: "/v1/WhatsappLead",

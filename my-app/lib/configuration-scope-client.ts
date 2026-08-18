@@ -469,8 +469,10 @@ export function mergeRequirementDefaults(
 
 export function toPutRequirementsBody(
   req: ConfigurationScopeRequirements,
+  extra?: { configuration?: string | null },
 ): PutConfigurationScopeRequirementsBody {
   const coherent = withCoherentPropertyNameFields(req);
+  const configuration = (extra?.configuration ?? "").trim();
   return {
     version: coherent.version,
     availableRoomCatalog: Array.isArray(coherent.availableRoomCatalog)
@@ -488,6 +490,7 @@ export function toPutRequirementsBody(
     familyContactPhone: coherent.familyContactPhone,
     propertyName: coherent.propertyName,
     bookingType: coherent.bookingType,
+    ...(configuration ? { configuration } : {}),
     projectUnderstanding: coherent.projectUnderstanding,
     designStylePreference: coherent.designStylePreference,
     expectedTimeline: coherent.expectedTimeline,
@@ -509,6 +512,8 @@ export type PutConfigurationScopeRequirementsBody = {
   familyContactPhone: string | null;
   propertyName: string | null;
   bookingType: string | null;
+  /** BHK on the lead row. Sent only when set so Hub can copy it like bookingType. */
+  configuration?: string | null;
   projectUnderstanding: string | null;
   designStylePreference: string | null;
   expectedTimeline: string | null;

@@ -47,7 +47,8 @@ import {
 } from "@/lib/configuration-scope-client";
 import { seedPropertyNameFromLead } from "@/lib/lead-discovery-field-sync";
 import { syncCrmLeadToDesignModule } from "@/lib/design-module-phase-sync";
-import { detailJsonToLead, mergeLeadIntoDetail } from "@/lib/lead-detail-mapper";
+import { detailJsonToLead, mergeLeadIntoDetail, pickConfigurationFromDetail } from "@/lib/lead-detail-mapper";
+import { applyConfigurationToDetailPayload } from "@/lib/lead-field-persistence";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
 import {
@@ -223,7 +224,14 @@ export default function NewConfigurationScopePage({
   const [activeSectionId, setActiveSectionId] = useState<ScopeSectionId>("basic-understanding");
   const [baseDetail, setBaseDetail] = useState<Record<string, unknown> | null>(null);
   const [bookingType, setBookingType] = useState("");
-  const [leadConfiguration, setLeadConfiguration] = useState("");
+  const [leadConfiguration, setLeadConfigurationState] = useState("");
+  const leadConfigurationRef = useRef("");
+  const bookingTypeRef = useRef("");
+  const leadRowSaveInFlightRef = useRef(false);
+  const setLeadConfiguration = useCallback((value: string) => {
+    leadConfigurationRef.current = value;
+    setLeadConfigurationState(value);
+  }, []);
   const [bookingTypeLoading, setBookingTypeLoading] = useState(true);
   const [floorPlanS3Key, setFloorPlanS3Key] = useState("");
   const [floorPlanPublicLink, setFloorPlanPublicLink] = useState("");
@@ -253,6 +261,7 @@ export default function NewConfigurationScopePage({
   const requirementsDirtyRef = useRef(false);
   const aestheticNotesDirtyRef = useRef(false);
   const requirementsSaveInFlightRef = useRef(false);
+  const aestheticNotesSaveInFlightRef = useRef(false);
   const { notifyError, notifySuccess } = useGlobalNotifier();
 
   const validLeadType = useMemo<CrmLeadType | null>(
@@ -288,7 +297,9 @@ export default function NewConfigurationScopePage({
         if (cancelled) return;
         setBaseDetail(detailJson);
         const leadSnapshot = detailJsonToLead(detailJson, validLeadType);
-        setBookingType(leadSnapshot.bookingType ?? "");
+        const nextBookingType = leadSnapshot.bookingType ?? "";
+        bookingTypeRef.current = nextBookingType;
+        setBookingType(nextBookingType);
         setLeadConfiguration(leadSnapshot.configuration ?? "");
 
         const meta = await getLeadFloorPlanMeta(validLeadType, leadId);
@@ -332,20 +343,29 @@ export default function NewConfigurationScopePage({
             const saved = await putConfigurationScopeRequirements(
               validLeadType,
               leadId,
-              toPutRequirementsBody(requirementsToUse),
+              toPutRequirementsBody(requirementsToUse, {
+                configuration: leadConfigurationRef.current,
+              }),
             );
             if (cancelled) return;
             setRequirements(saved);
-            if (saved.bookingType) setBookingType(saved.bookingType);
+            if (saved.bookingType) {
+              bookingTypeRef.current = saved.bookingType;
+              setBookingType(saved.bookingType);
+            }
           } catch {
             if (!cancelled) {
               setRequirements(requirementsToUse);
-              if (requirementsToUse.bookingType) setBookingType(requirementsToUse.bookingType);
+              if (requirementsToUse.bookingType) {
+                bookingTypeRef.current = requirementsToUse.bookingType;
+                setBookingType(requirementsToUse.bookingType);
+              }
             }
           }
         } else {
           setRequirements(requirementsToUse);
           if (requirementsToUse.bookingType) {
+            bookingTypeRef.current = requirementsToUse.bookingType;
             setBookingType(requirementsToUse.bookingType);
           }
         }
@@ -410,6 +430,7 @@ export default function NewConfigurationScopePage({
   const handleBookingTypeChange = useCallback(
     (nextBookingType: string) => {
       if (requirementsLoading) return;
+      bookingTypeRef.current = nextBookingType;
       setBookingType(nextBookingType);
       patchRequirements((prev) => ({
         ...prev,
@@ -419,10 +440,111 @@ export default function NewConfigurationScopePage({
     [patchRequirements, requirementsLoading],
   );
 
+  const persistLeadRowFromScope = useCallback(
+    async (opts: {
+      configuration: string;
+      propertyName: string;
+      bookingType: string;
+    }): Promise<boolean> => {
+      if (!validLeadType) return false;
+
+      let waited = 0;
+      while (leadRowSaveInFlightRef.current && waited < 8000) {
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        waited += 80;
+      }
+
+      const nextConfiguration = (
+        leadConfigurationRef.current.trim() ||
+        opts.configuration.trim()
+      ).trim();
+      const nextPropertyName = opts.propertyName.trim();
+      const nextBookingType = (
+        opts.bookingType.trim() ||
+        bookingTypeRef.current.trim()
+      ).trim();
+      if (!nextConfiguration && !nextPropertyName && !nextBookingType) return true;
+
+      const configurationStuck = (detail: Record<string, unknown>): boolean => {
+        if (!nextConfiguration) return true;
+        const saved = pickConfigurationFromDetail(detail, validLeadType).trim();
+        return saved.toLowerCase() === nextConfiguration.toLowerCase();
+      };
+
+      const writeOnce = async (): Promise<Record<string, unknown>> => {
+        const latest = await getLeadDetail(validLeadType, leadId);
+        const snapshot = detailJsonToLead(latest, validLeadType);
+        const leadForSave = {
+          ...snapshot,
+          configuration: nextConfiguration || snapshot.configuration,
+          propertyLocation: nextPropertyName || snapshot.propertyLocation,
+          bookingType: nextBookingType || snapshot.bookingType,
+        };
+        const body = mergeLeadIntoDetail(latest, leadForSave);
+        if (nextConfiguration) {
+          applyConfigurationToDetailPayload(validLeadType, body, nextConfiguration);
+        }
+        return putLeadDetail(validLeadType, leadId, body);
+      };
+
+      leadRowSaveInFlightRef.current = true;
+      try {
+        await writeOnce();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        let updated = await getLeadDetail(validLeadType, leadId);
+        if (nextConfiguration && !configurationStuck(updated)) {
+          await writeOnce();
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          updated = await getLeadDetail(validLeadType, leadId);
+        }
+        setBaseDetail(updated);
+        if (nextConfiguration && !configurationStuck(updated)) {
+          notifyError("BHK type did not save. Please try once more.");
+          return false;
+        }
+        return true;
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Unable to save BHK type.");
+        return false;
+      } finally {
+        leadRowSaveInFlightRef.current = false;
+      }
+    },
+    [leadId, notifyError, validLeadType],
+  );
+
+  const handleConfigurationChange = useCallback(
+    (value: string) => {
+      setLeadConfiguration(value);
+      void persistLeadRowFromScope({
+        configuration: value,
+        propertyName: resolvePropertyNameSite(
+          requirements?.propertyName,
+          requirements?.projectUnderstanding,
+        ),
+        bookingType: bookingTypeRef.current,
+      });
+    },
+    [
+      persistLeadRowFromScope,
+      requirements?.projectUnderstanding,
+      requirements?.propertyName,
+      setLeadConfiguration,
+    ],
+  );
+
   const saveRequirements = useCallback(
     async (payload?: ConfigurationScopeRequirements, isRetry = false): Promise<boolean> => {
       const toSave = payload ?? requirements;
-      if (!validLeadType || !toSave || requirementsSaveInFlightRef.current) return false;
+      if (!validLeadType || !toSave) return false;
+      if (requirementsSaveInFlightRef.current) {
+        let waited = 0;
+        while (requirementsSaveInFlightRef.current && waited < 8000) {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          waited += 80;
+        }
+        if (requirementsSaveInFlightRef.current) return false;
+      }
 
       requirementsSaveInFlightRef.current = true;
       setRequirementsSaving(true);
@@ -430,11 +552,16 @@ export default function NewConfigurationScopePage({
         const saved = await putConfigurationScopeRequirements(
           validLeadType,
           leadId,
-          toPutRequirementsBody(toSave),
+          toPutRequirementsBody(toSave, {
+            configuration: leadConfigurationRef.current,
+          }),
         );
         requirementsDirtyRef.current = false;
         setRequirements(saved);
-        if (saved.bookingType) setBookingType(saved.bookingType);
+        if (saved.bookingType) {
+          bookingTypeRef.current = saved.bookingType;
+          setBookingType(saved.bookingType);
+        }
 
         // Keep Design Module View in sync when config scope is saved (not only on meeting schedule)
         if (baseDetail) {
@@ -558,9 +685,17 @@ export default function NewConfigurationScopePage({
 
   const saveAestheticNotes = useCallback(
     async (force = false): Promise<boolean> => {
-      if (!validLeadType || aestheticNotesSaving) return false;
+      if (!validLeadType) return false;
+      if (aestheticNotesSaveInFlightRef.current) {
+        let waited = 0;
+        while (aestheticNotesSaveInFlightRef.current && waited < 8000) {
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          waited += 80;
+        }
+      }
       if (!force && !aestheticNotesDirtyRef.current) return true;
 
+      aestheticNotesSaveInFlightRef.current = true;
       setAestheticNotesSaving(true);
       try {
         const data = await putConfigurationScopeAestheticNotes(
@@ -577,10 +712,11 @@ export default function NewConfigurationScopePage({
         notifyError(e instanceof Error ? e.message : "Unable to save aesthetic notes.");
         return false;
       } finally {
+        aestheticNotesSaveInFlightRef.current = false;
         setAestheticNotesSaving(false);
       }
     },
-    [aestheticNotes, aestheticNotesSaving, leadId, notifyError, validLeadType],
+    [aestheticNotes, leadId, notifyError, validLeadType],
   );
 
   const viewerName = useMemo(() => {
@@ -600,10 +736,19 @@ export default function NewConfigurationScopePage({
       notifyError("Configuration scope is still loading.");
       return false;
     }
-    const requirementsOk = await saveRequirements(requirements);
+    const coherentRequirements = withCoherentPropertyNameFields(requirements);
+    const requirementsOk = await saveRequirements(coherentRequirements);
     const notesOk = await saveAestheticNotes(true);
-    return requirementsOk && notesOk;
-  }, [notifyError, requirements, saveAestheticNotes, saveRequirements, validLeadType]);
+    const leadRowOk = await persistLeadRowFromScope({
+      configuration: leadConfigurationRef.current,
+      propertyName: resolvePropertyNameSite(
+        coherentRequirements.propertyName,
+        coherentRequirements.projectUnderstanding,
+      ),
+      bookingType: bookingTypeRef.current || coherentRequirements.bookingType || "",
+    });
+    return requirementsOk && notesOk && leadRowOk;
+  }, [notifyError, persistLeadRowFromScope, requirements, saveAestheticNotes, saveRequirements, validLeadType]);
 
   const handlePrintPdf = useCallback(() => {
     window.print();
@@ -691,43 +836,28 @@ export default function NewConfigurationScopePage({
     setFinalizing(true);
     try {
       const coherentRequirements = withCoherentPropertyNameFields(requirements);
-      const requirementsOk = await saveRequirements(coherentRequirements);
-      const notesOk = await saveAestheticNotes(true);
-      if (!requirementsOk || !notesOk) return;
-
-      const nextConfiguration = leadConfiguration.trim();
+      const nextConfiguration = leadConfigurationRef.current.trim() || leadConfiguration.trim();
       const nextPropertyName = resolvePropertyNameSite(
         coherentRequirements.propertyName,
         coherentRequirements.projectUnderstanding,
       );
       const nextBookingType = (
+        bookingTypeRef.current.trim() ||
         bookingType.trim() ||
         coherentRequirements.bookingType?.trim() ||
         ""
       ).trim();
 
-      if (baseDetail && validLeadType) {
-        const leadSnapshot = detailJsonToLead(baseDetail, validLeadType);
-        const currentConfiguration = (leadSnapshot.configuration ?? "").trim();
-        const currentProperty = (leadSnapshot.propertyLocation ?? "").trim();
-        const currentBooking = (leadSnapshot.bookingType ?? "").trim();
-        const needsLeadPut =
-          (nextConfiguration && nextConfiguration !== currentConfiguration) ||
-          (nextPropertyName && nextPropertyName !== currentProperty) ||
-          (nextBookingType && nextBookingType !== currentBooking);
+      const requirementsOk = await saveRequirements(coherentRequirements);
+      const notesOk = await saveAestheticNotes(true);
+      const leadRowOk = await persistLeadRowFromScope({
+        configuration: nextConfiguration,
+        propertyName: nextPropertyName,
+        bookingType: nextBookingType,
+      });
+      if (!leadRowOk) return;
+      if (!requirementsOk || !notesOk) return;
 
-        if (needsLeadPut) {
-          const leadForSave = {
-            ...leadSnapshot,
-            configuration: nextConfiguration || leadSnapshot.configuration,
-            propertyLocation: nextPropertyName || leadSnapshot.propertyLocation,
-            bookingType: nextBookingType || leadSnapshot.bookingType,
-          };
-          const body = mergeLeadIntoDetail(baseDetail, leadForSave);
-          const updated = await putLeadDetail(validLeadType, leadId, body);
-          setBaseDetail(updated);
-        }
-      }
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
       notifyConfigurationScopeUpdated({
         leadType: validLeadType,
@@ -790,6 +920,7 @@ export default function NewConfigurationScopePage({
     requirements,
     saveAestheticNotes,
     saveRequirements,
+    persistLeadRowFromScope,
     showFinalizeCelebration,
     validLeadType,
   ]);
@@ -1196,7 +1327,7 @@ export default function NewConfigurationScopePage({
                 });
               }}
               onBookingTypeChange={handleBookingTypeChange}
-              onConfigurationChange={setLeadConfiguration}
+              onConfigurationChange={handleConfigurationChange}
               onExpectedTimelineChange={(value) => {
                 patchRequirements((prev) => ({
                   ...prev,

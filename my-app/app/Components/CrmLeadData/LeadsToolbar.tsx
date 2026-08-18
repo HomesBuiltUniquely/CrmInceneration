@@ -405,6 +405,7 @@ export default function LeadsToolbar({
       glead: Number(leadTypeCounts.glead ?? 0),
       mlead: Number(leadTypeCounts.mlead ?? 0),
       addlead: Number(leadTypeCounts.addlead ?? 0),
+      ivrlead: Number(leadTypeCounts.ivrlead ?? 0),
       websitelead: Number(leadTypeCounts.websitelead ?? 0),
       walkinlead: Number(leadTypeCounts.walkinlead ?? 0),
       whatsapplead: Number(leadTypeCounts.whatsapplead ?? 0),
@@ -427,14 +428,11 @@ export default function LeadsToolbar({
     () =>
       ADMIN_SOURCE_LEAD_TYPE_TILES.map((tile) => ({
         ...tile,
-        value:
-          tile.leadTypeKey === "ivr_call"
-            ? Number(leadTypeCounts.ivr_call ?? 0)
-            : Number(
-                pooledSourceCounts[tile.leadTypeKey as keyof typeof pooledSourceCounts] ?? 0,
-              ),
+        value: Number(
+          pooledSourceCounts[tile.leadTypeKey as keyof typeof pooledSourceCounts] ?? 0,
+        ),
       })),
-    [pooledSourceCounts, leadTypeCounts.ivr_call],
+    [pooledSourceCounts],
   );
   const adminPoolAllCount = pooledSourceCounts.all ?? 0;
   const adminPoolPrimaryTotal =

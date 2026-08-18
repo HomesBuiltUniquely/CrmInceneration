@@ -11,10 +11,7 @@ export default function ScheduleHubMeetingPreviewPage() {
   const [lastPayload, setLastPayload] = useState<ScheduleHubMeetingConfirmPayload | null>(null);
 
   return (
-    <div
-      className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--crm-app-bg)] p-6"
-      style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
-    >
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[var(--crm-app-bg)] p-6">
       <p className="text-[14px] text-[var(--crm-text-muted)]">Schedule Hub Meeting — UI preview</p>
       {lastPayload ? (
         <pre className="max-w-xl overflow-auto rounded-lg border border-[var(--crm-border)] bg-white p-3 text-[11px]">

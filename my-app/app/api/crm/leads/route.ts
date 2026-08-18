@@ -39,7 +39,7 @@ import {
   rawInInclusiveDateRange,
   resolveEffectiveDateField,
 } from "@/lib/crm-date-field-filter";
-import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
+import { hubLeadTypeForFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -95,6 +95,7 @@ function emptySourceCounts(): LeadSourceCounts {
     glead: 0,
     mlead: 0,
     addlead: 0,
+    ivrlead: 0,
     websitelead: 0,
     walkinlead: 0,
     whatsapplead: 0,
@@ -648,9 +649,7 @@ export async function GET(req: NextRequest) {
     const leadType =
       leadTypeParam === "all"
         ? "formlead"
-        : isIvrCallFilterKey(leadTypeParam)
-          ? "addlead"
-          : leadTypeParam;
+        : hubLeadTypeParam || leadTypeParam;
     if (
       !adminActingAsManager &&
       !allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])
@@ -698,9 +697,7 @@ export async function GET(req: NextRequest) {
     const leadType =
       leadTypeParam === "all"
         ? "formlead"
-        : isIvrCallFilterKey(leadTypeParam)
-          ? "addlead"
-          : leadTypeParam;
+        : hubLeadTypeParam || leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
@@ -731,7 +728,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam) && !isIvrCallFilterKey(leadTypeParam)) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
     const presalesPerType = 1000;
     const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(

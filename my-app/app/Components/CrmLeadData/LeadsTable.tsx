@@ -222,9 +222,9 @@ function LeadRowAction({
       </div>
       <div className="flex min-h-[56px] min-w-0 items-start gap-2 self-start">
         <div className="leading-tight">
-          <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
-          <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-1">
+          <div className="text-[12.5px] font-semibold leading-tight text-[var(--crm-text-primary)]">{row.name}</div>
+          <div className="mt-[5px] text-[9.5px] font-medium leading-none text-[var(--crm-text-muted)]">{row.company}</div>
+          <div className="mt-[8px] flex flex-wrap items-center gap-1.5">
             {row.leadSource === "IVR Call" ? (
               <TinyTag chip={{ label: "IVR Call", tone: "violet" }} />
             ) : null}

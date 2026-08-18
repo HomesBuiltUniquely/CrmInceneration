@@ -159,6 +159,7 @@ export function adminByLeadTypeToSourceCounts(
     glead: 0,
     mlead: 0,
     addlead: 0,
+    ivrlead: 0,
     websitelead: 0,
     walkinlead: 0,
     whatsapplead: 0,

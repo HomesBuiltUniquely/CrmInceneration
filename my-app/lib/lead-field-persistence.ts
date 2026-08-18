@@ -1,6 +1,28 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
 
-export type ConfigurationDbColumn = "interior_setup" | "booking_type" | "property_type";
+export type ConfigurationDbColumn = "interior_setup" | "booking_type" | "property_type" | "configuration";
+
+const BOOKING_TYPE_VALUE_SET = new Set(
+  BOOKING_TYPE_OPTIONS.map((value) => value.trim().toLowerCase()),
+);
+
+const BHK_OPTION_SET = new Set(
+  CONFIGURATION_OPTIONS.map((value) => value.trim().toLowerCase()),
+);
+
+/** True when the value is a Scope "Type" (APARTMENT / RENOVATION / KITCHEN), not BHK. */
+export function isLeadBookingTypeValue(raw: string): boolean {
+  return BOOKING_TYPE_VALUE_SET.has(raw.trim().toLowerCase());
+}
+
+/** True when the value looks like BHK (2 BHK, 5 BHK /Villa, …). */
+export function isBhkLikeConfigurationValue(raw: string): boolean {
+  const v = raw.trim().toLowerCase();
+  if (!v || isLeadBookingTypeValue(v)) return false;
+  if (BHK_OPTION_SET.has(v)) return true;
+  return /\bbhk\b/.test(v) || v.includes("villa");
+}
 
 /** Which lead-table column stores CRM UI `configuration` (BHK). */
 export function configurationDbColumnForLeadType(leadType: CrmLeadType): ConfigurationDbColumn {
@@ -9,14 +31,16 @@ export function configurationDbColumnForLeadType(leadType: CrmLeadType): Configu
     case "mlead":
     case "websitelead":
       return "interior_setup";
-    case "whatsapplead":
-    case "formlead":
-      return "booking_type";
     case "addlead":
+    case "ivrlead":
     case "walkinlead":
       return "property_type";
+    case "whatsapplead":
+    case "formlead":
+      // BHK is lead `configuration`. `booking_type` is Scope "Type" (APARTMENT / …).
+      return "configuration";
     default:
-      return "interior_setup";
+      return "configuration";
   }
 }
 
@@ -51,6 +75,8 @@ export function applyConfigurationToDetailPayload(
     case "property_type":
       body.propertyType = cfg;
       body.property_type = cfg;
+      break;
+    case "configuration":
       break;
   }
 }

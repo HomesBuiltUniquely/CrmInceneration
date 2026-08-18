@@ -3900,10 +3900,7 @@ export default function AdminPanelContent() {
   };
 
   return (
-    <div
-      className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-7 md:px-8"
-      style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}
-    >
+    <div className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-7 md:px-8">
       {/* Quick nav cards - Modern compact design */}
       <div className="mb-7 flex flex-wrap gap-2.5">
         {sections.map((s) => (

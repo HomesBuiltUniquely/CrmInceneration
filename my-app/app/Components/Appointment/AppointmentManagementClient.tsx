@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -248,13 +249,7 @@ export default function AppointmentManagementClient() {
         </div>
 
         <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <h1 className="text-[1.35rem] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[2rem]">
-                {roleLabel} Panel
-              </h1>
-            </div>
-          </div>
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6">
             <section className="mx-auto max-w-[1200px] rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface)]">

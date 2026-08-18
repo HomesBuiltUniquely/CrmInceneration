@@ -1163,7 +1163,7 @@ export default function JourneyPhaseHeatmap({
   ]);
 
   return (
-    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-6`}>
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-2`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
