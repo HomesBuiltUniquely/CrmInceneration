@@ -1,6 +1,7 @@
 import { asCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
 import { isCrmLeadReinquiry, parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import { isIvrCallLeadSource, isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import {
   getLeadDisplayEmail,
   getLeadDisplayName,
@@ -20,6 +21,8 @@ import {
   applyPropertyNotesToDetailPayload,
   applyWalkinLeadFieldsToDetailPayload,
   configurationDbColumnForLeadType,
+  isBhkLikeConfigurationValue,
+  isLeadBookingTypeValue,
   readPropertyNotesFromRawPropertyDetails,
 } from "@/lib/lead-field-persistence";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
@@ -343,12 +346,28 @@ export function pickConfigurationFromDetail(
       const trimmed = value.trim();
       if (!trimmed) continue;
       if (isBudgetLikeConfiguration(trimmed)) continue;
+      if (isLeadBookingTypeValue(trimmed)) continue;
       return trimmed;
     }
     return "";
   };
 
-  /** Lead-type primary column for configuration (BHK). */
+  const firstBhkLike = (...values: string[]): string => {
+    for (const value of values) {
+      const trimmed = value.trim();
+      if (isBhkLikeConfigurationValue(trimmed) && !isBudgetLikeConfiguration(trimmed)) {
+        return trimmed;
+      }
+    }
+    return "";
+  };
+
+  /** Canonical Hub field is `configuration`. Prefer a BHK-shaped value there. */
+  const flatConfiguration = pickStr(detail, "configuration");
+  const bhkFromCanonical = firstBhkLike(flatConfiguration);
+  if (bhkFromCanonical) return bhkFromCanonical;
+
+  /** Lead-type primary column for configuration (BHK). Never treat booking Type as BHK. */
   const configCol = configurationDbColumnForLeadType(leadType);
   let fromColumn = "";
   switch (configCol) {
@@ -356,16 +375,21 @@ export function pickConfigurationFromDetail(
       fromColumn = pickStr(detail, "interiorSetup", "interior_setup");
       break;
     case "booking_type":
-      fromColumn = pickStr(detail, "bookingType", "booking_type");
+      fromColumn = pickStr(detail, "interiorSetup", "interior_setup", "propertyType", "property_type");
       break;
     case "property_type":
       fromColumn = pickStr(detail, "propertyType", "property_type");
       break;
+    case "configuration":
+      fromColumn = flatConfiguration;
+      break;
   }
+  const bhkFromColumn = firstBhkLike(fromColumn);
+  if (bhkFromColumn) return bhkFromColumn;
   const columnValue = firstValidConfiguration(fromColumn);
   if (columnValue) return columnValue;
 
-  const flatAlias = firstValidConfiguration(pickStr(detail, "configuration"));
+  const flatAlias = firstValidConfiguration(flatConfiguration);
   if (flatAlias) return flatAlias;
 
   /** Legacy JSON in property_details (one-time migration read). */
@@ -629,7 +653,10 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     })(),
     designQaLink:
       pickStr(detail, "designQaLink", "design_qa_quiz_url", "designQaQuizUrl") || undefined,
-    leadSource: getLeadDisplaySource({ ...detail, leadType }),
+    leadSource: (() => {
+      const source = getLeadDisplaySource({ ...detail, leadType });
+      return isIvrLeadTypeKey(leadType) || isIvrCallLeadSource(source) ? "IVR Call" : source;
+    })(),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     bookingType: pickStr(detail, "bookingType", "booking_type", "BookingType") || "",
@@ -1103,7 +1130,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
-  if (boxLt === "addlead") {
+  if (boxLt === "addlead" || boxLt === "ivrlead") {
     next.property_type = resolvedConfiguration;
   }
   const floorPlanValue = lead.floorPlan.trim();

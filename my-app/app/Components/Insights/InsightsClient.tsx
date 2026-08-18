@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BOOKING_DATE_PRESETS,
@@ -89,6 +88,7 @@ import {
 } from "@/lib/roleUtils";
 import { collectHierarchyUserAssigneeAliases, hierarchyUserDisplayName } from "@/lib/hierarchy-user-display";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
 import InsightSect3 from "./InsightsSect3";
@@ -1074,19 +1074,7 @@ export default function InsightsClient1() {
         />
 
         <div className="min-w-0 bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
-              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
-              <div>
-                <h1 className="text-base font-bold text-[var(--crm-text-primary)]">
-                  Insights
-                </h1>
-                <p className="text-xs text-[var(--crm-text-muted)]">
-                  Sales performance &amp; pipeline analytics
-                </p>
-              </div>
-            </div>
-          </div>
+          <AppTopBar />
 
           <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">

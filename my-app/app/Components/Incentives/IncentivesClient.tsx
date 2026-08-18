@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -254,17 +254,7 @@ export default function IncentivesClient() {
         />
 
         <div className="min-w-0 xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--inc-border)] bg-[var(--inc-surface)] shadow-sm">
-            <div className="flex min-h-16 items-center gap-3 px-4 md:px-6">
-              <Image src="/HowsCrmLogo.png" alt="Hows CRM" width={44} height={44} />
-              <div>
-                <h1 className="text-base font-bold text-[var(--inc-text)]">Incentives</h1>
-                <p className="text-xs text-[var(--inc-muted)]">
-                  {roster?.canPickTeam ? "Team & individual performance" : "Your performance tracking"}
-                </p>
-              </div>
-            </div>
-          </div>
+          <AppTopBar />
 
           <main className="p-4 md:p-6 lg:p-8">
             <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--inc-border)] bg-[var(--inc-surface)] px-4 py-3 shadow-sm">

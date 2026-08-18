@@ -684,11 +684,11 @@ export default function Header() {
         <div id="crm-leads-scroll-root" className="xl:h-screen xl:overflow-y-auto">
           <TopNav search={search} onSearchChange={setSearch} />
           {!authResolved ? (
-            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
+            <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               Loading your role access...
             </div>
           ) : isDesignRole ? (
-            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
+            <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               You don&apos;t have access to CRM lead management in this role.
             </div>
           ) : (

@@ -50,7 +50,7 @@ import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
-import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
@@ -163,7 +163,7 @@ export type PresalesVerifyFromCompleteTaskPayload = {
 
 function verifyHandoffButtonTitle(lead: Lead): string {
   if (lead.leadType === "whatsapplead") return "Verify WhatsApp Lead";
-  if (lead.leadType === "addlead" && isIvrCallLeadSource(lead.leadSource)) {
+  if (isIvrInboundLead(lead.leadType, lead.leadSource)) {
     return "Verify IVR Lead";
   }
   return "Verify & hand off to sales";

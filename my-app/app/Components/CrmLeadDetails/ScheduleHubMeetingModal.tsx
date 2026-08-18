@@ -447,7 +447,6 @@ export default function ScheduleHubMeetingModal({
     >
       <div
         className="flex max-h-[96vh] w-full max-w-[1180px] flex-col overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[0_28px_80px_rgba(15,23,42,0.28)]"
-        style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-[var(--crm-border)] px-6 py-4">

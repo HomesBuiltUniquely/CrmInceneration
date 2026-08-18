@@ -7,8 +7,8 @@ import {
   type DragEvent,
   type ReactNode,
 } from "react";
-import Image from "next/image";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
 import { BASE_URL } from "@/lib/base-url";
@@ -491,13 +491,7 @@ export default function ImportLeadsClient() {
   }
 
   return (
-    <div
-      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
-      style={{
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -512,27 +506,7 @@ export default function ImportLeadsClient() {
         </div>
 
         <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <div className="flex items-center gap-3">
-                <Image
-                  src="/HowsCrmLogo.png"
-                  alt="Hows CRM"
-                  width={46}
-                  height={46}
-                />
-                <div>
-                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                    Import Leads
-                  </div>
-                  <div className="text-sm text-[var(--crm-text-muted)]">
-                    Upload Excel files and map columns to the original CRM
-                    import API
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1120px] space-y-5">

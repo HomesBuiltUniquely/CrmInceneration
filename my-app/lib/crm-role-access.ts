@@ -1,18 +1,12 @@
 import { normalizeRole } from "@/lib/auth/api";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
+import { isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import { isPresalesRole as isPresalesRoleUtil } from "@/lib/roleUtils";
 
 export type LeadTypeFilterKey = "all" | CrmLeadType | "verified" | "ivr_call";
 
-const ALL_LEAD_TYPES: CrmLeadType[] = [
-  "formlead",
-  "glead",
-  "mlead",
-  "addlead",
-  "websitelead",
-  "walkinlead",
-  "whatsapplead",
-];
+const ALL_LEAD_TYPES: CrmLeadType[] = [...CRM_LEAD_TYPES];
 
 export function toRoleKey(role: string): string {
   return normalizeRole(role);
@@ -35,7 +29,7 @@ export function getAllowedLeadTypesForRole(_role: string): CrmLeadType[] {
 }
 
 export function isLeadTypeAllowedForRole(role: string, leadType: string): boolean {
-  if (leadType === "all" || leadType === "verified" || leadType === "ivr_call") return true;
+  if (leadType === "all" || leadType === "verified" || isIvrLeadTypeKey(leadType)) return true;
   return getAllowedLeadTypesForRole(role).includes(leadType as CrmLeadType);
 }
 
@@ -44,6 +38,7 @@ export function sanitizeLeadTypeForRole(
   leadType: string,
   fallback: CrmLeadType = "formlead",
 ): LeadTypeFilterKey {
+  if (isIvrLeadTypeKey(leadType)) return "ivrlead";
   if (isLeadTypeAllowedForRole(role, leadType)) {
     return leadType as LeadTypeFilterKey;
   }
@@ -60,7 +55,7 @@ export function getLeadTypeFilterOptions(
       { value: "glead", label: "Google Ads" },
       { value: "mlead", label: "Meta Ads" },
       { value: "addlead", label: "Add Lead" },
-      { value: "ivr_call", label: "IVR Call" },
+      { value: "ivrlead", label: "IVR Lead" },
       { value: "websitelead", label: "Website Lead" },
       { value: "walkinlead", label: "Walk-in Lead" },
       { value: "whatsapplead", label: "WhatsApp" },
@@ -69,7 +64,7 @@ export function getLeadTypeFilterOptions(
   return [
     { value: "all", label: "All Types" },
     { value: "addlead", label: "Add Lead" },
-    { value: "ivr_call", label: "IVR Call" },
+    { value: "ivrlead", label: "IVR Lead" },
     { value: "formlead", label: "External Lead" },
     { value: "glead", label: "Google Ads" },
     { value: "mlead", label: "Meta Ads" },

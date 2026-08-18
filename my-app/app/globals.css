@@ -53,6 +53,56 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  letter-spacing: -0.011em;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+button,
+input,
+textarea,
+select,
+optgroup {
+  font-family: inherit;
+}
+
+button,
+label,
+th,
+legend,
+summary {
+  font-weight: 600;
+}
+
+h1,
+h2 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 .dark {
   --background: #081120;
   --foreground: #e5eef8;
@@ -97,15 +147,6 @@
   --crm-shadow-sm: 0 14px 32px rgba(2, 6, 23, 0.32);
   --crm-shadow-md: 0 22px 54px rgba(2, 6, 23, 0.44);
   --crm-shadow-lg: 0 28px 70px rgba(2, 6, 23, 0.56);
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  transition:
-    background-color 180ms ease,
-    color 180ms ease;
 }
 
 .animate-fade-up {
@@ -158,6 +199,107 @@ body {
   50% {
     opacity: 0.55;
     transform: scale(0.82);
+  }
+}
+
+@keyframes breadcrumb-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes breadcrumb-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+  }
+
+  50% {
+    opacity: 0.85;
+    transform: scale(1.15);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0);
+  }
+}
+
+.app-breadcrumb-active {
+  animation: breadcrumb-page-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.app-breadcrumb-active-dot {
+  animation: breadcrumb-dot-pulse 2s ease-in-out infinite;
+}
+
+/* ——— CRM page transitions (iOS-style) ——— */
+@keyframes crm-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.988);
+    filter: blur(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.crm-page-transition {
+  animation: crm-page-enter 0.48s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: opacity, transform, filter;
+}
+
+@keyframes crm-vt-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+    filter: blur(4px);
+  }
+}
+
+@keyframes crm-vt-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(1.012);
+    filter: blur(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+::view-transition-old(root) {
+  animation: crm-vt-fade-out 0.34s cubic-bezier(0.32, 0.72, 0, 1) both;
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  animation: crm-vt-fade-in 0.44s cubic-bezier(0.32, 0.72, 0, 1) both;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-page-transition,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
   }
 }
 

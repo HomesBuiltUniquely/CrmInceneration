@@ -10,6 +10,7 @@ import { getEffectiveNewCrmEndDate, getEffectiveNewCrmStartDate } from "@/lib/ne
 import { appendCrmDateFilters } from "@/lib/crm-date-field-filter";
 import { fetchWalkInLeadsForMerge } from "@/lib/crm-walkin-leads";
 import { fetchWhatsappLeadsForMerge } from "@/lib/crm-whatsapp-leads";
+import { hubLeadTypeForFilterKey } from "@/lib/ivr-lead-source";
 
 type SourceCountsResponse = Record<"all" | (typeof CRM_LEAD_TYPES)[number], number>;
 
@@ -221,7 +222,9 @@ export async function GET(req: NextRequest) {
   const viewerRole = await resolveViewerRole(req);
   const viewerRoleKey = normalizeRole(viewerRole);
   const allowedLeadTypes = getAllowedLeadTypesForRole(viewerRoleKey);
-  const requestedLeadType = (reqUrl.searchParams.get("leadType") ?? "all").trim().toLowerCase();
+  const requestedLeadType = hubLeadTypeForFilterKey(
+    (reqUrl.searchParams.get("leadType") ?? "all").trim().toLowerCase(),
+  );
   const effDates = effectiveDateRangeFromRequest(reqUrl);
   const assigneeScopes = [
     ...new Set(
@@ -240,6 +243,7 @@ export async function GET(req: NextRequest) {
     glead: 0,
     mlead: 0,
     addlead: 0,
+    ivrlead: 0,
     websitelead: 0,
     walkinlead: 0,
     whatsapplead: 0,

@@ -4,11 +4,14 @@ import Script from "next/script";
 import "./globals.css";
 import { CRM_THEME_STORAGE_KEY } from "@/lib/theme";
 import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
+import { ActiveModuleProvider } from "./Components/Shared/ActiveModuleContext";
+import ModuleHubHost from "./Components/Shared/ModuleHubHost";
 
 const manrope = Manrope({
   variable: "--font-manrope",
   subsets: ["latin"],
-  weight: ["400", "600", "700", "800"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
@@ -25,9 +28,7 @@ const themeBootstrap = `
 (function () {
   try {
     var stored = localStorage.getItem(${JSON.stringify(CRM_THEME_STORAGE_KEY)});
-    var theme = stored === "dark" || stored === "light"
-      ? stored
-      : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    var theme = stored === "dark" || stored === "light" ? stored : "light";
     document.documentElement.classList.remove("light", "dark");
     document.documentElement.classList.add(theme);
     document.documentElement.style.colorScheme = theme;
@@ -41,14 +42,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={manrope.variable} suppressHydrationWarning>
       <body
-        className={`${manrope.variable} ${geistMono.variable} font-sans antialiased`}
+        className={`${manrope.className} ${geistMono.variable} font-sans antialiased`}
       >
         <Script id="crm-theme-bootstrap" strategy="beforeInteractive">
           {themeBootstrap}
         </Script>
-        <GlobalNotifierProvider>{children}</GlobalNotifierProvider>
+        <GlobalNotifierProvider>
+          <ActiveModuleProvider>
+            <ModuleHubHost />
+            {children}
+          </ActiveModuleProvider>
+        </GlobalNotifierProvider>
       </body>
     </html>
   );

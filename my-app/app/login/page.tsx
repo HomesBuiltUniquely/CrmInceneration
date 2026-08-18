@@ -107,10 +107,10 @@ export default function LoginPage() {
             height={56}
             className="rounded-lg"
           />
-          <h1 className="text-xl font-bold text-gray-900 text-center">
+          <h1 className="text-xl font-bold tracking-tight text-gray-900 text-center">
             Sign in to CRM
           </h1>
-          <p className="text-sm text-gray-500 text-center">
+          <p className="text-sm font-medium text-gray-500 text-center">
             Backend:{" "}
             <span className="font-mono text-gray-700">{apiBase}</span>
           </p>
@@ -120,7 +120,7 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="username"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-semibold text-gray-700 mb-1"
             >
               Username
             </label>
@@ -138,7 +138,7 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-semibold text-gray-700 mb-1"
             >
               Password
             </label>
