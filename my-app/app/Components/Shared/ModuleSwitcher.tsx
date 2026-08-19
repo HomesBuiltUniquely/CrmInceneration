@@ -183,17 +183,12 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
           aria-label="Open apps menu"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className={cn(
-            "group inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent p-0 shadow-none outline-none ring-0 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent-ring)] active:scale-95",
-            open
-              ? "scale-105 bg-[var(--crm-accent-soft)]"
-              : "hover:bg-[var(--crm-surface-subtle)] active:bg-[var(--crm-accent-soft)]",
-          )}
+          className="group inline-flex h-11 w-11 items-center justify-center rounded-full border-0 bg-transparent p-0 shadow-none outline-none ring-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--crm-accent-ring)]"
         >
           <HowsHubLauncherIcon
             className={cn(
-              "h-9 w-9 transition-transform duration-300 ease-out md:h-10 md:w-10",
-              open ? "rotate-[8deg] scale-110" : "rotate-0 scale-100",
+              "h-9 w-9 origin-center transition-transform duration-200 ease-out md:h-10 md:w-10 group-hover:scale-110",
+              open ? "scale-110" : "scale-100",
             )}
           />
         </button>
@@ -202,12 +197,12 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
       {open ? (
         <div
           className={cn(
-            "absolute right-0 top-[calc(100%+6px)] z-[80] origin-top-right overflow-visible rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-1.5 py-1.5 shadow-[0_12px_28px_rgba(15,23,42,0.12)] ring-1 ring-black/[0.03] backdrop-blur-[8px] transition-all duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
+            "absolute right-0 top-[calc(100%+6px)] z-[80] origin-center overflow-visible rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] px-1.5 py-1.5 shadow-[0_12px_28px_rgba(15,23,42,0.12)] ring-1 ring-black/[0.03] backdrop-blur-[8px] transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
             !activeModuleId &&
-              "fixed left-1/2 top-20 z-[90] -translate-x-1/2 sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:translate-x-0",
+              "fixed left-1/2 top-20 z-[90] -translate-x-1/2 sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+8px)] sm:translate-x-0 sm:origin-center",
             panelVisible
-              ? "translate-y-0 scale-100 opacity-100"
-              : "pointer-events-none -translate-y-2 scale-[0.96] opacity-0",
+              ? "scale-100 opacity-100"
+              : "pointer-events-none scale-90 opacity-0",
           )}
           role="dialog"
           aria-label="Hows modules"
@@ -226,11 +221,11 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
                   className={cn(
                     "group relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] border transition-all duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
                     isActive
-                      ? "border-[#93c5fd] bg-[#eff6ff] shadow-[0_4px_12px_rgba(37,99,235,0.14)]"
-                      : "border-transparent bg-transparent hover:-translate-y-px hover:border-[#bfdbfe] hover:bg-[#eff6ff] hover:shadow-[0_6px_14px_rgba(37,99,235,0.12)]",
-                    panelVisible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
+                      ? "border-[#93c5fd] bg-[#eff6ff] shadow-[0_4px_12px_rgba(37,99,235,0.14)] scale-[1.08]"
+                      : "border-transparent bg-transparent hover:scale-[1.1] hover:border-[#bfdbfe] hover:bg-[#eff6ff] hover:shadow-[0_6px_14px_rgba(37,99,235,0.12)] active:scale-95",
+                    panelVisible ? "scale-100 opacity-100" : "scale-75 opacity-0",
                   )}
-                  style={{ transitionDelay: `${index * 18}ms` }}
+                  style={{ transitionDelay: `${index * 30}ms` }}
                 >
                   <div
                     className={cn(

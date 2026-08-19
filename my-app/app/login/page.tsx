@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BASE_URL } from "@/lib/base-url";
 import {
+  CRM_ACTIVE_MODULE_KEY,
   CRM_DESIGNER_ID_STORAGE_KEY,
   CRM_DESIGNER_NAME_STORAGE_KEY,
   CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
+  defaultModuleByRole,
   CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   getDesignerIdFromUser,
@@ -62,6 +64,12 @@ export default function LoginPage() {
         localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
       } else {
         localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      }
+      const defaultModule = defaultModuleByRole(role);
+      if (defaultModule) {
+        localStorage.setItem(CRM_ACTIVE_MODULE_KEY, defaultModule);
+      } else {
+        localStorage.removeItem(CRM_ACTIVE_MODULE_KEY);
       }
       if (name) {
         localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
