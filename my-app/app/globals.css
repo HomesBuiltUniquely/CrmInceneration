@@ -303,6 +303,76 @@ h6 {
   }
 }
 
+/* ——— Fullscreen overlay modal (lead detail) ——— */
+@keyframes crm-overlay-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes crm-overlay-backdrop-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes crm-overlay-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes crm-overlay-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+}
+
+.crm-overlay-backdrop-in {
+  animation: crm-overlay-backdrop-in 0.36s ease-out both;
+}
+
+.crm-overlay-backdrop-out {
+  animation: crm-overlay-backdrop-out 0.28s ease-in both;
+}
+
+.crm-overlay-panel-in {
+  animation: crm-overlay-panel-in 0.46s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.crm-overlay-panel-out {
+  animation: crm-overlay-panel-out 0.3s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-overlay-backdrop-in,
+  .crm-overlay-backdrop-out,
+  .crm-overlay-panel-in,
+  .crm-overlay-panel-out {
+    animation: none !important;
+  }
+}
+
 /* Insights — Sales Funnel substage drill-down */
 @keyframes insights-funnel-backdrop-in {
   from {
