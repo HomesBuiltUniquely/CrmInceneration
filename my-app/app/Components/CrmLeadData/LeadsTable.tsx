@@ -130,7 +130,7 @@ type LeadRowActionProps = {
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
-  onOpenLead?: (row: LeadRowModel) => void;
+  onOpenLead?: (row: LeadRowModel, sourceEl?: HTMLElement | null) => void;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
@@ -184,7 +184,10 @@ function LeadRowAction({
   const critical = row.journey.status?.tone === "critical";
   const lostPath = Boolean(row.lostPathHighlight || row.lostQuoteHighlight);
   const lostQuote = Boolean(row.lostQuoteHighlight);
-  const open = () => onOpenLead?.(row);
+  const open = (event?: { currentTarget: EventTarget }) => {
+    const el = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    onOpenLead?.(row, el);
+  };
   return (
     <div
       onClick={open}
@@ -200,7 +203,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          open();
+          open(event);
         }
       }}
     >
@@ -468,6 +471,7 @@ export default function LeadsTable({
   const [openLead, setOpenLead] = useState<{
     leadType: string;
     leadId: string;
+    origin: { top: number; left: number; width: number; height: number } | null;
   } | null>(null);
 
   // ── Notification highlight ────────────────────────────────────────────────
@@ -636,12 +640,16 @@ export default function LeadsTable({
                 gridClass={gridClass}
                 onDelete={onDeleteRow}
                 onAssign={onAssignRow}
-                onOpenLead={(row) =>
+                onOpenLead={(row, sourceEl) => {
+                  const r = sourceEl?.getBoundingClientRect();
                   setOpenLead({
                     leadType: row.leadType,
                     leadId: row.id,
-                  })
-                }
+                    origin: r
+                      ? { top: r.top, left: r.left, width: r.width, height: r.height }
+                      : null,
+                  });
+                }}
               />
             </div>
           ))
@@ -674,6 +682,10 @@ export default function LeadsTable({
         hideHeader
         closeOnBackdrop
         closeEventName={LEAD_DETAIL_OVERLAY_CLOSE_EVENT}
+        originRect={openLead?.origin}
+        originSelector={
+          openLead ? `[data-highlight-row="${CSS.escape(openLead.leadId)}"]` : undefined
+        }
         zOverlay={80}
         zPanel={85}
       >

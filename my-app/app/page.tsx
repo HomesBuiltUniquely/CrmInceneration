@@ -6,6 +6,7 @@ import RequireAuth from "./Components/RequireAuth";
 import {
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
+  landingPathByRole,
   normalizeRole,
 } from "@/lib/auth/api";
 
@@ -22,8 +23,9 @@ export default function Home() {
       return;
     }
     const role = normalizeRole(localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
-    if (role === "SALES_EXECUTIVE") {
-      window.location.replace(`${window.location.origin}/Leads`);
+    const landingPath = landingPathByRole(role);
+    if (landingPath !== "/") {
+      window.location.replace(`${window.location.origin}${landingPath}`);
       return;
     }
     setReady(true);

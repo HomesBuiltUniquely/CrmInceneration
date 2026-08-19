@@ -9,6 +9,13 @@ import {
   type ReactNode,
 } from "react";
 
+export type OverlayOriginRect = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -28,7 +35,48 @@ type Props = {
   closeOnBackdrop?: boolean;
   /** Optional window event name that requests close (e.g. empty-space double-click). */
   closeEventName?: string;
+  /** Screen rect to zoom out of (Mac-style app open). */
+  originRect?: OverlayOriginRect | null;
+  /** Query for the source element so close can zoom back into it. */
+  originSelector?: string;
 };
+
+const OPEN_MS = 520;
+const CLOSE_MS = 420;
+const OPEN_EASE = "cubic-bezier(0.16, 1, 0.3, 1)";
+const CLOSE_EASE = "cubic-bezier(0.45, 0, 1, 1)";
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function resolveOrigin(
+  selector: string | undefined,
+  fallback: OverlayOriginRect | null | undefined,
+): OverlayOriginRect | null {
+  if (selector) {
+    const el = document.querySelector(selector);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 1 && r.height > 1) {
+        return { top: r.top, left: r.left, width: r.width, height: r.height };
+      }
+    }
+  }
+  return fallback ?? null;
+}
+
+function transformFromOrigin(origin: OverlayOriginRect, panel: DOMRect) {
+  const originCx = origin.left + origin.width / 2;
+  const originCy = origin.top + origin.height / 2;
+  const panelCx = panel.left + panel.width / 2;
+  const panelCy = panel.top + panel.height / 2;
+  const scale = Math.max(
+    0.018,
+    Math.min(origin.width / panel.width, origin.height / panel.height),
+  );
+  return `translate(${originCx - panelCx}px, ${originCy - panelCy}px) scale(${scale})`;
+}
 
 /**
  * Full-viewport centered dialog (Design Preferences–style chrome).
@@ -46,12 +94,47 @@ export default function CrmFullscreenOverlayModal({
   closeOnEscape = true,
   closeOnBackdrop = true,
   closeEventName,
+  originRect = null,
+  originSelector,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [panelEntered, setPanelEntered] = useState(false);
+  const zoomAnimRef = useRef<Animation | null>(null);
+  const originRectRef = useRef(originRect);
+  const originSelectorRef = useRef(originSelector);
+  originRectRef.current = originRect;
+  originSelectorRef.current = originSelector;
   const [closing, setClosing] = useState(false);
+  const [exiting, setExiting] = useState(false);
   const onBeforeCloseRef = useRef(onBeforeClose);
   onBeforeCloseRef.current = onBeforeClose;
+  const useMacZoom = Boolean(originRect || originSelector);
+
+  const playCloseZoom = useCallback(async () => {
+    const panel = panelRef.current;
+    if (!panel || prefersReducedMotion()) return;
+    const origin = resolveOrigin(originSelectorRef.current, originRectRef.current);
+    if (!origin) return;
+    const target = panel.getBoundingClientRect();
+    if (target.width < 2 || target.height < 2) return;
+    zoomAnimRef.current?.cancel();
+    const anim = panel.animate(
+      [
+        { transform: "translate(0px, 0px) scale(1)", opacity: 1, borderRadius: "12px" },
+        {
+          transform: transformFromOrigin(origin, target),
+          opacity: 0,
+          borderRadius: "18px",
+        },
+      ],
+      { duration: CLOSE_MS, easing: CLOSE_EASE, fill: "forwards" },
+    );
+    zoomAnimRef.current = anim;
+    try {
+      await anim.finished;
+    } catch {
+      /* cancelled */
+    }
+  }, []);
 
   const closePanel = useCallback(async () => {
     if (closing) return;
@@ -61,12 +144,14 @@ export default function CrmFullscreenOverlayModal({
     } catch {
       /* still close */
     }
-    setPanelEntered(false);
-    window.setTimeout(() => {
-      setClosing(false);
-      onClose();
-    }, 280);
-  }, [closing, onClose]);
+    setExiting(true);
+    if (useMacZoom) {
+      await playCloseZoom();
+    } else {
+      await new Promise((resolve) => window.setTimeout(resolve, 320));
+    }
+    onClose();
+  }, [closing, onClose, playCloseZoom, useMacZoom]);
 
   useEffect(() => {
     if (!open || !closeEventName) return;
@@ -79,15 +164,29 @@ export default function CrmFullscreenOverlayModal({
 
   useLayoutEffect(() => {
     if (!open) {
-      setPanelEntered(false);
       setClosing(false);
+      setExiting(false);
+      zoomAnimRef.current?.cancel();
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setPanelEntered(true));
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open]);
+    const panel = panelRef.current;
+    const origin = resolveOrigin(originSelector, originRect);
+    if (!panel || !origin || prefersReducedMotion()) return;
+    const target = panel.getBoundingClientRect();
+    if (target.width < 2 || target.height < 2) return;
+    zoomAnimRef.current?.cancel();
+    zoomAnimRef.current = panel.animate(
+      [
+        {
+          transform: transformFromOrigin(origin, target),
+          opacity: 0.55,
+          borderRadius: "18px",
+        },
+        { transform: "translate(0px, 0px) scale(1)", opacity: 1, borderRadius: "12px" },
+      ],
+      { duration: OPEN_MS, easing: OPEN_EASE, fill: "both" },
+    );
+  }, [open, originRect, originSelector]);
 
   useEffect(() => {
     if (!open) return;
@@ -115,8 +214,8 @@ export default function CrmFullscreenOverlayModal({
   return (
     <>
       <div
-        className={`fixed inset-0 bg-black/25 backdrop-blur-[2px] transition-opacity duration-300 ${
-          panelEntered ? "opacity-100" : "opacity-0"
+        className={`fixed inset-0 bg-black/30 backdrop-blur-[3px] ${
+          exiting ? "crm-overlay-backdrop-out" : "crm-overlay-backdrop-in"
         }`}
         style={{ zIndex: zOverlay }}
         onClick={closeOnBackdrop ? () => void closePanel() : undefined}
@@ -130,8 +229,12 @@ export default function CrmFullscreenOverlayModal({
       >
         <div
           ref={panelRef}
-          className={`pointer-events-auto relative flex h-[100dvh] w-full max-h-[100dvh] max-w-[1520px] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-            panelEntered ? "scale-100 opacity-100" : "scale-[0.98] opacity-0"
+          className={`pointer-events-auto relative flex h-[100dvh] w-full max-h-[100dvh] max-w-[1520px] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl ${
+            useMacZoom
+              ? "origin-center will-change-transform"
+              : exiting
+                ? "crm-overlay-panel-out"
+                : "crm-overlay-panel-in"
           }`}
           role="dialog"
           aria-modal="true"

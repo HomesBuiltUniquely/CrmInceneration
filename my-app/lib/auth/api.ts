@@ -19,6 +19,7 @@ export const CRM_USER_ID_STORAGE_KEY = "crm_user_id";
 /** Linked `Designer.name` from login / `GET /api/auth/me` — used for designer dashboard APIs. */
 export const CRM_DESIGNER_NAME_STORAGE_KEY = "crm_designer_name";
 export const CRM_DESIGNER_ID_STORAGE_KEY = "crm_designer_id";
+export const CRM_ACTIVE_MODULE_KEY = "crm_active_module";
 
 export function getAuthApiBaseUrl(): string {
   return BASE_URL;
@@ -112,7 +113,16 @@ export function canAccessDesignerDashboard(role: string): boolean {
 /** First page after login by role. */
 export function landingPathByRole(role: string): string {
   const r = normalizeRole(role);
-  if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") {
+  if (r === "PRESALES_EXECUTIVE" || r === "PRESALES_MANAGER") {
+    return "/presales-leads";
+  }
+  if (
+    r === "SUPER_ADMIN" ||
+    r === "ADMIN" ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_EXECUTIVE" ||
+    r === "SALES_MANAGER"
+  ) {
     return "/Leads";
   }
   if (
@@ -123,6 +133,29 @@ export function landingPathByRole(role: string): string {
     return "/design-dashboard";
   }
   return "/Leads";
+}
+
+/** Default module to auto-open in sidebar launcher context. */
+export function defaultModuleByRole(role: string): "crm" | "presales" | "design" | "admin" | null {
+  const r = normalizeRole(role);
+  if (r === "PRESALES_EXECUTIVE" || r === "PRESALES_MANAGER") return "presales";
+  if (
+    r === "SUPER_ADMIN" ||
+    r === "ADMIN" ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_EXECUTIVE" ||
+    r === "SALES_MANAGER"
+  ) {
+    return "crm";
+  }
+  if (
+    r === "TERRITORY_DESIGN_MANAGER" ||
+    r === "DESIGN_MANAGER" ||
+    r === "DESIGNER"
+  ) {
+    return "design";
+  }
+  return null;
 }
 
 export async function login(

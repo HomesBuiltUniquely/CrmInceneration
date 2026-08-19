@@ -163,6 +163,64 @@ export type InsightsDashboard = {
     actual: number;
     projected: number;
   };
+  /** Four sales-strip KPI tiles. Prefer dedicated `/performance-cards` fetch. */
+  performanceCards?: PerformanceCards;
+};
+
+export type InsightsTone = "green" | "yellow" | "red" | "neutral";
+export type InsightsTrend = "up" | "down" | "flat";
+export type InsightsCardStatus = "hit" | "on_track" | "at_risk" | "behind";
+
+type PerformanceMoneyCard = {
+  title: string;
+  valueInr: number;
+  valueLabel: string;
+  status: InsightsCardStatus;
+  tone: InsightsTone;
+};
+
+export type BookingValueCard = PerformanceMoneyCard & {
+  cardKey: "bookingValue";
+  targetInr: number;
+  targetLabel: string;
+  completionPercent: number;
+  progressRatio: number;
+};
+
+export type WeightedPipelineCard = PerformanceMoneyCard & {
+  cardKey: "weightedPipeline";
+  unweightedValueInr: number;
+  remainingTargetInr: number;
+  remainingTargetLabel: string;
+  coverageX: number;
+  coverageLabel: string;
+};
+
+export type ConversionCard = {
+  cardKey: "leadToMeeting" | "meetingToBooking";
+  title: string;
+  valuePercent: number;
+  targetPercent: number;
+  variancePercent: number;
+  varianceLabel: string;
+  trend: InsightsTrend;
+  status: InsightsCardStatus;
+  tone: InsightsTone;
+};
+
+export type PerformanceCards = {
+  targets: {
+    bookingValueInr: number;
+    leadToMeetingPercent: number;
+    meetingToBookingPercent: number;
+  };
+  counts: { leads: number; meetings: number; bookings: number };
+  cards: {
+    bookingValue: BookingValueCard;
+    weightedPipeline: WeightedPipelineCard;
+    leadToMeeting: ConversionCard & { leadCount: number; meetingCount: number };
+    meetingToBooking: ConversionCard & { meetingCount: number; bookingCount: number };
+  };
 };
 
 export type InsightsBranchOption = {
@@ -198,6 +256,12 @@ export type InsightsDashboardQuery = {
   salesManagerId: number | null;
   salesExecutiveId: number | null;
   teamPeriod: "daily" | "monthly";
+};
+
+export type InsightsPerformanceCardsQuery = InsightsDashboardQuery & {
+  bookingTargetInr?: number;
+  leadToMeetingTargetPercent?: number;
+  meetingToBookingTargetPercent?: number;
 };
 
 /* ── Formatters ───────────────────────────────────────────────────────── */
@@ -321,6 +385,42 @@ export function buildInsightsDashboardSearchParams(
   return params;
 }
 
+/** Same Insights scope; omit matrix-only `teamPeriod`. Prefer `dateRange=current_month` for MTD. */
+export function buildInsightsPerformanceCardsSearchParams(
+  query: InsightsPerformanceCardsQuery,
+): URLSearchParams {
+  const params = buildInsightsDashboardSearchParams(query);
+  params.delete("teamPeriod");
+  if (
+    query.dateFilter.preset === "currentMonth" &&
+    !params.has("dateRange")
+  ) {
+    params.set("dateRange", "current_month");
+  }
+  if (query.bookingTargetInr != null && Number.isFinite(query.bookingTargetInr)) {
+    params.set("bookingTargetInr", String(query.bookingTargetInr));
+  }
+  if (
+    query.leadToMeetingTargetPercent != null &&
+    Number.isFinite(query.leadToMeetingTargetPercent)
+  ) {
+    params.set(
+      "leadToMeetingTargetPercent",
+      String(query.leadToMeetingTargetPercent),
+    );
+  }
+  if (
+    query.meetingToBookingTargetPercent != null &&
+    Number.isFinite(query.meetingToBookingTargetPercent)
+  ) {
+    params.set(
+      "meetingToBookingTargetPercent",
+      String(query.meetingToBookingTargetPercent),
+    );
+  }
+  return params;
+}
+
 /* ── Fetch ────────────────────────────────────────────────────────────── */
 
 async function readJson<T>(res: Response, fallback: string): Promise<T> {
@@ -372,6 +472,149 @@ function normalizeKpi(raw: unknown): InsightsKpiMetric {
 function normalizeOptionalKpi(raw: unknown): InsightsKpiMetric | null {
   if (raw == null || typeof raw !== "object") return null;
   return normalizeKpi(raw);
+}
+
+function asTone(value: unknown): InsightsTone {
+  const s = asStr(value);
+  if (s === "green" || s === "yellow" || s === "red" || s === "neutral") return s;
+  return "neutral";
+}
+
+function asTrend(value: unknown): InsightsTrend {
+  const s = asStr(value);
+  if (s === "up" || s === "down" || s === "flat") return s;
+  return "flat";
+}
+
+function asCardStatus(value: unknown): InsightsCardStatus {
+  const s = asStr(value);
+  if (s === "hit" || s === "on_track" || s === "at_risk" || s === "behind") {
+    return s;
+  }
+  return "on_track";
+}
+
+function hubLabel(value: unknown, fallback: string): string {
+  const s = asStr(value).trim();
+  return s || fallback;
+}
+
+export function normalizePerformanceCards(raw: unknown): PerformanceCards {
+  const root = (raw && typeof raw === "object" ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const wrapped =
+    root.performanceCards && typeof root.performanceCards === "object"
+      ? (root.performanceCards as Record<string, unknown>)
+      : root;
+  const targets = (
+    wrapped.targets && typeof wrapped.targets === "object"
+      ? wrapped.targets
+      : {}
+  ) as Record<string, unknown>;
+  const counts = (
+    wrapped.counts && typeof wrapped.counts === "object" ? wrapped.counts : {}
+  ) as Record<string, unknown>;
+  const cards = (
+    wrapped.cards && typeof wrapped.cards === "object" ? wrapped.cards : {}
+  ) as Record<string, unknown>;
+  const booking = (
+    cards.bookingValue && typeof cards.bookingValue === "object"
+      ? cards.bookingValue
+      : {}
+  ) as Record<string, unknown>;
+  const pipeline = (
+    cards.weightedPipeline && typeof cards.weightedPipeline === "object"
+      ? cards.weightedPipeline
+      : {}
+  ) as Record<string, unknown>;
+  const leadToMeeting = (
+    cards.leadToMeeting && typeof cards.leadToMeeting === "object"
+      ? cards.leadToMeeting
+      : {}
+  ) as Record<string, unknown>;
+  const meetingToBooking = (
+    cards.meetingToBooking && typeof cards.meetingToBooking === "object"
+      ? cards.meetingToBooking
+      : {}
+  ) as Record<string, unknown>;
+
+  const bookingTargetInr = asNum(targets.bookingValueInr, asNum(booking.targetInr, 30_000_000));
+  const leadTarget = asNum(
+    targets.leadToMeetingPercent,
+    asNum(leadToMeeting.targetPercent, 75),
+  );
+  const meetingTarget = asNum(
+    targets.meetingToBookingPercent,
+    asNum(meetingToBooking.targetPercent, 40),
+  );
+
+  return {
+    targets: {
+      bookingValueInr: bookingTargetInr,
+      leadToMeetingPercent: leadTarget,
+      meetingToBookingPercent: meetingTarget,
+    },
+    counts: {
+      leads: asNum(counts.leads, asNum(leadToMeeting.leadCount)),
+      meetings: asNum(counts.meetings, asNum(leadToMeeting.meetingCount)),
+      bookings: asNum(counts.bookings, asNum(meetingToBooking.bookingCount)),
+    },
+    cards: {
+      bookingValue: {
+        cardKey: "bookingValue",
+        title: hubLabel(booking.title, "Booking Value"),
+        valueInr: asNum(booking.valueInr),
+        valueLabel: hubLabel(booking.valueLabel, "₹0"),
+        targetInr: asNum(booking.targetInr, bookingTargetInr),
+        targetLabel: hubLabel(booking.targetLabel, "₹3 Cr"),
+        completionPercent: asNum(booking.completionPercent),
+        progressRatio: asNum(booking.progressRatio),
+        status: asCardStatus(booking.status),
+        tone: asTone(booking.tone),
+      },
+      weightedPipeline: {
+        cardKey: "weightedPipeline",
+        title: hubLabel(pipeline.title, "Weighted Pipeline"),
+        valueInr: asNum(pipeline.valueInr),
+        valueLabel: hubLabel(pipeline.valueLabel, "₹0"),
+        unweightedValueInr: asNum(pipeline.unweightedValueInr),
+        remainingTargetInr: asNum(pipeline.remainingTargetInr),
+        remainingTargetLabel: hubLabel(pipeline.remainingTargetLabel, "₹0"),
+        coverageX: asNum(pipeline.coverageX),
+        coverageLabel: hubLabel(pipeline.coverageLabel, "0.0x"),
+        status: asCardStatus(pipeline.status),
+        tone: asTone(pipeline.tone),
+      },
+      leadToMeeting: {
+        cardKey: "leadToMeeting",
+        title: hubLabel(leadToMeeting.title, "Lead → Meeting"),
+        valuePercent: asNum(leadToMeeting.valuePercent),
+        targetPercent: asNum(leadToMeeting.targetPercent, leadTarget),
+        variancePercent: asNum(leadToMeeting.variancePercent),
+        varianceLabel: hubLabel(leadToMeeting.varianceLabel, "0%"),
+        leadCount: asNum(leadToMeeting.leadCount, asNum(counts.leads)),
+        meetingCount: asNum(leadToMeeting.meetingCount, asNum(counts.meetings)),
+        trend: asTrend(leadToMeeting.trend),
+        status: asCardStatus(leadToMeeting.status),
+        tone: asTone(leadToMeeting.tone),
+      },
+      meetingToBooking: {
+        cardKey: "meetingToBooking",
+        title: hubLabel(meetingToBooking.title, "Meeting → Booking"),
+        valuePercent: asNum(meetingToBooking.valuePercent),
+        targetPercent: asNum(meetingToBooking.targetPercent, meetingTarget),
+        variancePercent: asNum(meetingToBooking.variancePercent),
+        varianceLabel: hubLabel(meetingToBooking.varianceLabel, "0% VAR"),
+        meetingCount: asNum(meetingToBooking.meetingCount, asNum(counts.meetings)),
+        bookingCount: asNum(meetingToBooking.bookingCount, asNum(counts.bookings)),
+        trend: asTrend(meetingToBooking.trend),
+        status: asCardStatus(meetingToBooking.status),
+        tone: asTone(meetingToBooking.tone),
+      },
+    },
+  };
 }
 
 function normalizeLostFunnel(
@@ -557,6 +800,9 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       actual: asNum(forecast.actual),
       projected: asNum(forecast.projected),
     },
+    performanceCards: r.performanceCards
+      ? normalizePerformanceCards(r.performanceCards)
+      : undefined,
   };
 }
 
@@ -615,6 +861,24 @@ export async function fetchInsightsDashboard(
   return normalizeInsightsDashboard(json);
 }
 
+export async function fetchInsightsPerformanceCards(
+  query: InsightsPerformanceCardsQuery,
+): Promise<PerformanceCards> {
+  const qs = buildInsightsPerformanceCardsSearchParams(query).toString();
+  const res = await fetch(
+    `/api/crm/insights/performance-cards${qs ? `?${qs}` : ""}`,
+    {
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  const json = await readJson<unknown>(
+    res,
+    "Unable to load sales performance cards.",
+  );
+  return normalizePerformanceCards(json);
+}
+
 export async function fetchInsightsFilterOptions(
   branchId?: string,
 ): Promise<InsightsFilterOptions> {
@@ -654,4 +918,66 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
   leadsOverTime: { changePercent: 0, points: [] },
   conversionTrend: { changePercent: 0, points: [] },
   revenueForecast: { target: 0, actual: 0, projected: 0 },
+};
+
+export const EMPTY_PERFORMANCE_CARDS: PerformanceCards = {
+  targets: {
+    bookingValueInr: 30_000_000,
+    leadToMeetingPercent: 75,
+    meetingToBookingPercent: 40,
+  },
+  counts: { leads: 0, meetings: 0, bookings: 0 },
+  cards: {
+    bookingValue: {
+      cardKey: "bookingValue",
+      title: "Booking Value",
+      valueInr: 0,
+      valueLabel: "₹0",
+      targetInr: 30_000_000,
+      targetLabel: "₹3 Cr",
+      completionPercent: 0,
+      progressRatio: 0,
+      status: "behind",
+      tone: "neutral",
+    },
+    weightedPipeline: {
+      cardKey: "weightedPipeline",
+      title: "Weighted Pipeline",
+      valueInr: 0,
+      valueLabel: "₹0",
+      unweightedValueInr: 0,
+      remainingTargetInr: 0,
+      remainingTargetLabel: "₹0",
+      coverageX: 0,
+      coverageLabel: "0.0x",
+      status: "behind",
+      tone: "neutral",
+    },
+    leadToMeeting: {
+      cardKey: "leadToMeeting",
+      title: "Lead → Meeting",
+      valuePercent: 0,
+      targetPercent: 75,
+      variancePercent: 0,
+      varianceLabel: "0%",
+      leadCount: 0,
+      meetingCount: 0,
+      trend: "flat",
+      status: "behind",
+      tone: "neutral",
+    },
+    meetingToBooking: {
+      cardKey: "meetingToBooking",
+      title: "Meeting → Booking",
+      valuePercent: 0,
+      targetPercent: 40,
+      variancePercent: 0,
+      varianceLabel: "0% VAR",
+      meetingCount: 0,
+      bookingCount: 0,
+      trend: "flat",
+      status: "behind",
+      tone: "neutral",
+    },
+  },
 };

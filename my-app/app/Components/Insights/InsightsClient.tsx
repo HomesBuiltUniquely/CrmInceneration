@@ -10,12 +10,15 @@ import {
 } from "@/lib/booking-token-date-filter";
 import {
   EMPTY_INSIGHTS_DASHBOARD,
+  EMPTY_PERFORMANCE_CARDS,
   fetchInsightsDashboard,
   fetchInsightsFilterOptions,
+  fetchInsightsPerformanceCards,
   type InsightsDashboard,
   type InsightsFilterOptions,
   type InsightsLostFunnelStage,
   type InsightsTeamMember,
+  type PerformanceCards,
 } from "@/lib/crm-insights-api";
 import {
   fetchAdminLeadsHeatmapData,
@@ -91,6 +94,7 @@ import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import InsightSect2, { type TokenMetricsData } from "./InsightSect2";
+import InsightsPerformanceCards from "./InsightsPerformanceCards";
 import InsightSect3 from "./InsightsSect3";
 import InsightsSect4 from "./InsightsSect4";
 import InsightsSect5 from "./InsightsSect5";
@@ -164,6 +168,10 @@ export default function InsightsClient1() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [performanceCards, setPerformanceCards] = useState<PerformanceCards | null>(
+    null,
+  );
+  const [performanceCardsLoading, setPerformanceCardsLoading] = useState(true);
 
   /** Achieved/Payoff vs Insights date filter (Incentives engine). */
   const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
@@ -433,6 +441,42 @@ export default function InsightsClient1() {
     role,
   ]);
 
+  const performanceQuery = useMemo(
+    () => ({
+      dateFilter,
+      branchId: effectiveBranchId,
+      salesManagerId: dashboardPeopleParams.salesManagerId,
+      salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
+      teamPeriod,
+    }),
+    [
+      dateFilter,
+      effectiveBranchId,
+      dashboardPeopleParams,
+      teamPeriod,
+    ],
+  );
+
+  const loadPerformanceCards = useCallback(async () => {
+    if (!role) return;
+    if (!canAccessCrmInsights(role)) {
+      setPerformanceCardsLoading(false);
+      return;
+    }
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) {
+      return;
+    }
+    setPerformanceCardsLoading(true);
+    try {
+      const data = await fetchInsightsPerformanceCards(performanceQuery);
+      setPerformanceCards(data);
+    } catch {
+      setPerformanceCards((prev) => prev ?? EMPTY_PERFORMANCE_CARDS);
+    } finally {
+      setPerformanceCardsLoading(false);
+    }
+  }, [role, isSalesManager, viewerUserId, performanceQuery]);
+
   /**
    * Token / Booking / Gross — Hub KPIs only (same Scope as totalLeads).
    * Do not recompute via fetchDashboardDealRows (misses branch when people=all).
@@ -484,6 +528,10 @@ export default function InsightsClient1() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    void loadPerformanceCards();
+  }, [loadPerformanceCards]);
 
   // Achieved + Payoff = same executive-leads API as Incentives page
   useEffect(() => {
@@ -1215,6 +1263,12 @@ export default function InsightsClient1() {
             tokenMetrics={tokenMetrics}
             dashboardLoading={
               loading || funnelMetricsLoading || (isSalesManager && !smScopeReady)
+            }
+          />
+          <InsightsPerformanceCards
+            data={performanceCards ?? dashboard.performanceCards ?? null}
+            loading={
+              performanceCardsLoading || (isSalesManager && !smScopeReady)
             }
           />
       <InsightSect3
