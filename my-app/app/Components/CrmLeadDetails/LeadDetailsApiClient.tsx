@@ -942,10 +942,13 @@ export default function LeadDetailsApiClient({
   leadType: leadTypeParam,
   leadId,
   uiVariant = "legacy",
+  isPopupMode = false,
 }: {
   leadType: string;
   leadId: string;
   uiVariant?: "legacy" | "v2";
+  /** True when rendered inside CrmFullscreenOverlayModal (popup mode). False when rendered via URL routing. */
+  isPopupMode?: boolean;
 }) {
   const validLeadType = isCrmLeadType(leadTypeParam);
   const leadType = leadTypeParam as CrmLeadType;
@@ -3685,7 +3688,7 @@ export default function LeadDetailsApiClient({
     return (
       <>
         <LeadDetailV2Provider value={v2Context}>
-          <NewLeadDetailPage leadType={leadType} leadId={leadId} />
+          <NewLeadDetailPage leadType={leadType} leadId={leadId} isPopupMode={isPopupMode} />
         </LeadDetailV2Provider>
         <QuoteSentCelebrationOverlay
           open={quoteCelebrateOpen}
