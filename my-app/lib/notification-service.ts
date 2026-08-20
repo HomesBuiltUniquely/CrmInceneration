@@ -721,13 +721,14 @@ async function fetchRawLeadItems(
 // ─── Counts fetch ─────────────────────────────────────────────────────────────
 
 async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
+  console.warn(`${LOG_PREFIX} [DEPRECATED] fetchRawCounts called - returns unfiltered database totals, not UI-visible notifications`);
   const zero: NotificationCounts = {
     totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
     totalCancelled: 0, totalSuccess: 0, totalBookings: 0,
   };
 
   const url = "/api/crm/notifications/counts";
-  console.log(`${LOG_PREFIX} [COUNTS] fetching: ${url}`);
+  console.log(`${LOG_PREFIX} [COUNTS] fetching database totals (not UI counts): ${url}`);
 
   let res: Response;
   try {
@@ -987,6 +988,7 @@ return activeNotifications;
 export async function loadNotificationCounts(
   token: string | null,
 ): Promise<NotificationCounts> {
+  console.warn(`${LOG_PREFIX} [DEPRECATED] loadNotificationCounts called - UI should use activeNotifications array from loadNotifications() instead`);
   const zero: NotificationCounts = {
     totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
     totalCancelled: 0, totalSuccess: 0, totalBookings: 0,
