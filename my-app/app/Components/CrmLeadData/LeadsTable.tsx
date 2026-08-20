@@ -694,6 +694,7 @@ export default function LeadsTable({
             key={`${openLead.leadType}-${openLead.leadId}`}
             leadType={openLead.leadType}
             leadId={openLead.leadId}
+            isPopupMode={true}
           />
         ) : null}
       </CrmFullscreenOverlayModal>
