@@ -217,12 +217,12 @@ function categorizeNotifications(items: NotificationItem[]) {
   const bookings: NotificationItem[] = [];
 
   items.forEach((item) => {
-    const tag = (item.tag || "").toLowerCase();
-    if (tag === "lead") {
+    const tag = item.tag || "";
+    if (tag === "Lead") {
       leads.push(item);
-    } else if (tag === "booking") {
+    } else if (tag === "Booking") {
       bookings.push(item);
-    } else {
+    } else if (["Scheduled", "Rescheduled", "Cancellation", "Success"].includes(tag)) {
       meetings.push(item);
     }
   });
