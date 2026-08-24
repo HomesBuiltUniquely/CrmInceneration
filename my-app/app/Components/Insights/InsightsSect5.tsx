@@ -190,7 +190,10 @@ export default function InsightSect5({
                   team.map((member, index) => {
                     const rank = index + 1;
                     const isPodium = hasAnyAchieved && rank <= 3;
-                    const podiumRank = (isPodium ? rank : 0) as 0 | 1 | 2 | 3;
+                    const podiumRank: 1 | 2 | 3 | null =
+                      isPodium && rank >= 1 && rank <= 3
+                        ? (rank as 1 | 2 | 3)
+                        : null;
                     const leads = Number(member.leads) || 0;
                     const closed = Number(member.closed) || 0;
                     const conversionPercent =
@@ -232,7 +235,7 @@ export default function InsightSect5({
                             >
                               {(member.name || "?").charAt(0).toUpperCase()}
                             </div>
-                            {podiumRank >= 1 && podiumRank <= 3 ? (
+                            {podiumRank ? (
                               <span
                                 className={`absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full ring-1 ring-white ${podiumTrophyWrapClass(podiumRank)}`}
                                 title={
