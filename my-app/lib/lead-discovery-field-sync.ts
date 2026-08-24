@@ -43,11 +43,34 @@ type ConnectionStickyKey = (typeof CONNECTION_STICKY_KEYS)[number];
 
 function isUiPlaceholderToken(value: string): boolean {
   const trimmed = value.trim();
-  return trimmed === "—" || trimmed === "-" || trimmed === "–";
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed === "—" ||
+    trimmed === "-" ||
+    trimmed === "–" ||
+    lower === "not assigned" ||
+    lower === "unassigned" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none"
+  );
+}
+
+function sameLeadIdentity(prev: Lead, next: Lead): boolean {
+  const prevId = String(prev.id ?? "").trim();
+  const nextId = String(next.id ?? "").trim();
+  if (!prevId || !nextId || prevId !== nextId) return false;
+  const prevType = String(prev.leadType ?? "").trim().toLowerCase();
+  const nextType = String(next.leadType ?? "").trim().toLowerCase();
+  if (prevType && nextType && prevType !== nextType) return false;
+  return true;
 }
 
 /** Preserve connection-phase values when refresh/save round-trips drop them. */
 export function preserveLeadStickyFields(prev: Lead, next: Lead): Lead {
+  if (!sameLeadIdentity(prev, next)) {
+    return next;
+  }
   const out = preserveDiscoveryFields(prev, next);
   for (const key of CONNECTION_STICKY_KEYS) {
     const prevVal = String(prev[key as ConnectionStickyKey] ?? "").trim();

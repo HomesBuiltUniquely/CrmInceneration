@@ -3,16 +3,28 @@
 import type { ReactNode } from "react";
 import type {
   BookingValueCard,
-  ConversionCard,
+  InsightsDashboard,
+  InsightsKpiMetric,
   InsightsTone,
-  InsightsTrend,
   PerformanceCards,
   WeightedPipelineCard,
 } from "@/lib/crm-insights-api";
+import {
+  formatInsightsChangeAbsolute,
+  formatInsightsCount,
+  formatInsightsInrCompact,
+} from "@/lib/crm-insights-api";
+import type { TokenMetricsData } from "./InsightSect2";
+import type { QuotesSentMonthMetrics } from "@/lib/insights-quotes-sent-month";
 
 type Props = {
   data: PerformanceCards | null;
   loading?: boolean;
+  kpis: InsightsDashboard["kpis"];
+  tokenMetrics?: TokenMetricsData;
+  dashboardLoading?: boolean;
+  quotesSentMonth?: QuotesSentMonthMetrics | null;
+  quotesSentMonthLoading?: boolean;
 };
 
 type ToneTheme = {
@@ -69,46 +81,18 @@ function clampPct(n: number): number {
   return Math.min(100, Math.max(0, n));
 }
 
-function TrendArrow({ trend, className }: { trend: InsightsTrend; className: string }) {
-  if (trend === "flat") {
-    return (
-      <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 ${className}`} aria-hidden>
-        <path
-          d="M2 8h12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-  if (trend === "up") {
-    return (
-      <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 ${className}`} aria-hidden>
-        <path
-          d="M3 11.5 8 5.5l5 6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 ${className}`} aria-hidden>
-      <path
-        d="M3 4.5 8 10.5l5-6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+function toneFromSigned(value: number | null | undefined): InsightsTone {
+  const v = Number(value ?? 0);
+  if (!Number.isFinite(v) || v === 0) return "yellow";
+  return v > 0 ? "green" : "red";
+}
+
+function moneyFromHubOrFe(
+  hub: InsightsKpiMetric | null | undefined,
+  feValue: number | undefined,
+): number {
+  if (hub != null && Number.isFinite(hub.value)) return hub.value;
+  return Number(feValue ?? 0);
 }
 
 function Shell({
@@ -163,8 +147,22 @@ function BookingValueTile({ card }: { card: BookingValueCard }) {
   );
 }
 
-function WeightedPipelineTile({ card }: { card: WeightedPipelineCard }) {
-  const coverageTone: InsightsTone = card.tone === "green" ? "green" : "neutral";
+function WeightedPipelineTile({
+  card,
+  quoteValueInr,
+  quoteCount,
+  loading,
+}: {
+  card: WeightedPipelineCard;
+  quoteValueInr: number;
+  quoteCount: number;
+  loading?: boolean;
+}) {
+  const remaining = Number(card.remainingTargetInr ?? 0);
+  const coverageX =
+    remaining > 0 && Number.isFinite(quoteValueInr) ? quoteValueInr / remaining : 0;
+  const coverageLabel = `${coverageX.toFixed(1)}x`;
+  const coverageTone: InsightsTone = coverageX >= 1 ? "green" : "neutral";
   const pill = TONE[coverageTone];
 
   return (
@@ -172,67 +170,79 @@ function WeightedPipelineTile({ card }: { card: WeightedPipelineCard }) {
       <p className="text-[11px] font-semibold leading-none text-gray-500">
         {card.title}
       </p>
+      <p className="mt-1.5 text-[10px] font-medium leading-snug text-gray-400">
+        Quotes sent
+      </p>
       <p className="mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight text-gray-900 sm:text-[1.85rem]">
-        {card.valueLabel}
+        {loading ? "…" : formatInsightsInrCompact(quoteValueInr)}
       </p>
       <div className="mt-3 h-px w-full bg-gray-200/90" />
       <div className="mt-auto flex items-center justify-between gap-2 pt-3">
         <p className="min-w-0 text-[10px] font-semibold tracking-wide text-gray-400">
           <span className="uppercase">Rem. Target</span>{" "}
           <span className="text-gray-800">{card.remainingTargetLabel}</span>
+          <span className="text-gray-300"> · </span>
+          <span className="text-gray-800">
+            {loading ? "…" : `${formatInsightsCount(quoteCount)} leads`}
+          </span>
         </p>
         <span
           className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-wide ${pill.pill} ${pill.pillText}`}
         >
-          <span className="uppercase">Coverage</span>&nbsp;{card.coverageLabel}
+          <span className="uppercase">Coverage</span>&nbsp;
+          {loading ? "…" : coverageLabel}
         </span>
       </div>
     </Shell>
   );
 }
 
-function ConversionTile({ card }: { card: ConversionCard }) {
-  const t = TONE[card.tone];
-  const fill = clampPct(card.valuePercent);
-  const marker = clampPct(card.targetPercent);
-  const pct = Number.isFinite(card.valuePercent)
-    ? `${card.valuePercent}%`
-    : "0%";
-  const targetPct = Number.isFinite(card.targetPercent)
-    ? `${card.targetPercent}%`
-    : "0%";
+function GrowthMoneyTile({
+  title,
+  valueLabel,
+  metaLabel,
+  metaValue,
+  accent,
+  progressRatio,
+  tone,
+  hint,
+}: {
+  title: string;
+  valueLabel: string;
+  metaLabel: string;
+  metaValue: string;
+  accent: string;
+  progressRatio: number;
+  tone: InsightsTone;
+  hint?: string;
+}) {
+  const t = TONE[tone];
+  const fill = clampPct(progressRatio * 100);
 
   return (
-    <Shell tone={card.tone}>
-      <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 text-[11px] font-semibold leading-none text-gray-500">
-          {card.title}
-        </p>
-        <TrendArrow trend={card.trend} className={`mt-px shrink-0 ${t.accent}`} />
-      </div>
-      <p
-        className={`mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight sm:text-[1.85rem] ${t.value}`}
-      >
-        {pct}
+    <Shell tone={tone}>
+      <p className="text-[11px] font-semibold leading-none text-gray-500">{title}</p>
+      {hint ? (
+        <p className="mt-1.5 text-[10px] font-medium leading-snug text-gray-400">{hint}</p>
+      ) : null}
+      <p className="mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight text-gray-900 sm:text-[1.85rem]">
+        {valueLabel}
       </p>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-medium text-gray-400">Target: {targetPct}</p>
-        <span
-          className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-extrabold ${t.pill} ${t.pillText}`}
-        >
-          {card.varianceLabel}
-        </span>
+      <div className="mt-3 flex items-end justify-between gap-2">
+        <p className="min-w-0 text-[10px] font-semibold tracking-wide text-gray-400">
+          {metaLabel ? <span className="uppercase">{metaLabel}</span> : null}
+          {metaLabel ? " " : null}
+          <span className="text-gray-700">{metaValue}</span>
+        </p>
+        {accent ? (
+          <p className={`shrink-0 text-sm font-extrabold leading-none ${t.accent}`}>{accent}</p>
+        ) : null}
       </div>
       <div className="mt-auto pt-3">
-        <div className="relative h-1.5 w-full rounded-full bg-gray-200/80">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200/80">
           <div
             className={`h-1.5 rounded-full ${t.bar} transition-all duration-300`}
             style={{ width: `${fill}%` }}
-          />
-          <span
-            className="absolute top-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-900"
-            style={{ left: `${marker}%` }}
-            aria-hidden
           />
         </div>
       </div>
@@ -253,14 +263,47 @@ function SkeletonCard() {
   );
 }
 
-export default function InsightsPerformanceCards({ data, loading = false }: Props) {
+export default function InsightsPerformanceCards({
+  data,
+  loading = false,
+  kpis,
+  tokenMetrics,
+  dashboardLoading = false,
+  quotesSentMonth = null,
+  quotesSentMonthLoading = false,
+}: Props) {
   const cards = data?.cards;
+  const hasHubMoney =
+    kpis.tokenValue != null || kpis.bookingValue != null || kpis.grossBooking != null;
+  const isMoneyLoading =
+    dashboardLoading || (!hasHubMoney && Boolean(tokenMetrics?.loading));
+
+  const tokenValue = moneyFromHubOrFe(kpis.tokenValue, tokenMetrics?.tokenValue);
+  const bookingValue = moneyFromHubOrFe(
+    kpis.bookingValue,
+    tokenMetrics?.bookingValue ?? kpis.closedWon.value,
+  );
+  const grossBooking =
+    kpis.grossBooking != null && Number.isFinite(kpis.grossBooking.value)
+      ? kpis.grossBooking.value
+      : tokenValue + bookingValue;
+
+  const tokenMeta =
+    kpis.tokenValue?.changeAbsolute != null
+      ? formatInsightsChangeAbsolute(kpis.tokenValue.changeAbsolute)
+      : tokenMetrics?.tokenCount != null
+        ? `${tokenMetrics.tokenCount} tokens`
+        : "Token deals";
+  const grossMeta =
+    kpis.grossBooking?.changeAbsolute != null
+      ? formatInsightsChangeAbsolute(kpis.grossBooking.changeAbsolute)
+      : "Token + Booking";
+
+  const tokenTone = toneFromSigned(kpis.tokenValue?.changeAbsolute);
+  const grossTone = toneFromSigned(kpis.grossBooking?.changeAbsolute);
 
   return (
     <section className="mt-6 px-4 sm:px-6 lg:px-8">
-      <p className="mb-2.5 text-[10px] font-bold uppercase tracking-[0.22em] text-gray-400">
-        Growth
-      </p>
       <div
         className={`grid grid-cols-1 items-stretch gap-3.5 sm:grid-cols-2 xl:grid-cols-4 ${
           loading && cards ? "opacity-80" : ""
@@ -273,14 +316,42 @@ export default function InsightsPerformanceCards({ data, loading = false }: Prop
             <SkeletonCard />
             <SkeletonCard />
           </>
-        ) : cards ? (
+        ) : (
           <>
-            <BookingValueTile card={cards.bookingValue} />
-            <WeightedPipelineTile card={cards.weightedPipeline} />
-            <ConversionTile card={cards.leadToMeeting} />
-            <ConversionTile card={cards.meetingToBooking} />
+            {cards ? <BookingValueTile card={cards.bookingValue} /> : <SkeletonCard />}
+            <GrowthMoneyTile
+              title="Gross Booking Value"
+              hint="Token Value + Booking Value combined"
+              valueLabel={isMoneyLoading ? "..." : formatInsightsInrCompact(grossBooking)}
+              metaLabel="Change"
+              metaValue={isMoneyLoading ? "…" : grossMeta}
+              accent=""
+              progressRatio={Number(kpis.grossBooking?.progressRatio ?? (grossBooking > 0 ? 1 : 0))}
+              tone={isMoneyLoading ? "neutral" : grossTone}
+            />
+            {cards ? (
+              <WeightedPipelineTile
+                card={cards.weightedPipeline}
+                quoteValueInr={quotesSentMonth?.quotationValueInr ?? 0}
+                quoteCount={quotesSentMonth?.quotesSentCount ?? 0}
+                loading={quotesSentMonthLoading}
+              />
+            ) : (
+              <SkeletonCard />
+            )}
+            <GrowthMoneyTile
+              title="Token Value"
+              valueLabel={isMoneyLoading ? "..." : formatInsightsInrCompact(tokenValue)}
+              metaLabel=""
+              metaValue={isMoneyLoading ? "…" : tokenMeta}
+              accent=""
+              progressRatio={Number(
+                kpis.tokenValue?.progressRatio ?? (tokenValue > 0 ? 0.7 : 0),
+              )}
+              tone={isMoneyLoading ? "yellow" : tokenTone}
+            />
           </>
-        ) : null}
+        )}
       </div>
     </section>
   );

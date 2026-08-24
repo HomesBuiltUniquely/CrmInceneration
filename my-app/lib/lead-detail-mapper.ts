@@ -113,11 +113,11 @@ function pickDesignerDisplay(detail: Record<string, unknown>): string {
     "designConsultant",
     "designConsultantName"
   );
-  if (flat) return flat;
+  if (flat && !isUiPlaceholderToken(flat)) return flat;
   const nested = detail.designer ?? detail.interiorDesigner;
   if (typeof nested === "object" && nested !== null) {
     const n = pickPersonNameFromNested(nested as Record<string, unknown>);
-    if (n) return n;
+    if (n && !isUiPlaceholderToken(n)) return n;
   }
   return "";
 }
@@ -303,7 +303,17 @@ function collectPropertyDetailsBags(detail: Record<string, unknown>): Record<str
 
 export function isUiPlaceholderToken(value: string): boolean {
   const trimmed = value.trim();
-  return trimmed === "—" || trimmed === "-" || trimmed === "–";
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed === "—" ||
+    trimmed === "-" ||
+    trimmed === "–" ||
+    lower === "not assigned" ||
+    lower === "unassigned" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none"
+  );
 }
 
 function pickMeetingTypeFromDetail(detail: Record<string, unknown>): string {
@@ -312,12 +322,10 @@ function pickMeetingTypeFromDetail(detail: Record<string, unknown>): string {
 
 function resolveDesignerNameForSave(
   leadDesignerName: string,
-  base: Record<string, unknown>,
+  _base: Record<string, unknown>,
 ): string {
   const fromLead = leadDesignerName.trim();
-  if (fromLead && !isUiPlaceholderToken(fromLead)) return fromLead;
-  const fromBase = pickDesignerDisplay(base);
-  if (fromBase) return fromBase;
+  if (!fromLead || isUiPlaceholderToken(fromLead)) return "";
   return fromLead;
 }
 
@@ -604,7 +612,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     createdAt,
     firstCallAt: firstCallAtRaw || "",
     assignee: assignee || "—",
-    designerName: pickDesignerDisplay(detail) || "—",
+    designerName: pickDesignerDisplay(detail),
     designerEmail:
       pickStr(detail, "designerEmail", "designEmail", "interiorDesignerEmail", "designPreferenceEmail") ||
       (() => {
@@ -931,6 +939,8 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
         ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
         : {}),
     };
+  } else if (!resolvedDesignerName) {
+    next.designer = "";
   }
 
   const prevAssignee = base.assignee;

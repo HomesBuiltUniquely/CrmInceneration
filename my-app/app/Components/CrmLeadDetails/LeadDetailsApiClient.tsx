@@ -1041,6 +1041,7 @@ export default function LeadDetailsApiClient({
     }
     setLoading(true);
     setError(null);
+    setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
     try {
       const lt = leadTypeParam as CrmLeadType;
       let detailJson = await getLeadDetail(lt, leadId);
@@ -1100,25 +1101,19 @@ export default function LeadDetailsApiClient({
           activities: prev.activities,
         }),
       );
-      void resolveAppointmentContextForLead(leadId, { designerName: mapped.designerName }).then(
-        (apptCtx) => {
-          if (!apptCtx.meetingType?.trim() && !apptCtx.designerName?.trim()) return;
+      void resolveAppointmentContextForLead(leadId, {
+        designerName: mapped.designerName,
+        leadType: lt,
+      }).then((apptCtx) => {
+          // Meeting type may come from Hub appointments. Never copy designer onto
+          // the lead — IDs collide across lead types and would fake an assignment.
+          if (!apptCtx.meetingType?.trim()) return;
           setLead((prev) => {
-            const next = { ...prev };
-            let changed = false;
-            if (!prev.meetingType?.trim() && apptCtx.meetingType?.trim()) {
-              next.meetingType = apptCtx.meetingType;
-              changed = true;
-            }
-            const prevDesigner = String(prev.designerName ?? "").trim();
-            const designerMissing =
-              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
-            if (designerMissing && apptCtx.designerName?.trim()) {
-              next.designerName = apptCtx.designerName;
-              changed = true;
-            }
-            if (!changed) return prev;
-            return preserveLeadStickyFields(prev, next);
+            if (prev.meetingType?.trim()) return prev;
+            return preserveLeadStickyFields(prev, {
+              ...prev,
+              meetingType: apptCtx.meetingType ?? prev.meetingType,
+            });
           });
         },
       );
@@ -2221,7 +2216,7 @@ export default function LeadDetailsApiClient({
             bookingType: mapped.bookingType || leadToSave.bookingType || prev.bookingType,
             salesManagerName:
               mapped.salesManagerName || leadToSave.salesManagerName || prev.salesManagerName,
-            designerName: mapped.designerName || leadToSave.designerName || prev.designerName,
+            designerName: mapped.designerName || leadToSave.designerName,
             meetingType: mapped.meetingType || leadToSave.meetingType || prev.meetingType,
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
           });
@@ -3443,26 +3438,11 @@ export default function LeadDetailsApiClient({
             bookingType: leadForSave.bookingType || mapped.bookingType || prev.bookingType,
             salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
             meetingType: leadForSave.meetingType || mapped.meetingType || prev.meetingType,
-            designerName: leadForSave.designerName || mapped.designerName || prev.designerName,
+            designerName: leadForSave.designerName || mapped.designerName,
             stageBlock: nextStage,
             quoteLink: stickyQuote || prev.quoteLink || "",
           });
           return mergedLead;
-        });
-        void resolveAppointmentContextForLead(leadId, {
-          designerName: leadForSave.designerName,
-        }).then((apptCtx) => {
-          if (!apptCtx.designerName?.trim()) return;
-          setLead((prev) => {
-            const prevDesigner = String(prev.designerName ?? "").trim();
-            const designerMissing =
-              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
-            if (!designerMissing) return prev;
-            return preserveLeadStickyFields(prev, {
-              ...prev,
-              designerName: apptCtx.designerName ?? prev.designerName,
-            });
-          });
         });
         const propertyLocation = leadForSave.propertyLocation?.trim();
         if (propertyLocation) {
