@@ -212,9 +212,9 @@ function mapRawItem(raw: RawMeetingItem, tag: MeetingTag, index: number): Notifi
   if (slot) parts.push(slot);
   if (meetingType) parts.push(meetingType.replace(/_/g, " "));
 
-  // For SUCCESS (and any tag where meetingDate/slot/meetingType are absent),
+  // For SUCCESS, CANCELLATION (and any tag where meetingDate/slot/meetingType are absent),
   // fall back to created_at formatted as a readable date + time.
-  if (parts.length === 0 && tag === "SUCCESS") {
+  if (parts.length === 0 && (tag === "SUCCESS" || tag === "CANCELLATION")) {
     const fallbackTs =
       raw.created_at ??
       raw.createdAt ??
@@ -721,13 +721,14 @@ async function fetchRawLeadItems(
 // ─── Counts fetch ─────────────────────────────────────────────────────────────
 
 async function fetchRawCounts(authHeader: string): Promise<NotificationCounts> {
+  console.warn(`${LOG_PREFIX} [DEPRECATED] fetchRawCounts called - returns unfiltered database totals, not UI-visible notifications`);
   const zero: NotificationCounts = {
     totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
     totalCancelled: 0, totalSuccess: 0, totalBookings: 0,
   };
 
   const url = "/api/crm/notifications/counts";
-  console.log(`${LOG_PREFIX} [COUNTS] fetching: ${url}`);
+  console.log(`${LOG_PREFIX} [COUNTS] fetching database totals (not UI counts): ${url}`);
 
   let res: Response;
   try {
@@ -912,32 +913,68 @@ export async function loadNotifications(
   if (all.length !== deduped.length) {
     console.log(`${LOG_PREFIX}  Deduplicated: ${all.length} → ${deduped.length} (${all.length - deduped.length} duplicates removed)`);
   }
+// ── Step 6: Remove notifications older than 32 days ──────────────────────────
+// Filter based on lead creation date (createdAt from the lead record), not the
+// notification timestamp. This ensures a consistent 32-day window from when the
+// lead was originally created, not when the notification was sent.
 
-  // ── Step 6: Sort newest-first with proper handling of invalid timestamps ─────
-  deduped.sort((a, b) => {
-    const tA = new Date(a.timestamp).getTime();
-    const tB = new Date(b.timestamp).getTime();
-    
-    // Place items with invalid timestamps at the end
-    if (Number.isNaN(tA) && Number.isNaN(tB)) return 0;
-    if (Number.isNaN(tA)) return 1;
-    if (Number.isNaN(tB)) return -1;
-    
-    // Place items with empty timestamps at the end
-    if (!a.timestamp && !b.timestamp) return 0;
-    if (!a.timestamp) return 1;
-    if (!b.timestamp) return -1;
-    
-    return tB - tA;
-  });
+const now = new Date();
+const thirtyDaysAgo = new Date(now);
+thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 32);
 
-  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
-  console.log(`${LOG_PREFIX}  loadNotifications COMPLETE`);
-  console.log(`${LOG_PREFIX}  Final result: ${deduped.length} total notifications`);
-  console.log(`${LOG_PREFIX}  Total time: ${Date.now() - (fetchStart - fetchDuration)}ms (fetch: ${fetchDuration}ms, rbac: ${rbacDuration}ms)`);
-  console.log(`${LOG_PREFIX} ════════════════════════════════════════════════════════════════`);
+const activeNotifications = deduped.filter((notification) => {
+  // We use notification.timestamp which is set from the lead's createdAt field
+  // (see mapRawItem and mapRawBookingItem for meeting and booking items,
+  // and mapRawLeadItem for lead items)
+  if (!notification.timestamp) {
+    console.log(`${LOG_PREFIX}  Filtering: notification "${notification.title}" has no timestamp, excluding`);
+    return false;
+  }
 
-  return deduped;
+  const leadCreatedAt = new Date(notification.timestamp);
+
+  // Remove invalid timestamps
+  if (Number.isNaN(leadCreatedAt.getTime())) {
+    console.log(`${LOG_PREFIX}  Filtering: notification "${notification.title}" has invalid timestamp "${notification.timestamp}", excluding`);
+    return false;
+  }
+
+  // Keep notification only if the lead was created within the last 32 days
+  const isWithin32Days = leadCreatedAt >= thirtyDaysAgo;
+  
+  if (!isWithin32Days) {
+    console.log(`${LOG_PREFIX}  Filtering: notification "${notification.title}" created ${leadCreatedAt.toISOString()} is before 32-day cutoff ${thirtyDaysAgo.toISOString()}, excluding`);
+  }
+
+  return isWithin32Days;
+});
+
+console.log(
+  `${LOG_PREFIX} 32-day expiry filter: ${deduped.length} → ${activeNotifications.length} (cutoff: ${thirtyDaysAgo.toISOString()})`
+);
+
+// ── Step 7: Sort newest-first ───────────────────────────────────────────────
+
+activeNotifications.sort((a, b) => {
+  const tA = new Date(a.timestamp).getTime();
+  const tB = new Date(b.timestamp).getTime();
+
+  if (Number.isNaN(tA) && Number.isNaN(tB)) return 0;
+  if (Number.isNaN(tA)) return 1;
+  if (Number.isNaN(tB)) return -1;
+
+  // Place items with empty timestamps at the end
+  if (!a.timestamp && !b.timestamp) return 0;
+  if (!a.timestamp) return 1;
+  if (!b.timestamp) return -1;
+
+  return tB - tA;
+});
+
+console.log(`${LOG_PREFIX} Final active notifications: ${activeNotifications.length}`);
+
+return activeNotifications;
+    
 }
 
 /**
@@ -951,6 +988,7 @@ export async function loadNotifications(
 export async function loadNotificationCounts(
   token: string | null,
 ): Promise<NotificationCounts> {
+  console.warn(`${LOG_PREFIX} [DEPRECATED] loadNotificationCounts called - UI should use activeNotifications array from loadNotifications() instead`);
   const zero: NotificationCounts = {
     totalLeads: 0, totalScheduled: 0, totalRescheduled: 0,
     totalCancelled: 0, totalSuccess: 0, totalBookings: 0,

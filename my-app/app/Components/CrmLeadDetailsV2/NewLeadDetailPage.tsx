@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   isEmptySpaceDoubleClickTarget,
   requestLeadDetailOverlayClose,
@@ -122,6 +123,8 @@ function discoveryPhaseDraftsEqual(a: DiscoveryPhaseDraft, b: DiscoveryPhaseDraf
 type Props = {
   leadType: string;
   leadId: string;
+  /** True when rendered inside CrmFullscreenOverlayModal (popup mode). False when rendered via URL routing. */
+  isPopupMode?: boolean;
 };
 
 type PhaseItem = {
@@ -136,7 +139,7 @@ const phaseItems: PhaseItem[] = [
   { id: "decision", title: "4. Decision Phase" },
 ];
 
-export default function NewLeadDetailPage({ leadType, leadId }: Props) {
+export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = false }: Props) {
   const { lead } = useLeadDetailV2();
   const activityPanelRef = useRef<ActivityHistoryHandle>(null);
   const currentPhaseId = resolveLeadDetailUiPhase(lead);
@@ -151,7 +154,7 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
         <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
           <DealControlSidebar onActivityClick={openActivityPanel} />
           <section className="rounded-xl border border-[#e1e6ed] bg-[#f3f5f8] p-3">
-            <LeadDetailHeader />
+            <LeadDetailHeader isPopupMode={isPopupMode} />
             <div className="mt-3 grid gap-3 lg:grid-cols-[270px_minmax(0,1fr)]">
               <aside className="space-y-3">
                 <div id="deal-overview" className="scroll-mt-24">
@@ -211,7 +214,8 @@ export default function NewLeadDetailPage({ leadType, leadId }: Props) {
   );
 }
 
-function LeadDetailHeader() {
+function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
+  const router = useRouter();
   const {
     leadType,
     leadId,
@@ -244,6 +248,10 @@ function LeadDetailHeader() {
   const leadComeCount = createdTimelineOptions.length;
   const showIvrDelete =
     canDeleteIvrLead(viewerRoleKey) && isIvrInboundLead(leadType, lead.leadSource);
+
+  const handleClose = useCallback(() => {
+    router.back();
+  }, [router]);
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -312,12 +320,42 @@ function LeadDetailHeader() {
       }}
       title="Double-click empty space to close"
     >
+      {/* Header row with title and close button */}
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
+          Lead Information
+        </p>
+        
+        {/* Close button - only show in URL routing mode, not in popup mode */}
+        {!isPopupMode && (
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close Lead Information"
+            className="inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg border border-[#e2e8f0] bg-white text-[#6b7280] transition-all hover:border-[#cbd5e1] hover:bg-[#f1f5f9] hover:text-[#1f2937]"
+            title="Close (Back)"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      {/* Content area */}
       <div className="grid gap-4 lg:grid-cols-[1fr_440px] lg:items-start">
         <div>
           <div data-no-dblclick-close className="max-w-[560px]">
-            <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
-              Lead Information
-            </p>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <CreatedMetaChip createdAt={lead.createdAt} />
