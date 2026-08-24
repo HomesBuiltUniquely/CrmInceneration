@@ -125,7 +125,15 @@ import {
   filterIvrCallLeads,
   hubLeadTypeForFilterKey,
   isIvrCallFilterKey,
+  isIvrLeadTypeKey,
 } from "@/lib/ivr-lead-source";
+import {
+  deleteIvrLeads,
+  isIvrLeadDeleteTarget,
+  IVR_DELETE_CONFIRM_BODY,
+  IVR_DELETE_CONFIRM_TITLE,
+} from "@/lib/ivr-lead-delete";
+import { requestLeadDetailOverlayClose } from "@/lib/lead-detail-overlay-close";
 
 type Props = {
   search: string;
@@ -1264,10 +1272,15 @@ function toAssignmentLeadType(leadType: string): string {
   if (leadType === "glead") return "G Lead";
   if (leadType === "mlead") return "M Lead";
   if (leadType === "addlead") return "Add Lead";
+  if (isIvrLeadTypeKey(leadType)) return "IVR Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";
   if (leadType === "whatsapplead") return "WhatsApp";
   return "Form Lead";
+}
+
+function deleteBucketForRow(row: LeadRowModel): string {
+  return isIvrLeadDeleteTarget(row.leadType, row.leadSource) ? "ivrlead" : row.leadType;
 }
 
 function groupRowsByLeadType(rows: LeadRowModel[]): Map<string, LeadRowModel[]> {
@@ -1318,6 +1331,7 @@ function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "glead") return "bulk-delete-gleads";
   if (leadType === "mlead") return "bulk-delete-mleads";
   if (leadType === "addlead") return "bulk-delete-addleads";
+  if (isIvrLeadTypeKey(leadType)) return "bulk-delete-ivrleads";
   if (leadType === "walkinlead") return "bulk-delete-walkinleads";
   if (leadType === "whatsapplead") return "bulk-delete-whatsappleads";
   return "bulk-delete-websiteleads";
@@ -1328,6 +1342,7 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "glead") return "delete-all-gleads";
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
+  if (isIvrLeadTypeKey(leadType)) return "delete-all-ivrleads";
   if (leadType === "walkinlead") return "delete-all-walkinleads";
   if (leadType === "whatsapplead") return "delete-all-whatsappleads";
   return "delete-all-websiteleads";
@@ -1355,12 +1370,18 @@ function deleteNoticeText(role: string, scope = "Delete All"): string {
   return `${scope} done by ${actor} at ${time}`;
 }
 
-async function deleteLeadRowsByType(leadType: string, ids: number[]) {
+async function deleteLeadRowsByType(leadType: string, ids: Array<number | string>) {
+  if (isIvrLeadTypeKey(leadType)) {
+    return deleteIvrLeads(ids);
+  }
+  const numericIds = ids
+    .map((id) => (typeof id === "number" ? id : Number(id)))
+    .filter((id) => Number.isInteger(id) && id > 0);
   const res = await fetch(`/api/admin/${toAdminBulkDeletePath(leadType)}`, {
     method: "DELETE",
     credentials: "include",
     headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ ids: numericIds }),
   });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (res.ok && body.success !== false) {
@@ -1368,10 +1389,11 @@ async function deleteLeadRowsByType(leadType: string, ids: number[]) {
   }
   // Fallback for unstable bulk-delete backend endpoints (observed on addlead in production):
   // retry selected IDs one-by-one through the proven lead DELETE route.
-  if (ids.length > 0) {
+  // Never use AddLead DELETE for IVR — those rows live in /v1/IvrLead.
+  if (numericIds.length > 0) {
     const failedIds: number[] = [];
     await Promise.all(
-      ids.map(async (id) => {
+      numericIds.map(async (id) => {
         const single = await fetch(`/api/crm/lead/${leadType}/${id}`, {
           method: "DELETE",
           credentials: "include",
@@ -1389,7 +1411,9 @@ async function deleteLeadRowsByType(leadType: string, ids: number[]) {
       } as Record<string, unknown>;
     }
     throw new Error(
-      `Delete failed for lead IDs: ${failedIds.join(", ")}.`,
+      typeof body.message === "string"
+        ? body.message
+        : `Delete failed for lead IDs: ${failedIds.join(", ")}.`,
     );
   }
   throw new Error(typeof body.message === "string" ? body.message : "Delete failed");
@@ -4514,6 +4538,9 @@ export default function LeadsDataSection({
     .map((id) => rowsById.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
   const selectedCount = selectedLeads.length;
+  const selectedAreAllIvr =
+    selectedCount > 0 &&
+    selectedLeads.every((row) => isIvrLeadDeleteTarget(row.leadType, row.leadSource));
   const insightSelectAllRowIds =
     insightTableMode !== null ? rows.map((row) => row.id) : undefined;
   const isBulkBarVisible = selectedCount > 0;
@@ -4721,10 +4748,23 @@ export default function LeadsDataSection({
   const executeDeleteLeadRow = async (row: LeadRowModel) => {
     try {
       setIsDeleting(true);
-      await deleteLeadRowsByType(row.leadType, [Number(row.id)]);
+      const bucket = deleteBucketForRow(row);
+      const n = Number(row.id);
+      const deleteId = Number.isInteger(n) && n > 0 ? n : row.id;
+      const body = await deleteLeadRowsByType(bucket, [deleteId]);
+      requestLeadDetailOverlayClose();
       await load();
       const displayName = row.name.trim() || `Lead #${row.id}`;
-      notifySuccess(`${displayName} deleted successfully.`);
+      const hubMessage =
+        body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
+          ? String((body as { message: string }).message).trim()
+          : "";
+      notifySuccess(
+        hubMessage ||
+          (isIvrLeadDeleteTarget(row.leadType, row.leadSource)
+            ? "IVR lead deleted successfully"
+            : `${displayName} deleted successfully.`),
+      );
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -4819,16 +4859,20 @@ export default function LeadsDataSection({
     if (selectedLeads.length === 0 || !canBulkDelete) return;
     try {
       setIsDeleting(true);
-      const grouped = new Map<string, number[]>();
+      const grouped = new Map<string, Array<number | string>>();
       for (const row of selectedLeads) {
-        const list = grouped.get(row.leadType) ?? [];
-        list.push(Number(row.id));
-        grouped.set(row.leadType, list);
+        const type = deleteBucketForRow(row);
+        const n = Number(row.id);
+        const deleteId = Number.isInteger(n) && n > 0 ? n : row.id;
+        const list = grouped.get(type) ?? [];
+        list.push(deleteId);
+        grouped.set(type, list);
       }
       for (const [type, ids] of grouped.entries()) {
         await deleteLeadRowsByType(type, ids);
       }
       clearSelection();
+      requestLeadDetailOverlayClose();
       await load();
       notifySuccess("Selected leads deleted successfully.");
     } catch (e) {
@@ -4843,7 +4887,8 @@ export default function LeadsDataSection({
     try {
       setIsDeleting(true);
       if (leadType !== "all") {
-        const res = await fetch(`/api/admin/${toAdminDeleteAllPath(leadType)}`, {
+        const deleteAllType = isIvrLeadTypeKey(leadType) ? "ivrlead" : leadType;
+        const res = await fetch(`/api/admin/${toAdminDeleteAllPath(deleteAllType)}`, {
           method: "DELETE",
           credentials: "include",
           headers: getCrmAuthHeaders(),
@@ -4856,6 +4901,7 @@ export default function LeadsDataSection({
           "glead",
           "mlead",
           "addlead",
+          "ivrlead",
           "websitelead",
           "walkinlead",
           "whatsapplead",
@@ -5575,14 +5621,30 @@ export default function LeadsDataSection({
           <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_25px_60px_rgba(15,23,42,0.25)]">
             <h3 className="text-sm font-bold text-slate-800">
               {deleteModalType === "row"
-                ? `Delete lead #${deleteRowCandidate?.id ?? ""}?`
+                ? isIvrLeadDeleteTarget(
+                    deleteRowCandidate?.leadType,
+                    deleteRowCandidate?.leadSource,
+                  )
+                  ? IVR_DELETE_CONFIRM_TITLE
+                  : `Delete lead #${deleteRowCandidate?.id ?? ""}?`
                 : deleteModalType === "all"
                   ? leadType === "all"
                     ? "Delete all lead types (global)?"
                     : `Delete all ${toAssignmentLeadType(leadType)} records?`
-                  : "Delete selected leads?"}
+                  : selectedAreAllIvr
+                    ? IVR_DELETE_CONFIRM_TITLE
+                    : "Delete selected leads?"}
             </h3>
-            <p className="mt-1 text-xs text-slate-500">This action cannot be undone.</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {(deleteModalType === "row" &&
+                isIvrLeadDeleteTarget(
+                  deleteRowCandidate?.leadType,
+                  deleteRowCandidate?.leadSource,
+                )) ||
+              (deleteModalType === "selected" && selectedAreAllIvr)
+                ? IVR_DELETE_CONFIRM_BODY
+                : "This action cannot be undone."}
+            </p>
             {deleteModalType === "all" ? (
               <div className="mt-3">
                 <p className="text-[11px] font-semibold text-slate-700">

@@ -14,6 +14,7 @@ import {
   fetchInsightsDashboard,
   fetchInsightsFilterOptions,
   fetchInsightsPerformanceCards,
+  fetchInsightsQuotesSentMonth,
   type InsightsDashboard,
   type InsightsFilterOptions,
   type InsightsLostFunnelStage,
@@ -34,6 +35,11 @@ import {
   listQuoteSentWonLeads,
   resolveInsightsAssigneeAliases,
 } from "@/lib/insights-quote-sent-metrics";
+import {
+  computeQuotesSentMonthMetrics,
+  quotesSentMonthDateWindow,
+  type QuotesSentMonthMetrics,
+} from "@/lib/insights-quotes-sent-month";
 import {
   buildLeadBudgetInvestmentMapSync,
   enrichInvestmentMapWithQuotes,
@@ -467,13 +473,30 @@ export default function InsightsClient1() {
       return;
     }
     setPerformanceCardsLoading(true);
+    setQuotesSentMonthLoading(true);
     try {
       const data = await fetchInsightsPerformanceCards(performanceQuery);
       setPerformanceCards(data);
+      try {
+        const month = await fetchInsightsQuotesSentMonth(performanceQuery);
+        if (month.hubImplemented) {
+          setQuotesSentMonth({
+            periodStart: month.periodStart,
+            periodEnd: month.periodEnd,
+            filterField: "quoteSentAt",
+            quotesSentCount: month.quotesSentCount,
+            quotationValueInr: month.quotationValueInr,
+            source: "hub",
+          });
+        }
+      } catch {
+        /* CRM pool fallback in the leads effect */
+      }
     } catch {
       setPerformanceCards((prev) => prev ?? EMPTY_PERFORMANCE_CARDS);
     } finally {
       setPerformanceCardsLoading(false);
+      setQuotesSentMonthLoading(false);
     }
   }, [role, isSalesManager, viewerUserId, performanceQuery]);
 
@@ -657,7 +680,16 @@ export default function InsightsClient1() {
           payoff,
         };
       });
-    return rows.sort((a, b) => (Number(b.leads) || 0) - (Number(a.leads) || 0));
+    return rows.sort((a, b) => {
+      const aAchieved =
+        a.achievedIncentive == null ? -1 : Number(a.achievedIncentive) || 0;
+      const bAchieved =
+        b.achievedIncentive == null ? -1 : Number(b.achievedIncentive) || 0;
+      if (bAchieved !== aAchieved) return bAchieved - aAchieved;
+      const closedDiff = (Number(b.closed) || 0) - (Number(a.closed) || 0);
+      if (closedDiff !== 0) return closedDiff;
+      return (Number(b.leads) || 0) - (Number(a.leads) || 0);
+    });
   }, [dashboard.teamPerformance, teamIncentiveByUser]);
 
   const executiveOptions = useMemo(() => {
@@ -755,6 +787,10 @@ export default function InsightsClient1() {
     totalValue: number | null;
     loading: boolean;
   }>({ count: 0, totalValue: null, loading: false });
+  const [quotesSentMonth, setQuotesSentMonth] = useState<QuotesSentMonthMetrics | null>(
+    null,
+  );
+  const [quotesSentMonthLoading, setQuotesSentMonthLoading] = useState(false);
 
   const [funnelStageValues, setFunnelStageValues] = useState<Record<string, number> | null>(null);
   const [funnelMetricsLoading, setFunnelMetricsLoading] = useState(false);
@@ -863,6 +899,7 @@ export default function InsightsClient1() {
         // Org admins: sales filter-merge heatmap (not phone-primary).
         let poolRows: ApiLead[] = [];
         let smCanViewPool: ApiLead[] | null = null;
+        let quotesSentScopePool: ApiLead[] = [];
 
         if (isSalesManager) {
           /**
@@ -880,10 +917,12 @@ export default function InsightsClient1() {
           if (salesPeople.kind === "executive" && assigneeAliasSetLocal.length > 0) {
             inventory = filterLeadsByAssigneeScope(inventory, assigneeAliasSetLocal);
           }
+          const quotesSentScopePoolLocal = inventory;
           inventory = filterApiLeadsByInsightsDateRange(inventory, range);
           smCanViewPool = inventory;
           const aligned = insightsSalesManagerMilestoneAndTotal(inventory);
           poolRows = aligned.pool;
+          quotesSentScopePool = quotesSentScopePoolLocal;
         } else {
           // Full sales journey (no date in Hub) then client month/range cut — same as SM accuracy.
           const data = await fetchAdminLeadsHeatmapData(
@@ -902,6 +941,7 @@ export default function InsightsClient1() {
             journeyRows = filterLeadsByAssigneeScope(journeyRows, assigneeAliasSetLocal);
           }
           journeyRows = filterLeadsForSalesClientInbox(journeyRows, "verified");
+          quotesSentScopePool = journeyRows;
           journeyRows = filterApiLeadsByInsightsDateRange(journeyRows, range);
           const aligned = insightsSalesManagerMilestoneAndTotal(journeyRows);
           poolRows = aligned.pool;
@@ -1033,6 +1073,21 @@ export default function InsightsClient1() {
         const budgetMap = buildLeadBudgetInvestmentMapSync(funnelPool);
         if (cancelled) return;
         applyInvestmentMetrics(funnelPool, budgetMap, salesFunnelShell, opts);
+
+        const monthWindow = quotesSentMonthDateWindow(dateFilter);
+        const quotesSentScoped = filterInsightsScopeLeadsKeepRows(quotesSentScopePool, {
+          branchId: effectiveBranchId,
+          filterOptions,
+        });
+        setQuotesSentMonth((prev) =>
+          prev?.source === "hub"
+            ? prev
+            : computeQuotesSentMonthMetrics(quotesSentScoped, {
+                periodStart: monthWindow.periodStart,
+                periodEnd: monthWindow.periodEnd,
+                investments: budgetMap,
+              }),
+        );
         setFunnelMetricsLoading(false);
 
         const enriched = await enrichInvestmentMapWithQuotes(funnelPool, budgetMap, {
@@ -1042,9 +1097,19 @@ export default function InsightsClient1() {
         });
         if (cancelled) return;
         applyInvestmentMetrics(funnelPool, enriched, salesFunnelShell, opts);
+        setQuotesSentMonth((prev) =>
+          prev?.source === "hub"
+            ? prev
+            : computeQuotesSentMonthMetrics(quotesSentScoped, {
+                periodStart: monthWindow.periodStart,
+                periodEnd: monthWindow.periodEnd,
+                investments: enriched,
+              }),
+        );
       } catch {
         if (!cancelled) {
           setQuoteSentWonMetrics({ count: 0, totalValue: 0, loading: false });
+          setQuotesSentMonth(null);
           setFunnelStageValues(null);
           setFunnelMetricsLoading(false);
           setAlignedSalesPoolTotal(null);
@@ -1248,10 +1313,13 @@ export default function InsightsClient1() {
             </div>
           </main>
 
-          <InsightSect2
+          <InsightsPerformanceCards
+            data={performanceCards ?? dashboard.performanceCards ?? null}
+            loading={
+              performanceCardsLoading || (isSalesManager && !smScopeReady)
+            }
             kpis={{
               ...dashboard.kpis,
-              // Same id-merge journey inventory as Sales Funnel Total / My Leads Total.
               totalLeads: {
                 ...dashboard.kpis.totalLeads,
                 value:
@@ -1264,11 +1332,34 @@ export default function InsightsClient1() {
             dashboardLoading={
               loading || funnelMetricsLoading || (isSalesManager && !smScopeReady)
             }
+            quotesSentMonth={quotesSentMonth}
+            quotesSentMonthLoading={quotesSentMonthLoading || funnelMetricsLoading}
           />
-          <InsightsPerformanceCards
-            data={performanceCards ?? dashboard.performanceCards ?? null}
-            loading={
-              performanceCardsLoading || (isSalesManager && !smScopeReady)
+          <InsightSect2
+            kpis={{
+              ...dashboard.kpis,
+              // Same id-merge journey inventory as Sales Funnel Total / My Leads Total.
+              totalLeads: {
+                ...dashboard.kpis.totalLeads,
+                value:
+                  alignedSalesPoolTotal != null
+                    ? alignedSalesPoolTotal
+                    : dashboard.kpis.totalLeads.value,
+              },
+            }}
+            dashboardLoading={
+              loading ||
+              funnelMetricsLoading ||
+              performanceCardsLoading ||
+              (isSalesManager && !smScopeReady)
+            }
+            leadToMeeting={
+              (performanceCards ?? dashboard.performanceCards)?.cards.leadToMeeting ??
+              null
+            }
+            meetingToBooking={
+              (performanceCards ?? dashboard.performanceCards)?.cards
+                .meetingToBooking ?? null
             }
           />
       <InsightSect3
@@ -1283,9 +1374,9 @@ export default function InsightsClient1() {
           alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value
         }
         tokenMetrics={tokenMetrics}
-        quotationCount={quoteSentWonMetrics.count}
-        quotationValue={quoteSentWonMetrics.totalValue}
-        quotationMetricsLoading={quoteSentWonMetrics.loading}
+        quotationCount={quotesSentMonth?.quotesSentCount ?? quoteSentWonMetrics.count}
+        quotationValue={quotesSentMonth?.quotationValueInr ?? quoteSentWonMetrics.totalValue}
+        quotationMetricsLoading={quotesSentMonthLoading || quoteSentWonMetrics.loading}
         funnelStageValues={funnelStageValues}
         funnelMetricsLoading={funnelMetricsLoading}
         stagePathData={stagePathData}
@@ -1295,6 +1386,8 @@ export default function InsightsClient1() {
           <InsightsSect4
             dropReasons={alignedDropReasons ?? dashboard.dropReasons}
             lostTotalOverride={alignedLostFunnel?.total ?? dashboard.lostFunnel?.total ?? null}
+            stagePathData={stagePathData}
+            stagePathLoading={stagePathLoading}
             stageVelocity={dashboard.stageVelocity}
           />
           <InsightsSect5

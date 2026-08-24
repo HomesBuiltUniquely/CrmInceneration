@@ -13,6 +13,7 @@ import type {
   InsightsWeekCharts,
 } from "@/lib/insights-week-charts";
 import { intensityFromCounts } from "@/lib/insights-week-charts";
+import InsightsInfoTip from "./InsightsInfoTip";
 
 type Props = {
   leadsOverTime: InsightsDashboard["leadsOverTime"];
@@ -64,13 +65,6 @@ function isCalendarMonthPreset(dateFilter?: BookingDateFilterState): boolean {
     dateFilter?.preset === "currentMonth" ||
     dateFilter?.preset === "previousMonth"
   );
-}
-
-function isWeekSeriesLabels(points: { label?: string }[]): boolean {
-  return points.some((p) => {
-    const l = String(p.label ?? "");
-    return /week/i.test(l) || /^w\s*\d+/i.test(l.trim());
-  });
 }
 
 type VolumeIntensity = "high" | "medium" | "low" | "none";
@@ -891,21 +885,24 @@ export default function InsightsSect6({
           <div className="w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
             <div className="mb-5 flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <h2 className="text-lg font-bold text-gray-800">Conversion trend</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-bold text-gray-800">Conversion trend</h2>
+                  <InsightsInfoTip
+                    label="How conversion trend is counted"
+                    math="Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
+                  >
+                    Out of all leads in that week or month, how many became a closed
+                    deal. The small number on the right tells you if this got better
+                    or worse than the start of the range. Example: 16 out of 100
+                    closed, then 18 out of 100 — it went up.
+                  </InsightsInfoTip>
+                </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
-                  {rootLevel === "month"
-                    ? "Closed ÷ leads % for each month in the range"
-                    : "Closed ÷ leads % for each week in the range"}
+                  How many leads become closed deals
                 </p>
-                {isWeekSeriesLabels(conversionPoints) ? (
-                  <p className="mt-1 text-[10px] font-medium text-gray-400">
-                    Badge = last period − first period
-                  </p>
-                ) : null}
               </div>
               <span
                 className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(conversionTrend.changePercent)}`}
-                title="Last period conversion % minus first period conversion %"
               >
                 {changeArrow(conversionTrend.changePercent)}
                 {formatInsightsChangePercent(conversionTrend.changePercent)}
@@ -968,9 +965,20 @@ export default function InsightsSect6({
           {/* C) Revenue forecast */}
           <div className="w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
             <div className="mb-5">
-              <h2 className="text-lg font-bold text-gray-800">Revenue forecast</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-gray-800">Revenue forecast</h2>
+                <InsightsInfoTip
+                  label="How forecast is counted"
+                  math="Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal. Bars scale to the largest of the three."
+                >
+                  Green is money already booked. Dark is where we are heading if we
+                  keep this pace till the period ends. Grey is the goal. If green is
+                  below grey, we are still short of target. Example: booked ₹12.8L,
+                  heading to ₹14.5L, goal ₹15L.
+                </InsightsInfoTip>
+              </div>
               <p className="mt-0.5 text-[11px] font-medium text-gray-400">
-                Hub actual / projected / target (Insight heuristic)
+                Booked so far, heading to, and the goal
               </p>
             </div>
 

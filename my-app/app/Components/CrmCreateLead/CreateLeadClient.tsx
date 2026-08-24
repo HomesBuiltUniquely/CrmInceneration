@@ -95,7 +95,6 @@ type CreateLeadFormState = {
   leadSource: string;
   languagePrefered: string;
   propertyDetails: string;
-  designerName: string;
   notes: string;
   followUpDate: string;
   quoteLink: string;
@@ -127,7 +126,6 @@ const INITIAL_FORM: CreateLeadFormState = {
   leadSource: "",
   languagePrefered: "",
   propertyDetails: "",
-  designerName: "",
   notes: "",
   followUpDate: getDefaultFollowUpDateTimeLocal(),
   quoteLink: "",
@@ -268,7 +266,7 @@ export default function CreateLeadClient() {
     status: form.feedbackSubstage || "Fresh Lead",
     createdAt: "Today",
     assignee: "Unassigned",
-    designerName: form.designerName || "Not assigned",
+    designerName: "Not assigned",
     email: form.email,
     phone: form.phoneNumber,
     altPhone: form.altPhoneNumber,
@@ -359,7 +357,6 @@ export default function CreateLeadClient() {
       propertyPincode: form.propertyPincode.trim() || undefined,
       propertyPin: form.propertyPincode.trim() || undefined,
       pinCode: form.propertyPincode.trim() || undefined,
-      designerName: form.designerName.trim() || undefined,
       propertyDetails: form.propertyDetails.trim() || undefined,
       quoteLink: form.quoteLink.trim() || undefined,
       followUpDate: form.followUpDate.trim() || getDefaultFollowUpDateTimeLocal(),
@@ -699,19 +696,7 @@ export default function CreateLeadClient() {
                     </FormGroup>
 
                     <FormGroup>
-                      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
-                        <div>
-                          <CreateLeadFieldLabel>
-                            Designer Name
-                          </CreateLeadFieldLabel>
-                          <Input
-                            value={form.designerName}
-                            onChange={(e) =>
-                              updateField("designerName", e.target.value)
-                            }
-                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
-                          />
-                        </div>
+                      <div className="flex justify-end">
                         <Button
                           type="button"
                           variant="outline"

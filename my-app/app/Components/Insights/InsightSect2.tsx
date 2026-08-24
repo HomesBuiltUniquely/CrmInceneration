@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  formatInsightsChangeAbsolute,
   formatInsightsChangePercent,
   formatInsightsCount,
-  formatInsightsInrCompact,
   formatInsightsPercent,
   progressWidthPercent,
   type InsightsDashboard,
-  type InsightsKpiMetric,
+  type ConversionCard,
 } from "@/lib/crm-insights-api";
 
 /** Optional FE fallback when Hub money KPIs not present (legacy). */
@@ -23,9 +21,9 @@ export type TokenMetricsData = {
 
 type Props = {
   kpis: InsightsDashboard["kpis"];
-  /** Used only if Hub omits token/booking/gross KPIs. */
-  tokenMetrics?: TokenMetricsData;
   dashboardLoading?: boolean;
+  leadToMeeting?: ConversionCard | null;
+  meetingToBooking?: ConversionCard | null;
 };
 
 function trendClass(positiveIsGood: boolean, value: number | null | undefined) {
@@ -37,50 +35,19 @@ function trendClass(positiveIsGood: boolean, value: number | null | undefined) {
   return good ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700";
 }
 
-function moneyFromHubOrFe(
-  hub: InsightsKpiMetric | null | undefined,
-  feValue: number | undefined,
-): number {
-  if (hub != null && Number.isFinite(hub.value)) return hub.value;
-  return Number(feValue ?? 0);
+function barColorFromTrend(positiveIsGood: boolean, value: number | null | undefined) {
+  const v = Number(value ?? 0);
+  if (!Number.isFinite(v) || v === 0) return "bg-indigo-500";
+  const good = positiveIsGood ? v > 0 : v < 0;
+  return good ? "bg-emerald-500" : "bg-red-500";
 }
 
 export default function InsightSect2({
   kpis,
-  tokenMetrics,
   dashboardLoading = false,
+  leadToMeeting = null,
+  meetingToBooking = null,
 }: Props) {
-  const hasHubMoney =
-    kpis.tokenValue != null ||
-    kpis.bookingValue != null ||
-    kpis.grossBooking != null;
-
-  const isMoneyLoading =
-    dashboardLoading || (!hasHubMoney && Boolean(tokenMetrics?.loading));
-
-  const tokenValue = moneyFromHubOrFe(kpis.tokenValue, tokenMetrics?.tokenValue);
-  const bookingValue = moneyFromHubOrFe(
-    kpis.bookingValue,
-    tokenMetrics?.bookingValue ?? kpis.closedWon.value,
-  );
-  const grossBooking =
-    kpis.grossBooking != null && Number.isFinite(kpis.grossBooking.value)
-      ? kpis.grossBooking.value
-      : tokenValue + bookingValue;
-
-  const tokenTrend =
-    kpis.tokenValue?.changeAbsolute != null
-      ? formatInsightsChangeAbsolute(kpis.tokenValue.changeAbsolute)
-      : tokenMetrics?.tokenCount != null
-        ? `${tokenMetrics.tokenCount} Active Tokens`
-        : "Token deals";
-  const bookingTrend =
-    kpis.bookingValue?.changeAbsolute != null
-      ? formatInsightsChangeAbsolute(kpis.bookingValue.changeAbsolute)
-      : tokenMetrics?.bookingCount != null
-        ? `${tokenMetrics.bookingCount} Booked Deals`
-        : "Booking deals";
-
   const cards = [
     {
       key: "totalLeads",
@@ -94,42 +61,36 @@ export default function InsightSect2({
       barColor: "bg-indigo-500",
     },
     {
-      key: "tokenValue",
-      label: "Token Value",
-      display: isMoneyLoading ? "..." : formatInsightsInrCompact(tokenValue),
-      trend: isMoneyLoading ? "…" : tokenTrend,
-      trendClass: "bg-amber-100 text-amber-800",
-      width: progressWidthPercent(
-        kpis.tokenValue?.progressRatio ?? (tokenValue > 0 ? 0.7 : 0),
-      ),
-      barColor: "bg-amber-500",
+      key: "leadToMeeting",
+      label: "Lead → Meeting Conv %",
+      display: dashboardLoading
+        ? "..."
+        : formatInsightsPercent(leadToMeeting?.valuePercent ?? 0),
+      trend: dashboardLoading ? "…" : leadToMeeting?.varianceLabel ?? "0%",
+      trendClass: trendClass(true, leadToMeeting?.variancePercent ?? 0),
+      width: progressWidthPercent((leadToMeeting?.valuePercent ?? 0) / 100),
+      barColor: barColorFromTrend(true, leadToMeeting?.variancePercent ?? 0),
     },
     {
-      key: "bookingValue",
-      label: "Booking Value",
-      display: isMoneyLoading ? "..." : formatInsightsInrCompact(bookingValue),
-      trend: isMoneyLoading ? "…" : bookingTrend,
-      trendClass: "bg-emerald-100 text-emerald-800",
-      width: progressWidthPercent(kpis.bookingValue?.progressRatio ?? 1),
-      barColor: "bg-emerald-500",
-    },
-    {
-      key: "grossBookingValue",
-      label: "Gross Booking Value",
-      display: isMoneyLoading ? "..." : formatInsightsInrCompact(grossBooking),
-      trend:
-        kpis.grossBooking?.changeAbsolute != null
-          ? formatInsightsChangeAbsolute(kpis.grossBooking.changeAbsolute)
-          : "Token + Booking",
-      trendClass: "bg-indigo-100 text-indigo-800",
-      width: progressWidthPercent(kpis.grossBooking?.progressRatio ?? 1),
-      barColor: "bg-indigo-600",
+      key: "meetingToBooking",
+      label: "Meeting → Booking Conv",
+      display: dashboardLoading
+        ? "..."
+        : formatInsightsPercent(meetingToBooking?.valuePercent ?? 0),
+      trend: dashboardLoading ? "…" : meetingToBooking?.varianceLabel ?? "0%",
+      trendClass: trendClass(true, meetingToBooking?.variancePercent ?? 0),
+      width: progressWidthPercent((meetingToBooking?.valuePercent ?? 0) / 100),
+      barColor: barColorFromTrend(true, meetingToBooking?.variancePercent ?? 0),
     },
     {
       key: "conversionPercent",
       label: "Conversion %",
-      display: formatInsightsPercent(kpis.conversionPercent.value),
-      trend: formatInsightsChangePercent(kpis.conversionPercent.changePercent),
+      display: dashboardLoading
+        ? "..."
+        : formatInsightsPercent(kpis.conversionPercent.value),
+      trend: dashboardLoading
+        ? "…"
+        : formatInsightsChangePercent(kpis.conversionPercent.changePercent),
       trendClass: trendClass(true, kpis.conversionPercent.changePercent),
       width: progressWidthPercent(kpis.conversionPercent.progressRatio),
       barColor: "bg-emerald-500",
@@ -138,7 +99,7 @@ export default function InsightSect2({
 
   return (
     <main>
-      <div className="mt-6 grid grid-cols-1 items-stretch gap-3.5 px-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-5 lg:px-8">
+      <div className="mt-6 grid grid-cols-1 items-stretch gap-3.5 px-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-4 lg:px-8">
         {cards.map((card) => (
           <div
             key={card.key}

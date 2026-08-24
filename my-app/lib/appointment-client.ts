@@ -122,6 +122,39 @@ export async function fetchDesignersFromDesignModule(): Promise<DesignModuleDesi
   return [];
 }
 
+function isPlaceholderDesignerName(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed === "—" ||
+    trimmed === "-" ||
+    trimmed === "–" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none" ||
+    lower === "not assigned" ||
+    lower === "unassigned"
+  );
+}
+
+/** Design Module first; Hub active designer list if that is empty. */
+export async function fetchDesignersForHubMeeting(): Promise<DesignModuleDesigner[]> {
+  const fromModule = (await fetchDesignersFromDesignModule().catch(() => [])).filter(
+    (row) => row.name.trim() && !isPlaceholderDesignerName(row.name),
+  );
+  if (fromModule.length > 0) return fromModule;
+
+  const fromHub = (await fetchActiveDesigners().catch(() => [])).filter(
+    (name) => name.trim() && !isPlaceholderDesignerName(name),
+  );
+  return fromHub.map((name, index) => ({
+    id: index + 1,
+    name,
+    email: "",
+  }));
+}
+
 export async function fetchActiveDesigners(): Promise<string[]> {
   const res = await fetch("/api/crm/appointment/designer-list/active", {
     cache: "no-store",
@@ -276,6 +309,7 @@ export async function updateAppointment(
 export type AppointmentRow = {
   id?: number;
   leadId?: number;
+  leadType?: string;
   meetingType?: string;
   startTime?: string;
   endTime?: string;
@@ -324,6 +358,7 @@ function normalizeAppointmentRow(row: unknown): AppointmentRow | null {
   const createdAtRaw = readAppointmentField(o, "createdAt", "CreatedAt", "created_at");
   const startTimeRaw = readAppointmentField(o, "startTime", "StartTime", "start_time");
   const designerNameRaw = readAppointmentField(o, "designerName", "DesignerName", "designer_name");
+  const leadTypeRaw = readAppointmentField(o, "leadType", "LeadType", "lead_type");
 
   return {
     id:
@@ -333,6 +368,10 @@ function normalizeAppointmentRow(row: unknown): AppointmentRow | null {
           ? (readAppointmentField(o, "Id", "ID") as number)
           : undefined,
     leadId: Number.isFinite(leadId) ? leadId : undefined,
+    leadType:
+      typeof leadTypeRaw === "string" && leadTypeRaw.trim()
+        ? leadTypeRaw.trim()
+        : undefined,
     meetingType:
       typeof meetingTypeRaw === "string" && meetingTypeRaw.trim()
         ? meetingTypeRaw.trim()
@@ -357,10 +396,22 @@ function parseAppointmentRows(data: unknown): AppointmentRow[] {
     .filter((row): row is AppointmentRow => row !== null);
 }
 
-function appointmentMatchesLead(row: AppointmentRow, leadId: number | string): boolean {
+function normalizeLeadTypeToken(raw?: string): string {
+  return (raw ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function appointmentMatchesLead(
+  row: AppointmentRow,
+  leadId: number | string,
+  leadType?: string,
+): boolean {
   const target = String(leadId).trim();
   if (!target || row.leadId == null) return false;
-  return String(row.leadId) === target;
+  if (String(row.leadId) !== target) return false;
+  const expectedType = normalizeLeadTypeToken(leadType);
+  const rowType = normalizeLeadTypeToken(row.leadType);
+  if (expectedType && rowType && expectedType !== rowType) return false;
+  return true;
 }
 
 function sortAppointmentsNewestFirst(rows: AppointmentRow[]): AppointmentRow[] {
@@ -374,8 +425,9 @@ function sortAppointmentsNewestFirst(rows: AppointmentRow[]): AppointmentRow[] {
 function pickLatestAppointmentForLead(
   rows: AppointmentRow[],
   leadId: number | string,
+  leadType?: string,
 ): AppointmentRow | null {
-  const matches = rows.filter((row) => appointmentMatchesLead(row, leadId));
+  const matches = rows.filter((row) => appointmentMatchesLead(row, leadId, leadType));
   if (matches.length === 0) return null;
   return sortAppointmentsNewestFirst(matches)[0] ?? null;
 }
@@ -383,14 +435,14 @@ function pickLatestAppointmentForLead(
 /** All Hub appointments linked to a lead (deduped by id, newest first). */
 export async function findAllAppointmentsForLead(
   leadId: number | string,
-  options: { designerName?: string } = {},
+  options: { designerName?: string; leadType?: string } = {},
 ): Promise<AppointmentRow[]> {
   const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
   const byId = new Map<number, AppointmentRow>();
 
   const addRows = (rows: AppointmentRow[]) => {
     for (const row of rows) {
-      if (!appointmentMatchesLead(row, leadId) || row.id == null) continue;
+      if (!appointmentMatchesLead(row, leadId, options.leadType) || row.id == null) continue;
       byId.set(row.id, row);
     }
   };
@@ -461,7 +513,7 @@ export function normalizeDesignerNameForAppointmentLookup(name?: string): string
  */
 export async function resolveMeetingTypeForLead(
   leadId: number | string,
-  options: { designerName?: string } = {},
+  options: { designerName?: string; leadType?: string } = {},
 ): Promise<string | null> {
   const ctx = await resolveAppointmentContextForLead(leadId, options);
   return ctx.meetingType;
@@ -479,17 +531,17 @@ export type AppointmentContextForLead = {
  */
 export async function findLatestAppointmentForLead(
   leadId: number | string,
-  options: { designerName?: string } = {},
+  options: { designerName?: string; leadType?: string } = {},
 ): Promise<AppointmentRow | null> {
   const designerName = normalizeDesignerNameForAppointmentLookup(options.designerName);
   let rows: AppointmentRow[] = [];
   if (designerName) {
     rows = await fetchAppointmentsByDesigner(designerName);
   }
-  let latest = pickLatestAppointmentForLead(rows, leadId);
+  let latest = pickLatestAppointmentForLead(rows, leadId, options.leadType);
   if (!latest) {
     rows = parseAppointmentRows(await fetchMyAppointments());
-    latest = pickLatestAppointmentForLead(rows, leadId);
+    latest = pickLatestAppointmentForLead(rows, leadId, options.leadType);
   }
   return latest;
 }
@@ -500,7 +552,7 @@ export async function findLatestAppointmentForLead(
  */
 export async function resolveAppointmentContextForLead(
   leadId: number | string,
-  options: { designerName?: string } = {},
+  options: { designerName?: string; leadType?: string } = {},
 ): Promise<AppointmentContextForLead> {
   const latest = await findLatestAppointmentForLead(leadId, options);
   return {

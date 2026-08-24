@@ -37,6 +37,14 @@ import {
   registerLeadDetailPendingFlush,
 } from "@/lib/lead-detail-pending-flush";
 import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
+import {
+  canDeleteIvrLead,
+  deleteIvrLead,
+  IVR_DELETE_CONFIRM_BODY,
+  IVR_DELETE_CONFIRM_TITLE,
+} from "@/lib/ivr-lead-delete";
+import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import {
   createDefaultRequirements,
   getConfigurationScopeRequirements,
@@ -208,6 +216,7 @@ function LeadDetailHeader() {
     leadType,
     leadId,
     lead,
+    viewerRoleKey,
     createdTimelineOptions,
     createdTimelineLoading,
     selectedTimelineValue,
@@ -225,12 +234,16 @@ function LeadDetailHeader() {
     onPhoneCall,
     onWhatsAppMessage,
   } = useLeadDetailV2();
-  const { notifyError } = useGlobalNotifier();
+  const { notifyError, notifySuccess } = useGlobalNotifier();
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [ivrDeleteOpen, setIvrDeleteOpen] = useState(false);
+  const [ivrDeleting, setIvrDeleting] = useState(false);
   const timelineWrapRef = useRef<HTMLDivElement | null>(null);
   const selectedTimeline =
     createdTimelineOptions.find((x) => x.value === selectedTimelineValue) ?? null;
   const leadComeCount = createdTimelineOptions.length;
+  const showIvrDelete =
+    canDeleteIvrLead(viewerRoleKey) && isIvrInboundLead(leadType, lead.leadSource);
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -273,7 +286,23 @@ function LeadDetailHeader() {
     void onWhatsAppMessage?.();
   }, [hasLeadPhone, notifyError, onWhatsAppMessage]);
 
+  const handleConfirmIvrDelete = useCallback(async () => {
+    try {
+      setIvrDeleting(true);
+      const body = await deleteIvrLead(leadId);
+      notifySuccess(body.message || "IVR lead deleted successfully");
+      dispatchCrmLeadsInvalidate({ leadTypes: ["ivrlead"], reason: "delete" });
+      requestLeadDetailOverlayClose();
+    } catch (error) {
+      notifyError(error instanceof Error ? error.message : "Failed to delete IVR lead");
+    } finally {
+      setIvrDeleting(false);
+      setIvrDeleteOpen(false);
+    }
+  }, [leadId, notifyError, notifySuccess]);
+
   return (
+    <>
     <div
       className="py-4 lg:py-5"
       onDoubleClick={(event) => {
@@ -319,6 +348,15 @@ function LeadDetailHeader() {
               >
                 <span aria-hidden>↩</span>
                 Stage Rollback
+              </button>
+            ) : null}
+            {showIvrDelete ? (
+              <button
+                type="button"
+                onClick={() => setIvrDeleteOpen(true)}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-rose-200 bg-white px-3.5 text-[12px] font-bold uppercase tracking-wide text-rose-700 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-50 hover:shadow-sm active:scale-[0.98]"
+              >
+                Delete
               </button>
             ) : null}
           </div>
@@ -497,6 +535,36 @@ function LeadDetailHeader() {
         </div>
       </div>
     </div>
+    {ivrDeleteOpen ? (
+      <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-[2px]">
+        <div
+          className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_25px_60px_rgba(15,23,42,0.25)]"
+          data-no-dblclick-close
+        >
+          <h3 className="text-sm font-bold text-slate-800">{IVR_DELETE_CONFIRM_TITLE}</h3>
+          <p className="mt-1 text-xs text-slate-500">{IVR_DELETE_CONFIRM_BODY}</p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+              onClick={() => setIvrDeleteOpen(false)}
+              disabled={ivrDeleting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
+              onClick={() => void handleConfirmIvrDelete()}
+              disabled={ivrDeleting}
+            >
+              {ivrDeleting ? "Deleting..." : "Confirm Delete"}
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }
 
@@ -2000,7 +2068,10 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
   useEffect(() => {
     let cancelled = false;
-    void resolveMeetingTypeForLead(leadId, { designerName: lead.designerName }).then((meetingType) => {
+    void resolveMeetingTypeForLead(leadId, {
+      designerName: lead.designerName,
+      leadType,
+    }).then((meetingType) => {
       if (cancelled || !meetingType?.trim()) return;
       appointmentMeetingTypeRef.current = meetingType;
       setAppointmentMeetingType(meetingType);
@@ -2008,7 +2079,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [leadId, lead.designerName]);
+  }, [leadId, lead.designerName, leadType]);
 
   const resolvedMeetingType =
     lead.meetingType?.trim() ||

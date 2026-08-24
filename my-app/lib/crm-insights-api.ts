@@ -323,9 +323,39 @@ export function formatInsightsChangeAbsolute(
 
 export function formatInsightsTrendDays(n: number | null | undefined): string {
   const v = Number(n ?? 0);
-  if (!Number.isFinite(v) || v === 0) return "0.0d";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(1)}d`;
+  if (!Number.isFinite(v) || v === 0) return "0";
+  const sign = v > 0 ? "+" : "−";
+  return `${sign}${formatInsightsDuration(Math.abs(v))}`;
+}
+
+/**
+ * Hub stage velocity is stored in days (decimals). Show human units:
+ * minutes / hours under 1 day, otherwise days (+ hours when useful).
+ */
+export function formatInsightsDuration(days: number | null | undefined): string {
+  const d = Number(days ?? 0);
+  if (!Number.isFinite(d) || d <= 0) return "0h";
+
+  const totalHours = d * 24;
+  if (totalHours < 1) {
+    const mins = Math.max(1, Math.round(totalHours * 60));
+    return `${mins}m`;
+  }
+
+  if (d < 1) {
+    const h = totalHours >= 10 ? Math.round(totalHours) : Math.round(totalHours * 10) / 10;
+    return `${String(h).replace(/\.0$/, "")}h`;
+  }
+
+  const wholeDays = Math.floor(d + 1e-9);
+  const remHours = Math.round((d - wholeDays) * 24);
+  if (remHours <= 0) {
+    return wholeDays === 1 ? "1 day" : `${wholeDays} days`;
+  }
+  if (wholeDays === 0) {
+    return `${remHours}h`;
+  }
+  return `${wholeDays}d ${remHours}h`;
 }
 
 export function progressWidthPercent(ratio: number | null | undefined): string {
@@ -877,6 +907,53 @@ export async function fetchInsightsPerformanceCards(
     "Unable to load sales performance cards.",
   );
   return normalizePerformanceCards(json);
+}
+
+export type QuotesSentMonthApiResult = {
+  hubImplemented: boolean;
+  periodStart: string | null;
+  periodEnd: string | null;
+  filterField: "quoteSentAt";
+  quotesSentCount: number;
+  quotationValueInr: number;
+};
+
+function unwrapInsightsPayload(json: unknown): Record<string, unknown> {
+  if (!json || typeof json !== "object") return {};
+  const root = json as Record<string, unknown>;
+  if (root.data && typeof root.data === "object") {
+    return root.data as Record<string, unknown>;
+  }
+  return root;
+}
+
+/** Hub KPI: quotes sent in window by quoteSentAt + sum of quotation value. */
+export async function fetchInsightsQuotesSentMonth(
+  query: InsightsPerformanceCardsQuery,
+): Promise<QuotesSentMonthApiResult> {
+  const qs = buildInsightsPerformanceCardsSearchParams(query).toString();
+  const res = await fetch(
+    `/api/crm/insights/quotes-sent-month${qs ? `?${qs}` : ""}`,
+    {
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  const json = await readJson<unknown>(
+    res,
+    "Unable to load quotes-sent-month insights.",
+  );
+  const o = unwrapInsightsPayload(json);
+  return {
+    hubImplemented: o.hubImplemented === true,
+    periodStart: asStr(o.periodStart ?? o.dateFrom, "") || null,
+    periodEnd: asStr(o.periodEnd ?? o.dateTo, "") || null,
+    filterField: "quoteSentAt",
+    quotesSentCount: asNum(o.quotesSentCount ?? o.quoteSentCount),
+    quotationValueInr: asNum(
+      o.quotationValueInr ?? o.quotationValue ?? o.totalQuotationValueInr,
+    ),
+  };
 }
 
 export async function fetchInsightsFilterOptions(
