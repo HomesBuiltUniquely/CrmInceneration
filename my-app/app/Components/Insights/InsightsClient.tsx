@@ -479,7 +479,9 @@ export default function InsightsClient1() {
       setPerformanceCards(data);
       try {
         const month = await fetchInsightsQuotesSentMonth(performanceQuery);
-        if (month.hubImplemented) {
+        // Hub 404 stub is hubImplemented:false with 0. Only trust Hub when it
+        // actually returns a lead count; otherwise CRM quote-sent pool fills it.
+        if (month.hubImplemented && month.quotesSentCount > 0) {
           setQuotesSentMonth({
             periodStart: month.periodStart,
             periodEnd: month.periodEnd,
@@ -1075,7 +1077,7 @@ export default function InsightsClient1() {
         applyInvestmentMetrics(funnelPool, budgetMap, salesFunnelShell, opts);
 
         const monthWindow = quotesSentMonthDateWindow(dateFilter);
-        const quotesSentScoped = filterInsightsQuoteSentScopeLeads(quotesSentScopePool, {
+        const quotesSentScoped = filterInsightsScopeLeadsKeepRows(quotesSentScopePool, {
           branchId: effectiveBranchId,
           filterOptions,
         });
@@ -1150,8 +1152,8 @@ export default function InsightsClient1() {
 
   if (!insightsAllowed) {
     return (
-      <div className="h-dvh overflow-hidden bg-[var(--crm-app-bg)]">
-        <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[auto_minmax(0,1fr)]">
+      <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+        <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
           <QuickAccessSidebar
             appBadge="HO WS"
             appName="Hows"
@@ -1161,7 +1163,7 @@ export default function InsightsClient1() {
             profileRole={role}
             profileInitials={roleLabel.slice(0, 2).toUpperCase() || "U"}
           />
-          <div className="flex min-h-0 min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
+          <div className="flex min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
             <h1 className="text-xl font-bold text-gray-900">Access restricted</h1>
             <p className="max-w-md text-sm text-gray-600">
               CRM Insights is available for Super Admin, Admin, Sales Admin, and Sales
@@ -1174,8 +1176,8 @@ export default function InsightsClient1() {
   }
 
   return (
-    <div className="h-dvh overflow-hidden bg-[var(--crm-app-bg)]">
-      <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[auto_minmax(0,1fr)]">
+    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <QuickAccessSidebar
           appBadge="HO WS"
           appName="Hows"
@@ -1186,7 +1188,7 @@ export default function InsightsClient1() {
           profileInitials={roleLabel.slice(0, 2).toUpperCase() || "SA"}
         />
 
-        <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-[#f4f7fb]">
+        <div className="min-w-0 bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
           <AppTopBar />
 
           <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
@@ -1335,18 +1337,6 @@ export default function InsightsClient1() {
             quotesSentMonth={quotesSentMonth}
             quotesSentMonthLoading={quotesSentMonthLoading || funnelMetricsLoading}
           />
-          <InsightsSect6
-            leadsOverTime={
-              alignedWeekCharts?.leadsOverTime ?? dashboard.leadsOverTime
-            }
-            conversionTrend={
-              alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend
-            }
-            revenueForecast={dashboard.revenueForecast}
-            dateFilter={dateFilter}
-            volumeCharts={alignedWeekCharts}
-            weekBars={alignedWeekCharts?.weekBars ?? null}
-          />
           <InsightSect2
             kpis={{
               ...dashboard.kpis,
@@ -1406,6 +1396,18 @@ export default function InsightsClient1() {
             team={teamForMatrix}
             incentiveScopeLabel={incentiveScopeLabel}
             incentivesLoading={teamIncentivesLoading}
+          />
+          <InsightsSect6
+            leadsOverTime={
+              alignedWeekCharts?.leadsOverTime ?? dashboard.leadsOverTime
+            }
+            conversionTrend={
+              alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend
+            }
+            revenueForecast={dashboard.revenueForecast}
+            dateFilter={dateFilter}
+            volumeCharts={alignedWeekCharts}
+            weekBars={alignedWeekCharts?.weekBars ?? null}
           />
         </div>
       </div>

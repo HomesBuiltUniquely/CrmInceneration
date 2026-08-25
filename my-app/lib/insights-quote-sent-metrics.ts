@@ -255,7 +255,7 @@ export function listQuoteSentWonLeads(leads: ApiLead[], opts: InsightCountOpts):
 
 export function computeQuoteSentWonCount(leads: ApiLead[], opts: InsightCountOpts): number {
   const tiles = computeMilestoneTileCounts(leads, opts);
-  return tiles.quoteSent;
+  return Math.max(0, tiles.quoteSent - tiles.lostQuoteSent);
 }
 
 /** Sum of current-quote Total Investment Range for won quote-sent leads. */
