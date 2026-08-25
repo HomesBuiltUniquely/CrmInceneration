@@ -953,7 +953,8 @@ export async function fetchInsightsQuotesSentMonth(
       o.uniqueLeadCount ??
         o.quotesSentLeadCount ??
         o.distinctLeadCount ??
-        o.quotesSentCount,
+        o.quotesSentCount ??
+        o.quoteSentCount,
     ),
     quotationValueInr: asNum(
       o.quotationValueInr ?? o.quotationValue ?? o.totalQuotationValueInr,

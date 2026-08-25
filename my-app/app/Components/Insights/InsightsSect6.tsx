@@ -726,7 +726,7 @@ export default function InsightsSect6({
 
   return (
     <main className="px-4 lg:px-0">
-      <div className="mt-6 flex justify-center pb-8">
+      <div className="mt-10 flex justify-center pb-10">
         <div className="grid w-full max-w-[1290px] grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {/* A) Leads over time */}
           <div className="w-full overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">

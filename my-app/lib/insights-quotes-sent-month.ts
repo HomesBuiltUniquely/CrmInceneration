@@ -3,6 +3,7 @@ import {
   extractQuoteSentFields,
   isQuoteSentLead,
 } from "@/lib/quote-sent-info";
+import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { stableLeadKey } from "@/lib/insights-lead-investment";
 import {
   resolveBookingDateRange,
@@ -77,6 +78,14 @@ export function readLeadQuoteSentAtMs(lead: ApiLead): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+function inInclusiveWindow(ms: number, periodStart?: string, periodEnd?: string): boolean {
+  const fromMs = periodStart ? Date.parse(periodStart) : NaN;
+  const toMs = periodEnd ? Date.parse(periodEnd) : NaN;
+  if (Number.isFinite(fromMs) && ms < fromMs) return false;
+  if (Number.isFinite(toMs) && ms > toMs) return false;
+  return true;
+}
+
 export function leadQuoteSentInWindow(
   lead: ApiLead,
   periodStart?: string,
@@ -84,12 +93,14 @@ export function leadQuoteSentInWindow(
 ): boolean {
   if (!isQuoteSentLead(lead)) return false;
   const sentMs = readLeadQuoteSentAtMs(lead);
-  if (sentMs == null) return false;
-  const fromMs = periodStart ? Date.parse(periodStart) : NaN;
-  const toMs = periodEnd ? Date.parse(periodEnd) : NaN;
-  if (Number.isFinite(fromMs) && sentMs < fromMs) return false;
-  if (Number.isFinite(toMs) && sentMs > toMs) return false;
-  return true;
+  if (sentMs != null) return inInclusiveWindow(sentMs, periodStart, periodEnd);
+  // List rows often omit quoteSentAt. Count quote-sent leads whose created date
+  // falls in the Insights month so Weighted Pipeline is not stuck at 0.
+  const createdMs = Date.parse(readLeadCreatedAtRaw(lead));
+  if (Number.isFinite(createdMs)) {
+    return inInclusiveWindow(createdMs, periodStart, periodEnd);
+  }
+  return !periodStart && !periodEnd;
 }
 
 export function listLeadsQuoteSentInWindow(
