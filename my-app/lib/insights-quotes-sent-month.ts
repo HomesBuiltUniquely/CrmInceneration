@@ -109,9 +109,14 @@ export function computeQuotesSentMonthMetrics(
   },
 ): QuotesSentMonthMetrics {
   const matched = listLeadsQuoteSentInWindow(leads, args.periodStart, args.periodEnd);
+  const unique = new Map<string, ApiLead>();
+  for (const lead of matched) {
+    unique.set(stableLeadKey(lead), lead);
+  }
+  const uniqueLeads = Array.from(unique.values());
   let quotationValueInr = 0;
   if (args.investments) {
-    for (const lead of matched) {
+    for (const lead of uniqueLeads) {
       quotationValueInr += args.investments.get(stableLeadKey(lead)) ?? 0;
     }
   }
@@ -119,7 +124,7 @@ export function computeQuotesSentMonthMetrics(
     periodStart: args.periodStart ?? null,
     periodEnd: args.periodEnd ?? null,
     filterField: "quoteSentAt",
-    quotesSentCount: matched.length,
+    quotesSentCount: uniqueLeads.length,
     quotationValueInr,
     source: "crm",
   };

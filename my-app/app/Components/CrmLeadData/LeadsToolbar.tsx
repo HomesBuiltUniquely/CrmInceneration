@@ -924,14 +924,13 @@ export default function LeadsToolbar({
                     ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
                     : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
                 } ${interactive ? "cursor-pointer hover:bg-[var(--crm-surface)] w-full" : ""}`;
-                const quoteSentTotal = Number(leadTypeCounts.quoteSent ?? value ?? 0);
+                const quoteSentWon = Number(leadTypeCounts.quoteSent ?? value ?? 0);
                 const quoteSentLost = Number(leadTypeCounts.lostQuoteSent ?? 0);
-                const quoteSentWon = Math.max(0, quoteSentTotal - quoteSentLost);
                 const inner =
-                  tileLabel === "Quote Sent" && isActive ? (
+                  tileLabel === "Quote Sent" ? (
                     <>
                       <div className="text-2xl font-extrabold leading-none text-[var(--crm-accent)]">
-                        {quoteSentTotal}
+                        {quoteSentWon}
                       </div>
                       <div className="mt-1.5 space-y-0.5 text-[10px] font-semibold leading-tight">
                         <div className="text-emerald-700">Won {quoteSentWon}</div>
