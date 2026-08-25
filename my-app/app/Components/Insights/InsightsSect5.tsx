@@ -14,14 +14,7 @@ type Props = {
   incentivesLoading?: boolean;
 };
 
-const TEAM_VISIBLE_ROWS = 7;
-const TEAM_ROW_HEIGHT_PX = 60;
-const TEAM_SCROLL_MAX_PX = TEAM_VISIBLE_ROWS * TEAM_ROW_HEIGHT_PX;
-
-/**
- * Payoff stays computed + on the model; set true to show the column again.
- * Hide-only (not removed) so incentives data still loads.
- */
+/** Payoff stays computed + on the model; set true to show the column again. */
 const SHOW_PAYOFF_COLUMN = false;
 
 /** No Value column — closed $ is not shown (Achieved/Payoff cover incentives money). */
@@ -111,7 +104,6 @@ export default function InsightSect5({
   incentiveScopeLabel,
   incentivesLoading = false,
 }: Props) {
-  const needsScroll = team.length > TEAM_VISIBLE_ROWS;
   const hasAnyAchieved = team.some(
     (m) => (Number(m.achievedIncentive) || 0) > 0,
   );
@@ -170,18 +162,7 @@ export default function InsightSect5({
                 ) : null}
               </div>
 
-              <div
-                className={`insights-table-scroll ${
-                  needsScroll
-                    ? "overflow-y-auto overscroll-contain"
-                    : "overflow-visible"
-                }`}
-                style={
-                  needsScroll
-                    ? { maxHeight: `${TEAM_SCROLL_MAX_PX}px` }
-                    : undefined
-                }
-              >
+              <div className="insights-table-scroll">
                 {team.length === 0 ? (
                   <div className="px-5 py-8 text-center text-sm text-gray-500">
                     No team performance rows for this filter.
@@ -319,12 +300,6 @@ export default function InsightSect5({
               </div>
             </div>
           </div>
-
-          {needsScroll ? (
-            <p className="border-t border-gray-50 px-4 py-2 text-center text-[10px] font-medium text-gray-400">
-              Scroll · {formatInsightsCount(team.length)} members
-            </p>
-          ) : null}
         </div>
       </div>
     </main>

@@ -43,6 +43,42 @@ export function isRenovationFeedbackLocked(
   return true;
 }
 
+/** Renovation is only a Discovery Won substage — hide it after Discovery. */
+export function isRenovationCompleteTaskOptionAllowed(
+  milestoneStage: string | null | undefined,
+  milestoneSubStage: string | null | undefined,
+  milestoneStageCategory: string | null | undefined,
+): boolean {
+  const sub = (milestoneSubStage ?? "").trim().toUpperCase();
+  if (sub === "RENOVATION") return true;
+  const stage = normalizeStageKey(milestoneStage ?? "");
+  const cat = normalizeStageKey(milestoneStageCategory ?? "");
+  if (stage === "discovery") return true;
+  if (cat === "discovery won") return true;
+  if (isFreshLeadMilestonePosition(milestoneStage, milestoneSubStage, milestoneStageCategory)) {
+    return true;
+  }
+  return false;
+}
+
+/** Renovation is only a Discovery Won substage — hide it after Discovery. */
+export function isRenovationCompleteTaskOptionAllowed(
+  milestoneStage: string | null | undefined,
+  milestoneSubStage: string | null | undefined,
+  milestoneStageCategory: string | null | undefined,
+): boolean {
+  const sub = (milestoneSubStage ?? "").trim().toUpperCase();
+  if (sub === "RENOVATION") return true;
+  const stage = normalizeStageKey(milestoneStage ?? "");
+  const cat = normalizeStageKey(milestoneStageCategory ?? "");
+  if (stage === "discovery") return true;
+  if (cat === "discovery won") return true;
+  if (isFreshLeadMilestonePosition(milestoneStage, milestoneSubStage, milestoneStageCategory)) {
+    return true;
+  }
+  return false;
+}
+
 export function matchesMilestoneStage(
   label: string | null | undefined,
   canonical: string

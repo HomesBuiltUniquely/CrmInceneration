@@ -124,7 +124,7 @@ export function shouldShowLostPathLeadsInTable(args: {
 }): boolean {
   if (args.searchActive) return true;
   if (args.listFiltersActive) return true;
-  if (args.insightTableMode === "lostQuoteSent" || args.insightTableMode === "quoteSent") {
+  if (args.insightTableMode === "lostQuoteSent") {
     return true;
   }
   if (isLostSegmentInsightMode(args.insightTableMode)) return true;

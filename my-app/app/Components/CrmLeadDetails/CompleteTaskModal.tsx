@@ -13,6 +13,7 @@ import {
 } from "@/lib/milestone-substage-map";
 import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-substages";
 import {
+  isRenovationCompleteTaskOptionAllowed,
   isRenovationFeedbackLocked,
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
@@ -780,6 +781,17 @@ export default function CompleteTaskModal({
       if (!presalesMode && subStageName && !isManualCompleteTaskSubstage(subStageName)) {
         continue;
       }
+      if (
+        !presalesMode &&
+        subStageName.trim().toUpperCase() === "RENOVATION" &&
+        !isRenovationCompleteTaskOptionAllowed(
+          lead.stageBlock?.milestoneStage,
+          lead.stageBlock?.milestoneSubStage,
+          lead.stageBlock?.milestoneStageCategory,
+        )
+      ) {
+        continue;
+      }
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();
@@ -797,6 +809,9 @@ export default function CompleteTaskModal({
   }, [
     feedbackMappings,
     presalesMode,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.milestoneStageCategory,
   ]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();

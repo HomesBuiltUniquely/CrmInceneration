@@ -138,10 +138,11 @@ export function computeMilestoneTileCounts(
     const lost = isLostPathLead(lead);
     const quoteSent = isQuoteSentLead(lead);
 
-    // Quote Sent tile = active + lost (one combined total). Lost tile keeps its own count.
+    // Quote Sent tile = currently quote-sent and not lost.
+    // Lost-after-quote-sent is lostQuoteSent only — do not add it to the main 22.
     if (quoteSent) {
-      counts.quoteSent += 1;
       if (lost) counts.lostQuoteSent += 1;
+      else counts.quoteSent += 1;
     }
 
     if (lost) continue;
@@ -169,9 +170,11 @@ export function filterLeadsForMilestoneInsightMode(
 ): ApiLead[] {
   const matched = leads.filter((lead) => {
     if (!leadMatchesSalesInsightScope(lead, opts)) return false;
-    // Quote Sent + Lost Quote Sent → same combined list (active first, lost last).
-    if (mode === "quoteSent" || mode === "lostQuoteSent") {
-      return isQuoteSentLead(lead);
+    if (mode === "quoteSent") {
+      return isQuoteSentLead(lead) && !isLostPathLead(lead);
+    }
+    if (mode === "lostQuoteSent") {
+      return isQuoteSentLead(lead) && isLostPathLead(lead);
     }
     if (isLostPathLead(lead)) return false;
     switch (mode) {
@@ -188,12 +191,8 @@ export function filterLeadsForMilestoneInsightMode(
     }
   });
 
-  if (mode === "quoteSent" || mode === "lostQuoteSent") {
-    return [...matched].sort((a, b) => {
-      const aLost = isLostPathLead(a) ? 1 : 0;
-      const bLost = isLostPathLead(b) ? 1 : 0;
-      return aLost - bLost;
-    });
+  if (mode === "lostQuoteSent") {
+    return matched;
   }
 
   return matched;

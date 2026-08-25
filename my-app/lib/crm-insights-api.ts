@@ -949,7 +949,12 @@ export async function fetchInsightsQuotesSentMonth(
     periodStart: asStr(o.periodStart ?? o.dateFrom, "") || null,
     periodEnd: asStr(o.periodEnd ?? o.dateTo, "") || null,
     filterField: "quoteSentAt",
-    quotesSentCount: asNum(o.quotesSentCount ?? o.quoteSentCount),
+    quotesSentCount: asNum(
+      o.uniqueLeadCount ??
+        o.quotesSentLeadCount ??
+        o.distinctLeadCount ??
+        o.quotesSentCount,
+    ),
     quotationValueInr: asNum(
       o.quotationValueInr ?? o.quotationValue ?? o.totalQuotationValueInr,
     ),

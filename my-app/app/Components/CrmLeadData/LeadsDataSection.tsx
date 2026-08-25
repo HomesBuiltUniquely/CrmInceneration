@@ -4474,8 +4474,7 @@ export default function LeadsDataSection({
         : leadType.trim().toLowerCase()) as CrmLeadType,
     );
     const mergedLead = applyStoredPresalesMilestoneToApiLead(lead, sourceLt);
-    const quoteInsight =
-      insightTableMode === "quoteSent" || insightTableMode === "lostQuoteSent";
+    const quoteInsight = insightTableMode === "lostQuoteSent";
     const lostPath = isLostPathLead(lead);
     return {
       ...mapApiLeadToRow(mergedLead, sourceLt, stageOrder, scopeRoleKey, leadsWorkspace),
