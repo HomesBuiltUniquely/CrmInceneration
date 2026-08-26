@@ -21,6 +21,16 @@ export async function POST(
       upstreamForm.append("notes", notes.trim());
     }
 
+    const paymentMethod = incoming.get("paymentMethod");
+    if (typeof paymentMethod === "string" && paymentMethod.trim()) {
+      upstreamForm.append("paymentMethod", paymentMethod.trim());
+    }
+
+    const paymentChannel = incoming.get("paymentChannel");
+    if (typeof paymentChannel === "string" && paymentChannel.trim()) {
+      upstreamForm.append("paymentChannel", paymentChannel.trim());
+    }
+
     for (const [key, value] of incoming.entries()) {
       if (key !== "files" || !(value instanceof Blob) || value.size === 0) continue;
       const name = value instanceof File ? value.name : "payment-proof";

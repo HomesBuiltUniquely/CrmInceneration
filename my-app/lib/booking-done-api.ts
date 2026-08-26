@@ -13,6 +13,8 @@ export type BookingDoneSubmitInput = {
   quoteVerifyUrl?: string;
   /** Calendar day of booking (`YYYY-MM-DD`). */
   bookingDate?: string;
+  paymentChannel?: string;
+  paymentMethod?: string;
 };
 
 export type BookingTokenRecord = {
@@ -161,6 +163,8 @@ export async function submitBookingDone(
       paymentKind: input.paymentKind,
       quoteVerifyUrl: input.quoteVerifyUrl,
       bookingDate: input.bookingDate,
+      paymentChannel: input.paymentChannel,
+      paymentMethod: input.paymentMethod,
     }),
     cache: "no-store",
   });

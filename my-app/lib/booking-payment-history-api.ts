@@ -23,6 +23,10 @@ export type PaymentHistoryEntry = {
   remainingAfter: number;
   paymentKind?: string;
   source?: string;
+  paymentChannel?: string;
+  paymentMethod?: string;
+  gatewayPaymentId?: string | null;
+  paymentAttemptId?: string | null;
   recordedBy?: string;
   notes?: string;
   createdAt: string;
@@ -221,12 +225,24 @@ export type BookingPaymentSubmitResponse = PaymentHistoryEntry & {
 
 export async function submitBookingPayment(
   recordId: string,
-  input: { amount: number; notes?: string; files: File[] },
+  input: {
+    amount: number;
+    notes?: string;
+    files: File[];
+    paymentMethod?: string;
+    paymentChannel?: string;
+  },
 ): Promise<BookingPaymentSubmitResponse> {
   const form = new FormData();
   form.append("amount", String(input.amount));
   if (input.notes?.trim()) {
     form.append("notes", input.notes.trim());
+  }
+  if (input.paymentMethod?.trim()) {
+    form.append("paymentMethod", input.paymentMethod.trim());
+  }
+  if (input.paymentChannel?.trim()) {
+    form.append("paymentChannel", input.paymentChannel.trim());
   }
   for (const file of input.files) {
     form.append("files", file, file.name);
