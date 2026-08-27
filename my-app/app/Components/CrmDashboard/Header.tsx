@@ -9,7 +9,7 @@ import InsightsStrip from "./InsightsStrip";
 
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
-import SlimScrollArea from "../Shared/SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { sidebarSectionsForViewer, type CrmWorkspace } from "@/lib/crm-workspace";
 

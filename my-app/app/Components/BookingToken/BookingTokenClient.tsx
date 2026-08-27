@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
-import SlimScrollArea from "../Shared/SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessBookingTokenDashboard } from "@/lib/roleUtils";

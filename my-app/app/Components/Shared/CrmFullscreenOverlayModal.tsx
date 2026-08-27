@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import SlimScrollArea from "./SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 
 export type OverlayOriginRect = {
   top: number;

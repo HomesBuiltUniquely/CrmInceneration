@@ -6,7 +6,10 @@ import {
   formatInsightsInrCompact,
   formatInsightsPercent,
   type InsightsDashboard,
+  type InsightsFunnelMode,
+  type InsightsFunnelPathFilter,
   type InsightsFunnelStage,
+  type InsightsSalesFunnelResponse,
 } from "@/lib/crm-insights-api";
 import type { TokenMetricsData } from "./InsightSect2";
 import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
@@ -34,7 +37,60 @@ type Props = {
   stagePathLoading?: boolean;
   /** When true, stage bars are current-in-milestone inventory (not pool total / cumulative). */
   useCurrentStageInventory?: boolean;
+  /** Measure camera: Current | Passages | New leads. */
+  funnelMode?: InsightsFunnelMode;
+  onFunnelModeChange?: (mode: InsightsFunnelMode) => void;
+  /** Synced path tab (required for Hub passages/cohort). */
+  pathFilter?: InsightsFunnelPathFilter;
+  onPathFilterChange?: (path: InsightsFunnelPathFilter) => void;
+  /** Hub response for passages / cohort (null while on current). */
+  modeFunnel?: InsightsSalesFunnelResponse | null;
+  modeFunnelLoading?: boolean;
+  modeFunnelError?: string;
+  /** Passages / New leads — Super Admin only (preview + under construction). */
+  canUseAdvancedFunnelModes?: boolean;
 };
+
+const FUNNEL_MODE_OPTIONS: Array<{
+  id: InsightsFunnelMode;
+  label: string;
+  short: string;
+  hint: string;
+  /** Super Admin preview only until product launches. */
+  previewOnly?: boolean;
+}> = [
+  {
+    id: "current",
+    label: "Current",
+    short: "Now",
+    hint: "Who is sitting in each stage right now (Journey heatmap).",
+  },
+  {
+    id: "passages",
+    label: "Passages",
+    short: "Moved",
+    hint: "Who entered each stage in the selected dates — old leads moving still count.",
+    previewOnly: true,
+  },
+  {
+    id: "cohort",
+    label: "New leads",
+    short: "New",
+    hint: "Of leads created in the selected dates, how many reached each stage.",
+    previewOnly: true,
+  },
+];
+
+function funnelModeSubtitle(mode: InsightsFunnelMode): string {
+  switch (mode) {
+    case "passages":
+      return "Leads that entered each stage in the selected date range (old leads moving still count)";
+    case "cohort":
+      return "Of leads created in the selected date range — how many reached each milestone";
+    default:
+      return "Current leads in each milestone stage (same as Journey heatmap)";
+  }
+}
 
 const WON_FUNNEL_BAR_COLORS = [
   "bg-[#0B1220] text-white",
@@ -361,9 +417,46 @@ export default function InsightSect3({
   stagePathData: stagePathDataProp = {},
   stagePathLoading = false,
   useCurrentStageInventory = false,
+  funnelMode = "current",
+  onFunnelModeChange,
+  pathFilter: pathFilterProp,
+  onPathFilterChange,
+  modeFunnel = null,
+  modeFunnelLoading = false,
+  modeFunnelError = "",
+  canUseAdvancedFunnelModes = false,
 }: Props) {
-  const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost" | "hold">("all");
+  const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost" | "hold">(
+    pathFilterProp ?? "all",
+  );
   const [selectedStagePopup, setSelectedStagePopup] = useState<string | null>(null);
+
+  const visibleFunnelModes = useMemo(
+    () =>
+      FUNNEL_MODE_OPTIONS.filter(
+        (opt) => !opt.previewOnly || canUseAdvancedFunnelModes,
+      ),
+    [canUseAdvancedFunnelModes],
+  );
+
+  const isApiMode =
+    canUseAdvancedFunnelModes &&
+    (funnelMode === "passages" || funnelMode === "cohort");
+  const showUnderConstruction =
+    canUseAdvancedFunnelModes &&
+    (funnelMode === "passages" || funnelMode === "cohort");
+
+  useEffect(() => {
+    if (pathFilterProp && pathFilterProp !== funnelTab) {
+      setFunnelTab(pathFilterProp);
+    }
+  }, [pathFilterProp, funnelTab]);
+
+  const setPathTab = (tab: "all" | "won" | "lost" | "hold") => {
+    setFunnelTab(tab);
+    setSelectedStagePopup(null);
+    onPathFilterChange?.(tab);
+  };
 
   /** Hub holdPathByStage wins over client Hold heuristics. */
   const stagePathData = useMemo(
@@ -371,31 +464,80 @@ export default function InsightSect3({
     [stagePathDataProp, holdPathByStage],
   );
 
+  /** Hub passages/cohort stages — already path-filtered when pathFilter ≠ all. */
+  const apiModeStages = useMemo((): InsightsFunnelStage[] => {
+    if (!isApiMode || !modeFunnel) return [];
+    const stages = (modeFunnel.stages?.length
+      ? modeFunnel.stages
+      : modeFunnel.salesFunnel) ?? [];
+    const withoutTotal = stages.filter(
+      (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "total",
+    );
+    const totalFromApi = stages.find(
+      (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === "total",
+    );
+    const milestones =
+      funnelTab === "all"
+        ? withoutTotal
+        : withoutTotal.filter(
+            (s) =>
+              resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !==
+              "fresh_lead",
+          );
+    const totalStage: InsightsFunnelStage = totalFromApi ?? {
+      stageKey: "total",
+      stageLabel: "Total",
+      count:
+        modeFunnel.total?.count != null && modeFunnel.total.count > 0
+          ? modeFunnel.total.count
+          : withoutTotal.reduce((s, x) => s + (Number(x.count) || 0), 0),
+      countLabel: modeFunnel.total?.countLabel || "Leads",
+      value: 0,
+      conversionPercent: 100,
+    };
+    return [totalStage, ...milestones];
+  }, [isApiMode, modeFunnel, funnelTab]);
+
+  const apiPathBreakdownByKey = useMemo(() => {
+    const map: Record<string, { won: number; lost: number; hold: number }> = {};
+    if (!modeFunnel) return map;
+    for (const s of modeFunnel.stages ?? modeFunnel.salesFunnel ?? []) {
+      const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+      if (s.pathBreakdown) map[k] = s.pathBreakdown;
+    }
+    return map;
+  }, [modeFunnel]);
+
   const fullSalesFunnel = useMemo(() => {
+    if (isApiMode) return apiModeStages;
+
     // Authoritative inventory: never replace Fresh Lead with pool total
     if (useCurrentStageInventory && salesFunnel.length > 0) {
       return salesFunnel;
     }
 
     // Hub fallback only — do NOT inject totalLeadsCount as Fresh Lead
-    // (Fresh Lead is a milestone stage inventory, not all leads)
     const hasFresh = salesFunnel.some((s) => {
       const k = (s.stageKey || s.stageLabel).toLowerCase();
       return k.includes("fresh") || k.includes("new lead") || k.includes("received");
     });
     if (hasFresh) return salesFunnel;
 
-    // If Hub omits Fresh Lead stage, leave stages as-is (no synthetic total-as-fresh)
     return salesFunnel;
-  }, [salesFunnel, useCurrentStageInventory]);
+  }, [salesFunnel, useCurrentStageInventory, isApiMode, apiModeStages]);
 
   const activeSalesFunnel = useMemo(() => {
+    if (isApiMode) {
+      // Hub already returns sharePercent / conversionPercent for the mode
+      return fullSalesFunnel.map((stage) => ({
+        ...stage,
+        conversionPercent: Number(stage.conversionPercent) || 0,
+      }));
+    }
+
     const withCounts = fullSalesFunnel.map((stage) => {
       const key = stage.stageKey || stage.stageLabel;
       let count = stage.count;
-
-      // Closed inventory already comes from milestone counts when aligned —
-      // do not inflate with bookingCount (that caused 133 vs heatmap 128)
 
       let value = stage.value;
       if (funnelStageValues && !funnelMetricsLoading) {
@@ -417,6 +559,7 @@ export default function InsightSect3({
     funnelMetricsLoading,
     funnelStageValues,
     useCurrentStageInventory,
+    isApiMode,
   ]);
 
   const lostStages = lostFunnel?.stages ?? [];
@@ -505,33 +648,53 @@ export default function InsightSect3({
    * - Hold Total = Hub holdFunnel (prefer) or mapped On Hold path
    */
   const displaySalesFunnel = useMemo(() => {
+    const isSyntheticTotalStage = (s: InsightsFunnelStage) =>
+      resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === "total";
+
+    // Passages / cohort: Hub already path-filtered + returned share %.
+    // Deduplicate by canonical key so React keys stay unique (Hub may send Total twice).
+    if (isApiMode) {
+      const seen = new Set<string>();
+      return activeSalesFunnel.filter((s) => {
+        const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
     // Hold tab: Hub catalog-gated stages only when holdFunnel is present.
+    // Always strip Hub's own Total — we prepend a single synthetic Total bar below.
     const milestoneStages: InsightsFunnelStage[] =
       funnelTab === "hold" && hasHubHoldFunnel
-        ? holdStages.map((s) => ({
-            stageKey: s.stageKey,
-            stageLabel: s.stageLabel,
-            count: s.count,
-            countLabel: "On Hold",
-            value: 0,
-            conversionPercent: Number(s.sharePercent) || 0,
-          }))
+        ? holdStages
+            .filter((s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "total")
+            .map((s) => ({
+              stageKey: s.stageKey,
+              stageLabel: s.stageLabel,
+              count: s.count,
+              countLabel: "On Hold",
+              value: 0,
+              conversionPercent: Number(s.sharePercent) || 0,
+            }))
         : funnelTab === "hold"
           ? activeSalesFunnel.filter((s) => {
               const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
               if (key === "fresh_lead" || key === "total") return false;
               return funnelStageHasHoldPath(stagePathData[key]);
             })
-          : funnelTab === "all"
-            ? activeSalesFunnel
-            : activeSalesFunnel.filter(
-                (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
-              );
+          : activeSalesFunnel.filter((s) => {
+              const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+              if (key === "total") return false;
+              if (funnelTab !== "all" && key === "fresh_lead") return false;
+              return true;
+            });
 
+    const inventoryStages = activeSalesFunnel.filter((s) => !isSyntheticTotalStage(s));
     const poolTotal =
       totalLeadsCount != null && totalLeadsCount > 0
         ? totalLeadsCount
-        : activeSalesFunnel.reduce((sum, s) => sum + (Number(s.count) || 0), 0);
+        : inventoryStages.reduce((sum, s) => sum + (Number(s.count) || 0), 0);
 
     const lostSegmentTotal =
       lostFunnel?.total != null && lostFunnel.total > 0
@@ -540,9 +703,9 @@ export default function InsightSect3({
 
     // Current-in-stage: sum is the pool. Cumulative roll-up: first stage already ≈ full value.
     const poolValue = useCurrentStageInventory
-      ? activeSalesFunnel.reduce((sum, s) => sum + (Number(s.value) || 0), 0)
-      : Number(activeSalesFunnel[0]?.value ?? 0) ||
-        activeSalesFunnel.reduce((sum, s) => sum + (Number(s.value) || 0), 0);
+      ? inventoryStages.reduce((sum, s) => sum + (Number(s.value) || 0), 0)
+      : Number(inventoryStages[0]?.value ?? 0) ||
+        inventoryStages.reduce((sum, s) => sum + (Number(s.value) || 0), 0);
 
     let totalCount = poolTotal;
     let totalValue = poolValue;
@@ -586,6 +749,7 @@ export default function InsightSect3({
     holdCountByStageKey,
     holdSegmentTotal,
     holdStages,
+    isApiMode,
     lostFunnel?.stages,
     lostFunnel?.total,
     stagePathData,
@@ -648,48 +812,131 @@ export default function InsightSect3({
       <div className="mx-auto flex max-w-[1300px] flex-col gap-8 lg:flex-row">
         {/* Sales Funnel Efficiency */}
         <div className="w-full rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6 lg:w-[68%]">
-          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">Sales Funnel Efficiency</h2>
-              <p className="mt-0.5 text-xs text-gray-500">
-                Current leads in each milestone stage (same as Journey heatmap)
-              </p>
+          <div className="mb-5 flex flex-col gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold text-gray-900">Sales Funnel Efficiency</h2>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  {funnelModeSubtitle(funnelMode)}
+                </p>
+              </div>
+
+              {canUseAdvancedFunnelModes ? (
+                <div
+                  className="flex flex-wrap items-center gap-1 self-start rounded-xl border border-slate-200 bg-slate-50 p-1"
+                  role="tablist"
+                  aria-label="Funnel measure mode"
+                >
+                  {visibleFunnelModes.map((opt) => {
+                    const active = funnelMode === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        title={
+                          opt.previewOnly
+                            ? `${opt.hint} (Under construction — Super Admin preview)`
+                            : opt.hint
+                        }
+                        onClick={() => {
+                          onFunnelModeChange?.(opt.id);
+                          setSelectedStagePopup(null);
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-bold tracking-wide transition sm:px-3 sm:text-xs ${
+                          active
+                            ? "bg-slate-900 text-white shadow-sm"
+                            : "text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-xs"
+                        }`}
+                      >
+                        <span className="sm:hidden">{opt.short}</span>
+                        <span className="hidden sm:inline">{opt.label}</span>
+                        {opt.previewOnly ? (
+                          <span
+                            className={`rounded px-1 py-0.5 text-[8px] font-extrabold uppercase tracking-wide ${
+                              active
+                                ? "bg-amber-400/95 text-amber-950"
+                                : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            WIP
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
 
-            <div className="flex items-center gap-1 self-start rounded-lg border border-gray-200 bg-gray-100 p-0.5 sm:self-auto">
-              {(["all", "won", "lost", "hold"] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => {
-                    setFunnelTab(tab);
-                    setSelectedStagePopup(null);
-                  }}
-                  className={`min-w-[3.75rem] cursor-pointer rounded-md px-2.5 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out sm:min-w-[4.5rem] sm:px-3 ${
-                    funnelTab === tab
-                      ? tab === "won"
-                        ? "bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-500 hover:shadow-md hover:brightness-110"
-                        : tab === "lost"
-                          ? "bg-red-600 font-bold text-white shadow-xs hover:bg-red-500 hover:shadow-md hover:brightness-110"
-                          : tab === "hold"
-                            ? "bg-amber-500 font-bold text-white shadow-xs hover:bg-amber-400 hover:shadow-md hover:brightness-110"
-                            : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
-                      : tab === "won"
-                        ? "text-gray-600 hover:bg-emerald-100 hover:text-emerald-700 hover:shadow-xs"
-                        : tab === "lost"
-                          ? "text-gray-600 hover:bg-red-100 hover:text-red-700 hover:shadow-xs"
-                          : tab === "hold"
-                            ? "text-gray-600 hover:bg-amber-100 hover:text-amber-800 hover:shadow-xs"
-                            : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
-                  }`}
-                >
-                  {tab === "all" ? "All" : tab === "won" ? "Won" : tab === "hold" ? "Hold" : "Lost"}
-                </button>
-              ))}
+            {showUnderConstruction ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
+                <span className="rounded-md bg-amber-400/90 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-amber-950">
+                  Under construction
+                </span>
+                <span className="font-medium text-amber-800/90">
+                  Super Admin preview — you can use {funnelMode === "passages" ? "Passages" : "New leads"} now; not launched for other roles yet.
+                </span>
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="max-w-xl text-[10px] font-medium leading-snug text-slate-400">
+                {FUNNEL_MODE_OPTIONS.find((o) => o.id === funnelMode)?.hint}
+              </p>
+              <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-100 p-0.5">
+                {(["all", "won", "lost", "hold"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setPathTab(tab)}
+                    className={`min-w-[3.75rem] cursor-pointer rounded-md px-2.5 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out sm:min-w-[4.5rem] sm:px-3 ${
+                      funnelTab === tab
+                        ? tab === "won"
+                          ? "bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-500 hover:shadow-md hover:brightness-110"
+                          : tab === "lost"
+                            ? "bg-red-600 font-bold text-white shadow-xs hover:bg-red-500 hover:shadow-md hover:brightness-110"
+                            : tab === "hold"
+                              ? "bg-amber-500 font-bold text-white shadow-xs hover:bg-amber-400 hover:shadow-md hover:brightness-110"
+                              : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
+                        : tab === "won"
+                          ? "text-gray-600 hover:bg-emerald-100 hover:text-emerald-700 hover:shadow-xs"
+                          : tab === "lost"
+                            ? "text-gray-600 hover:bg-red-100 hover:text-red-700 hover:shadow-xs"
+                            : tab === "hold"
+                              ? "text-gray-600 hover:bg-amber-100 hover:text-amber-800 hover:shadow-xs"
+                              : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
+                    }`}
+                  >
+                    {tab === "all" ? "All" : tab === "won" ? "Won" : tab === "hold" ? "Hold" : "Lost"}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
-          {displaySalesFunnel.length === 0 ? (
+          {isApiMode && modeFunnelLoading ? (
+            <div className="flex items-center gap-2 py-10 text-sm font-medium text-slate-500">
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
+              Loading {funnelMode === "passages" ? "passages" : "new-lead"} funnel…
+            </div>
+          ) : isApiMode && modeFunnelError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+              {modeFunnelError}
+            </div>
+          ) : isApiMode &&
+            funnelMode === "passages" &&
+            modeFunnel &&
+            modeFunnel.passagesAvailable === false ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+              <p className="font-bold">Passages not available yet</p>
+              <p className="mt-1 text-xs font-medium text-amber-800/90">
+                {modeFunnel.passagesUnavailableReason ||
+                  "Stage transition history is empty for this scope. Current and New leads modes still work."}
+              </p>
+            </div>
+          ) : displaySalesFunnel.length === 0 ? (
             <p className="text-sm text-gray-500">No funnel data for this filter.</p>
           ) : (
             <div className="relative">
@@ -714,10 +961,16 @@ export default function InsightSect3({
                   const holdCount = hasHubHoldFunnel
                     ? (holdCountByStageKey[canonicalKey] ?? 0)
                     : (holdCountByStageKey[canonicalKey] ?? pathBreakdown?.holdTotal ?? 0);
-                  const wonCount = pathBreakdown?.wonTotal ?? Math.max(0, stage.count - lostCount);
+                  const apiBd = apiPathBreakdownByKey[canonicalKey];
+                  const wonCount = apiBd
+                    ? apiBd.won
+                    : (pathBreakdown?.wonTotal ?? Math.max(0, stage.count - lostCount));
+                  const badgeLost = apiBd ? apiBd.lost : lostCount;
+                  const badgeHold = apiBd ? apiBd.hold : holdCount;
 
+                  // API modes are already path-filtered — use Hub count as-is.
                   let displayCount = stage.count;
-                  if (!isTotal) {
+                  if (!isApiMode && !isTotal) {
                     if (funnelTab === "won") displayCount = wonCount;
                     else if (funnelTab === "lost") displayCount = lostCount;
                     else if (funnelTab === "hold") displayCount = holdCount;
@@ -760,11 +1013,11 @@ export default function InsightSect3({
                   }
 
                   const stageValue =
-                    funnelTab === "won" && !isTotal && stage.count > 0
+                    !isApiMode && funnelTab === "won" && !isTotal && stage.count > 0
                       ? (Number(stage.value) || 0) * (wonCount / stage.count)
                       : stage.value;
                   const isPopupOpen = selectedStagePopup === canonicalKey;
-                  const isClickable = !isFreshLead && !isTotal;
+                  const isClickable = !isApiMode && !isFreshLead && !isTotal;
                   const isDimmed = Boolean(selectedStagePopup) && !isPopupOpen;
 
                   const showPathBadge =
@@ -776,7 +1029,9 @@ export default function InsightSect3({
 
                   const percentLabel = isTotal
                     ? formatInsightsPercent(100)
-                    : funnelTab === "lost"
+                    : isApiMode
+                      ? formatInsightsPercent(stage.conversionPercent)
+                      : funnelTab === "lost"
                       ? `${formatInsightsPercent(
                           lostStages.find(
                             (s) =>
@@ -800,6 +1055,7 @@ export default function InsightSect3({
                           : formatInsightsPercent(stage.conversionPercent);
 
                   const metricsText =
+                    !isApiMode &&
                     funnelTab !== "lost" &&
                     funnelTab !== "hold" &&
                     !isTotal &&
@@ -811,7 +1067,7 @@ export default function InsightSect3({
 
                   return (
                     <div
-                      key={stage.stageKey || stage.stageLabel}
+                      key={`${canonicalKey}-${index}`}
                       className={`flex w-full items-stretch transition-all duration-500 ease-out ${
                         isDimmed ? "scale-[0.985] opacity-45 blur-[0.3px]" : "opacity-100"
                       }`}
@@ -847,10 +1103,10 @@ export default function InsightSect3({
                                 {metricsText}
                               </span>
                               {showPathBadge ? (
-                                <span className={wonLostBadgeClass} title={`${wonCount} won · ${lostCount} lost · ${holdCount} hold`}>
+                                <span className={wonLostBadgeClass} title={`${wonCount} won · ${badgeLost} lost · ${badgeHold} hold`}>
                                   {formatInsightsCount(wonCount)} won ·{" "}
-                                  {formatInsightsCount(lostCount)} lost ·{" "}
-                                  {formatInsightsCount(holdCount)} hold
+                                  {formatInsightsCount(badgeLost)} lost ·{" "}
+                                  {formatInsightsCount(badgeHold)} hold
                                 </span>
                               ) : null}
                             </div>

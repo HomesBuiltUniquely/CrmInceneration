@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
-import SlimScrollArea from "../Shared/SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_ROLE_STORAGE_KEY,

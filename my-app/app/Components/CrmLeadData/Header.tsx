@@ -7,7 +7,7 @@ import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
-import SlimScrollArea from "../Shared/SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,

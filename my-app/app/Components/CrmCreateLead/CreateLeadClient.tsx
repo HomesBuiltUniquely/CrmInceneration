@@ -7,11 +7,13 @@ import { BUDGET_OPTIONS } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
-import SlimScrollArea from "../Shared/SlimScrollArea";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import {
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
+  CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   normalizeRole,
 } from "@/lib/auth/api";
@@ -235,6 +237,8 @@ export default function CreateLeadClient() {
   const router = useRouter();
   const [role, setRole] = useState("SUPER_ADMIN");
   const [currentUserName, setCurrentUserName] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   useEffect(() => {
     const stored =
       window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
@@ -242,6 +246,11 @@ export default function CreateLeadClient() {
     setCurrentUserName(
       (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim(),
     );
+    setLoginUsername(
+      (window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY) ?? "").trim(),
+    );
+    const rawId = Number(window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY) ?? "");
+    setCurrentUserId(Number.isFinite(rawId) && rawId > 0 ? rawId : null);
   }, []);
   const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
   const [error, setError] = useState<string | null>(null);

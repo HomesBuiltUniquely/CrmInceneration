@@ -15,9 +15,13 @@ import {
   fetchInsightsFilterOptions,
   fetchInsightsPerformanceCards,
   fetchInsightsQuotesSentMonth,
+  fetchInsightsSalesFunnel,
   type InsightsDashboard,
   type InsightsFilterOptions,
+  type InsightsFunnelMode,
+  type InsightsFunnelPathFilter,
   type InsightsLostFunnelStage,
+  type InsightsSalesFunnelResponse,
   type InsightsTeamMember,
   type PerformanceCards,
 } from "@/lib/crm-insights-api";
@@ -94,6 +98,7 @@ import {
 import {
   canAccessCrmInsights,
   canUseInsightsOrgFilters,
+  isSuperAdminRole,
 } from "@/lib/roleUtils";
 import { collectHierarchyUserAssigneeAliases, hierarchyUserDisplayName } from "@/lib/hierarchy-user-display";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
@@ -178,6 +183,16 @@ export default function InsightsClient1() {
     null,
   );
   const [performanceCardsLoading, setPerformanceCardsLoading] = useState(true);
+
+  /** Sales Funnel measure mode — current keeps FE inventory; passages/cohort use Hub API. */
+  const [funnelMode, setFunnelMode] = useState<InsightsFunnelMode>("current");
+  const [funnelPathFilter, setFunnelPathFilter] =
+    useState<InsightsFunnelPathFilter>("all");
+  const [modeFunnel, setModeFunnel] = useState<InsightsSalesFunnelResponse | null>(
+    null,
+  );
+  const [modeFunnelLoading, setModeFunnelLoading] = useState(false);
+  const [modeFunnelError, setModeFunnelError] = useState("");
 
   /** Achieved/Payoff vs Insights date filter (Incentives engine). */
   const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
@@ -355,9 +370,20 @@ export default function InsightsClient1() {
     () => (role ? canAccessCrmInsights(role) : false),
     [role],
   );
+  const canUseAdvancedFunnelModes = useMemo(
+    () => (role ? isSuperAdminRole(role) : false),
+    [role],
+  );
   /** Branch + full people hierarchy only for org admins. */
   const showBranchFilter = isOrgAdmin;
   const showManagerPeopleOptions = isOrgAdmin;
+
+  // Non–Super Admin must stay on Current funnel measure.
+  useEffect(() => {
+    if (!canUseAdvancedFunnelModes && funnelMode !== "current") {
+      setFunnelMode("current");
+    }
+  }, [canUseAdvancedFunnelModes, funnelMode]);
 
   const pageScrollRef = useRef<HTMLDivElement | null>(null);
   const scrollRailRef = useRef<HTMLDivElement | null>(null);
@@ -711,6 +737,62 @@ export default function InsightsClient1() {
   useEffect(() => {
     void loadPerformanceCards();
   }, [loadPerformanceCards]);
+
+  // Hub Sales Funnel — passages / cohort (current mode stays on FE-aligned inventory).
+  useEffect(() => {
+    if (!role || !canAccessCrmInsights(role)) return;
+    if (!canUseAdvancedFunnelModes || funnelMode === "current") {
+      setModeFunnel(null);
+      setModeFunnelError("");
+      setModeFunnelLoading(false);
+      return;
+    }
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) return;
+
+    let cancelled = false;
+    setModeFunnelLoading(true);
+    setModeFunnelError("");
+    void (async () => {
+      try {
+        const data = await fetchInsightsSalesFunnel({
+          dateFilter,
+          branchId: effectiveBranchId,
+          salesManagerId: dashboardPeopleParams.salesManagerId,
+          salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
+          teamPeriod,
+          funnelMode,
+          pathFilter: funnelPathFilter,
+        });
+        if (!cancelled) {
+          setModeFunnel(data);
+          setModeFunnelError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setModeFunnel(null);
+          setModeFunnelError(
+            err instanceof Error ? err.message : "Failed to load sales funnel.",
+          );
+        }
+      } finally {
+        if (!cancelled) setModeFunnelLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    role,
+    canUseAdvancedFunnelModes,
+    funnelMode,
+    funnelPathFilter,
+    dateFilter,
+    effectiveBranchId,
+    dashboardPeopleParams,
+    teamPeriod,
+    isSalesManager,
+    viewerUserId,
+  ]);
 
   // Achieved + Payoff = same executive-leads API as Incentives page
   useEffect(() => {
@@ -1547,6 +1629,14 @@ export default function InsightsClient1() {
         stagePathData={stagePathData}
         stagePathLoading={stagePathLoading}
         useCurrentStageInventory={Boolean(alignedSalesFunnel)}
+        funnelMode={funnelMode}
+        onFunnelModeChange={setFunnelMode}
+        pathFilter={funnelPathFilter}
+        onPathFilterChange={setFunnelPathFilter}
+        modeFunnel={modeFunnel}
+        modeFunnelLoading={modeFunnelLoading}
+        modeFunnelError={modeFunnelError}
+        canUseAdvancedFunnelModes={canUseAdvancedFunnelModes}
       />
           <InsightsSect4
             dropReasons={alignedDropReasons ?? dashboard.dropReasons}
