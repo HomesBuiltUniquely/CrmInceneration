@@ -99,7 +99,7 @@ export default function InsightSect2({
 
   return (
     <main>
-      <div className="mt-6 grid grid-cols-1 items-stretch gap-3.5 px-4 sm:grid-cols-2 sm:px-6 lg:grid-cols-4 lg:px-8">
+      <div className="mt-6 grid grid-cols-1 items-stretch gap-3.5 px-4 sm:grid-cols-2 sm:px-5 lg:grid-cols-4 lg:px-6">
         {cards.map((card) => (
           <div
             key={card.key}

@@ -303,7 +303,7 @@ export default function InsightsPerformanceCards({
   const grossTone = toneFromSigned(kpis.grossBooking?.changeAbsolute);
 
   return (
-    <section className="mt-6 px-4 sm:px-6 lg:px-8">
+    <section className="mt-6 px-4 sm:px-5 lg:px-6">
       <div
         className={`grid grid-cols-1 items-stretch gap-3.5 sm:grid-cols-2 xl:grid-cols-4 ${
           loading && cards ? "opacity-80" : ""

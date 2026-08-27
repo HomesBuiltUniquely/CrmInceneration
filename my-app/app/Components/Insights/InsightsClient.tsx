@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BOOKING_DATE_PRESETS,
   DEFAULT_INSIGHTS_DATE_FILTER,
@@ -15,9 +15,13 @@ import {
   fetchInsightsFilterOptions,
   fetchInsightsPerformanceCards,
   fetchInsightsQuotesSentMonth,
+  fetchInsightsSalesFunnel,
   type InsightsDashboard,
   type InsightsFilterOptions,
+  type InsightsFunnelMode,
+  type InsightsFunnelPathFilter,
   type InsightsLostFunnelStage,
+  type InsightsSalesFunnelResponse,
   type InsightsTeamMember,
   type PerformanceCards,
 } from "@/lib/crm-insights-api";
@@ -94,6 +98,7 @@ import {
 import {
   canAccessCrmInsights,
   canUseInsightsOrgFilters,
+  isSuperAdminRole,
 } from "@/lib/roleUtils";
 import { collectHierarchyUserAssigneeAliases, hierarchyUserDisplayName } from "@/lib/hierarchy-user-display";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
@@ -179,6 +184,16 @@ export default function InsightsClient1() {
   );
   const [performanceCardsLoading, setPerformanceCardsLoading] = useState(true);
 
+  /** Sales Funnel measure mode — current keeps FE inventory; passages/cohort use Hub API. */
+  const [funnelMode, setFunnelMode] = useState<InsightsFunnelMode>("current");
+  const [funnelPathFilter, setFunnelPathFilter] =
+    useState<InsightsFunnelPathFilter>("all");
+  const [modeFunnel, setModeFunnel] = useState<InsightsSalesFunnelResponse | null>(
+    null,
+  );
+  const [modeFunnelLoading, setModeFunnelLoading] = useState(false);
+  const [modeFunnelError, setModeFunnelError] = useState("");
+
   /** Achieved/Payoff vs Insights date filter (Incentives engine). */
   const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
     Map<number, IncentiveBookingLead[]>
@@ -197,6 +212,15 @@ export default function InsightsClient1() {
     const rawId = window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY);
     const id = rawId ? Number(rawId) : NaN;
     setViewerUserId(Number.isFinite(id) && id > 0 ? id : null);
+  }, []);
+
+  /** Prevent body/html scroll — Insights uses an internal scroller only. */
+  useEffect(() => {
+    const html = document.documentElement;
+    html.classList.add("insights-lock-scroll");
+    return () => {
+      html.classList.remove("insights-lock-scroll");
+    };
   }, []);
 
   /**
@@ -346,9 +370,165 @@ export default function InsightsClient1() {
     () => (role ? canAccessCrmInsights(role) : false),
     [role],
   );
+  const canUseAdvancedFunnelModes = useMemo(
+    () => (role ? isSuperAdminRole(role) : false),
+    [role],
+  );
   /** Branch + full people hierarchy only for org admins. */
   const showBranchFilter = isOrgAdmin;
   const showManagerPeopleOptions = isOrgAdmin;
+
+  // Non–Super Admin must stay on Current funnel measure.
+  useEffect(() => {
+    if (!canUseAdvancedFunnelModes && funnelMode !== "current") {
+      setFunnelMode("current");
+    }
+  }, [canUseAdvancedFunnelModes, funnelMode]);
+
+  const pageScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollRailRef = useRef<HTMLDivElement | null>(null);
+  const scrollThumbRef = useRef<HTMLDivElement | null>(null);
+  const [scrollThumb, setScrollThumb] = useState({
+    visible: false,
+    top: 0,
+    height: 0,
+  });
+
+  /** Custom overlay scrollbar — native Chrome bar hidden; thumb is wide enough to drag. */
+  useEffect(() => {
+    if (!insightsAllowed) return;
+    const el = pageScrollRef.current;
+    const rail = scrollRailRef.current;
+    const thumb = scrollThumbRef.current;
+    if (!el) return;
+
+    let hideTimer: number | undefined;
+    let raf = 0;
+    let show = false;
+    let dragging = false;
+    let dragOffsetY = 0;
+
+    const syncThumb = (makeVisible: boolean) => {
+      const { scrollTop, scrollHeight, clientHeight } = el;
+      const canScroll = scrollHeight > clientHeight + 1;
+      if (!canScroll) {
+        show = false;
+        setScrollThumb({ visible: false, top: 0, height: 0 });
+        return;
+      }
+      const track = Math.max(clientHeight - 8, 1);
+      const ratio = clientHeight / scrollHeight;
+      const height = Math.max(40, Math.round(track * ratio));
+      const maxTop = Math.max(track - height, 0);
+      const top =
+        maxTop <= 0
+          ? 0
+          : Math.round((scrollTop / (scrollHeight - clientHeight)) * maxTop);
+      if (makeVisible || dragging) show = true;
+      setScrollThumb({ visible: show, top, height });
+    };
+
+    const scheduleHide = () => {
+      window.clearTimeout(hideTimer);
+      if (dragging) return;
+      hideTimer = window.setTimeout(() => {
+        if (rail?.matches(":hover")) return;
+        show = false;
+        setScrollThumb((prev) => ({ ...prev, visible: false }));
+      }, 1200);
+    };
+
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => syncThumb(true));
+      scheduleHide();
+    };
+
+    const scrollFromRailY = (clientY: number, thumbGrabOffset = 0) => {
+      const rect = rail?.getBoundingClientRect();
+      if (!rect) return;
+      const track = Math.max(rect.height, 1);
+      const { scrollHeight, clientHeight } = el;
+      const thumbH = Math.max(40, Math.round(track * (clientHeight / scrollHeight)));
+      const maxTop = Math.max(track - thumbH, 0);
+      const y = clientY - rect.top - thumbGrabOffset;
+      const ratio = maxTop <= 0 ? 0 : Math.min(1, Math.max(0, y / maxTop));
+      el.scrollTop = ratio * (scrollHeight - clientHeight);
+    };
+
+    const onThumbPointerDown = (e: PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      show = true;
+      const thumbRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      dragOffsetY = e.clientY - thumbRect.top;
+      (e.currentTarget as HTMLElement).dataset.dragging = "1";
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      syncThumb(true);
+    };
+
+    const onThumbPointerMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      scrollFromRailY(e.clientY, dragOffsetY);
+    };
+
+    const onThumbPointerUp = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      (e.currentTarget as HTMLElement).dataset.dragging = "0";
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      scheduleHide();
+    };
+
+    const onRailPointerDown = (e: PointerEvent) => {
+      if (e.target !== rail) return;
+      e.preventDefault();
+      const thumbH = scrollThumbRef.current?.offsetHeight ?? 40;
+      scrollFromRailY(e.clientY, thumbH / 2);
+      syncThumb(true);
+      scheduleHide();
+    };
+
+    const onRailEnter = () => {
+      show = true;
+      syncThumb(true);
+      window.clearTimeout(hideTimer);
+    };
+
+    const onRailLeave = () => {
+      if (!dragging) scheduleHide();
+    };
+
+    syncThumb(false);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    rail?.addEventListener("pointerdown", onRailPointerDown);
+    rail?.addEventListener("pointerenter", onRailEnter);
+    rail?.addEventListener("pointerleave", onRailLeave);
+    thumb?.addEventListener("pointerdown", onThumbPointerDown);
+    thumb?.addEventListener("pointermove", onThumbPointerMove);
+    thumb?.addEventListener("pointerup", onThumbPointerUp);
+    thumb?.addEventListener("pointercancel", onThumbPointerUp);
+    const ro = new ResizeObserver(() => syncThumb(false));
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      rail?.removeEventListener("pointerdown", onRailPointerDown);
+      rail?.removeEventListener("pointerenter", onRailEnter);
+      rail?.removeEventListener("pointerleave", onRailLeave);
+      thumb?.removeEventListener("pointerdown", onThumbPointerDown);
+      thumb?.removeEventListener("pointermove", onThumbPointerMove);
+      thumb?.removeEventListener("pointerup", onThumbPointerUp);
+      thumb?.removeEventListener("pointercancel", onThumbPointerUp);
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+      window.clearTimeout(hideTimer);
+    };
+  }, [insightsAllowed]);
 
   /**
    * Dashboard people scope:
@@ -557,6 +737,62 @@ export default function InsightsClient1() {
   useEffect(() => {
     void loadPerformanceCards();
   }, [loadPerformanceCards]);
+
+  // Hub Sales Funnel — passages / cohort (current mode stays on FE-aligned inventory).
+  useEffect(() => {
+    if (!role || !canAccessCrmInsights(role)) return;
+    if (!canUseAdvancedFunnelModes || funnelMode === "current") {
+      setModeFunnel(null);
+      setModeFunnelError("");
+      setModeFunnelLoading(false);
+      return;
+    }
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) return;
+
+    let cancelled = false;
+    setModeFunnelLoading(true);
+    setModeFunnelError("");
+    void (async () => {
+      try {
+        const data = await fetchInsightsSalesFunnel({
+          dateFilter,
+          branchId: effectiveBranchId,
+          salesManagerId: dashboardPeopleParams.salesManagerId,
+          salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
+          teamPeriod,
+          funnelMode,
+          pathFilter: funnelPathFilter,
+        });
+        if (!cancelled) {
+          setModeFunnel(data);
+          setModeFunnelError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setModeFunnel(null);
+          setModeFunnelError(
+            err instanceof Error ? err.message : "Failed to load sales funnel.",
+          );
+        }
+      } finally {
+        if (!cancelled) setModeFunnelLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    role,
+    canUseAdvancedFunnelModes,
+    funnelMode,
+    funnelPathFilter,
+    dateFilter,
+    effectiveBranchId,
+    dashboardPeopleParams,
+    teamPeriod,
+    isSalesManager,
+    viewerUserId,
+  ]);
 
   // Achieved + Payoff = same executive-leads API as Incentives page
   useEffect(() => {
@@ -1152,18 +1388,20 @@ export default function InsightsClient1() {
 
   if (!insightsAllowed) {
     return (
-      <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-        <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-          <QuickAccessSidebar
-            appBadge="HO WS"
-            appName="Hows"
-            appTagline="by HUB"
-            sections={dashboardSidebarSections}
-            profileName={roleLabel}
-            profileRole={role}
-            profileInitials={roleLabel.slice(0, 2).toUpperCase() || "U"}
-          />
-          <div className="flex min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
+      <div className="h-dvh overflow-hidden bg-[var(--crm-app-bg)]">
+        <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[auto_minmax(0,1fr)]">
+          <div className="min-h-0">
+            <QuickAccessSidebar
+              appBadge="HO WS"
+              appName="Hows"
+              appTagline="by HUB"
+              sections={dashboardSidebarSections}
+              profileName={roleLabel}
+              profileRole={role}
+              profileInitials={roleLabel.slice(0, 2).toUpperCase() || "U"}
+            />
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
             <h1 className="text-xl font-bold text-gray-900">Access restricted</h1>
             <p className="max-w-md text-sm text-gray-600">
               CRM Insights is available for Super Admin, Admin, Sales Admin, and Sales
@@ -1176,22 +1414,29 @@ export default function InsightsClient1() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
-      <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
-        <QuickAccessSidebar
-          appBadge="HO WS"
-          appName="Hows"
-          appTagline="by HUB"
-          sections={dashboardSidebarSections}
-          profileName={roleLabel}
-          profileRole={role}
-          profileInitials={roleLabel.slice(0, 2).toUpperCase() || "SA"}
-        />
+    <div className="h-dvh overflow-hidden bg-[var(--crm-app-bg)]">
+      <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[auto_minmax(0,1fr)]">
+        <div className="min-h-0 self-stretch">
+          <QuickAccessSidebar
+            appBadge="HO WS"
+            appName="Hows"
+            appTagline="by HUB"
+            sections={dashboardSidebarSections}
+            profileName={roleLabel}
+            profileRole={role}
+            profileInitials={roleLabel.slice(0, 2).toUpperCase() || "SA"}
+          />
+        </div>
 
-        <div className="min-w-0 bg-[#f4f7fb] xl:h-screen xl:overflow-y-auto">
-          <AppTopBar />
+        <div className="relative min-h-0 min-w-0 h-full">
+          <div
+            ref={pageScrollRef}
+            data-insights-scroll
+            className="insights-page-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-y-contain bg-[#f4f7fb]"
+          >
+            <AppTopBar />
 
-          <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
+            <main className="w-full px-4 py-6 sm:px-5 lg:px-6">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div className="shrink-0">
                 <h2 className="text-3xl font-extrabold tracking-tight text-[#1f2937] sm:text-4xl">
@@ -1384,6 +1629,14 @@ export default function InsightsClient1() {
         stagePathData={stagePathData}
         stagePathLoading={stagePathLoading}
         useCurrentStageInventory={Boolean(alignedSalesFunnel)}
+        funnelMode={funnelMode}
+        onFunnelModeChange={setFunnelMode}
+        pathFilter={funnelPathFilter}
+        onPathFilterChange={setFunnelPathFilter}
+        modeFunnel={modeFunnel}
+        modeFunnelLoading={modeFunnelLoading}
+        modeFunnelError={modeFunnelError}
+        canUseAdvancedFunnelModes={canUseAdvancedFunnelModes}
       />
           <InsightsSect4
             dropReasons={alignedDropReasons ?? dashboard.dropReasons}
@@ -1409,6 +1662,23 @@ export default function InsightsClient1() {
             volumeCharts={alignedWeekCharts}
             weekBars={alignedWeekCharts?.weekBars ?? null}
           />
+          </div>
+          <div
+            ref={scrollRailRef}
+            className="insights-scroll-rail"
+            data-visible={scrollThumb.visible ? "1" : "0"}
+            aria-hidden
+          >
+            <div
+              ref={scrollThumbRef}
+              className="insights-scroll-thumb"
+              style={{
+                height: Math.max(scrollThumb.height, 40),
+                transform: `translateY(${scrollThumb.top}px)`,
+                visibility: scrollThumb.height > 0 ? "visible" : "hidden",
+              }}
+            />
+          </div>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -496,7 +497,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
           />
         </div>
 
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
@@ -733,7 +734,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
                 </div>
             )}
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

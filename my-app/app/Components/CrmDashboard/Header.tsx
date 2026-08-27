@@ -9,6 +9,7 @@ import InsightsStrip from "./InsightsStrip";
 
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { sidebarSectionsForViewer, type CrmWorkspace } from "@/lib/crm-workspace";
 
@@ -78,7 +79,7 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
             onSelectionChange={handleSidebarSelection}
           />
         </div>
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen">
           <AppTopBar
             pageLabelOverride={
               activeDashboardView === "design-module" ? "Design Module" : undefined
@@ -117,7 +118,7 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
               <InsightsStrip />
             </div>
           )}
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

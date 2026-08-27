@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { salesWorkspaceSidebarSections } from "../Shared/sidebar-data";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -253,7 +254,7 @@ export default function IncentivesClient() {
           profileInitials={profileInitials}
         />
 
-        <div className="min-w-0 xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="min-w-0 xl:h-screen">
           <AppTopBar />
 
           <main className="p-4 md:p-6 lg:p-8">
@@ -413,7 +414,7 @@ export default function IncentivesClient() {
               </>
             )}
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

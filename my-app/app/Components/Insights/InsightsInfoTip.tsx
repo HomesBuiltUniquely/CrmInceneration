@@ -18,7 +18,10 @@ type Props = {
   trigger?: ReactNode;
 };
 
-/** Hover pop: plain words first, then math when provided. */
+/**
+ * Hover pop: plain words first, then math when provided.
+ * Tip uses `hidden` until hover so absolute content cannot inflate page scroll height.
+ */
 export default function InsightsInfoTip({
   label,
   children,
@@ -48,7 +51,7 @@ export default function InsightsInfoTip({
       )}
       <span
         role="tooltip"
-        className={`pointer-events-none absolute z-40 w-[268px] rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left opacity-0 shadow-[0_10px_28px_rgba(15,23,42,0.14)] transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
+        className={`pointer-events-none absolute z-40 hidden w-[268px] rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left shadow-[0_10px_28px_rgba(15,23,42,0.14)] group-hover:block group-focus-within:block ${
           side === "top" ? "bottom-[calc(100%+8px)]" : "top-[calc(100%+8px)]"
         } ${align === "right" ? "right-0" : "left-0"}`}
       >

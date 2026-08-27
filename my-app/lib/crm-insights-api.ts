@@ -264,6 +264,48 @@ export type InsightsPerformanceCardsQuery = InsightsDashboardQuery & {
   meetingToBookingTargetPercent?: number;
 };
 
+/** Sales Funnel measure mode (Hub /v1/crm/insights/sales-funnel). */
+export type InsightsFunnelMode = "current" | "passages" | "cohort";
+
+/** Path tab — same as production All / Won / Lost / Hold. */
+export type InsightsFunnelPathFilter = "all" | "won" | "lost" | "hold";
+
+export type InsightsFunnelPathBreakdown = {
+  won: number;
+  lost: number;
+  hold: number;
+};
+
+export type InsightsSalesFunnelStage = InsightsFunnelStage & {
+  sharePercent?: number;
+  pathBreakdown?: InsightsFunnelPathBreakdown | null;
+};
+
+export type InsightsSalesFunnelResponse = {
+  funnelMode: InsightsFunnelMode;
+  pathFilter: InsightsFunnelPathFilter;
+  passagesAvailable: boolean;
+  passagesUnavailableReason: string | null;
+  definitions: {
+    dateField: string;
+    reachRule: string;
+    timezone: string;
+  };
+  total: {
+    count: number;
+    sharePercent: number;
+    countLabel?: string;
+  };
+  stages: InsightsSalesFunnelStage[];
+  /** Alias some Hub builds still return. */
+  salesFunnel: InsightsSalesFunnelStage[];
+};
+
+export type InsightsSalesFunnelQuery = InsightsDashboardQuery & {
+  funnelMode: InsightsFunnelMode;
+  pathFilter?: InsightsFunnelPathFilter;
+};
+
 /* ── Formatters ───────────────────────────────────────────────────────── */
 
 export function formatInsightsInrCompact(amount: number | null | undefined): string {
@@ -413,6 +455,167 @@ export function buildInsightsDashboardSearchParams(
 
   params.set("teamPeriod", query.teamPeriod);
   return params;
+}
+
+export function buildInsightsSalesFunnelSearchParams(
+  query: InsightsSalesFunnelQuery,
+): URLSearchParams {
+  const params = buildInsightsDashboardSearchParams(query);
+  params.delete("teamPeriod");
+
+  const mode =
+    query.funnelMode === "cohort"
+      ? "cohort"
+      : query.funnelMode === "passages"
+        ? "passages"
+        : "current";
+  params.set("funnelMode", mode);
+
+  const path = query.pathFilter ?? "all";
+  if (path === "won" || path === "lost" || path === "hold" || path === "all") {
+    params.set("pathFilter", path);
+  }
+  return params;
+}
+
+function normalizeFunnelMode(value: unknown): InsightsFunnelMode {
+  const s = asStr(value).toLowerCase();
+  if (s === "passages") return "passages";
+  if (s === "cohort" || s === "created_cohort") return "cohort";
+  // inventory / current aliases
+  return "current";
+}
+
+function normalizePathFilter(value: unknown): InsightsFunnelPathFilter {
+  const s = asStr(value).toLowerCase();
+  if (s === "won" || s === "lost" || s === "hold") return s;
+  return "all";
+}
+
+function normalizeSalesFunnelStage(
+  raw: Record<string, unknown>,
+): InsightsSalesFunnelStage {
+  const share = asNum(
+    raw.sharePercent ?? raw.conversionPercent ?? raw.percent,
+  );
+  const breakdownRaw =
+    raw.pathBreakdown && typeof raw.pathBreakdown === "object"
+      ? (raw.pathBreakdown as Record<string, unknown>)
+      : null;
+  return {
+    stageKey: asStr(raw.stageKey),
+    stageLabel: asStr(raw.stageLabel, asStr(raw.stageKey)),
+    count: asNum(raw.count),
+    countLabel: asStr(raw.countLabel, "Leads"),
+    value: asNum(raw.value),
+    conversionPercent: share,
+    sharePercent: share,
+    pathBreakdown: breakdownRaw
+      ? {
+          won: asNum(breakdownRaw.won ?? breakdownRaw.wonTotal),
+          lost: asNum(breakdownRaw.lost ?? breakdownRaw.lostTotal),
+          hold: asNum(breakdownRaw.hold ?? breakdownRaw.holdTotal),
+        }
+      : null,
+  };
+}
+
+export function normalizeInsightsSalesFunnel(
+  raw: unknown,
+): InsightsSalesFunnelResponse {
+  const root = unwrapInsightsPayload(raw);
+  const stagesRaw = asArray<Record<string, unknown>>(
+    root.stages ?? root.salesFunnel,
+  );
+  const stages = stagesRaw.map(normalizeSalesFunnelStage);
+  const totalRaw =
+    root.total && typeof root.total === "object"
+      ? (root.total as Record<string, unknown>)
+      : {};
+  const defsRaw =
+    root.definitions && typeof root.definitions === "object"
+      ? (root.definitions as Record<string, unknown>)
+      : {};
+
+  const passagesAvailable =
+    root.passagesAvailable === false
+      ? false
+      : root.passagesAvailable === true
+        ? true
+        : true;
+
+  return {
+    funnelMode: normalizeFunnelMode(root.funnelMode),
+    pathFilter: normalizePathFilter(root.pathFilter),
+    passagesAvailable,
+    passagesUnavailableReason:
+      root.passagesUnavailableReason == null && root.message == null
+        ? null
+        : asStr(root.passagesUnavailableReason ?? root.message) || null,
+    definitions: {
+      dateField: asStr(defsRaw.dateField),
+      reachRule: asStr(defsRaw.reachRule),
+      timezone: asStr(defsRaw.timezone, "UTC"),
+    },
+    total: {
+      count: asNum(totalRaw.count),
+      sharePercent: asNum(totalRaw.sharePercent, 100),
+      countLabel: asStr(totalRaw.countLabel, "Leads") || "Leads",
+    },
+    stages,
+    salesFunnel: stages,
+  };
+}
+
+/**
+ * Hub Sales Funnel Efficiency — current | passages | cohort.
+ * 501 with passagesAvailable:false is treated as a successful “unavailable” payload.
+ */
+export async function fetchInsightsSalesFunnel(
+  query: InsightsSalesFunnelQuery,
+): Promise<InsightsSalesFunnelResponse> {
+  const qs = buildInsightsSalesFunnelSearchParams(query).toString();
+  const res = await fetch(
+    `/api/crm/insights/sales-funnel${qs ? `?${qs}` : ""}`,
+    {
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+
+  if (res.status === 501) {
+    const normalized = normalizeInsightsSalesFunnel(json);
+    return {
+      ...normalized,
+      funnelMode: query.funnelMode === "passages" ? "passages" : normalized.funnelMode,
+      pathFilter: query.pathFilter ?? "all",
+      passagesAvailable: false,
+      passagesUnavailableReason:
+        normalized.passagesUnavailableReason ||
+        "Stage transition history is not available yet.",
+      stages: normalized.stages.length ? normalized.stages : [],
+      salesFunnel: normalized.salesFunnel,
+    };
+  }
+
+  if (!res.ok) {
+    const o =
+      json && typeof json === "object" ? (json as Record<string, unknown>) : {};
+    const msg =
+      [o.error, o.message, o.debugMessage]
+        .map((v) => (typeof v === "string" ? v.trim() : ""))
+        .find((v) => v.length > 0) || "Unable to load sales funnel.";
+    throw new Error(msg);
+  }
+
+  return normalizeInsightsSalesFunnel(json);
 }
 
 /** Same Insights scope; omit matrix-only `teamPeriod`. Prefer `dateRange=current_month` for MTD. */
