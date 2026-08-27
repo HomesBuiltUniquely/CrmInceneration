@@ -9,6 +9,7 @@ import {
 } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Select } from "../CrmLeadDetails/ui";
 import { BASE_URL } from "@/lib/base-url";
@@ -505,7 +506,7 @@ export default function ImportLeadsClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
@@ -823,7 +824,7 @@ export default function ImportLeadsClient() {
               </ImportSection>
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

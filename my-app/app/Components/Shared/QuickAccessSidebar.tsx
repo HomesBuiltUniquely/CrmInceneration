@@ -310,7 +310,7 @@ export default function QuickAccessSidebar({
         onMouseLeave={isTouch ? undefined : handleMouseLeave}
         {...(isTouch ? { onClick: () => setHovered((v) => !v) } : {})}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden border-r border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-lg)] xl:static xl:z-auto xl:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex h-screen flex-col overflow-hidden border-r border-[var(--crm-border)] bg-[var(--crm-surface)] text-[var(--crm-text-primary)] shadow-[var(--crm-shadow-lg)] xl:static xl:z-auto xl:h-full xl:min-h-0 xl:translate-x-0",
           isCollapsed ? "xl:w-[68px]" : "xl:w-[286px]",
           isMobileOpen ? "translate-x-0 w-[min(84vw,320px)]" : "-translate-x-full w-[min(84vw,320px)]",
         )}

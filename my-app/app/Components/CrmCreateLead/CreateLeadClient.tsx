@@ -7,6 +7,7 @@ import { BUDGET_OPTIONS } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import {
@@ -477,7 +478,7 @@ export default function CreateLeadClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
@@ -780,7 +781,7 @@ export default function CreateLeadClient() {
               </form>
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
       <CompleteTaskModal
         lead={modalLead}

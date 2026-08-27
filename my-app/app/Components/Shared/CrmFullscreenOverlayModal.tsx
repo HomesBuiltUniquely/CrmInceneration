@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import SlimScrollArea from "./SlimScrollArea";
 
 export type OverlayOriginRect = {
   top: number;
@@ -295,9 +296,12 @@ export default function CrmFullscreenOverlayModal({
               </button>
             </div>
           )}
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#eef1f5]">
+          <SlimScrollArea
+            className="min-h-0 flex-1"
+            contentClassName="overscroll-contain bg-[#eef1f5]"
+          >
             {children}
-          </div>
+          </SlimScrollArea>
         </div>
       </div>
     </>

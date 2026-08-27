@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -248,7 +249,7 @@ export default function AppointmentManagementClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6">
@@ -387,7 +388,7 @@ export default function AppointmentManagementClient() {
               </div>
             </section>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
 
       {createOpen ? (

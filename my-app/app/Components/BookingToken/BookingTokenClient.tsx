@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessBookingTokenDashboard } from "@/lib/roleUtils";
@@ -102,7 +103,7 @@ export default function BookingTokenClient() {
           profileInitials="SA"
         />
 
-        <div className="min-w-0 bg-[var(--bt-bg)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="min-w-0 bg-[var(--bt-bg)] xl:h-screen">
           <AppTopBar />
 
           <main className="p-6 lg:p-8">
@@ -183,7 +184,7 @@ export default function BookingTokenClient() {
               ) : null}
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

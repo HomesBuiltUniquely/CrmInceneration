@@ -7,6 +7,7 @@ import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -681,7 +682,7 @@ export default function Header() {
             profileInitials="AD"
           />
         </div>
-        <div id="crm-leads-scroll-root" className="xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea contentId="crm-leads-scroll-root" className="xl:h-screen">
           <TopNav search={search} onSearchChange={setSearch} />
           {!authResolved ? (
             <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
@@ -792,7 +793,7 @@ export default function Header() {
             </>
           )}
           <div className="h-10" />
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

@@ -479,6 +479,68 @@ h6 {
   background: #94a3b8;
 }
 
+/* Insights main page scroller — hide native OS scrollbar completely */
+.insights-page-scroll {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* legacy Edge */
+}
+
+.insights-page-scroll::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent !important;
+}
+
+.insights-page-scroll::-webkit-scrollbar-track,
+.insights-page-scroll::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
+
+/* Custom slim overlay thumb (shown only while scrolling / rail hover) */
+.insights-scroll-rail {
+  position: absolute;
+  top: 4px;
+  right: 1px;
+  bottom: 4px;
+  width: 10px;
+  z-index: 40;
+  pointer-events: auto;
+}
+
+.insights-scroll-thumb {
+  position: absolute;
+  left: 1px;
+  width: 8px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.45);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    background 0.15s ease;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.insights-scroll-rail[data-visible="1"] .insights-scroll-thumb,
+.insights-scroll-rail:hover .insights-scroll-thumb {
+  opacity: 1;
+}
+
+.insights-scroll-thumb:hover,
+.insights-scroll-thumb[data-dragging="1"] {
+  background: rgba(71, 85, 105, 0.75);
+  cursor: grabbing;
+}
+
+html.insights-lock-scroll,
+html.insights-lock-scroll body {
+  overflow: hidden !important;
+  height: 100% !important;
+  overscroll-behavior: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .insights-funnel-backdrop,
   .insights-funnel-modal,

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "../Shared/SlimScrollArea";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import {
@@ -140,7 +141,7 @@ export default function DesignDashboardClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6">
@@ -342,7 +343,7 @@ export default function DesignDashboardClient() {
               </div>
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

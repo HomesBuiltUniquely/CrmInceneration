@@ -726,10 +726,10 @@ export default function InsightsSect6({
 
   return (
     <main className="px-4 lg:px-0">
-      <div className="mt-10 flex justify-center pb-10">
-        <div className="grid w-full max-w-[1290px] grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+      <div className="mt-10 flex justify-center pb-8">
+        <div className="grid w-full max-w-[1290px] grid-cols-1 items-stretch gap-6 md:grid-cols-2 xl:grid-cols-3">
           {/* A) Leads over time */}
-          <div className="w-full overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
+          <div className="w-full rounded-2xl border border-gray-200 bg-white p-6 shadow-lg xl:max-w-[400px]">
             <div className="mb-4 flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-800">Leads over time</h2>
@@ -888,6 +888,7 @@ export default function InsightsSect6({
                 <div className="flex items-center gap-2">
                   <h2 className="text-lg font-bold text-gray-800">Conversion trend</h2>
                   <InsightsInfoTip
+                    side="top"
                     label="How conversion trend is counted"
                     math="Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
                   >
@@ -968,6 +969,7 @@ export default function InsightsSect6({
               <div className="flex items-center gap-2">
                 <h2 className="text-lg font-bold text-gray-800">Revenue forecast</h2>
                 <InsightsInfoTip
+                  side="top"
                   label="How forecast is counted"
                   math="Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal. Bars scale to the largest of the three."
                 >
