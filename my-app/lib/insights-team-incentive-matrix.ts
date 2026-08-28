@@ -28,6 +28,7 @@ import { monthKeysForInsightsDateFilter } from "@/lib/insights-revenue-forecast-
 import {
   DEFAULT_MONTHLY_SALES_TARGET_INR,
   currentSalesTargetMonth,
+  type SalesTargetUserRow,
 } from "@/lib/sales-targets";
 import { salesTargetsApi } from "@/lib/sales-targets-api";
 
@@ -113,14 +114,25 @@ export function formatTeamMatrixIncentiveScope(
   return `${months[0]} → ${months[months.length - 1]} · Insights date · Incentives`;
 }
 
-function resolveMonthlyTarget(
+function resolveTargetRow(
   userId: number,
   monthKey: string,
-  targetsByMonth: Map<string, Map<number, number>>,
-): number {
-  const v = targetsByMonth.get(monthKey)?.get(userId);
-  if (v != null && v > 0) return v;
-  return DEFAULT_MONTHLY_SALES_TARGET_INR;
+  targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>,
+): SalesTargetUserRow | null {
+  return targetsByMonth.get(monthKey)?.get(userId) ?? null;
+}
+
+function fallbackTargetRow(userId: number): SalesTargetUserRow {
+  const half = DEFAULT_MONTHLY_SALES_TARGET_INR / 2;
+  return {
+    userId,
+    name: `User ${userId}`,
+    role: "SALES_EXECUTIVE",
+    h1TargetInr: half,
+    h2TargetInr: half,
+    monthlyTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR,
+    isCustom: false,
+  };
 }
 
 /**
@@ -131,7 +143,7 @@ export function computeTeamMatrixIncentiveMetrics(options: {
   team: InsightsTeamMember[];
   leadsByUserId: Map<number, IncentiveBookingLead[]>;
   dateFilter: BookingDateFilterState;
-  targetsByMonth: Map<string, Map<number, number>>;
+  targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>;
 }): Map<number, TeamMemberIncentiveMetrics> {
   const byUserId = new Map<number, TeamMemberIncentiveMetrics>();
 
@@ -163,15 +175,16 @@ export function computeTeamMatrixIncentiveMetrics(options: {
         : incentiveWindowsForDateFilter(options.dateFilter, scopedLeads);
 
     for (const win of personWindows) {
+      const targetRow =
+        resolveTargetRow(id, win.monthKey, options.targetsByMonth) ??
+        fallbackTargetRow(id);
       const member: IncentiveMemberRef = {
         id,
         name: row.name || `User ${id}`,
         role: row.role || "SALES_EXECUTIVE",
-        monthlyTargetInr: resolveMonthlyTarget(
-          id,
-          win.monthKey,
-          options.targetsByMonth,
-        ),
+        monthlyTargetInr: targetRow.monthlyTargetInr,
+        h1TargetInr: targetRow.h1TargetInr,
+        h2TargetInr: targetRow.h2TargetInr,
       };
       const periodLeads = resolveIncentiveLeadsForPeriod(
         scopedLeads,
@@ -200,9 +213,9 @@ export function computeTeamMatrixIncentiveMetrics(options: {
 
 async function loadTargetsForMonths(
   monthKeys: string[],
-): Promise<Map<string, Map<number, number>>> {
+): Promise<Map<string, Map<number, SalesTargetUserRow>>> {
   const unique = [...new Set(monthKeys.filter(Boolean))];
-  const out = new Map<string, Map<number, number>>();
+  const out = new Map<string, Map<number, SalesTargetUserRow>>();
   if (unique.length === 0) {
     unique.push(currentSalesTargetMonth());
   }
@@ -210,12 +223,9 @@ async function loadTargetsForMonths(
     unique.map(async (monthKey) => {
       try {
         const rows = await salesTargetsApi.listUsers(monthKey);
-        const m = new Map<number, number>();
+        const m = new Map<number, SalesTargetUserRow>();
         for (const row of rows) {
-          m.set(
-            row.userId,
-            row.monthlyTargetInr || DEFAULT_MONTHLY_SALES_TARGET_INR,
-          );
+          m.set(row.userId, row);
         }
         out.set(monthKey, m);
       } catch {
@@ -259,7 +269,7 @@ async function mapPool<T, R>(
 
 export type LoadTeamIncentiveProgress = {
   leadsByUserId: Map<number, IncentiveBookingLead[]>;
-  targetsByMonth: Map<string, Map<number, number>>;
+  targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>;
   done: boolean;
 };
 
@@ -275,12 +285,12 @@ export async function loadTeamMatrixIncentiveBase(options: {
   onProgress?: (state: LoadTeamIncentiveProgress) => void;
 }): Promise<{
   leadsByUserId: Map<number, IncentiveBookingLead[]>;
-  targetsByMonth: Map<string, Map<number, number>>;
+  targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>;
 }> {
   const leadsByUserId = new Map<number, IncentiveBookingLead[]>();
   const empty = {
     leadsByUserId,
-    targetsByMonth: new Map<string, Map<number, number>>(),
+    targetsByMonth: new Map<string, Map<number, SalesTargetUserRow>>(),
   };
 
   if (options.team.length === 0) return empty;

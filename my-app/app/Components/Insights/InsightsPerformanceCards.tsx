@@ -21,6 +21,8 @@ type Props = {
   data: PerformanceCards | null;
   loading?: boolean;
   kpis: InsightsDashboard["kpis"];
+  /** Same monthly goal as Revenue forecast TARGET bar (Hub incentives scope). */
+  revenueForecastTargetInr?: number;
   tokenMetrics?: TokenMetricsData;
   dashboardLoading?: boolean;
   quotesSentMonth?: QuotesSentMonthMetrics | null;
@@ -151,19 +153,38 @@ function WeightedPipelineTile({
   card,
   quoteValueInr,
   quoteCount,
+  pathBreakdownNow,
+  revenueForecastTargetInr,
   loading,
 }: {
   card: WeightedPipelineCard;
   quoteValueInr: number;
   quoteCount: number;
+  pathBreakdownNow?: QuotesSentMonthMetrics["pathBreakdownNow"];
+  revenueForecastTargetInr?: number;
   loading?: boolean;
 }) {
-  const remaining = Number(card.remainingTargetInr ?? 0);
+  const hubTarget =
+    revenueForecastTargetInr != null &&
+    Number.isFinite(revenueForecastTargetInr) &&
+    revenueForecastTargetInr > 0
+      ? revenueForecastTargetInr
+      : Number(card.remainingTargetInr ?? 0);
+  const targetLabel =
+    revenueForecastTargetInr != null &&
+    Number.isFinite(revenueForecastTargetInr) &&
+    revenueForecastTargetInr > 0
+      ? formatInsightsInrCompact(revenueForecastTargetInr)
+      : card.remainingTargetLabel;
   const coverageX =
-    remaining > 0 && Number.isFinite(quoteValueInr) ? quoteValueInr / remaining : 0;
+    hubTarget > 0 && Number.isFinite(quoteValueInr) ? quoteValueInr / hubTarget : 0;
   const coverageLabel = `${coverageX.toFixed(1)}x`;
   const coverageTone: InsightsTone = coverageX >= 1 ? "green" : "neutral";
   const pill = TONE[coverageTone];
+  const breakdown = pathBreakdownNow;
+  const showBreakdown =
+    breakdown != null &&
+    (breakdown.won > 0 || breakdown.lost > 0 || breakdown.hold > 0 || quoteCount > 0);
 
   return (
     <Shell tone="neutral">
@@ -176,15 +197,32 @@ function WeightedPipelineTile({
       <p className="mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight text-gray-900 sm:text-[1.85rem]">
         {loading ? "…" : formatInsightsInrCompact(quoteValueInr)}
       </p>
+      <p className="mt-3 min-w-0 text-[10px] font-semibold leading-snug tracking-wide text-gray-400">
+        <span className="text-gray-800">
+          {loading ? "…" : `${formatInsightsCount(quoteCount)} leads`}
+        </span>
+        {showBreakdown ? (
+          <>
+            <span className="text-gray-300"> · </span>
+            <span className="text-emerald-700">
+              Won {loading ? "…" : formatInsightsCount(breakdown!.won)}
+            </span>
+            <span className="text-gray-300"> · </span>
+            <span className="text-red-600">
+              Lost {loading ? "…" : formatInsightsCount(breakdown!.lost)}
+            </span>
+            <span className="text-gray-300"> · </span>
+            <span className="text-amber-700">
+              Hold {loading ? "…" : formatInsightsCount(breakdown!.hold)}
+            </span>
+          </>
+        ) : null}
+      </p>
       <div className="mt-3 h-px w-full bg-gray-200/90" />
       <div className="mt-auto flex items-center justify-between gap-2 pt-3">
         <p className="min-w-0 text-[10px] font-semibold tracking-wide text-gray-400">
-          <span className="uppercase">Rem. Target</span>{" "}
-          <span className="text-gray-800">{card.remainingTargetLabel}</span>
-          <span className="text-gray-300"> · </span>
-          <span className="text-gray-800">
-            {loading ? "…" : `${formatInsightsCount(quoteCount)} leads`}
-          </span>
+          <span className="uppercase">Target</span>{" "}
+          <span className="text-gray-800">{targetLabel}</span>
         </p>
         <span
           className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-wide ${pill.pill} ${pill.pillText}`}
@@ -267,6 +305,7 @@ export default function InsightsPerformanceCards({
   data,
   loading = false,
   kpis,
+  revenueForecastTargetInr,
   tokenMetrics,
   dashboardLoading = false,
   quotesSentMonth = null,
@@ -334,6 +373,8 @@ export default function InsightsPerformanceCards({
                 card={cards.weightedPipeline}
                 quoteValueInr={quotesSentMonth?.quotationValueInr ?? 0}
                 quoteCount={quotesSentMonth?.quotesSentCount ?? 0}
+                pathBreakdownNow={quotesSentMonth?.pathBreakdownNow}
+                revenueForecastTargetInr={revenueForecastTargetInr}
                 loading={quotesSentMonthLoading}
               />
             ) : (

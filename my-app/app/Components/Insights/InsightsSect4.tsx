@@ -338,7 +338,11 @@ export default function InsightSect4({
                     math={
                       <span className="space-y-1">
                         <span className="block">
-                          Hub already sends two numbers. This screen only displays them.
+                          Hub sends avgDays and trendDays for four fixed stage pairs.
+                          Same branch / SM / SE filters as Insights; exitedAt in your date window.
+                        </span>
+                        <span className="block">
+                          If a transition has no assignee snapshot, Hub uses the lead&apos;s current assignee.
                         </span>
                         <span className="mt-1 block font-semibold text-gray-600">
                           Duration = avgDays (typical wait for that step)

@@ -19,6 +19,8 @@ type Props = {
   leadsOverTime: InsightsDashboard["leadsOverTime"];
   conversionTrend: InsightsDashboard["conversionTrend"];
   revenueForecast: InsightsDashboard["revenueForecast"];
+  /** Optional cross-check — Actual should match when Hub actualScope = grossBooking. */
+  grossBookingKpi?: number | null;
   /** Same date filter as Insights header — only used for labels/copy. */
   dateFilter?: BookingDateFilterState;
   /** FE-rebuilt volume series (week or month root + nested drill-down). */
@@ -544,10 +546,36 @@ function MonthWeekSheetContent({
   );
 }
 
+/** Scale line to actual data range — not 0–100% (small % values were rendering flat). */
+function conversionChartScale(values: number[]): { min: number; span: number } {
+  const min = 0;
+  const dataMax = values.length > 0 ? Math.max(...values) : 0;
+  const max = dataMax > 0 ? Math.max(dataMax * 1.12, 1) : 1;
+  return { min, span: Math.max(max - min, 0.1) };
+}
+
+function conversionPointCoords(
+  values: number[],
+  index: number,
+): { x: number; y: number } {
+  const width = 320;
+  const height = 140;
+  const padX = 10;
+  const padY = 20;
+  const { min, span } = conversionChartScale(values);
+  const step =
+    values.length === 1 ? 0 : (width - padX * 2) / (values.length - 1);
+  const x = padX + index * step;
+  const y =
+    height - padY - ((values[index]! - min) / span) * (height - padY * 2);
+  return { x, y };
+}
+
 export default function InsightsSect6({
   leadsOverTime,
   conversionTrend,
   revenueForecast,
+  grossBookingKpi,
   dateFilter,
   volumeCharts,
   weekBars: weekBarsProp,
@@ -628,26 +656,12 @@ export default function InsightsSect6({
 
   const conversionPath = useMemo(() => {
     if (conversionPoints.length === 0) return "";
-    const width = 320;
-    const height = 140;
-    const padX = 10;
-    const padY = 20;
     const values = conversionPoints.map((p) =>
       Math.min(100, Math.max(0, Number(p.conversionPercent ?? 0))),
     );
-    const min = 0;
-    const max = Math.max(100, ...values);
-    const span = Math.max(1, max - min);
-    const step =
-      conversionPoints.length === 1
-        ? 0
-        : (width - padX * 2) / (conversionPoints.length - 1);
-
-    return conversionPoints
+    return values
       .map((_, index) => {
-        const x = padX + index * step;
-        const y =
-          height - padY - ((values[index]! - min) / span) * (height - padY * 2);
+        const { x, y } = conversionPointCoords(values, index);
         return `${index === 0 ? "M" : "L"}${x} ${y}`;
       })
       .join(" ");
@@ -655,30 +669,24 @@ export default function InsightsSect6({
 
   const lastConversionPoint = useMemo(() => {
     if (conversionPoints.length === 0) return null;
-    const width = 320;
-    const height = 140;
-    const padX = 10;
-    const padY = 20;
     const values = conversionPoints.map((p) =>
       Math.min(100, Math.max(0, Number(p.conversionPercent ?? 0))),
     );
-    const min = 0;
-    const max = Math.max(100, ...values);
-    const span = Math.max(1, max - min);
-    const step =
-      conversionPoints.length === 1
-        ? 0
-        : (width - padX * 2) / (conversionPoints.length - 1);
     const index = conversionPoints.length - 1;
-    const x = padX + index * step;
-    const y =
-      height - padY - ((values[index]! - min) / span) * (height - padY * 2);
-    return { x, y };
+    return conversionPointCoords(values, index);
   }, [conversionPoints]);
 
   const target = Number(revenueForecast?.target ?? 0) || 0;
-  const actual = Number(revenueForecast?.actual ?? 0) || 0;
   const projected = Number(revenueForecast?.projected ?? 0) || 0;
+  const hubActual = Number(revenueForecast?.actual ?? 0) || 0;
+  const grossBooking =
+    grossBookingKpi != null && Number.isFinite(Number(grossBookingKpi))
+      ? Number(grossBookingKpi)
+      : null;
+  const actual =
+    revenueForecast?.actualScope === "grossBooking" && grossBooking != null
+      ? grossBooking
+      : hubActual;
   const forecastMax = Math.max(1, target, actual, projected);
   const bar = (v: number) => Math.max(8, Math.round((v / forecastMax) * 144));
 
@@ -890,12 +898,25 @@ export default function InsightsSect6({
                   <InsightsInfoTip
                     side="top"
                     label="How conversion trend is counted"
-                    math="Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
+                    math={
+                      conversionTrend.numeratorRule
+                        ? "Point = (Closed Won + Booking Done) ÷ Leads created in week × 100. Badge = relative change vs first week."
+                        : "Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
+                    }
                   >
-                    Out of all leads in that week or month, how many became a closed
-                    deal. The small number on the right tells you if this got better
-                    or worse than the start of the range. Example: 16 out of 100
-                    closed, then 18 out of 100 — it went up.
+                    {conversionTrend.numeratorRule ? (
+                      <>
+                        Each week (W1–W5): leads <strong>created</strong> in that week vs
+                        how many are now Closed Won or Booking Done (Lost and Hold
+                        excluded). The badge compares the last week to the first week.
+                      </>
+                    ) : (
+                      <>
+                        Out of all leads in that week or month, how many became a closed
+                        deal. The small number on the right tells you if this got better
+                        or worse than the start of the range.
+                      </>
+                    )}
                   </InsightsInfoTip>
                 </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
@@ -971,12 +992,24 @@ export default function InsightsSect6({
                 <InsightsInfoTip
                   side="top"
                   label="How forecast is counted"
-                  math="Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal. Bars scale to the largest of the three."
+                  math={
+                    revenueForecast?.actualScope === "grossBooking"
+                      ? revenueForecast?.targetSource === "incentives"
+                        ? "Actual = Token + Booking (grossBooking). Projected = pace to period end. Target = sum of Incentives H1+H2 for scoped execs in this month."
+                        : revenueForecast?.targetSource === "config_default"
+                          ? "Actual = Token + Booking. Target = config fallback (₹3 Cr) until Incentives targets are loaded in Hub."
+                          : "Actual = Token + Booking (grossBooking). Projected = (actual ÷ days elapsed) × days in period. Target = Hub booking target."
+                      : "Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal. Bars scale to the largest of the three."
+                  }
                 >
-                  Green is money already booked. Dark is where we are heading if we
-                  keep this pace till the period ends. Grey is the goal. If green is
-                  below grey, we are still short of target. Example: booked ₹12.8L,
-                  heading to ₹14.5L, goal ₹15L.
+                  Green is money already booked (Token + Booking deals in your
+                  filter window). Dark is where we are heading if we keep this
+                  pace till the period ends. Grey is the monthly booking goal
+                  {revenueForecast?.targetSource === "incentives"
+                    ? " from Incentives targets."
+                    : revenueForecast?.targetSource === "config_default"
+                      ? " (default until targets are set)."
+                      : "."}
                 </InsightsInfoTip>
               </div>
               <p className="mt-0.5 text-[11px] font-medium text-gray-400">

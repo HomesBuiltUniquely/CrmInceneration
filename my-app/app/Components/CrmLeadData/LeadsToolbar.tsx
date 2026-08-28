@@ -51,7 +51,10 @@ function meetingQuoteLeadTypeTiles(
     ["Meeting Scheduled", counts.meetingScheduled ?? 0],
     ["Meeting Rescheduled", counts.meetingRescheduled ?? 0],
     ["Meeting Cancelled", counts.meetingCancelled ?? 0],
-    ["Quote Sent", counts.quoteSent ?? 0],
+    [
+      "Quote Sent",
+      (counts.quoteSent ?? 0) + (counts.lostQuoteSent ?? 0),
+    ],
     ["Meeting Successful", counts.meetingSuccessful ?? 0],
   ];
 }
@@ -924,13 +927,14 @@ export default function LeadsToolbar({
                     ? "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
                     : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
                 } ${interactive ? "cursor-pointer hover:bg-[var(--crm-surface)] w-full" : ""}`;
-                const quoteSentWon = Number(leadTypeCounts.quoteSent ?? value ?? 0);
+                const quoteSentWon = Number(leadTypeCounts.quoteSent ?? 0);
                 const quoteSentLost = Number(leadTypeCounts.lostQuoteSent ?? 0);
+                const quoteSentTotal = quoteSentWon + quoteSentLost;
                 const inner =
                   tileLabel === "Quote Sent" ? (
                     <>
                       <div className="text-2xl font-extrabold leading-none text-[var(--crm-accent)]">
-                        {quoteSentWon}
+                        {quoteSentTotal}
                       </div>
                       <div className="mt-1.5 space-y-0.5 text-[10px] font-semibold leading-tight">
                         <div className="text-emerald-700">Won {quoteSentWon}</div>

@@ -17,8 +17,12 @@ export type IncentiveMemberRef = {
   managerName?: string;
   /** CRM assignee aliases (fullName, username, email local-part) for admin matching. */
   assigneeAliases?: string[];
-  /** Monthly revenue target in INR — default ₹60L from admin settings (₹30L per 15-day period). */
+  /** Monthly revenue target in INR — H1 + H2 from Hub incentives targets. */
   monthlyTargetInr?: number;
+  /** H1 (1–15) target in INR. */
+  h1TargetInr?: number;
+  /** H2 (16–end) target in INR. */
+  h2TargetInr?: number;
 };
 
 export type IncentiveSlabRow = {
@@ -243,12 +247,25 @@ export type IncentivePeriodNumbers = {
   achievementPct: number;
 };
 
+function resolvePeriodTargetInr(
+  member: IncentiveMemberRef,
+  periodHalf?: IncentivePeriodHalf,
+): number {
+  if (periodHalf === "H1" && member.h1TargetInr != null && member.h1TargetInr > 0) {
+    return member.h1TargetInr;
+  }
+  if (periodHalf === "H2" && member.h2TargetInr != null && member.h2TargetInr > 0) {
+    return member.h2TargetInr;
+  }
+  const monthly = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
+  return periodTargetFromMonthly(monthly) || DEFAULT_INCENTIVE_PERIOD_TARGET_INR;
+}
+
 export function computeIncentivePeriodNumbers(
   member: IncentiveMemberRef,
   options?: BuildIncentiveProfileOptions,
 ): IncentivePeriodNumbers {
-  const monthlyTarget = member.monthlyTargetInr ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
-  const target = periodTargetFromMonthly(monthlyTarget) || DEFAULT_INCENTIVE_PERIOD_TARGET_INR;
+  const target = resolvePeriodTargetInr(member, options?.periodHalf);
   const monthLeads = options?.bookingLeads ?? [];
   const historyLeads = options?.allBookingLeads ?? monthLeads;
   const incrementalByRecord = computeIncrementalWeightsByRecordId(historyLeads);

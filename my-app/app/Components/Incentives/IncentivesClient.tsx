@@ -64,6 +64,12 @@ export default function IncentivesClient() {
           monthlyTargetInr:
             targets.find((t) => t.userId === base.viewer.id)?.monthlyTargetInr ??
             base.viewer.monthlyTargetInr,
+          h1TargetInr:
+            targets.find((t) => t.userId === base.viewer.id)?.h1TargetInr ??
+            base.viewer.h1TargetInr,
+          h2TargetInr:
+            targets.find((t) => t.userId === base.viewer.id)?.h2TargetInr ??
+            base.viewer.h2TargetInr,
         },
       };
     } catch {

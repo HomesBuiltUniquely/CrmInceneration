@@ -11,7 +11,6 @@ import {
   type InsightsFunnelStage,
   type InsightsSalesFunnelResponse,
 } from "@/lib/crm-insights-api";
-import type { TokenMetricsData } from "./InsightSect2";
 import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
 import {
   funnelStageHasHoldPath,
@@ -25,12 +24,7 @@ type Props = {
   lostFunnel?: InsightsDashboard["lostFunnel"];
   holdFunnel?: InsightsDashboard["holdFunnel"];
   holdPathByStage?: InsightsDashboard["holdPathByStage"];
-  revenueDistribution: InsightsDashboard["revenueDistribution"];
   totalLeadsCount?: number;
-  tokenMetrics?: TokenMetricsData;
-  quotationCount?: number;
-  quotationValue?: number | null;
-  quotationMetricsLoading?: boolean;
   funnelStageValues?: Record<string, number> | null;
   funnelMetricsLoading?: boolean;
   stagePathData?: FunnelStagePathDataMap;
@@ -133,8 +127,6 @@ function funnelPyramidWidthPercent(index: number, stageCount: number): number {
   const step = (maxW - minW) / (stageCount - 1);
   return Math.round((maxW - index * step) * 10) / 10;
 }
-
-const PHASE_COLORS = ["bg-[#111827]", "bg-[#334155]", "bg-[#64748B]", "bg-[#22E574]"];
 
 type SubstageItem = {
   title: string;
@@ -406,12 +398,7 @@ export default function InsightSect3({
   lostFunnel,
   holdFunnel,
   holdPathByStage,
-  revenueDistribution,
   totalLeadsCount,
-  tokenMetrics,
-  quotationCount,
-  quotationValue,
-  quotationMetricsLoading,
   funnelStageValues,
   funnelMetricsLoading,
   stagePathData: stagePathDataProp = {},
@@ -759,39 +746,6 @@ export default function InsightSect3({
     wonSegmentValue,
   ]);
 
-  const phasesWithOverrides = revenueDistribution.phases.map((phase) => {
-    const key = (phase.phaseKey || phase.phaseLabel).toLowerCase();
-    const isDesign = key.includes("design");
-    const isQuotation = key.includes("quotation") || key.includes("proposal");
-
-    let subtext: string | undefined = undefined;
-    let val = phase.value;
-
-    if (isDesign) {
-      if (tokenMetrics?.bookingValue && tokenMetrics.bookingValue > 0) {
-        val = tokenMetrics.bookingValue;
-      }
-      if (tokenMetrics?.bookingCount != null) {
-        subtext = `${tokenMetrics.bookingCount} Booked Leads`;
-      }
-    } else if (isQuotation) {
-      if (quotationValue != null && !quotationMetricsLoading) {
-        val = quotationValue;
-      }
-      if (quotationCount != null) {
-        subtext = `${formatInsightsCount(quotationCount)} Quote Sent Leads`;
-      }
-    }
-
-    return {
-      ...phase,
-      value: val,
-      subtext,
-    };
-  });
-
-  const totalPhaseValue = phasesWithOverrides.reduce((sum, p) => sum + p.value, 0);
-
   const activeStagePopupDetails = useMemo(() => {
     if (!selectedStagePopup) return null;
     const stage = displaySalesFunnel.find(
@@ -808,15 +762,16 @@ export default function InsightSect3({
   }, [selectedStagePopup, displaySalesFunnel, stagePathData]);
 
   return (
-    <main className="mt-10 px-4">
-      <div className="mx-auto flex max-w-[1300px] flex-col gap-8 lg:flex-row">
-        {/* Sales Funnel Efficiency */}
-        <div className="w-full rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6 lg:w-[68%]">
-          <div className="mb-5 flex flex-col gap-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <main className="mt-6 px-4">
+      <div className="mx-auto max-w-[1300px]">
+        <div className="w-full rounded-2xl border border-slate-200/80 bg-white p-4 shadow-md sm:p-5">
+          <div className="mb-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <h2 className="text-xl font-bold text-gray-900">Sales Funnel Efficiency</h2>
-                <p className="mt-0.5 text-xs text-gray-500">
+                <h2 className="text-xl font-bold tracking-tight text-slate-900">
+                  Sales Funnel
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500">
                   {funnelModeSubtitle(funnelMode)}
                 </p>
               </div>
@@ -881,11 +836,11 @@ export default function InsightSect3({
               </div>
             ) : null}
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="max-w-xl text-[10px] font-medium leading-snug text-slate-400">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+              <p className="max-w-xl text-[11px] font-medium leading-snug text-slate-400">
                 {FUNNEL_MODE_OPTIONS.find((o) => o.id === funnelMode)?.hint}
               </p>
-              <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-100 p-0.5">
+              <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
                 {(["all", "won", "lost", "hold"] as const).map((tab) => (
                   <button
                     key={tab}
@@ -939,7 +894,7 @@ export default function InsightSect3({
           ) : displaySalesFunnel.length === 0 ? (
             <p className="text-sm text-gray-500">No funnel data for this filter.</p>
           ) : (
-            <div className="relative">
+            <div className="relative mx-auto max-w-5xl pt-1">
               {selectedStagePopup ? (
                 <div
                   className="pointer-events-none absolute inset-0 z-10 rounded-xl bg-slate-900/[0.04] backdrop-blur-[1px] transition-opacity duration-300"
@@ -947,7 +902,7 @@ export default function InsightSect3({
                 />
               ) : null}
 
-              <div className="relative w-full space-y-2.5">
+              <div className="relative w-full space-y-1.5">
                 {displaySalesFunnel.map((stage, index) => {
                   const canonicalKey = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
                   const isTotal = canonicalKey === "total";
@@ -1024,8 +979,8 @@ export default function InsightSect3({
                     funnelTab === "all" && !isFreshLead && !isTotal;
 
                   const wonLostBadgeClass = isClosedWonStage
-                    ? "inline-flex h-5 max-w-[11rem] items-center truncate rounded-md bg-black/15 px-1.5 text-[9px] font-semibold whitespace-nowrap text-gray-950 sm:h-6 sm:max-w-none sm:px-2 sm:text-[10px]"
-                    : "inline-flex h-5 max-w-[11rem] items-center truncate rounded-md bg-white/20 px-1.5 text-[9px] font-semibold whitespace-nowrap text-white/90 sm:h-6 sm:max-w-none sm:px-2 sm:text-[10px]";
+                    ? "inline-flex h-4 max-w-[10rem] items-center truncate rounded bg-black/15 px-1 text-[8px] font-semibold whitespace-nowrap text-gray-950 sm:max-w-none sm:px-1.5 sm:text-[9px]"
+                    : "inline-flex h-4 max-w-[10rem] items-center truncate rounded bg-white/20 px-1 text-[8px] font-semibold whitespace-nowrap text-white/90 sm:max-w-none sm:px-1.5 sm:text-[9px]";
 
                   const percentLabel = isTotal
                     ? formatInsightsPercent(100)
@@ -1087,19 +1042,19 @@ export default function InsightSect3({
                                 : undefined
                             }
                             title={isClickable ? "Click to view substage breakdown" : undefined}
-                            className={`flex h-12 w-full items-center gap-2 px-2.5 sm:h-14 sm:gap-3 sm:px-4 ${barColor} rounded-xl shadow-xs transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:z-10 hover:-translate-y-1.5 hover:scale-[1.015] hover:shadow-[0_14px_32px_rgba(15,23,42,0.22)] ${
+                            className={`flex h-11 w-full items-center gap-1.5 px-2.5 sm:h-12 sm:gap-2 sm:px-3.5 ${barColor} rounded-lg shadow-xs transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:z-10 hover:-translate-y-0.5 hover:scale-[1.008] hover:shadow-[0_8px_20px_rgba(15,23,42,0.18)] ${
                               isClickable ? "cursor-pointer active:scale-[0.995]" : "cursor-default"
                             } ${
                               isPopupOpen
-                                ? "insights-funnel-bar-lift z-10 shadow-[0_18px_40px_rgba(15,23,42,0.28)] ring-2 ring-white/35"
+                                ? "insights-funnel-bar-lift z-10 shadow-[0_12px_28px_rgba(15,23,42,0.22)] ring-2 ring-white/35"
                                 : ""
                             }`}
                           >
-                            <span className="w-[5.5rem] shrink-0 truncate text-left text-[11px] font-semibold sm:w-[7rem] sm:text-sm">
+                            <span className="w-[4.75rem] shrink-0 truncate text-left text-[10px] font-semibold sm:w-[6rem] sm:text-xs">
                               {displayLabel}
                             </span>
-                            <div className="ml-auto flex min-w-0 items-center justify-end gap-2 sm:gap-2.5">
-                              <span className="text-right text-[11px] font-bold whitespace-nowrap tabular-nums sm:text-sm">
+                            <div className="ml-auto flex min-w-0 items-center justify-end gap-1.5 sm:gap-2">
+                              <span className="text-right text-[10px] font-bold whitespace-nowrap tabular-nums sm:text-xs">
                                 {metricsText}
                               </span>
                               {showPathBadge ? (
@@ -1114,7 +1069,7 @@ export default function InsightSect3({
                         </div>
                       </div>
                       <span
-                        className={`flex w-[3.75rem] shrink-0 items-center justify-end text-right text-[11px] font-bold whitespace-nowrap tabular-nums sm:w-[5rem] sm:text-sm transition-opacity duration-300 ${
+                        className={`flex w-[3.25rem] shrink-0 items-center justify-end text-right text-[10px] font-bold whitespace-nowrap tabular-nums sm:w-[4rem] sm:text-xs transition-opacity duration-300 ${
                           isDimmed ? "text-gray-400" : "text-gray-700"
                         }`}
                       >
@@ -1137,71 +1092,6 @@ export default function InsightSect3({
               loading={stagePathLoading}
               onClose={() => setSelectedStagePopup(null)}
             />
-          ) : null}
-        </div>
-
-        {/* Revenue Distribution */}
-        <div className="w-full rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-6 lg:w-[32%]">
-          <h2 className="mb-2 text-xl font-bold text-gray-900">Revenue Distribution</h2>
-          <p className="mb-6 text-xs text-gray-500">Booking value in design phase & quotation breakdown</p>
-
-          {phasesWithOverrides.length === 0 ? (
-            <p className="text-sm text-gray-500">No revenue phase data.</p>
-          ) : (
-            <div className="space-y-7">
-              {phasesWithOverrides.map((phase, index) => {
-                const calcPercent =
-                  totalPhaseValue > 0
-                    ? Math.min(100, Math.round((phase.value / totalPhaseValue) * 100))
-                    : phase.percent;
-                const phaseKey = (phase.phaseKey || phase.phaseLabel).toLowerCase();
-                const isQuotationPhase =
-                  phaseKey.includes("quotation") || phaseKey.includes("proposal");
-
-                return (
-                  <div key={phase.phaseKey || phase.phaseLabel}>
-                    <div className="mb-2 flex items-center justify-between text-sm">
-                      <div>
-                        <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-                          {phase.phaseLabel}
-                        </span>
-                        {phase.subtext ? (
-                          <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">
-                            {phase.subtext}
-                          </span>
-                        ) : null}
-                      </div>
-                      <span className="text-xs font-bold text-gray-900 sm:text-sm">
-                        {quotationMetricsLoading && isQuotationPhase ? (
-                          <span className="text-gray-400">Loading…</span>
-                        ) : (
-                          formatInsightsInrCompact(phase.value)
-                        )}{" "}
-                        <span className="text-xs font-normal text-gray-400">
-                          ({formatInsightsPercent(calcPercent, 0)})
-                        </span>
-                      </span>
-                    </div>
-                    <div className="h-3.5 w-full overflow-hidden rounded-full bg-gray-100">
-                      <div
-                        className={`h-3.5 rounded-full ${PHASE_COLORS[index % PHASE_COLORS.length]} transition-all duration-300`}
-                        style={{
-                          width: `${Math.min(100, Math.max(0, calcPercent))}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {revenueDistribution.observation ? (
-            <div className="mt-8 rounded-r-xl border-l-4 border-[#22E574] bg-emerald-50/80 p-4">
-              <p className="text-xs font-medium italic text-emerald-900">
-                &ldquo;{revenueDistribution.observation}&rdquo;
-              </p>
-            </div>
           ) : null}
         </div>
       </div>
