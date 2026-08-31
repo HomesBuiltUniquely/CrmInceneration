@@ -82,7 +82,8 @@ function readLeadSourceField(lead: Record<string, unknown>): unknown {
 export function filterIvrCallLeads<T extends Record<string, unknown> | object>(leads: T[]): T[] {
   return leads.filter((lead) => {
     const rec = lead as Record<string, unknown>;
-    return isIvrInboundLead(rec.leadType ?? rec.lead_type, readLeadSourceField(rec));
+    const leadType = String(rec.leadType ?? rec.lead_type ?? "");
+    return isIvrInboundLead(leadType, readLeadSourceField(rec));
   });
 }
 

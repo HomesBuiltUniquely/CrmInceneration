@@ -3555,16 +3555,17 @@ export default function LeadsDataSection({
           heatmapData.primaryRows.length > 0
             ? heatmapData.primaryRows
             : salesInsightCountLeads(heatmapData.leads);
-        const countsWithInsights =
-          roleUsesAdminPoolInsightTiles(roleKey) && leadsWorkspace === "sales"
-            ? mergeSalesPoolInsightCounts(base, adminInsightPool, adminInsightOpts)
-            : { ...base };
         const ivrPool =
           heatmapData.primaryRows.length > 0
             ? heatmapData.primaryRows
             : heatmapData.leads;
+        const ivrAdjustedBase = overlayIvrLeadTypeCountsFromRows(base, ivrPool);
+        const countsWithInsights =
+          roleUsesAdminPoolInsightTiles(roleKey) && leadsWorkspace === "sales"
+            ? mergeSalesPoolInsightCounts(ivrAdjustedBase, adminInsightPool, adminInsightOpts)
+            : { ...ivrAdjustedBase };
         setLeadTypeCounts({
-          ...overlayIvrLeadTypeCountsFromRows(countsWithInsights, ivrPool),
+          ...countsWithInsights,
           verified: Number(heatmapData.verifiedCount ?? 0),
         });
       } catch {

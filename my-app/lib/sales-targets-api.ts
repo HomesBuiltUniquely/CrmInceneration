@@ -220,7 +220,7 @@ export function applyMonthlyTargets<T extends { id: number }>(
       ...member,
       h1TargetInr: h1,
       h2TargetInr: h2,
-      monthlyTargetInr: row?.monthlyTargetInr ?? h1 + h2 ?? fallback,
+      monthlyTargetInr: row?.monthlyTargetInr ?? h1 + h2,
     };
   });
 }
