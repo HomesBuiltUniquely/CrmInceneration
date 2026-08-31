@@ -25,6 +25,7 @@ import {
 } from "@/lib/lead-presales-milestone-store";
 import {
   computeLeadTypeCountsFromRows,
+  overlayIvrLeadTypeCountsFromRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
 import {
@@ -121,13 +122,14 @@ import {
 } from "@/lib/crm-date-field-filter";
 import {
   appendIvrLeadSourceFilter,
-  countIvrCallLeads,
   filterIvrCallLeads,
   hubLeadTypeForFilterKey,
   isIvrCallFilterKey,
   isIvrLeadTypeKey,
 } from "@/lib/ivr-lead-source";
 import {
+  deleteApiLeadTypeForRow,
+  deleteIvrInboundLeads,
   deleteIvrLeads,
   isIvrLeadDeleteTarget,
   IVR_DELETE_CONFIRM_BODY,
@@ -759,9 +761,9 @@ async function fetchMergedPage(
           );
 
   /**
-   * IVR Call is a virtual tile (`leadSource`), not a Hub leadType.
-   * Hub often ignores `leadSource` and returns all Add Lead rows — always filter client-side
-   * from the same pool the IVR tile count uses.
+   * IVR Lead tile is a business filter, not a Hub table filter.
+   * `/v1/leads/filter?leadType=ivrlead` only returns the ivrlead table — load the
+   * merged pool (`leadType=all`) and client-filter with isIvrInboundLead().
    */
   if (isIvrCallFilterKey(normalizedLeadType)) {
     const pageFromIvrLeads = (leads: ApiLead[]): SpringPage<ApiLead> => {
@@ -1280,7 +1282,7 @@ function toAssignmentLeadType(leadType: string): string {
 }
 
 function deleteBucketForRow(row: LeadRowModel): string {
-  return isIvrLeadDeleteTarget(row.leadType, row.leadSource) ? "ivrlead" : row.leadType;
+  return deleteApiLeadTypeForRow(row.leadType, row.leadSource);
 }
 
 function groupRowsByLeadType(rows: LeadRowModel[]): Map<string, LeadRowModel[]> {
@@ -1389,7 +1391,6 @@ async function deleteLeadRowsByType(leadType: string, ids: Array<number | string
   }
   // Fallback for unstable bulk-delete backend endpoints (observed on addlead in production):
   // retry selected IDs one-by-one through the proven lead DELETE route.
-  // Never use AddLead DELETE for IVR — those rows live in /v1/IvrLead.
   if (numericIds.length > 0) {
     const failedIds: number[] = [];
     await Promise.all(
@@ -3558,14 +3559,13 @@ export default function LeadsDataSection({
           roleUsesAdminPoolInsightTiles(roleKey) && leadsWorkspace === "sales"
             ? mergeSalesPoolInsightCounts(base, adminInsightPool, adminInsightOpts)
             : { ...base };
+        const ivrPool =
+          heatmapData.primaryRows.length > 0
+            ? heatmapData.primaryRows
+            : heatmapData.leads;
         setLeadTypeCounts({
-          ...countsWithInsights,
+          ...overlayIvrLeadTypeCountsFromRows(countsWithInsights, ivrPool),
           verified: Number(heatmapData.verifiedCount ?? 0),
-          ivr_call: countIvrCallLeads(
-            heatmapData.primaryRows.length > 0
-              ? heatmapData.primaryRows
-              : heatmapData.leads,
-          ),
         });
       } catch {
         if (!cancelled) {
@@ -4886,13 +4886,35 @@ export default function LeadsDataSection({
     try {
       setIsDeleting(true);
       if (leadType !== "all") {
-        const deleteAllType = isIvrLeadTypeKey(leadType) ? "ivrlead" : leadType;
-        const res = await fetch(`/api/admin/${toAdminDeleteAllPath(deleteAllType)}`, {
-          method: "DELETE",
-          credentials: "include",
-          headers: getCrmAuthHeaders(),
-        });
-        if (!res.ok) throw new Error("Delete-all failed.");
+        if (isIvrCallFilterKey(leadType)) {
+          const res = await fetch(`/api/admin/${toAdminDeleteAllPath("ivrlead")}`, {
+            method: "DELETE",
+            credentials: "include",
+            headers: getCrmAuthHeaders(),
+          });
+          if (!res.ok) throw new Error("Delete-all failed.");
+          const scopedRows = await fetchAllScopedMergedLeads("all", "updatedAt,desc");
+          const legacyIvrAddLeads = scopedRows.filter(
+            (lead) => isIvrLeadDeleteTarget(lead.leadType, lead.leadSource) && !isIvrLeadTypeKey(lead.leadType),
+          );
+          if (legacyIvrAddLeads.length > 0) {
+            await deleteIvrInboundLeads(
+              legacyIvrAddLeads.map((lead) => ({
+                id: lead.id ?? "",
+                leadType: lead.leadType,
+                leadSource: (lead as Record<string, unknown>).leadSource,
+              })),
+            );
+          }
+        } else {
+          const deleteAllType = isIvrLeadTypeKey(leadType) ? "ivrlead" : leadType;
+          const res = await fetch(`/api/admin/${toAdminDeleteAllPath(deleteAllType)}`, {
+            method: "DELETE",
+            credentials: "include",
+            headers: getCrmAuthHeaders(),
+          });
+          if (!res.ok) throw new Error("Delete-all failed.");
+        }
         notifyInfo(deleteNoticeText(currentRole, `Delete All (${toAssignmentLeadType(leadType)})`));
       } else {
         const targets = [

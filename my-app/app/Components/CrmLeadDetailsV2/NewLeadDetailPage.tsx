@@ -14,7 +14,6 @@ import CrmFullscreenOverlayModal from "@/app/Components/Shared/CrmFullscreenOver
 import ActivityHistoryWithConnector, {
   type ActivityHistoryHandle,
 } from "./ActivityHistoryWithConnector";
-import LeadPaymentLinkBanner from "./LeadPaymentLinkBanner";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
 import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
@@ -42,7 +41,7 @@ import { useGlobalNotifier } from "@/app/Components/Shared/GlobalNotifier";
 import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import {
   canDeleteIvrLead,
-  deleteIvrLead,
+  deleteIvrInboundLead,
   IVR_DELETE_CONFIRM_BODY,
   IVR_DELETE_CONFIRM_TITLE,
 } from "@/lib/ivr-lead-delete";
@@ -156,7 +155,6 @@ export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = fals
           <DealControlSidebar onActivityClick={openActivityPanel} />
           <section className="rounded-xl border border-[#e1e6ed] bg-[#f3f5f8] p-3">
             <LeadDetailHeader isPopupMode={isPopupMode} />
-            <LeadPaymentLinkBanner leadType={leadType} leadId={leadId} />
             <div className="mt-3 grid gap-3 lg:grid-cols-[270px_minmax(0,1fr)]">
               <aside className="space-y-3">
                 <div id="deal-overview" className="scroll-mt-24">
@@ -299,9 +297,9 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
   const handleConfirmIvrDelete = useCallback(async () => {
     try {
       setIvrDeleting(true);
-      const body = await deleteIvrLead(leadId);
+      const body = await deleteIvrInboundLead(leadType, lead.leadSource, leadId);
       notifySuccess(body.message || "IVR lead deleted successfully");
-      dispatchCrmLeadsInvalidate({ leadTypes: ["ivrlead"], reason: "delete" });
+      dispatchCrmLeadsInvalidate({ leadTypes: ["ivrlead", "addlead"], reason: "delete" });
       requestLeadDetailOverlayClose();
     } catch (error) {
       notifyError(error instanceof Error ? error.message : "Failed to delete IVR lead");
@@ -309,7 +307,7 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
       setIvrDeleting(false);
       setIvrDeleteOpen(false);
     }
-  }, [leadId, notifyError, notifySuccess]);
+  }, [lead.leadSource, leadId, leadType, notifyError, notifySuccess]);
 
   return (
     <>

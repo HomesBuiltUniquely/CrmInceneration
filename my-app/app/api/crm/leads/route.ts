@@ -26,7 +26,7 @@ import {
   whatsappHubUnavailableMessage,
 } from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
-import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
+import { computeLeadTypeCountsFromRows, normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import {
@@ -103,13 +103,7 @@ function emptySourceCounts(): LeadSourceCounts {
 }
 
 function computeSourceCounts(leads: ApiLead[]): LeadSourceCounts {
-  const counts = emptySourceCounts();
-  for (const lead of leads) {
-    const leadType = normalizeLeadTypeKey(lead.leadType);
-    counts[leadType] += 1;
-    counts.all += 1;
-  }
-  return counts;
+  return computeLeadTypeCountsFromRows(leads);
 }
 
 /** Hub admin pool / mergeAll may omit walk-in + WhatsApp — fold filter counts into `all`. */

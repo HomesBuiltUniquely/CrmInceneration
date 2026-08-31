@@ -36,6 +36,7 @@ import {
 import {
   buildAdminPoolDualCounts,
   computeLeadTypeCountsFromRows,
+  overlayIvrLeadTypeCountsFromRows,
   pickMilestoneRepresentativeRows,
   pickPrimarySourceRows,
 } from "@/lib/primary-source-leads";
@@ -757,6 +758,13 @@ export async function fetchAdminLeadsHeatmapData(
         ? salesJourneyRows.filter((l) => isCrmLeadVerified(l)).length
         : pool.primaryRows.filter((l) => isCrmLeadVerified(l)).length;
 
+    const ivrOverlayRows =
+      input.workspace === "sales"
+        ? salesJourneyRows
+        : pool.primaryRows.length > 0
+          ? pool.primaryRows
+          : leads;
+
     let leadTypeCountsForUi = leadTypeCounts;
     let leadTypeAllRowsForUi =
       input.workspace === "sales" ? fromRowsTypes : pool.leadTypeAllRows;
@@ -808,6 +816,16 @@ export async function fetchAdminLeadsHeatmapData(
       }
     } catch {
       // Walk-in / WhatsApp augment is optional; admin pool must still load.
+    }
+
+    // Hub byLeadType is table-based; reconcile ivrlead + addlead after all augment steps.
+    leadTypeCountsForUi = overlayIvrLeadTypeCountsFromRows(leadTypeCountsForUi, ivrOverlayRows);
+    if (input.workspace !== "sales") {
+      leadTypeAllRowsForUi = overlayIvrLeadTypeCountsFromRows(leadTypeAllRowsForUi, leads);
+      leadTypePrimaryForUi = overlayIvrLeadTypeCountsFromRows(
+        leadTypePrimaryForUi,
+        pool.primaryRows.length > 0 ? pool.primaryRows : leads,
+      );
     }
 
     const journeyTotal =
