@@ -18,6 +18,8 @@ export type ActivityType =
 export interface ActivityItem {
   id: string;
   type: ActivityType;
+  /** Hub `activityType` before UI mapping (e.g. BOOKING_PAYMENT_LINK_SENT). */
+  rawActivityType?: string;
   timestamp: string;
   createdAtIso?: string;
   description: string;

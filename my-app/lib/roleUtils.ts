@@ -20,6 +20,11 @@ export function isSuperAdminRole(role: string): boolean {
   return normalizeRole(role) === "SUPER_ADMIN";
 }
 
+/** Easebuzz payment-link integration — SUPER_ADMIN only until rolled out org-wide. */
+export function canUsePaymentLinkIntegration(role: string): boolean {
+  return isSuperAdminRole(role);
+}
+
 /** Booking & Token dashboard — sales hierarchy + admin roles. */
 export function canAccessBookingTokenDashboard(role: string): boolean {
   const r = normalizeRole(role);

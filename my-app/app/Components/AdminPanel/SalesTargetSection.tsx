@@ -7,6 +7,7 @@ import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { salesTargetsApi } from "@/lib/sales-targets-api";
 import {
   currentSalesTargetMonth,
+  DEFAULT_INCENTIVE_HALF_TARGET_INR,
   DEFAULT_MONTHLY_SALES_TARGET_INR,
   formatSalesTargetMonthLabel,
   formatTargetInr,
@@ -34,6 +35,8 @@ function mapExecRow(row: Record<string, unknown>, index: number): SalesTargetUse
           ? String(row.salesManagerName)
           : undefined,
     monthlyTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR,
+    h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+    h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
     isCustom: false,
   };
 }
@@ -47,11 +50,19 @@ function mergeExecWithTargets(
   return execs.map((exec) => {
     const fromApi = byId.get(exec.userId);
     if (!fromApi) {
-      return { ...exec, monthlyTargetInr: defaultTarget, isCustom: false };
+      return {
+        ...exec,
+        monthlyTargetInr: defaultTarget,
+        h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+        h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+        isCustom: false,
+      };
     }
     return {
       ...exec,
       monthlyTargetInr: fromApi.monthlyTargetInr,
+      h1TargetInr: fromApi.h1TargetInr,
+      h2TargetInr: fromApi.h2TargetInr,
       isCustom: fromApi.isCustom,
     };
   });
@@ -67,7 +78,8 @@ export default function SalesTargetSection() {
   const [bulkTarget, setBulkTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [editUser, setEditUser] = useState<SalesTargetUserRow | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const [editH1, setEditH1] = useState("");
+  const [editH2, setEditH2] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -148,18 +160,20 @@ export default function SalesTargetSection() {
 
   const openEdit = (user: SalesTargetUserRow) => {
     setEditUser(user);
-    setEditValue(String(user.monthlyTargetInr));
+    setEditH1(String(user.h1TargetInr));
+    setEditH2(String(user.h2TargetInr));
   };
 
   const saveEdit = async () => {
     if (!editUser) return;
-    const parsed = parseTargetInrInput(editValue);
-    if (parsed == null) {
-      notifyError("Enter a valid monthly target.");
+    const h1 = parseTargetInrInput(editH1);
+    const h2 = parseTargetInrInput(editH2);
+    if (h1 == null || h2 == null) {
+      notifyError("Enter valid H1 and H2 target amounts.");
       return;
     }
     try {
-      await salesTargetsApi.setUserTarget(editUser.userId, parsed, month);
+      await salesTargetsApi.setUserHalves(editUser.userId, h1, h2, month);
       notifySuccess(`Target set for ${editUser.name}.`);
       setEditUser(null);
       await loadTargets();
@@ -203,7 +217,8 @@ export default function SalesTargetSection() {
         <div>
           <h2 className="text-lg font-bold text-[var(--crm-text-primary)]">Revenue Targets</h2>
           <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
-            Set each sales executive&apos;s monthly revenue target (default ₹60 lakhs).
+            Set each sales executive&apos;s monthly target as H1 (1–15) + H2 (16–end).
+            Syncs with Incentives and Insights revenue forecast.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +248,7 @@ export default function SalesTargetSection() {
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-[var(--crm-tab-grad)] px-5 py-4 text-white">
         <div>
-          <p className="text-sm text-white/80">Default monthly target for new executives</p>
+          <p className="text-sm text-white/80">Default monthly target (applied as equal H1 + H2)</p>
           <p className="mt-1 text-sm font-semibold">
             Current: <strong>{formatTargetLakhs(Number(defaultTarget) || DEFAULT_MONTHLY_SALES_TARGET_INR)}</strong>
             {" · "}
@@ -320,7 +335,7 @@ export default function SalesTargetSection() {
                 Manager
               </th>
               <th className="px-3 py-3 text-left text-xs font-bold uppercase text-[var(--crm-text-muted)]">
-                Monthly target
+                H1 / H2 target
               </th>
               <th className="px-3 py-3 text-right text-xs font-bold uppercase text-[var(--crm-text-muted)]">
                 Action
@@ -356,7 +371,8 @@ export default function SalesTargetSection() {
                       {formatTargetInr(exec.monthlyTargetInr)}
                     </div>
                     <div className="text-xs text-[var(--crm-text-muted)]">
-                      {formatTargetLakhs(exec.monthlyTargetInr)}
+                      H1 {formatTargetLakhs(exec.h1TargetInr)} · H2{" "}
+                      {formatTargetLakhs(exec.h2TargetInr)}
                       {exec.isCustom ? " · Custom" : " · Default"}
                     </div>
                   </td>
@@ -379,25 +395,40 @@ export default function SalesTargetSection() {
       {editUser ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold text-[var(--crm-text-primary)]">Edit monthly target</h3>
+            <h3 className="text-lg font-bold text-[var(--crm-text-primary)]">Edit incentive targets</h3>
             <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
               {editUser.name} · {formatSalesTargetMonthLabel(month)}
             </p>
-            <label className="mt-4 block">
-              <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
-                Target amount (INR)
-              </span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
-                placeholder="6000000"
-              />
-            </label>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
+                  H1 — 1st to 15th (INR)
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={editH1}
+                  onChange={(e) => setEditH1(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
+                  placeholder="3000000"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
+                  H2 — 16th to end (INR)
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={editH2}
+                  onChange={(e) => setEditH2(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
+                  placeholder="3000000"
+                />
+              </label>
+            </div>
             <p className="mt-2 text-xs text-[var(--crm-text-muted)]">
-              Default is {formatTargetLakhs(DEFAULT_MONTHLY_SALES_TARGET_INR)} (₹60,00,000).
+              Monthly total = H1 + H2. Default is {formatTargetLakhs(DEFAULT_INCENTIVE_HALF_TARGET_INR)} per half.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button

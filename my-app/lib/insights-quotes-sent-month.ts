@@ -3,8 +3,9 @@ import {
   extractQuoteSentFields,
   isQuoteSentLead,
 } from "@/lib/quote-sent-info";
-import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
 import { stableLeadKey } from "@/lib/insights-lead-investment";
+import { isLostPathLead } from "@/lib/lead-lost-segment";
+import { isHoldPathLabel } from "@/lib/insights-funnel-stage-paths";
 import {
   resolveBookingDateRange,
   type BookingDateFilterState,
@@ -17,12 +18,25 @@ import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
  * Lead created last month + quote sent this month → counted this month.
  * Timestamp used: lastQuoteSentAt ?? quoteSentAt.
  */
+export type QuotesSentPathBreakdownNow = {
+  won: number;
+  lost: number;
+  hold: number;
+};
+
 export type QuotesSentMonthMetrics = {
   periodStart: string | null;
   periodEnd: string | null;
   filterField: "quoteSentAt";
+  /** Distinct leads quoted in window (includes lost + hold + won). */
   quotesSentCount: number;
+  /** Won/active quotation budget only — big ₹ on Weighted Pipeline card. */
   quotationValueInr: number;
+  /** Full month cohort total (optional; Hub `quotationValueAllInr`). */
+  quotationValueAllInr?: number;
+  quotationValueScope?: "won_only" | "all" | string;
+  /** Current path split of the same month cohort (Hub `pathBreakdownNow`). */
+  pathBreakdownNow?: QuotesSentPathBreakdownNow | null;
   source: "hub" | "crm";
 };
 
@@ -93,14 +107,32 @@ export function leadQuoteSentInWindow(
 ): boolean {
   if (!isQuoteSentLead(lead)) return false;
   const sentMs = readLeadQuoteSentAtMs(lead);
-  if (sentMs != null) return inInclusiveWindow(sentMs, periodStart, periodEnd);
-  // List rows often omit quoteSentAt. Count quote-sent leads whose created date
-  // falls in the Insights month so Weighted Pipeline is not stuck at 0.
-  const createdMs = Date.parse(readLeadCreatedAtRaw(lead));
-  if (Number.isFinite(createdMs)) {
-    return inInclusiveWindow(createdMs, periodStart, periodEnd);
+  // Hub rule: COALESCE(lastQuoteSentAt, quoteSentAt) — no createdAt fallback.
+  if (sentMs == null) return false;
+  return inInclusiveWindow(sentMs, periodStart, periodEnd);
+}
+
+function isHoldPathLead(lead: ApiLead): boolean {
+  const sub = String(lead.stage?.milestoneSubStage ?? "").trim();
+  const cat = String(lead.stage?.milestoneStageCategory ?? "").trim();
+  return isHoldPathLabel(sub, cat);
+}
+
+export function computeQuotesSentPathBreakdownNow(
+  leads: ApiLead[],
+): QuotesSentPathBreakdownNow {
+  const breakdown: QuotesSentPathBreakdownNow = { won: 0, lost: 0, hold: 0 };
+  for (const lead of leads) {
+    if (isLostPathLead(lead)) breakdown.lost += 1;
+    else if (isHoldPathLead(lead)) breakdown.hold += 1;
+    else breakdown.won += 1;
   }
-  return !periodStart && !periodEnd;
+  return breakdown;
+}
+
+/** Won/active path — excludes lost and hold (matches Hub won-only quotation value). */
+export function isWonActiveQuotedLead(lead: ApiLead): boolean {
+  return !isLostPathLead(lead) && !isHoldPathLead(lead);
 }
 
 export function listLeadsQuoteSentInWindow(
@@ -126,9 +158,12 @@ export function computeQuotesSentMonthMetrics(
   }
   const uniqueLeads = Array.from(unique.values());
   let quotationValueInr = 0;
+  let quotationValueAllInr = 0;
   if (args.investments) {
     for (const lead of uniqueLeads) {
-      quotationValueInr += args.investments.get(stableLeadKey(lead)) ?? 0;
+      const inv = args.investments.get(stableLeadKey(lead)) ?? 0;
+      quotationValueAllInr += inv;
+      if (isWonActiveQuotedLead(lead)) quotationValueInr += inv;
     }
   }
   return {
@@ -137,6 +172,9 @@ export function computeQuotesSentMonthMetrics(
     filterField: "quoteSentAt",
     quotesSentCount: uniqueLeads.length,
     quotationValueInr,
+    quotationValueAllInr,
+    quotationValueScope: "won_only",
+    pathBreakdownNow: computeQuotesSentPathBreakdownNow(uniqueLeads),
     source: "crm",
   };
 }

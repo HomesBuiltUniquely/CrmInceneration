@@ -101,6 +101,42 @@ export type InsightsChartPoint = {
   conversionPercent?: number;
 };
 
+/** Hub conversion trend line — prefer over FE lead-pool recompute when points present. */
+export type InsightsConversionTrend = {
+  changePercent?: number | null;
+  points: InsightsChartPoint[];
+  bucketField?: string | null;
+  numeratorRule?: string | null;
+  denominatorRule?: string | null;
+};
+
+export function hasHubConversionTrend(
+  trend: InsightsConversionTrend | null | undefined,
+): boolean {
+  return (trend?.points?.length ?? 0) > 0;
+}
+
+/** Hub revenue forecast bars — Actual aligns with kpis.grossBooking when actualScope is set. */
+export type InsightsRevenueForecast = {
+  target: number;
+  actual: number;
+  projected: number;
+  /** e.g. "grossBooking" — same as Token + Booking KPI strip. */
+  actualScope?: string | null;
+  targetSource?: string | null;
+};
+
+function normalizeRevenueForecast(raw: unknown): InsightsRevenueForecast {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    target: asNum(o.target),
+    actual: asNum(o.actual),
+    projected: asNum(o.projected),
+    actualScope: o.actualScope == null ? null : asStr(o.actualScope),
+    targetSource: o.targetSource == null ? null : asStr(o.targetSource),
+  };
+}
+
 export type InsightsDashboard = {
   filtersApplied?: {
     dateRange?: string | null;
@@ -154,15 +190,8 @@ export type InsightsDashboard = {
     changePercent?: number | null;
     points: InsightsChartPoint[];
   };
-  conversionTrend: {
-    changePercent?: number | null;
-    points: InsightsChartPoint[];
-  };
-  revenueForecast: {
-    target: number;
-    actual: number;
-    projected: number;
-  };
+  conversionTrend: InsightsConversionTrend;
+  revenueForecast: InsightsRevenueForecast;
   /** Four sales-strip KPI tiles. Prefer dedicated `/performance-cards` fetch. */
   performanceCards?: PerformanceCards;
 };
@@ -907,6 +936,20 @@ function normalizeHoldPathByStage(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeConversionTrend(raw: unknown): InsightsConversionTrend {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    changePercent: o.changePercent == null ? null : asNum(o.changePercent),
+    points: asArray<Record<string, unknown>>(o.points).map((p) => ({
+      label: asStr(p.label),
+      conversionPercent: asNum(p.conversionPercent),
+    })),
+    bucketField: o.bucketField == null ? null : asStr(o.bucketField),
+    numeratorRule: o.numeratorRule == null ? null : asStr(o.numeratorRule),
+    denominatorRule: o.denominatorRule == null ? null : asStr(o.denominatorRule),
+  };
+}
+
 /** Normalize Hub payload so UI can rely on a stable shape. */
 export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -1020,19 +1063,8 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
         count: asNum(p.count),
       })),
     },
-    conversionTrend: {
-      changePercent:
-        convTrend.changePercent == null ? null : asNum(convTrend.changePercent),
-      points: asArray<Record<string, unknown>>(convTrend.points).map((p) => ({
-        label: asStr(p.label),
-        conversionPercent: asNum(p.conversionPercent),
-      })),
-    },
-    revenueForecast: {
-      target: asNum(forecast.target),
-      actual: asNum(forecast.actual),
-      projected: asNum(forecast.projected),
-    },
+    conversionTrend: normalizeConversionTrend(convTrend),
+    revenueForecast: normalizeRevenueForecast(forecast),
     performanceCards: r.performanceCards
       ? normalizePerformanceCards(r.performanceCards)
       : undefined,
@@ -1112,13 +1144,23 @@ export async function fetchInsightsPerformanceCards(
   return normalizePerformanceCards(json);
 }
 
+export type QuotesSentPathBreakdownNow = {
+  won: number;
+  lost: number;
+  hold: number;
+};
+
 export type QuotesSentMonthApiResult = {
   hubImplemented: boolean;
   periodStart: string | null;
   periodEnd: string | null;
   filterField: "quoteSentAt";
   quotesSentCount: number;
+  /** Won/active budget only — bind big ₹ to this. */
   quotationValueInr: number;
+  quotationValueAllInr?: number;
+  quotationValueScope?: string;
+  pathBreakdownNow?: QuotesSentPathBreakdownNow | null;
 };
 
 function unwrapInsightsPayload(json: unknown): Record<string, unknown> {
@@ -1130,7 +1172,31 @@ function unwrapInsightsPayload(json: unknown): Record<string, unknown> {
   return root;
 }
 
-/** Hub KPI: quotes sent in window by quoteSentAt + sum of quotation value. */
+function normalizeQuotesSentPathBreakdown(
+  raw: unknown,
+): QuotesSentPathBreakdownNow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    won: asNum(o.won ?? o.active ?? o.wonTotal),
+    lost: asNum(o.lost ?? o.lostTotal),
+    hold: asNum(o.hold ?? o.holdTotal),
+  };
+}
+
+/** Big ₹ = won/active budget only; never fall back to all-cohort totals. */
+function normalizeQuotesSentWonValueInr(o: Record<string, unknown>): number {
+  const explicit = asNum(
+    o.quotationValueInr ?? o.wonQuotationValueInr ?? o.activeQuotationValueInr,
+    Number.NaN,
+  );
+  if (Number.isFinite(explicit)) return explicit;
+  const scope = asStr(o.quotationValueScope).toLowerCase();
+  if (scope === "won_only") return 0;
+  return asNum(o.quotationValue ?? o.quotationValueInr);
+}
+
+/** Hub KPI: quotes sent in window by quoteSentAt + won-only quotation value. */
 export async function fetchInsightsQuotesSentMonth(
   query: InsightsPerformanceCardsQuery,
 ): Promise<QuotesSentMonthApiResult> {
@@ -1159,9 +1225,16 @@ export async function fetchInsightsQuotesSentMonth(
         o.quotesSentCount ??
         o.quoteSentCount,
     ),
-    quotationValueInr: asNum(
-      o.quotationValueInr ?? o.quotationValue ?? o.totalQuotationValueInr,
-    ),
+    quotationValueInr: normalizeQuotesSentWonValueInr(o),
+    quotationValueAllInr: (() => {
+      const all = asNum(
+        o.quotationValueAllInr ?? o.totalQuotationValueInr ?? o.allQuotationValueInr,
+        Number.NaN,
+      );
+      return Number.isFinite(all) ? all : undefined;
+    })(),
+    quotationValueScope: asStr(o.quotationValueScope, "") || undefined,
+    pathBreakdownNow: normalizeQuotesSentPathBreakdown(o.pathBreakdownNow),
   };
 }
 
@@ -1203,7 +1276,7 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
   teamPerformance: [],
   leadsOverTime: { changePercent: 0, points: [] },
   conversionTrend: { changePercent: 0, points: [] },
-  revenueForecast: { target: 0, actual: 0, projected: 0 },
+  revenueForecast: { target: 0, actual: 0, projected: 0, actualScope: null, targetSource: null },
 };
 
 export const EMPTY_PERFORMANCE_CARDS: PerformanceCards = {

@@ -1,5 +1,3 @@
-import { getLeadDisplaySource } from "@/lib/lead-display";
-
 /** Hub `leadSource` badge value for IVR voice inbound (MSG91). */
 export const IVR_CALL_LEAD_SOURCE = "IVR Call";
 
@@ -34,7 +32,8 @@ export function isIvrCallLeadSource(raw: unknown): boolean {
   return compact === "ivrcall" || compact === "ivr";
 }
 
-/** IVR inbound row: new `ivrlead` type, or leftover Add Lead + IVR Call source. */
+/** IVR inbound row: new `ivrlead` table row, or legacy `addlead` + IVR Call source.
+ *  Matches Hub `IvrLeadTableMigration` criteria (`ivr call`, `ivr`). */
 export function isIvrInboundLead(
   leadType: string | null | undefined,
   leadSource?: unknown,
@@ -61,15 +60,34 @@ export function appendIvrLeadSourceFilter(
   // no-op — kept so existing call sites stay valid
 }
 
-/** Keep rows whose display source is IVR Call. */
+function readLeadSourceField(lead: Record<string, unknown>): unknown {
+  const dynamic =
+    lead.dynamicFields && typeof lead.dynamicFields === "object" && !Array.isArray(lead.dynamicFields)
+      ? (lead.dynamicFields as Record<string, unknown>)
+      : {};
+  return (
+    lead.leadSource ??
+    lead.LeadSource ??
+    lead.leadsource ??
+    lead.source ??
+    dynamic.leadSource ??
+    dynamic.LeadSource ??
+    dynamic.leadsource ??
+    dynamic.source ??
+    ""
+  );
+}
+
+/** Keep IVR inbound rows: `ivrlead` type or legacy `addlead` + IVR Call source. */
 export function filterIvrCallLeads<T extends Record<string, unknown> | object>(leads: T[]): T[] {
   return leads.filter((lead) => {
-    const source = getLeadDisplaySource(lead as Parameters<typeof getLeadDisplaySource>[0]);
-    return isIvrCallLeadSource(source);
+    const rec = lead as Record<string, unknown>;
+    const leadType = String(rec.leadType ?? rec.lead_type ?? "");
+    return isIvrInboundLead(leadType, readLeadSourceField(rec));
   });
 }
 
-/** Count rows whose display source is IVR Call. */
+/** Count all IVR inbound rows (new `ivrlead` + legacy add-lead IVR Call). */
 export function countIvrCallLeads(leads: Array<Record<string, unknown> | object>): number {
   return filterIvrCallLeads(leads).length;
 }

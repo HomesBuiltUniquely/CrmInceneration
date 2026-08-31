@@ -22,6 +22,10 @@ import {
   isQuoteSentActivityText,
   pickQuoteSentMotivateLine,
 } from "@/lib/quote-sent-motivate";
+import {
+  formatBookingPaymentActivityTitle,
+  isBookingPaymentActivityType,
+} from "@/lib/booking-payment-activity";
 
 export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
@@ -124,7 +128,9 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
     ? quoteId
       ? `Quote Sent to Customer ⭐ · #${quoteId}`
       : "Quote Sent to Customer ⭐"
-    : formatActivitySummaryTitle(activity.description);
+    : isBookingPaymentActivityType(activity.rawActivityType)
+      ? formatBookingPaymentActivityTitle(activity.rawActivityType, activity.description)
+      : formatActivitySummaryTitle(activity.description);
   return {
     id: activity.id,
     kind: mapApiTypeToKind(activity.type),

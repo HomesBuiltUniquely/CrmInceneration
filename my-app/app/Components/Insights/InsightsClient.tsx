@@ -16,6 +16,7 @@ import {
   fetchInsightsPerformanceCards,
   fetchInsightsQuotesSentMonth,
   fetchInsightsSalesFunnel,
+  hasHubConversionTrend,
   type InsightsDashboard,
   type InsightsFilterOptions,
   type InsightsFunnelMode,
@@ -86,6 +87,7 @@ import {
   type TeamMemberIncentiveMetrics,
 } from "@/lib/insights-team-incentive-matrix";
 import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
+import type { SalesTargetUserRow } from "@/lib/sales-targets";
 import {
   CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -199,7 +201,7 @@ export default function InsightsClient1() {
     Map<number, IncentiveBookingLead[]>
   >(() => new Map());
   const [teamIncentiveTargets, setTeamIncentiveTargets] = useState<
-    Map<string, Map<number, number>>
+    Map<string, Map<number, SalesTargetUserRow>>
   >(() => new Map());
   const [teamIncentiveByUser, setTeamIncentiveByUser] = useState<
     Map<number, TeamMemberIncentiveMetrics>
@@ -659,15 +661,19 @@ export default function InsightsClient1() {
       setPerformanceCards(data);
       try {
         const month = await fetchInsightsQuotesSentMonth(performanceQuery);
-        // Hub 404 stub is hubImplemented:false with 0. Only trust Hub when it
-        // actually returns a lead count; otherwise CRM quote-sent pool fills it.
-        if (month.hubImplemented && month.quotesSentCount > 0) {
+        // Hub authoritative when hubImplemented — including 0 (no CRM createdAt fallback).
+        if (month.hubImplemented) {
           setQuotesSentMonth({
             periodStart: month.periodStart,
             periodEnd: month.periodEnd,
             filterField: "quoteSentAt",
             quotesSentCount: month.quotesSentCount,
             quotationValueInr: month.quotationValueInr,
+            quotationValueAllInr: Number.isFinite(month.quotationValueAllInr)
+              ? month.quotationValueAllInr
+              : undefined,
+            quotationValueScope: month.quotationValueScope ?? "won_only",
+            pathBreakdownNow: month.pathBreakdownNow ?? null,
             source: "hub",
           });
         }
@@ -822,7 +828,7 @@ export default function InsightsClient1() {
 
     const applyProgress = (state: {
       leadsByUserId: Map<number, IncentiveBookingLead[]>;
-      targetsByMonth: Map<string, Map<number, number>>;
+      targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>;
       done: boolean;
     }) => {
       if (cancelled) return;
@@ -1053,6 +1059,15 @@ export default function InsightsClient1() {
    */
   const [alignedWeekCharts, setAlignedWeekCharts] = useState<InsightsWeekCharts | null>(
     null,
+  );
+
+  /** Hub conversion line when dashboard returns points; else FE week-chart fallback. */
+  const conversionTrendForChart = useMemo(
+    () =>
+      hasHubConversionTrend(dashboard.conversionTrend)
+        ? dashboard.conversionTrend
+        : (alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend),
+    [dashboard.conversionTrend, alignedWeekCharts?.conversionTrend],
   );
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
@@ -1565,6 +1580,7 @@ export default function InsightsClient1() {
             loading={
               performanceCardsLoading || (isSalesManager && !smScopeReady)
             }
+            revenueForecastTargetInr={Number(dashboard.revenueForecast?.target ?? 0) || undefined}
             kpis={{
               ...dashboard.kpis,
               totalLeads: {
@@ -1616,14 +1632,9 @@ export default function InsightsClient1() {
         lostFunnel={alignedLostFunnel ?? dashboard.lostFunnel}
         holdFunnel={dashboard.holdFunnel}
         holdPathByStage={dashboard.holdPathByStage}
-        revenueDistribution={dashboard.revenueDistribution}
         totalLeadsCount={
           alignedSalesPoolTotal ?? dashboard.kpis.totalLeads.value
         }
-        tokenMetrics={tokenMetrics}
-        quotationCount={quotesSentMonth?.quotesSentCount ?? quoteSentWonMetrics.count}
-        quotationValue={quotesSentMonth?.quotationValueInr ?? quoteSentWonMetrics.totalValue}
-        quotationMetricsLoading={quotesSentMonthLoading || quoteSentWonMetrics.loading}
         funnelStageValues={funnelStageValues}
         funnelMetricsLoading={funnelMetricsLoading}
         stagePathData={stagePathData}
@@ -1654,10 +1665,9 @@ export default function InsightsClient1() {
             leadsOverTime={
               alignedWeekCharts?.leadsOverTime ?? dashboard.leadsOverTime
             }
-            conversionTrend={
-              alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend
-            }
+            conversionTrend={conversionTrendForChart}
             revenueForecast={dashboard.revenueForecast}
+            grossBookingKpi={dashboard.kpis.grossBooking?.value ?? null}
             dateFilter={dateFilter}
             volumeCharts={alignedWeekCharts}
             weekBars={alignedWeekCharts?.weekBars ?? null}

@@ -5,6 +5,7 @@
 
 import type { ApiLead, CrmLeadType, LeadSourceCounts } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES, leadHasRawSalesMilestone } from "@/lib/leads-filter";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 
 export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   const compact = String(raw ?? "")
@@ -127,14 +128,57 @@ export function pickMilestoneRepresentativeRows(leads: ApiLead[]): ApiLead[] {
   return primary;
 }
 
+function leadSourceForIvrCheck(lead: ApiLead): unknown {
+  const rec = lead as Record<string, unknown>;
+  const dynamic =
+    rec.dynamicFields && typeof rec.dynamicFields === "object" && !Array.isArray(rec.dynamicFields)
+      ? (rec.dynamicFields as Record<string, unknown>)
+      : {};
+  return (
+    rec.leadSource ??
+    rec.LeadSource ??
+    rec.leadsource ??
+    rec.source ??
+    dynamic.leadSource ??
+    dynamic.LeadSource ??
+    dynamic.leadsource ??
+    dynamic.source ??
+    ""
+  );
+}
+
 export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts {
   const counts = emptyLeadSourceCounts();
   counts.all = leads.length;
   for (const lead of leads) {
+    if (isIvrInboundLead(lead.leadType, leadSourceForIvrCheck(lead))) {
+      counts.ivrlead += 1;
+      continue;
+    }
     const type = normalizeLeadTypeKey(lead.leadType);
     counts[type] += 1;
   }
   return counts;
+}
+
+/** Hub `/counts` byLeadType can miss legacy add-lead IVR rows — fix ivrlead + addlead from list rows. */
+export function overlayIvrLeadTypeCountsFromRows(
+  counts: LeadSourceCounts,
+  leads: ApiLead[],
+): LeadSourceCounts {
+  if (leads.length === 0) return counts;
+  const rowCounts = computeLeadTypeCountsFromRows(leads);
+  if (
+    rowCounts.ivrlead === Number(counts.ivrlead ?? 0) &&
+    rowCounts.addlead === Number(counts.addlead ?? 0)
+  ) {
+    return counts;
+  }
+  return {
+    ...counts,
+    ivrlead: rowCounts.ivrlead,
+    addlead: rowCounts.addlead,
+  };
 }
 
 /** Primary-source unique customers by first-touch `leadType`. */

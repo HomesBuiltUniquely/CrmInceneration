@@ -1169,6 +1169,12 @@ export default function LeadDetailsApiClient({
     window.history.replaceState({}, "", nextUrl);
   }, [leadId, leadType, uiVariant]);
 
+  useEffect(() => {
+    const openBookingDone = () => setBookingDoneOpen(true);
+    window.addEventListener("crm-open-booking-done", openBookingDone);
+    return () => window.removeEventListener("crm-open-booking-done", openBookingDone);
+  }, []);
+
   const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
     Record<string, unknown> | null
   >(null);
