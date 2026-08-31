@@ -6,7 +6,8 @@ export type PaymentLinkStatus =
   | "PAID"
   | "SUPERSEDED"
   | "EXPIRED"
-  | "FAILED";
+  | "FAILED"
+  | "CANCELLED";
 
 export type PaymentLinkChannelStatus = "SENT" | "FAILED" | "SKIPPED";
 
@@ -14,6 +15,7 @@ export type PaymentLinkAttempt = {
   id: string;
   status: PaymentLinkStatus | string;
   amount: number;
+  currency?: string | null;
   paymentLinkUrl?: string | null;
   createdAt?: string | null;
   expiresAt?: string | null;
@@ -27,8 +29,9 @@ export type PaymentLinkAttempt = {
   salesUserName?: string | null;
   salesUserId?: string | number | null;
   warnings?: string[];
+  paymentChannel?: string | null;
   paymentMethod?: string | null;
-  recordId?: string | null;
+  bookingTokenRecordId?: string | null;
 };
 
 export type PaymentLinkResponse = {
@@ -39,6 +42,9 @@ export type PaymentLinkResponse = {
   userMessage?: string;
   error?: string;
   message?: string;
+  paymentLinkUrl?: string | null;
+  switchedToOffline?: boolean;
+  amount?: number;
 };
 
 export type CreateLeadPaymentLinkInput = {
@@ -126,8 +132,11 @@ export function parsePaymentLinkAttempt(raw: unknown): PaymentLinkAttempt | null
     salesUserName: pickStr(row, "salesUserName", "sales_user_name") || null,
     salesUserId: pickStr(row, "salesUserId", "sales_user_id") || null,
     warnings,
+    paymentChannel: pickStr(row, "paymentChannel", "payment_channel") || "ONLINE",
     paymentMethod: pickStr(row, "paymentMethod", "payment_method") || null,
-    recordId: pickStr(row, "recordId", "bookingTokenRecordId", "dealId") || null,
+    bookingTokenRecordId:
+      pickStr(row, "bookingTokenRecordId", "booking_token_record_id", "recordId", "dealId") || null,
+    currency: pickStr(row, "currency") || "INR",
   };
 }
 
@@ -145,6 +154,9 @@ function parsePaymentLinkResponse(text: string): PaymentLinkResponse {
       userMessage: typeof parsed.userMessage === "string" ? parsed.userMessage : undefined,
       error: typeof parsed.error === "string" ? parsed.error : undefined,
       message: typeof parsed.message === "string" ? parsed.message : undefined,
+      paymentLinkUrl: pickStr(parsed, "paymentLinkUrl", "payment_link_url") || null,
+      switchedToOffline: parsed.switchedToOffline === true,
+      amount: pickNum(parsed, "amount"),
     };
   } catch {
     return { success: false };
@@ -273,6 +285,43 @@ export function editPaymentLinkAmount(
 
 export function switchPaymentLinkOffline(attemptId: string): Promise<PaymentLinkResponse> {
   return postPaymentLinkAction(attemptId, "switch-offline");
+}
+
+export function resolveCopiedPaymentLinkUrl(
+  result: PaymentLinkResponse,
+  fallback?: PaymentLinkAttempt | null,
+): string {
+  return (
+    result.paymentLinkUrl?.trim() ||
+    result.attempt?.paymentLinkUrl?.trim() ||
+    fallback?.paymentLinkUrl?.trim() ||
+    ""
+  );
+}
+
+export function resolveSwitchOfflineAmount(
+  result: PaymentLinkResponse,
+  fallback?: PaymentLinkAttempt | null,
+): number | null {
+  if (typeof result.amount === "number" && Number.isFinite(result.amount) && result.amount > 0) {
+    return result.amount;
+  }
+  if (typeof result.attempt?.amount === "number" && result.attempt.amount > 0) {
+    return result.attempt.amount;
+  }
+  if (typeof fallback?.amount === "number" && fallback.amount > 0) return fallback.amount;
+  return null;
+}
+
+export function isStalePaymentLinkAction(err: unknown): boolean {
+  return err instanceof PaymentLinkApiError && err.status === 400;
+}
+
+export function isSmsFallback(attempt?: PaymentLinkAttempt | null): boolean {
+  return (
+    String(attempt?.whatsappStatus ?? "").toUpperCase() === "FAILED" &&
+    String(attempt?.smsStatus ?? "").toUpperCase() === "SENT"
+  );
 }
 
 export const PAYMENT_LINK_POLL_MS = 20_000;

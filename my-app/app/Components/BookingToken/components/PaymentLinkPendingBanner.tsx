@@ -6,8 +6,10 @@ import {
   parsePaymentAmountInput,
 } from "@/lib/booking-done-payment-storage";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import { formatCrmDateTime } from "@/lib/date-time-format";
 import {
   isActivePaymentLinkStatus,
+  isSmsFallback,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
 
@@ -47,12 +49,11 @@ function formatRemaining(iso?: string | null): string {
   return rest > 0 ? `Expires in ${hours}h ${rest}m` : `Expires in ${hours}h`;
 }
 
-function channelMark(status?: string | null): { show: boolean; ok: boolean; label: string } {
+function channelGlyph(status?: string | null): string {
   const normalized = String(status ?? "").toUpperCase();
-  if (!normalized || normalized === "SKIPPED") {
-    return { show: false, ok: false, label: "" };
-  }
-  return { show: true, ok: normalized === "SENT", label: normalized === "SENT" ? "✓" : "✕" };
+  if (normalized === "SENT") return "✓";
+  if (normalized === "FAILED") return "✕";
+  return "—";
 }
 
 function expiryUrgency(expiresAt?: string | null): "ok" | "amber" | "red" {
@@ -99,9 +100,12 @@ export default function PaymentLinkPendingBanner({
   const urgency = expiryUrgency(attempt.expiresAt);
   const progress = expiryProgress(attempt.createdAt, attempt.expiresAt);
   const notDelivered = String(attempt.status).toUpperCase() === "CREATED_NOT_DELIVERED";
-  const wa = channelMark(attempt.whatsappStatus);
-  const email = channelMark(attempt.emailStatus);
-  const sms = channelMark(attempt.smsStatus);
+  const smsFallback = isSmsFallback(attempt);
+  const wa = channelGlyph(attempt.whatsappStatus);
+  const email = channelGlyph(attempt.emailStatus);
+  const sms = channelGlyph(attempt.smsStatus);
+  const createdLocal = formatCrmDateTime(attempt.createdAt ?? "");
+  const expiresLocal = formatCrmDateTime(attempt.expiresAt ?? "");
 
   const counts = useMemo(() => {
     const parts = [
@@ -143,19 +147,9 @@ export default function PaymentLinkPendingBanner({
             Payment Link — {formatQuoteAmount(attempt.amount)} · Online (UPI/Card/Netbanking)
           </p>
           <p className="mt-1 text-[11px] text-[#4b5563]">
-            Sent:
-            {wa.show ? (
-              <span className="ml-1 font-semibold">WA {wa.label}</span>
-            ) : null}
-            {email.show ? (
-              <span className="ml-1 font-semibold">Email {email.label}</span>
-            ) : null}
-            {sms.show ? (
-              <span className="ml-1 font-semibold">SMS {sms.label}</span>
-            ) : null}
-            {!wa.show && !email.show && !sms.show ? (
-              <span className="ml-1">awaiting delivery</span>
-            ) : null}
+            Sent: <span className="font-semibold">WA {wa}</span>
+            <span className="ml-1 font-semibold">Email {email}</span>
+            <span className="ml-1 font-semibold">SMS {sms}</span>
           </p>
         </div>
         {isActivePaymentLinkStatus(attempt.status) ? (
@@ -188,6 +182,12 @@ export default function PaymentLinkPendingBanner({
         ) : null}
       </div>
 
+      {smsFallback ? (
+        <p className="mt-2 rounded-md border border-sky-200 bg-white/70 px-2.5 py-1.5 text-[12px] text-sky-900">
+          WhatsApp failed — SMS sent as fallback.
+        </p>
+      ) : null}
+
       {notDelivered ? (
         <p className="mt-2 rounded-md border border-amber-300 bg-white/70 px-2.5 py-1.5 text-[12px] text-amber-900">
           Link created, messages failed — copy the URL and share it manually.
@@ -200,8 +200,13 @@ export default function PaymentLinkPendingBanner({
 
       <div className="mt-3">
         <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-[#6b7280]">
-          <span>{sentAgo ? `Sent ${sentAgo}` : "Sent"}</span>
-          <span className={urgency === "ok" ? "text-[#6b7280]" : urgency === "amber" ? "text-amber-800" : "text-red-700"}>
+          <span title={createdLocal && createdLocal !== "—" ? createdLocal : undefined}>
+            {sentAgo ? `Sent ${sentAgo}` : "Sent"}
+          </span>
+          <span
+            title={expiresLocal && expiresLocal !== "—" ? expiresLocal : undefined}
+            className={urgency === "ok" ? "text-[#6b7280]" : urgency === "amber" ? "text-amber-800" : "text-red-700"}
+          >
             {expiresLabel}
           </span>
         </div>

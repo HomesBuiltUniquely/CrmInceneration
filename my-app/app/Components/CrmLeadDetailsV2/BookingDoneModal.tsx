@@ -68,7 +68,10 @@ import {
   fetchLeadPaymentLinkActive,
   hasLeadContact,
   isBannerPaymentLink,
+  isStalePaymentLinkAction,
   PaymentLinkApiError,
+  resolveCopiedPaymentLinkUrl,
+  resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
   type PaymentLinkAttempt,
@@ -335,16 +338,26 @@ export default function BookingDoneModal({
         const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
         const bannerGone = !isBannerPaymentLink(attempt);
         if (!paid && !bannerGone) return;
-        if (paid) {
-          setLinkPaid(true);
+        if (paid || bannerGone) {
           try {
             if (isCrmLeadType(leadType)) {
               const { records } = await fetchBookingDoneRecords(leadType, leadId);
-              const recordId = attempt?.recordId || records[0]?.id || "";
-              if (recordId) setPaidRecordId(recordId);
+              const recordId =
+                attempt?.bookingTokenRecordId || records[0]?.id || "";
+              if (recordId) {
+                setPaidRecordId(recordId);
+                setLinkPaid(true);
+              } else if (paid) {
+                setLinkPaid(true);
+              }
             }
           } catch {
-            if (attempt?.recordId) setPaidRecordId(attempt.recordId);
+            if (attempt?.bookingTokenRecordId) {
+              setPaidRecordId(attempt.bookingTokenRecordId);
+              setLinkPaid(true);
+            } else if (paid) {
+              setLinkPaid(true);
+            }
           }
           onHandoffComplete?.();
         }
@@ -526,8 +539,7 @@ export default function BookingDoneModal({
     setHandoffError("");
     try {
       const result = await copyPaymentLink(activeAttempt.id);
-      const url =
-        result.attempt?.paymentLinkUrl?.trim() || activeAttempt.paymentLinkUrl?.trim() || "";
+      const url = resolveCopiedPaymentLinkUrl(result, activeAttempt);
       if (result.attempt) applyAttempt(result.attempt);
       if (!url) {
         setHandoffError("Payment link URL is not available yet.");
@@ -549,6 +561,9 @@ export default function BookingDoneModal({
       const result = await resendPaymentLink(activeAttempt.id);
       applyAttempt(result.attempt);
     } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
       if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
         setHandoffError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
@@ -568,6 +583,9 @@ export default function BookingDoneModal({
       const result = await editPaymentLinkAmount(activeAttempt.id, amount);
       applyAttempt(result.attempt);
     } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
       setHandoffError(err instanceof Error ? err.message : "Unable to edit payment link.");
     } finally {
       setLinkBusy(false);
@@ -583,9 +601,14 @@ export default function BookingDoneModal({
     setLinkBusy(true);
     setHandoffError("");
     try {
-      await switchPaymentLinkOffline(activeAttempt.id);
+      const result = await switchPaymentLinkOffline(activeAttempt.id);
+      const switchedAmount = resolveSwitchOfflineAmount(result, activeAttempt);
       setActiveAttempt(null);
       setChannel("offline");
+      if (switchedAmount != null) {
+        writePaymentAmount(leadType, leadId, formatPaymentAmountInput(switchedAmount));
+        bumpPaymentDraft();
+      }
     } catch (err) {
       setHandoffError(err instanceof Error ? err.message : "Unable to switch to offline payment.");
     } finally {
@@ -729,7 +752,7 @@ export default function BookingDoneModal({
 
           {linkPaid ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900">
-              Online payment received. The deal stays on Token until you click Convert.
+              Online payment received. Token is recorded automatically. Convert is still manual.
               {paidRecordId ? (
                 <button
                   type="button"
@@ -793,9 +816,9 @@ export default function BookingDoneModal({
 
           <p className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3 text-[13px] text-[#475569]">
             {showBanner
-              ? "The customer can pay from the Easebuzz link. Convert stays on Booking & Token — it is never automatic."
+              ? "Customer pays on Easebuzz. Token is created when payment succeeds — Convert stays manual."
               : channel === "online"
-                ? "Send the Easebuzz link after selecting quote and booking date. Convert is unchanged and still requires confirmation."
+                ? "Send the Easebuzz link after selecting quote and booking date. Token is not created until the customer pays."
                 : `Select quote and payment, then click ${CONFIRM_BOOKING_TOKEN_LABEL} to send this lead to Booking & Token.`}
           </p>
 

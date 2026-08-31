@@ -39,7 +39,10 @@ import {
   fetchDealPaymentLinkActive,
   hasLeadContact,
   isBannerPaymentLink,
+  isStalePaymentLinkAction,
   PaymentLinkApiError,
+  resolveCopiedPaymentLinkUrl,
+  resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
   type PaymentLinkAttempt,
@@ -226,7 +229,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setHistoryFilter("all");
     setCopiedNotice("");
     void loadHistory();
-    if (mode === "pay") void loadActiveAttempt();
+    void loadActiveAttempt();
   }, [open, deal, loadHistory, loadActiveAttempt, mode]);
 
   useEffect(() => {
@@ -250,7 +253,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, [deal, isRichDetailView, mode, open]);
 
   useEffect(() => {
-    if (!open || mode !== "pay" || !deal || !activeAttempt?.id) return;
+    if (!open || !deal || !activeAttempt?.id) return;
     const tick = window.setInterval(() => {
       void (async () => {
         const previousId = activeAttempt?.id ?? null;
@@ -265,7 +268,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       })();
     }, PAYMENT_LINK_POLL_MS);
     return () => window.clearInterval(tick);
-  }, [activeAttempt?.id, activeAttempt?.status, deal, loadActiveAttempt, loadHistory, mode, onUpdated, open]);
+  }, [activeAttempt?.id, activeAttempt?.status, deal, loadActiveAttempt, loadHistory, onUpdated, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -474,8 +477,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setError("");
     try {
       const result = await copyPaymentLink(activeAttempt.id);
-      const url =
-        result.attempt?.paymentLinkUrl?.trim() || activeAttempt.paymentLinkUrl?.trim() || "";
+      const url = resolveCopiedPaymentLinkUrl(result, activeAttempt);
       if (result.attempt) applyAttempt(result.attempt);
       if (!url) {
         setError("Payment link URL is not available yet.");
@@ -499,6 +501,9 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       const result = await resendPaymentLink(activeAttempt.id);
       applyAttempt(result.attempt);
     } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
       if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
         setError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
@@ -508,7 +513,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setLinkBusy(false);
     }
-  }, [activeAttempt, applyAttempt]);
+  }, [activeAttempt, applyAttempt, loadActiveAttempt]);
 
   const handleEditPaymentLink = useCallback(
     async (amount: number) => {
@@ -519,12 +524,15 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         const result = await editPaymentLinkAmount(activeAttempt.id, amount);
         applyAttempt(result.attempt);
       } catch (err) {
+        if (isStalePaymentLinkAction(err)) {
+          await loadActiveAttempt();
+        }
         setError(err instanceof Error ? err.message : "Unable to edit payment link.");
       } finally {
         setLinkBusy(false);
       }
     },
-    [activeAttempt, applyAttempt],
+    [activeAttempt, applyAttempt, loadActiveAttempt],
   );
 
   const handleSwitchOffline = useCallback(async () => {
@@ -536,9 +544,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setLinkBusy(true);
     setError("");
     try {
-      await switchPaymentLinkOffline(activeAttempt.id);
+      const result = await switchPaymentLinkOffline(activeAttempt.id);
+      const switchedAmount = resolveSwitchOfflineAmount(result, activeAttempt);
       setActiveAttempt(null);
       setChannel("offline");
+      if (switchedAmount != null) {
+        setAmountInput(formatPaymentAmountInput(switchedAmount));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to switch to offline payment.");
     } finally {
@@ -793,6 +805,17 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   </div>
                 ) : null}
               </section>
+
+              {showBanner && activeAttempt ? (
+                <PaymentLinkPendingBanner
+                  attempt={activeAttempt}
+                  busy={linkBusy}
+                  onCopy={() => void handleCopyPaymentLink()}
+                  onResend={() => void handleResendPaymentLink()}
+                  onEdit={(amount) => void handleEditPaymentLink(amount)}
+                  onSwitchOffline={() => void handleSwitchOffline()}
+                />
+              ) : null}
 
               {paymentHistoryBlock}
 
