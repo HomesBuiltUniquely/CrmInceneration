@@ -1,4 +1,5 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { copyTextToClipboard } from "@/lib/copy-text-to-clipboard";
 
 export type PaymentLinkStatus =
   | "PENDING"
@@ -299,6 +300,18 @@ export function resolveCopiedPaymentLinkUrl(
   );
 }
 
+/** POST .../copy then clipboard (modal-safe fallback). */
+export async function copyPaymentLinkToClipboard(
+  attemptId: string,
+  fallback?: PaymentLinkAttempt | null,
+): Promise<PaymentLinkResponse> {
+  const result = await copyPaymentLink(attemptId);
+  const url = resolveCopiedPaymentLinkUrl(result, fallback ?? result.attempt);
+  if (!url) throw new Error("Payment link URL is not available yet.");
+  await copyTextToClipboard(url);
+  return result;
+}
+
 export function resolveSwitchOfflineAmount(
   result: PaymentLinkResponse,
   fallback?: PaymentLinkAttempt | null,
@@ -325,3 +338,43 @@ export function isSmsFallback(attempt?: PaymentLinkAttempt | null): boolean {
 }
 
 export const PAYMENT_LINK_POLL_MS = 20_000;
+export const PAYMENT_LINK_UPDATED_EVENT = "crm-payment-link-updated";
+
+const activePaymentLinkCache = new Map<string, PaymentLinkAttempt | null>();
+
+export function paymentLinkCacheKey(leadType: string, leadId: string): string {
+  return `${leadType}:${leadId}`;
+}
+
+export function readCachedPaymentLinkAttempt(
+  leadType: string,
+  leadId: string,
+): PaymentLinkAttempt | null {
+  const cached = activePaymentLinkCache.get(paymentLinkCacheKey(leadType, leadId));
+  return isBannerPaymentLink(cached) ? cached ?? null : null;
+}
+
+export function writeCachedPaymentLinkAttempt(
+  leadType: string,
+  leadId: string,
+  attempt: PaymentLinkAttempt | null | undefined,
+): void {
+  activePaymentLinkCache.set(
+    paymentLinkCacheKey(leadType, leadId),
+    isBannerPaymentLink(attempt) ? attempt ?? null : null,
+  );
+}
+
+export function notifyPaymentLinkUpdated(
+  leadType: string,
+  leadId: string,
+  attempt?: PaymentLinkAttempt | null,
+): void {
+  if (typeof window === "undefined") return;
+  writeCachedPaymentLinkAttempt(leadType, leadId, attempt ?? null);
+  window.dispatchEvent(
+    new CustomEvent(PAYMENT_LINK_UPDATED_EVENT, {
+      detail: { leadType, leadId, attempt: attempt ?? null },
+    }),
+  );
+}

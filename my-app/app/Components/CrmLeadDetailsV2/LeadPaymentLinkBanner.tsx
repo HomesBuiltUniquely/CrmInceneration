@@ -3,24 +3,30 @@
 import { useCallback, useEffect, useState } from "react";
 import PaymentLinkPendingBanner from "@/app/Components/BookingToken/components/PaymentLinkPendingBanner";
 import {
-  formatPaymentAmountInput,
-  writePaymentAmount,
-} from "@/lib/booking-done-payment-storage";
-import {
   PAYMENT_LINK_POLL_MS,
-  copyPaymentLink,
+  PAYMENT_LINK_UPDATED_EVENT,
+  copyPaymentLinkToClipboard,
   editPaymentLinkAmount,
   fetchLeadPaymentLinkActive,
   isBannerPaymentLink,
   isStalePaymentLinkAction,
+  notifyPaymentLinkUpdated,
   PaymentLinkApiError,
-  resolveCopiedPaymentLinkUrl,
+  readCachedPaymentLinkAttempt,
   resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
+  writeCachedPaymentLinkAttempt,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
+import { shouldProbeActivePaymentLink } from "@/lib/lead-payment-link-probe";
+import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
+import {
+  formatPaymentAmountInput,
+  writePaymentAmount,
+} from "@/lib/booking-done-payment-storage";
+import { useLeadDetailV2 } from "./LeadDetailV2Context";
 
 type Props = {
   leadType: string;
@@ -35,32 +41,97 @@ export default function LeadPaymentLinkBanner({
   onPaid,
   onSwitchOffline,
 }: Props) {
-  const [attempt, setAttempt] = useState<PaymentLinkAttempt | null>(null);
+  const { lead, viewerRoleKey } = useLeadDetailV2();
+  const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRoleKey);
+  const shouldProbe = shouldProbeActivePaymentLink(lead);
+  const [attempt, setAttempt] = useState<PaymentLinkAttempt | null>(() =>
+    canUsePaymentLinks ? readCachedPaymentLinkAttempt(leadType, leadId) : null,
+  );
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const applyAttempt = useCallback((next: PaymentLinkAttempt | null | undefined) => {
-    setAttempt(isBannerPaymentLink(next) ? next ?? null : null);
-  }, []);
+  const applyAttempt = useCallback(
+    (next: PaymentLinkAttempt | null | undefined) => {
+      const bannerAttempt = isBannerPaymentLink(next) ? next ?? null : null;
+      writeCachedPaymentLinkAttempt(leadType, leadId, bannerAttempt);
+      setAttempt(bannerAttempt);
+    },
+    [leadId, leadType],
+  );
 
   const loadActive = useCallback(async () => {
+    if (!canUsePaymentLinkIntegration(viewerRoleKey)) {
+      setAttempt(null);
+      setLoading(false);
+      return null;
+    }
+    if (!shouldProbeActivePaymentLink(lead) && !readCachedPaymentLinkAttempt(leadType, leadId)) {
+      setAttempt(null);
+      setLoading(false);
+      return null;
+    }
     try {
       const next = await fetchLeadPaymentLinkActive(leadType, leadId);
       applyAttempt(next);
       return next;
     } catch {
-      setAttempt(null);
+      applyAttempt(null);
       return null;
+    } finally {
+      setLoading(false);
     }
-  }, [applyAttempt, leadId, leadType]);
+  }, [applyAttempt, lead, leadId, leadType, viewerRoleKey]);
 
   useEffect(() => {
+    if (!canUsePaymentLinks) {
+      setAttempt(null);
+      setLoading(false);
+      return;
+    }
+
+    const cached = readCachedPaymentLinkAttempt(leadType, leadId);
+    if (cached) {
+      setAttempt(cached);
+      setLoading(false);
+      return;
+    }
+
+    if (!shouldProbe) {
+      setAttempt(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
     void loadActive();
-  }, [loadActive]);
+  }, [canUsePaymentLinks, leadId, leadType, loadActive, shouldProbe]);
 
   useEffect(() => {
-    if (!attempt?.id) return;
+    if (!canUsePaymentLinks) return;
+
+    const onPaymentLinkUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        leadType?: string;
+        leadId?: string;
+        attempt?: PaymentLinkAttempt | null;
+      }>).detail;
+      if (detail?.leadType !== leadType || detail?.leadId !== leadId) return;
+      if (isBannerPaymentLink(detail.attempt)) {
+        applyAttempt(detail.attempt);
+        setLoading(false);
+        return;
+      }
+      void loadActive();
+    };
+
+    window.addEventListener(PAYMENT_LINK_UPDATED_EVENT, onPaymentLinkUpdated);
+    return () => window.removeEventListener(PAYMENT_LINK_UPDATED_EVENT, onPaymentLinkUpdated);
+  }, [applyAttempt, canUsePaymentLinks, leadId, leadType, loadActive]);
+
+  useEffect(() => {
+    if (!canUsePaymentLinks || !attempt?.id) return;
     const tick = window.setInterval(() => {
       void (async () => {
         const next = await loadActive();
@@ -73,21 +144,18 @@ export default function LeadPaymentLinkBanner({
       })();
     }, PAYMENT_LINK_POLL_MS);
     return () => window.clearInterval(tick);
-  }, [attempt?.id, loadActive, onPaid]);
+  }, [attempt?.id, canUsePaymentLinks, loadActive, onPaid]);
 
   const handleCopy = useCallback(async () => {
     if (!attempt) return;
     setBusy(true);
     setError("");
     try {
-      const result = await copyPaymentLink(attempt.id);
-      const url = resolveCopiedPaymentLinkUrl(result, attempt);
-      if (result.attempt) applyAttempt(result.attempt);
-      if (!url) {
-        setError("Payment link URL is not available yet.");
-        return;
+      const result = await copyPaymentLinkToClipboard(attempt.id, attempt);
+      if (result.attempt) {
+        applyAttempt(result.attempt);
+        notifyPaymentLinkUpdated(leadType, leadId, result.attempt);
       }
-      await navigator.clipboard.writeText(url);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch (err) {
@@ -95,7 +163,7 @@ export default function LeadPaymentLinkBanner({
     } finally {
       setBusy(false);
     }
-  }, [applyAttempt, attempt]);
+  }, [applyAttempt, attempt, leadId, leadType]);
 
   const handleResend = useCallback(async () => {
     if (!attempt) return;
@@ -104,13 +172,14 @@ export default function LeadPaymentLinkBanner({
     try {
       const result = await resendPaymentLink(attempt.id);
       applyAttempt(result.attempt);
+      notifyPaymentLinkUpdated(leadType, leadId, result.attempt);
     } catch (err) {
       if (isStalePaymentLinkAction(err)) await loadActive();
       setError(err instanceof Error ? err.message : "Unable to resend payment link.");
     } finally {
       setBusy(false);
     }
-  }, [applyAttempt, attempt, loadActive]);
+  }, [applyAttempt, attempt, leadId, leadType, loadActive]);
 
   const handleEdit = useCallback(
     async (amount: number) => {
@@ -120,6 +189,7 @@ export default function LeadPaymentLinkBanner({
       try {
         const result = await editPaymentLinkAmount(attempt.id, amount);
         applyAttempt(result.attempt);
+        notifyPaymentLinkUpdated(leadType, leadId, result.attempt);
       } catch (err) {
         if (isStalePaymentLinkAction(err)) await loadActive();
         setError(err instanceof Error ? err.message : "Unable to edit payment link.");
@@ -127,7 +197,7 @@ export default function LeadPaymentLinkBanner({
         setBusy(false);
       }
     },
-    [applyAttempt, attempt, loadActive],
+    [applyAttempt, attempt, leadId, leadType, loadActive],
   );
 
   const handleSwitchOffline = useCallback(async () => {
@@ -144,6 +214,7 @@ export default function LeadPaymentLinkBanner({
       if (amount != null) {
         writePaymentAmount(leadType, leadId, formatPaymentAmountInput(amount));
       }
+      notifyPaymentLinkUpdated(leadType, leadId, null);
       setAttempt(null);
       onSwitchOffline?.();
       window.dispatchEvent(new Event("crm-open-booking-done"));
@@ -158,10 +229,20 @@ export default function LeadPaymentLinkBanner({
     }
   }, [attempt, leadId, leadType, onSwitchOffline]);
 
-  if (!isBannerPaymentLink(attempt) || !attempt) return null;
+  if (!canUsePaymentLinks) return null;
+  if (!isBannerPaymentLink(attempt) || !attempt) {
+    if (!loading) return null;
+    return (
+      <div className="animate-pulse rounded-[10px] border border-slate-200 bg-white px-3.5 py-2.5">
+        <div className="h-4 w-2/3 rounded bg-slate-100" />
+        <div className="mt-2 h-[3px] rounded-full bg-slate-100" />
+        <div className="mt-2 h-3 w-1/2 rounded bg-slate-100" />
+      </div>
+    );
+  }
 
   return (
-    <div className="mt-3 mb-3">
+    <div>
       <PaymentLinkPendingBanner
         attempt={attempt}
         busy={busy}

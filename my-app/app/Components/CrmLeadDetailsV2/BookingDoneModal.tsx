@@ -62,21 +62,23 @@ import { isClosedWonCustomerSubstage } from "@/lib/milestone-substage-map";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import {
   PAYMENT_LINK_POLL_MS,
-  copyPaymentLink,
+  copyPaymentLinkToClipboard,
   createLeadPaymentLink,
   editPaymentLinkAmount,
   fetchLeadPaymentLinkActive,
   hasLeadContact,
   isBannerPaymentLink,
   isStalePaymentLinkAction,
+  notifyPaymentLinkUpdated,
   PaymentLinkApiError,
-  resolveCopiedPaymentLinkUrl,
   resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
 import type { OfflinePaymentMethodId, PaymentChannelChoice } from "@/lib/booking-payment-display";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
 
 type Props = {
   open: boolean;
@@ -183,6 +185,13 @@ export default function BookingDoneModal({
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkPaid, setLinkPaid] = useState(false);
   const [paidRecordId, setPaidRecordId] = useState("");
+  const [viewerRole, setViewerRole] = useState("");
+
+  useEffect(() => {
+    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
+  }, []);
+
+  const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRole);
 
   const bumpPaymentDraft = useCallback(() => {
     setPaymentDraftRevision((value) => value + 1);
@@ -310,10 +319,16 @@ export default function BookingDoneModal({
   }, [leadId, leadType, open]);
 
   const applyAttempt = useCallback((attempt: PaymentLinkAttempt | null | undefined) => {
-    setActiveAttempt(isBannerPaymentLink(attempt) ? attempt ?? null : null);
-  }, []);
+    const next = isBannerPaymentLink(attempt) ? attempt ?? null : null;
+    setActiveAttempt(next);
+    notifyPaymentLinkUpdated(leadType, leadId, next);
+  }, [leadId, leadType]);
 
   const loadActiveAttempt = useCallback(async () => {
+    if (!canUsePaymentLinks) {
+      setActiveAttempt(null);
+      return null;
+    }
     if (!isCrmLeadType(leadType)) return null;
     try {
       const attempt = await fetchLeadPaymentLinkActive(leadType, leadId);
@@ -323,15 +338,15 @@ export default function BookingDoneModal({
       setActiveAttempt(null);
       return null;
     }
-  }, [applyAttempt, leadId, leadType]);
+  }, [applyAttempt, canUsePaymentLinks, leadId, leadType]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !canUsePaymentLinks) return;
     void loadActiveAttempt();
-  }, [loadActiveAttempt, open]);
+  }, [canUsePaymentLinks, loadActiveAttempt, open]);
 
   useEffect(() => {
-    if (!open || !activeAttempt?.id) return;
+    if (!open || !canUsePaymentLinks || !activeAttempt?.id) return;
     const tick = window.setInterval(() => {
       void (async () => {
         const attempt = await loadActiveAttempt();
@@ -364,7 +379,7 @@ export default function BookingDoneModal({
       })();
     }, PAYMENT_LINK_POLL_MS);
     return () => window.clearInterval(tick);
-  }, [activeAttempt?.id, leadId, leadType, loadActiveAttempt, onHandoffComplete, open]);
+  }, [activeAttempt?.id, canUsePaymentLinks, leadId, leadType, loadActiveAttempt, onHandoffComplete, open]);
 
   const selectedQuote = useMemo(
     () => quoteOptions.find((option) => option.id === selectedQuoteId) ?? quoteOptions[0] ?? null,
@@ -412,16 +427,16 @@ export default function BookingDoneModal({
     return isValidBookingDateValue(readBookingDate(leadType, leadId));
   }, [leadId, leadType, paymentDraftRevision]);
 
-  const showBanner = isBannerPaymentLink(activeAttempt);
+  const showBanner = canUsePaymentLinks && isBannerPaymentLink(activeAttempt);
   const missingContacts = !hasLeadContact(customerPhone, customerEmail);
 
   useEffect(() => {
-    if (!open || channel !== "online") return;
+    if (!open || !canUsePaymentLinks || channel !== "online") return;
     if (parsePaymentAmountInput(readPaymentAmount(leadType, leadId)) != null) return;
     if (tenPercentAmount == null) return;
     writePaymentAmount(leadType, leadId, formatPaymentAmountInput(tenPercentAmount));
     bumpPaymentDraft();
-  }, [bumpPaymentDraft, channel, leadId, leadType, open, tenPercentAmount]);
+  }, [bumpPaymentDraft, canUsePaymentLinks, channel, leadId, leadType, open, tenPercentAmount]);
 
   async function handleConfirmSubmit() {
     setHandoffError("");
@@ -439,7 +454,7 @@ export default function BookingDoneModal({
       setHandoffError("Invalid lead type.");
       return;
     }
-    if (!offlineMethod) {
+    if (canUsePaymentLinks && !offlineMethod) {
       setHandoffError("Select Cash, Cheque, Bank Transfer, or DD.");
       return;
     }
@@ -456,11 +471,17 @@ export default function BookingDoneModal({
 
     setSubmitting(true);
     try {
-      const record = await submitBookingDone(leadType, leadId, {
-        ...payload,
-        paymentChannel: "OFFLINE",
-        paymentMethod: offlineMethod,
-      });
+      const record = await submitBookingDone(
+        leadType,
+        leadId,
+        canUsePaymentLinks
+          ? {
+              ...payload,
+              paymentChannel: "OFFLINE",
+              paymentMethod: offlineMethod,
+            }
+          : payload,
+      );
       const draftProofs = readPaymentProofs(leadType, leadId);
       if (draftProofs.length > 0) {
         const files = await paymentProofsToFiles(draftProofs);
@@ -538,14 +559,8 @@ export default function BookingDoneModal({
     setLinkBusy(true);
     setHandoffError("");
     try {
-      const result = await copyPaymentLink(activeAttempt.id);
-      const url = resolveCopiedPaymentLinkUrl(result, activeAttempt);
+      const result = await copyPaymentLinkToClipboard(activeAttempt.id, activeAttempt);
       if (result.attempt) applyAttempt(result.attempt);
-      if (!url) {
-        setHandoffError("Payment link URL is not available yet.");
-        return;
-      }
-      await navigator.clipboard.writeText(url);
     } catch (err) {
       setHandoffError(err instanceof Error ? err.message : "Unable to copy payment link.");
     } finally {
@@ -750,7 +765,7 @@ export default function BookingDoneModal({
             onBookingDateChange={bumpPaymentDraft}
           />
 
-          {linkPaid ? (
+          {canUsePaymentLinks && linkPaid ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900">
               Online payment received. Token is recorded automatically. Convert is still manual.
               {paidRecordId ? (
@@ -765,7 +780,7 @@ export default function BookingDoneModal({
             </div>
           ) : null}
 
-          {showBanner && activeAttempt ? (
+          {canUsePaymentLinks && showBanner && activeAttempt ? (
             <div className="mt-4">
               <PaymentLinkPendingBanner
                 attempt={activeAttempt}
@@ -778,15 +793,17 @@ export default function BookingDoneModal({
             </div>
           ) : (
             <>
-              <div className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
-                <PaymentChannelSelector
-                  channel={channel}
-                  offlineMethod={offlineMethod}
-                  disabled={submitting || linkBusy || handoffComplete}
-                  onChannelChange={setChannel}
-                  onOfflineMethodChange={setOfflineMethod}
-                />
-              </div>
+              {canUsePaymentLinks ? (
+                <div className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
+                  <PaymentChannelSelector
+                    channel={channel}
+                    offlineMethod={offlineMethod}
+                    disabled={submitting || linkBusy || handoffComplete}
+                    onChannelChange={setChannel}
+                    onOfflineMethodChange={setOfflineMethod}
+                  />
+                </div>
+              ) : null}
 
               <PaymentProofUploadSection
                 leadType={leadType}
@@ -794,12 +811,14 @@ export default function BookingDoneModal({
                 selectedQuote={selectedQuote}
                 quoteAmountRefreshing={quoteAmountRefreshing}
                 onPaymentDraftChange={bumpPaymentDraft}
-                hideProofs={channel === "online"}
+                hideProofs={canUsePaymentLinks && channel === "online"}
               />
             </>
           )}
 
-          {paymentKind && channel === "offline" && !showBanner ? (
+          {paymentKind &&
+          (!canUsePaymentLinks || channel === "offline") &&
+          !(canUsePaymentLinks && showBanner) ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
               <span className="font-semibold">{bookingPaymentKindLabel(paymentKind)}</span>
               {" · "}
@@ -815,9 +834,9 @@ export default function BookingDoneModal({
           ) : null}
 
           <p className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3 text-[13px] text-[#475569]">
-            {showBanner
+            {canUsePaymentLinks && showBanner
               ? "Customer pays on Easebuzz. Token is created when payment succeeds — Convert stays manual."
-              : channel === "online"
+              : canUsePaymentLinks && channel === "online"
                 ? "Send the Easebuzz link after selecting quote and booking date. Token is not created until the customer pays."
                 : `Select quote and payment, then click ${CONFIRM_BOOKING_TOKEN_LABEL} to send this lead to Booking & Token.`}
           </p>
@@ -839,7 +858,7 @@ export default function BookingDoneModal({
             >
               Close
             </button>
-            {showBanner || linkPaid ? null : channel === "online" ? (
+            {(canUsePaymentLinks && (showBanner || linkPaid)) ? null : canUsePaymentLinks && channel === "online" ? (
               <button
                 type="button"
                 onClick={() => void handleSendLeadPaymentLink()}

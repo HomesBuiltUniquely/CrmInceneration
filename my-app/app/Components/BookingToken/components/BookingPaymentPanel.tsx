@@ -33,7 +33,7 @@ import {
 } from "@/lib/booking-payment-display";
 import {
   PAYMENT_LINK_POLL_MS,
-  copyPaymentLink,
+  copyPaymentLinkToClipboard,
   createDealPaymentLink,
   editPaymentLinkAmount,
   fetchDealPaymentLinkActive,
@@ -41,7 +41,6 @@ import {
   isBannerPaymentLink,
   isStalePaymentLinkAction,
   PaymentLinkApiError,
-  resolveCopiedPaymentLinkUrl,
   resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
@@ -67,7 +66,7 @@ import {
 } from "@/lib/booking-payment-overpay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
-import { isSuperAdminRole } from "@/lib/roleUtils";
+import { isSuperAdminRole, canUsePaymentLinkIntegration } from "@/lib/roleUtils";
 import {
   formatBookingDateDisplay,
   formatFormSubmittedAt,
@@ -138,6 +137,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [leadDetails, setLeadDetails] = useState<BookingLeadDetails>(EMPTY_BOOKING_LEAD_DETAILS);
   const [loadingLead, setLoadingLead] = useState(false);
   const [viewerRole, setViewerRole] = useState("");
+  const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRole);
   const [channel, setChannel] = useState<PaymentChannelChoice>("online");
   const [offlineMethod, setOfflineMethod] = useState<OfflinePaymentMethodId | "">("");
   const [activeAttempt, setActiveAttempt] = useState<PaymentLinkAttempt | null>(null);
@@ -200,6 +200,10 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, [deal]);
 
   const loadActiveAttempt = useCallback(async () => {
+    if (!canUsePaymentLinks) {
+      setActiveAttempt(null);
+      return null;
+    }
     if (!deal) return null;
     try {
       const attempt = await fetchDealPaymentLinkActive(deal.id);
@@ -210,10 +214,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       setActiveAttempt(null);
       return null;
     }
-  }, [deal]);
+  }, [canUsePaymentLinks, deal, viewerRole]);
 
   useEffect(() => {
     if (!open || !deal) return;
+    const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRole);
     setAmountInput(
       mode === "pay" && deal.remainingAmount > 0
         ? formatPaymentAmountInput(deal.remainingAmount)
@@ -223,14 +228,16 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setDraftProofs([]);
     setHistoryData(null);
     setLeadDetails(EMPTY_BOOKING_LEAD_DETAILS);
-    setChannel("online");
+    setChannel(canUsePaymentLinks ? "online" : "offline");
     setOfflineMethod("");
     setActiveAttempt(null);
     setHistoryFilter("all");
     setCopiedNotice("");
     void loadHistory();
-    void loadActiveAttempt();
-  }, [open, deal, loadHistory, loadActiveAttempt, mode]);
+    if (canUsePaymentLinks) {
+      void loadActiveAttempt();
+    }
+  }, [open, deal, loadHistory, loadActiveAttempt, mode, viewerRole]);
 
   useEffect(() => {
     if (!open || !deal || (!isRichDetailView && mode !== "pay")) return;
@@ -253,7 +260,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, [deal, isRichDetailView, mode, open]);
 
   useEffect(() => {
-    if (!open || !deal || !activeAttempt?.id) return;
+    if (!open || !deal || !canUsePaymentLinks || !activeAttempt?.id) return;
     const tick = window.setInterval(() => {
       void (async () => {
         const previousId = activeAttempt?.id ?? null;
@@ -268,7 +275,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       })();
     }, PAYMENT_LINK_POLL_MS);
     return () => window.clearInterval(tick);
-  }, [activeAttempt?.id, activeAttempt?.status, deal, loadActiveAttempt, loadHistory, onUpdated, open]);
+  }, [activeAttempt?.id, activeAttempt?.status, canUsePaymentLinks, deal, loadActiveAttempt, loadHistory, onUpdated, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -397,7 +404,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       setError("Upload at least one payment proof screenshot.");
       return;
     }
-    if (!offlineMethod) {
+    if (canUsePaymentLinks && !offlineMethod) {
       setError("Select Cash, Cheque, Bank Transfer, or DD.");
       return;
     }
@@ -409,8 +416,9 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         amount,
         notes,
         files: draftProofs.map((proof) => proof.file),
-        paymentMethod: offlineMethod,
-        paymentChannel: "OFFLINE",
+        ...(canUsePaymentLinks
+          ? { paymentMethod: offlineMethod, paymentChannel: "OFFLINE" }
+          : {}),
       });
       for (const proof of draftProofs) {
         URL.revokeObjectURL(proof.previewUrl);
@@ -428,7 +436,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setSubmitting(false);
     }
-  }, [amountInput, deal, draftProofs, handleClose, loadHistory, mode, notes, offlineMethod, onUpdated, summary]);
+  }, [amountInput, canUsePaymentLinks, deal, draftProofs, handleClose, loadHistory, mode, notes, offlineMethod, onUpdated, summary]);
 
   const applyAttempt = useCallback(
     (attempt: PaymentLinkAttempt | null | undefined) => {
@@ -476,15 +484,9 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setLinkBusy(true);
     setError("");
     try {
-      const result = await copyPaymentLink(activeAttempt.id);
-      const url = resolveCopiedPaymentLinkUrl(result, activeAttempt);
+      const result = await copyPaymentLinkToClipboard(activeAttempt.id, activeAttempt);
       if (result.attempt) applyAttempt(result.attempt);
-      if (!url) {
-        setError("Payment link URL is not available yet.");
-        return;
-      }
-      await navigator.clipboard.writeText(url);
-      setCopiedNotice("Link copied");
+      setCopiedNotice("Payment link copied");
       window.setTimeout(() => setCopiedNotice(""), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to copy payment link.");
@@ -592,7 +594,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             ? "Token details"
             : "Deal details";
   const canPay = summary.remainingAmount > 0;
-  const showBanner = isBannerPaymentLink(activeAttempt);
+  const showBanner = canUsePaymentLinks && isBannerPaymentLink(activeAttempt);
   const showPayComposer = mode === "pay" && (canPay || showBanner);
   const missingContacts =
     !loadingLead && !hasLeadContact(leadDetails.phone, leadDetails.email);
@@ -870,7 +872,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                 </span>
               ) : null}
             </p>
-            {history.length > 0 ? (
+            {history.length > 0 && canUsePaymentLinks ? (
               <div className="flex gap-1 px-4 pb-2">
                 {(["all", "online", "offline"] as const).map((filter) => (
                   <button
@@ -957,14 +959,16 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                     />
                   ) : (
                     <>
-                      <PaymentChannelSelector
-                        channel={channel}
-                        offlineMethod={offlineMethod}
-                        disabled={submitting || linkBusy}
-                        onChannelChange={setChannel}
-                        onOfflineMethodChange={setOfflineMethod}
-                      />
-                      {channel === "online" ? (
+                      {canUsePaymentLinks ? (
+                        <PaymentChannelSelector
+                          channel={channel}
+                          offlineMethod={offlineMethod}
+                          disabled={submitting || linkBusy}
+                          onChannelChange={setChannel}
+                          onOfflineMethodChange={setOfflineMethod}
+                        />
+                      ) : null}
+                      {canUsePaymentLinks && channel === "online" ? (
                         <OnlineLinkFormSection
                           amountInput={amountInput}
                           remainingAmount={summary.remainingAmount}
@@ -1043,7 +1047,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                     {error}
                   </p>
                 ) : null}
-                {channel === "online" ? (
+                {canUsePaymentLinks && channel === "online" ? (
                   <button
                     type="button"
                     onClick={() => void handleSendPaymentLink()}
