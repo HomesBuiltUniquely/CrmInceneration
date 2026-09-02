@@ -377,7 +377,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
   if (!mounted) return null;
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       {/* Event Details Popup — Google Calendar style (matches Design Module) */}
       {modalEvent && (
         <div
@@ -497,7 +497,7 @@ export default function HubCalendarPage(): React.ReactElement | null {
           />
         </div>
 
-        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen">
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen crm-main-scroll">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">

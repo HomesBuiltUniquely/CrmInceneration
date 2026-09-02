@@ -4,15 +4,20 @@ import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from
 import {
   formatInsightsChangePercent,
   formatInsightsInrCompact,
+  hasHubConversionTrend,
   type InsightsDashboard,
 } from "@/lib/crm-insights-api";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
 import type {
   InsightsMonthBarPoint,
   InsightsWeekBarPoint,
+  InsightsVolumeChartBundle,
   InsightsWeekCharts,
 } from "@/lib/insights-week-charts";
 import { intensityFromCounts } from "@/lib/insights-week-charts";
+import InsightsChartGranularityToggle, {
+  type ChartGranularity,
+} from "./InsightsChartGranularityToggle";
 import InsightsInfoTip from "./InsightsInfoTip";
 
 type Props = {
@@ -24,8 +29,10 @@ type Props = {
   /** Same date filter as Insights header — only used for labels/copy. */
   dateFilter?: BookingDateFilterState;
   /** FE-rebuilt volume series (week or month root + nested drill-down). */
+  volumeChartBundle?: InsightsVolumeChartBundle | null;
+  /** @deprecated use volumeChartBundle */
   volumeCharts?: InsightsWeekCharts | null;
-  /** @deprecated use volumeCharts.weekBars */
+  /** @deprecated use volumeChartBundle.week.weekBars */
   weekBars?: InsightsWeekBarPoint[] | null;
 };
 
@@ -71,8 +78,8 @@ function isCalendarMonthPreset(dateFilter?: BookingDateFilterState): boolean {
 
 type VolumeIntensity = "high" | "medium" | "low" | "none";
 
-/** Months shown at once on All time / multi-month (arrows for the rest). */
-const MONTH_PAGE_SIZE = 6;
+/** Months shown at once when paging (Leads + Conversion stay in sync). */
+const MONTH_PAGE_SIZE = 5;
 
 /** Shared Leads-over-time bar geometry (month / week / day stay matched). */
 const LEAD_VOLUME_BAR_SHAPE = "w-full max-w-[36px] rounded-md";
@@ -577,14 +584,56 @@ export default function InsightsSect6({
   revenueForecast,
   grossBookingKpi,
   dateFilter,
-  volumeCharts,
+  volumeChartBundle,
+  volumeCharts: volumeChartsProp,
   weekBars: weekBarsProp,
 }: Props) {
-  const rootLevel = volumeCharts?.rootLevel ?? (weekBarsProp?.length ? "week" : null);
-  const weekBars = volumeCharts?.weekBars?.length
-    ? volumeCharts.weekBars
+  const [chartGranularity, setChartGranularity] = useState<ChartGranularity>("week");
+  const [conversionHoverIdx, setConversionHoverIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (volumeChartBundle) {
+      setChartGranularity(volumeChartBundle.defaultGranularity);
+    }
+  }, [
+    volumeChartBundle?.defaultGranularity,
+    dateFilter?.preset,
+    dateFilter?.customFrom,
+    dateFilter?.customTo,
+  ]);
+
+  const activeVolume = useMemo(() => {
+    if (!volumeChartBundle) return volumeChartsProp ?? null;
+    return chartGranularity === "week"
+      ? volumeChartBundle.week
+      : volumeChartBundle.month;
+  }, [volumeChartBundle, volumeChartsProp, chartGranularity]);
+
+  const rootLevel = activeVolume?.rootLevel ?? (weekBarsProp?.length ? "week" : null);
+  const weekBars = activeVolume?.weekBars?.length
+    ? activeVolume.weekBars
     : weekBarsProp ?? [];
-  const monthBars = volumeCharts?.monthBars ?? [];
+  const monthBars = activeVolume?.monthBars ?? [];
+
+  const effectiveLeadsOverTime = activeVolume?.leadsOverTime ?? leadsOverTime;
+
+  const resolvedConversionTrend = useMemo(() => {
+    if (chartGranularity === "week") {
+      if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
+      return (
+        volumeChartBundle?.week.conversionTrend ??
+        activeVolume?.conversionTrend ??
+        conversionTrend
+      );
+    }
+    return (
+      volumeChartBundle?.month.conversionTrend ??
+      activeVolume?.conversionTrend ??
+      conversionTrend
+    );
+  }, [chartGranularity, conversionTrend, activeVolume, volumeChartBundle]);
+
+  const showGranularityToggle = volumeChartBundle?.showGranularityToggle ?? false;
 
   const [selectedMonth, setSelectedMonth] = useState<InsightsMonthBarPoint | null>(
     null,
@@ -634,7 +683,7 @@ export default function InsightsSect6({
     setMonthPage((p) => Math.min(p, Math.max(0, monthPageCount - 1)));
   }, [monthPageCount]);
 
-  const leadPoints = leadsOverTime.points ?? [];
+  const leadPoints = effectiveLeadsOverTime.points ?? [];
   const maxLeadCount = useMemo(() => {
     if (rootLevel === "month" && monthBars.length > 0) {
       // Full-series max so bar scale stays comparable across arrow pages.
@@ -652,29 +701,33 @@ export default function InsightsSect6({
     return intensityFromCounts(leadPoints.map((p) => Number(p.count ?? 0)));
   }, [leadPoints, rootLevel]);
 
-  const conversionPoints = conversionTrend.points ?? [];
+  const conversionPoints = resolvedConversionTrend.points ?? [];
+
+  const visibleConversionPoints = useMemo(() => {
+    if (chartGranularity !== "month" || rootLevel !== "month") {
+      return conversionPoints;
+    }
+    if (conversionPoints.length <= MONTH_PAGE_SIZE) return conversionPoints;
+    const start = monthPageClamped * MONTH_PAGE_SIZE;
+    return conversionPoints.slice(start, start + MONTH_PAGE_SIZE);
+  }, [conversionPoints, chartGranularity, rootLevel, monthPageClamped]);
+
+  const conversionCoords = useMemo(() => {
+    if (visibleConversionPoints.length === 0) return [];
+    const values = visibleConversionPoints.map((p) =>
+      Math.min(100, Math.max(0, Number(p.conversionPercent ?? 0))),
+    );
+    return values.map((_, index) => conversionPointCoords(values, index));
+  }, [visibleConversionPoints]);
+
+  const activeConversionIdx = conversionHoverIdx;
 
   const conversionPath = useMemo(() => {
-    if (conversionPoints.length === 0) return "";
-    const values = conversionPoints.map((p) =>
-      Math.min(100, Math.max(0, Number(p.conversionPercent ?? 0))),
-    );
-    return values
-      .map((_, index) => {
-        const { x, y } = conversionPointCoords(values, index);
-        return `${index === 0 ? "M" : "L"}${x} ${y}`;
-      })
+    if (conversionCoords.length === 0) return "";
+    return conversionCoords
+      .map((c, i) => `${i === 0 ? "M" : "L"}${c.x} ${c.y}`)
       .join(" ");
-  }, [conversionPoints]);
-
-  const lastConversionPoint = useMemo(() => {
-    if (conversionPoints.length === 0) return null;
-    const values = conversionPoints.map((p) =>
-      Math.min(100, Math.max(0, Number(p.conversionPercent ?? 0))),
-    );
-    const index = conversionPoints.length - 1;
-    return conversionPointCoords(values, index);
-  }, [conversionPoints]);
+  }, [conversionCoords]);
 
   const target = Number(revenueForecast?.target ?? 0) || 0;
   const projected = Number(revenueForecast?.projected ?? 0) || 0;
@@ -750,15 +803,27 @@ export default function InsightsSect6({
                   </p>
                 ) : null}
               </div>
-              <span
-                className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(leadsOverTime.changePercent)}`}
-                title="Latest period with data vs the one before it"
-              >
-                {changeArrow(leadsOverTime.changePercent)}
-                {formatInsightsChangePercent(leadsOverTime.changePercent)}
-              </span>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                {showGranularityToggle ? (
+                  <InsightsChartGranularityToggle
+                    value={chartGranularity}
+                    onChange={setChartGranularity}
+                  />
+                ) : null}
+                <span
+                  className={`rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(effectiveLeadsOverTime.changePercent)}`}
+                  title="Latest period with data vs the one before it"
+                >
+                  {changeArrow(effectiveLeadsOverTime.changePercent)}
+                  {formatInsightsChangePercent(effectiveLeadsOverTime.changePercent)}
+                </span>
+              </div>
             </div>
 
+            <div
+              key={`leads-${chartGranularity}-${rootLevel}`}
+              className="animate-in fade-in duration-300"
+            >
             <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] font-semibold">
               <span className="inline-flex items-center gap-1 text-slate-500">
                 <span className="inline-block h-2 w-2 rounded-full bg-[#16B981]" /> High
@@ -887,6 +952,7 @@ export default function InsightsSect6({
                 })}
               />
             )}
+            </div>
           </div>
 
           {/* B) Conversion trend */}
@@ -899,12 +965,12 @@ export default function InsightsSect6({
                     side="top"
                     label="How conversion trend is counted"
                     math={
-                      conversionTrend.numeratorRule
+                      resolvedConversionTrend.numeratorRule
                         ? "Point = (Closed Won + Booking Done) ÷ Leads created in week × 100. Badge = relative change vs first week."
                         : "Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
                     }
                   >
-                    {conversionTrend.numeratorRule ? (
+                    {resolvedConversionTrend.numeratorRule ? (
                       <>
                         Each week (W1–W5): leads <strong>created</strong> in that week vs
                         how many are now Closed Won or Booking Done (Lost and Hold
@@ -912,38 +978,78 @@ export default function InsightsSect6({
                       </>
                     ) : (
                       <>
-                        Out of all leads in that week or month, how many became a closed
-                        deal. The small number on the right tells you if this got better
-                        or worse than the start of the range.
+                        Out of all leads in that {chartGranularity}, how many became a closed
+                        deal. The badge compares the last period to the first.
                       </>
                     )}
                   </InsightsInfoTip>
                 </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
-                  How many leads become closed deals
+                  {chartGranularity === "week"
+                    ? "Closed rate by week in the selected range"
+                    : "Closed rate by month"}
                 </p>
               </div>
               <span
-                className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(conversionTrend.changePercent)}`}
+                className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(resolvedConversionTrend.changePercent)}`}
               >
-                {changeArrow(conversionTrend.changePercent)}
-                {formatInsightsChangePercent(conversionTrend.changePercent)}
+                {changeArrow(resolvedConversionTrend.changePercent)}
+                {formatInsightsChangePercent(resolvedConversionTrend.changePercent)}
               </span>
             </div>
 
-            {conversionPoints.length === 0 ? (
+            {visibleConversionPoints.length === 0 ? (
               <p className="mt-8 text-sm text-gray-500">
                 No conversion trend points for this filter.
               </p>
             ) : (
-              <>
-                <div className="flex h-44 items-center justify-center">
+              <div
+                key={`conv-chart-${chartGranularity}-${monthPageClamped}`}
+                className="animate-in fade-in duration-300"
+              >
+                <div className="flex items-center gap-1">
+                  {chartGranularity === "month" && canPageMonths ? (
+                    <button
+                      type="button"
+                      aria-label="Older months"
+                      disabled={!canMonthPrev}
+                      onClick={() => setMonthPage((p) => Math.max(0, p - 1))}
+                      className={`flex h-9 w-8 shrink-0 items-center justify-center rounded-full text-slate-600 transition ${
+                        canMonthPrev
+                          ? "bg-slate-100 hover:bg-slate-200 active:scale-95"
+                          : "cursor-not-allowed bg-slate-50 text-slate-300"
+                      }`}
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
+                        <path
+                          d="M12 4L6 10l6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  ) : null}
+                  <div className="relative min-w-0 flex-1 flex h-44 items-center justify-center">
                   <svg
                     viewBox="0 0 320 140"
                     className="h-auto w-full max-w-[320px]"
                     role="img"
                     aria-label="Conversion trend line"
+                    onMouseLeave={() => setConversionHoverIdx(null)}
                   >
+                    {activeConversionIdx != null && conversionCoords[activeConversionIdx] ? (
+                      <line
+                        x1={conversionCoords[activeConversionIdx]!.x}
+                        x2={conversionCoords[activeConversionIdx]!.x}
+                        y1={20}
+                        y2={120}
+                        stroke="#e2e8f0"
+                        strokeWidth={1}
+                        strokeDasharray="3 3"
+                      />
+                    ) : null}
                     <path
                       d={conversionPath}
                       fill="none"
@@ -951,36 +1057,91 @@ export default function InsightsSect6({
                       strokeWidth="3"
                       strokeLinejoin="round"
                       strokeLinecap="round"
+                      className="transition-all duration-300"
                     />
-                    {lastConversionPoint ? (
-                      <circle
-                        cx={lastConversionPoint.x}
-                        cy={lastConversionPoint.y}
-                        r="5"
-                        fill="#22c55e"
-                      />
-                    ) : null}
+                    {conversionCoords.map((c, i) => (
+                      <g key={i}>
+                        <circle
+                          cx={c.x}
+                          cy={c.y}
+                          r={activeConversionIdx === i ? 6 : 4}
+                          fill={activeConversionIdx === i ? "#22c55e" : "#111827"}
+                          stroke="#fff"
+                          strokeWidth={2}
+                          className="transition-all duration-200"
+                          onMouseEnter={() => setConversionHoverIdx(i)}
+                        />
+                        <rect
+                          x={c.x - 16}
+                          y={0}
+                          width={32}
+                          height={140}
+                          fill="transparent"
+                          onMouseEnter={() => setConversionHoverIdx(i)}
+                        />
+                      </g>
+                    ))}
                   </svg>
+                  {activeConversionIdx != null && visibleConversionPoints[activeConversionIdx] ? (
+                    <div className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-1.5 text-center shadow-md backdrop-blur-sm">
+                      <p className="text-sm font-bold tabular-nums text-slate-900">
+                        {Number(visibleConversionPoints[activeConversionIdx]!.conversionPercent ?? 0).toFixed(1)}%
+                      </p>
+                    </div>
+                  ) : null}
+                  </div>
+                  {chartGranularity === "month" && canPageMonths ? (
+                    <button
+                      type="button"
+                      aria-label="Newer months"
+                      disabled={!canMonthNext}
+                      onClick={() =>
+                        setMonthPage((p) => Math.min(monthPageCount - 1, p + 1))
+                      }
+                      className={`flex h-9 w-8 shrink-0 items-center justify-center rounded-full text-slate-600 transition ${
+                        canMonthNext
+                          ? "bg-slate-100 hover:bg-slate-200 active:scale-95"
+                          : "cursor-not-allowed bg-slate-50 text-slate-300"
+                      }`}
+                    >
+                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" aria-hidden>
+                        <path
+                          d="M8 4l6 6-6 6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  ) : null}
                 </div>
+                {chartGranularity === "month" && canPageMonths ? (
+                  <div className="mb-2 flex items-center justify-center gap-2 text-[10px] font-medium text-slate-400">
+                    <span className="tabular-nums text-slate-500">{monthWindowLabel}</span>
+                    <span className="text-slate-300">·</span>
+                    <span className="tabular-nums">
+                      {monthPageClamped + 1}/{monthPageCount}
+                    </span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between gap-1">
-                  {conversionPoints.map((p, i) => {
-                    const pct = Number(p.conversionPercent ?? 0);
+                  {visibleConversionPoints.map((p, i) => {
                     const short = shortChartLabel(String(p.label ?? ""), i);
                     return (
                       <span
                         key={`${p.label}-${i}`}
-                        className="min-w-[2rem] flex-1 text-center text-[10px] font-semibold text-gray-600 sm:text-[11px]"
-                        title={`${p.label}: ${pct.toFixed(1)}%`}
+                        className={`min-w-[2rem] flex-1 text-center text-[10px] font-semibold transition-colors duration-200 sm:text-[11px] ${
+                          activeConversionIdx === i ? "text-emerald-600" : "text-gray-600"
+                        }`}
+                        title={`${p.label}: ${Number(p.conversionPercent ?? 0).toFixed(1)}%`}
                       >
-                        <span className="block tabular-nums text-gray-500">
-                          {Number.isFinite(pct) ? `${pct.toFixed(1)}%` : "—"}
-                        </span>
                         {short}
                       </span>
                     );
                   })}
                 </div>
-              </>
+              </div>
             )}
           </div>
 

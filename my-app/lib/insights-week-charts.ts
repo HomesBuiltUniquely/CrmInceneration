@@ -59,6 +59,14 @@ export type InsightsWeekCharts = {
   monthBars: InsightsMonthBarPoint[];
 };
 
+/** Week + month series for short date ranges (toggle in Sect6 / Passages trend). */
+export type InsightsVolumeChartBundle = {
+  defaultGranularity: "week" | "month";
+  showGranularityToggle: boolean;
+  week: InsightsWeekCharts;
+  month: InsightsWeekCharts;
+};
+
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -491,17 +499,59 @@ export function buildInsightsWeekChartsFromLeads(
   leads: ApiLead[],
   range: InsightsDateRange,
 ): InsightsWeekCharts | null {
+  const bundle = buildInsightsVolumeChartBundle(leads, range);
+  if (!bundle) return null;
+  return bundle.defaultGranularity === "week" ? bundle.week : bundle.month;
+}
+
+function buildTrailingMonthRoot(
+  leads: ApiLead[],
+  end: Date,
+  monthCount = 6,
+): InsightsWeekCharts | null {
+  const to = endOfLocalDay(end);
+  const from = startOfLocalMonth(
+    new Date(end.getFullYear(), end.getMonth() - (monthCount - 1), 1),
+  );
+  return buildMonthRoot(leads, from, to);
+}
+
+/**
+ * Builds week + month chart data. Short ranges expose a Week | Month toggle;
+ * long ranges default to months only.
+ */
+export function buildInsightsVolumeChartBundle(
+  leads: ApiLead[],
+  range: InsightsDateRange,
+): InsightsVolumeChartBundle | null {
   const window = resolveChartWindow(leads, range);
   if (!window) return null;
 
   const { from, to } = window;
   const spanDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
+  const isShortRange = spanDays <= 40;
 
-  // ~one month → week bars with day drill-down.
-  if (spanDays <= 40) {
-    return buildWeekRoot(leads, from, to);
+  if (isShortRange) {
+    const week = buildWeekRoot(leads, from, to);
+    if (!week) return null;
+    const month =
+      buildTrailingMonthRoot(leads, to, 12) ??
+      buildMonthRoot(leads, from, to) ??
+      week;
+    return {
+      defaultGranularity: "week",
+      showGranularityToggle: true,
+      week,
+      month,
+    };
   }
 
-  // All time / multi-month → month bars → weeks → days.
-  return buildMonthRoot(leads, from, to);
+  const month = buildMonthRoot(leads, from, to);
+  if (!month) return null;
+  return {
+    defaultGranularity: "month",
+    showGranularityToggle: false,
+    week: month,
+    month,
+  };
 }

@@ -308,6 +308,30 @@ export type InsightsFunnelPathBreakdown = {
 export type InsightsSalesFunnelStage = InsightsFunnelStage & {
   sharePercent?: number;
   pathBreakdown?: InsightsFunnelPathBreakdown | null;
+  /** Passages — entries from leads created inside the filter range. */
+  newCount?: number;
+  oldCount?: number;
+  newSharePercent?: number;
+  oldSharePercent?: number;
+};
+
+/** Discovery→Closed conversion summary (Passages + Cohort). */
+export type InsightsSalesFunnelConversion = {
+  baseStage: string;
+  overallPercent: number;
+  /** Passages only — leads created inside range. */
+  newPercent?: number | null;
+  /** Passages only — leads created before range. */
+  oldPercent?: number | null;
+};
+
+/** Cohort live snapshot — optional Hub block. */
+export type InsightsCohortProgress = {
+  inProgressCount?: number;
+  finalOutcomeCount?: number;
+  inProgressPercent?: number;
+  finalOutcomePercent?: number;
+  asOfLabel?: string | null;
 };
 
 export type InsightsSalesFunnelResponse = {
@@ -325,6 +349,10 @@ export type InsightsSalesFunnelResponse = {
     sharePercent: number;
     countLabel?: string;
   };
+  /** Discovery→Closed % — base at Discovery, not Fresh Lead. */
+  conversion?: InsightsSalesFunnelConversion | null;
+  /** Cohort — live in-progress vs final split. */
+  cohortProgress?: InsightsCohortProgress | null;
   stages: InsightsSalesFunnelStage[];
   /** Alias some Hub builds still return. */
   salesFunnel: InsightsSalesFunnelStage[];
@@ -333,6 +361,87 @@ export type InsightsSalesFunnelResponse = {
 export type InsightsSalesFunnelQuery = InsightsDashboardQuery & {
   funnelMode: InsightsFunnelMode;
   pathFilter?: InsightsFunnelPathFilter;
+};
+
+/** Trailing window for Passages old-lead share trend (ignores header date filter in month mode). */
+export const PASSAGES_TREND_MONTHS = 12;
+
+export type InsightsTrendGranularity = "month" | "week";
+
+export type InsightsPassagesTrendPoint = {
+  /** yyyy-MM (month) or W1…Wn (week). */
+  period: string;
+  periodLabel?: string;
+  weekIndex?: number;
+  /** Optional range e.g. "1–7 Sep" for week buckets. */
+  rangeLabel?: string;
+  /** ISO month e.g. 2026-01 — kept for month buckets. */
+  month: string;
+  monthLabel?: string;
+  newCount: number;
+  oldCount: number;
+  /** Hub may send; else FE derives old / (new + old). */
+  oldSharePercent?: number;
+};
+
+/** True when point is a week bucket (W1…Wn), not a calendar month. */
+export function isPassagesTrendWeekPoint(p: InsightsPassagesTrendPoint): boolean {
+  if (p.weekIndex != null && p.weekIndex > 0) return true;
+  return /^W\d+$/i.test(p.period.trim());
+}
+
+export function isPassagesTrendMonthPoint(p: InsightsPassagesTrendPoint): boolean {
+  if (isPassagesTrendWeekPoint(p)) return false;
+  const period = p.period.trim();
+  if (/^\d{4}-\d{2}$/.test(period)) return true;
+  const label = p.periodLabel ?? p.monthLabel ?? "";
+  return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(label);
+}
+
+export function filterPassagesTrendPointsByGranularity(
+  points: InsightsPassagesTrendPoint[],
+  granularity: InsightsTrendGranularity,
+): InsightsPassagesTrendPoint[] {
+  if (granularity === "week") {
+    const weeks = points.filter(isPassagesTrendWeekPoint);
+    if (weeks.length > 0) {
+      return [...weeks].sort(
+        (a, b) => (a.weekIndex ?? parseWeekIndex(a.period)) - (b.weekIndex ?? parseWeekIndex(b.period)),
+      );
+    }
+    return weeks;
+  }
+  return points.filter(isPassagesTrendMonthPoint);
+}
+
+function parseWeekIndex(period: string): number {
+  const m = period.match(/^W(\d+)$/i);
+  return m ? Number(m[1]) : 0;
+}
+
+export type InsightsPassagesTrendQuery = {
+  months?: number;
+  weeks?: number;
+  granularity?: InsightsTrendGranularity;
+  /** Hub preset e.g. current_month — sent with dateFrom/dateTo in week mode. */
+  dateRange?: string;
+  /** Week mode — YYYY-MM-DD bounds from Insights date filter. */
+  dateFrom?: string;
+  dateTo?: string;
+  branchId: string;
+  salesManagerId: number | null;
+  salesExecutiveId: number | null;
+};
+
+export type InsightsPassagesTrendResponse = {
+  hubImplemented: boolean;
+  months?: number;
+  weeks?: number;
+  timezone?: string;
+  granularity?: InsightsTrendGranularity;
+  dateFrom?: string;
+  dateTo?: string;
+  points: InsightsPassagesTrendPoint[];
 };
 
 /* ── Formatters ───────────────────────────────────────────────────────── */
@@ -500,9 +609,12 @@ export function buildInsightsSalesFunnelSearchParams(
         : "current";
   params.set("funnelMode", mode);
 
-  const path = query.pathFilter ?? "all";
-  if (path === "won" || path === "lost" || path === "hold" || path === "all") {
-    params.set("pathFilter", path);
+  // Passages = stage entries in range; path split (won/lost/hold) does not apply.
+  if (mode !== "passages") {
+    const path = query.pathFilter ?? "all";
+    if (path === "won" || path === "lost" || path === "hold" || path === "all") {
+      params.set("pathFilter", path);
+    }
   }
   return params;
 }
@@ -531,7 +643,7 @@ function normalizeSalesFunnelStage(
     raw.pathBreakdown && typeof raw.pathBreakdown === "object"
       ? (raw.pathBreakdown as Record<string, unknown>)
       : null;
-  return {
+  const stage: InsightsSalesFunnelStage = {
     stageKey: asStr(raw.stageKey),
     stageLabel: asStr(raw.stageLabel, asStr(raw.stageKey)),
     count: asNum(raw.count),
@@ -546,6 +658,50 @@ function normalizeSalesFunnelStage(
           hold: asNum(breakdownRaw.hold ?? breakdownRaw.holdTotal),
         }
       : null,
+  };
+
+  if (raw.newCount != null || raw.oldCount != null) {
+    stage.newCount = asNum(raw.newCount);
+    stage.oldCount = asNum(raw.oldCount);
+    if (raw.newSharePercent != null) {
+      stage.newSharePercent = asNum(raw.newSharePercent);
+    }
+    if (raw.oldSharePercent != null) {
+      stage.oldSharePercent = asNum(raw.oldSharePercent);
+    }
+  }
+
+  return stage;
+}
+
+function normalizeSalesFunnelConversion(
+  raw: unknown,
+): InsightsSalesFunnelConversion | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    baseStage: asStr(o.baseStage, "discovery") || "discovery",
+    overallPercent: asNum(o.overallPercent),
+    newPercent: o.newPercent == null ? null : asNum(o.newPercent),
+    oldPercent: o.oldPercent == null ? null : asNum(o.oldPercent),
+  };
+}
+
+function normalizeCohortProgress(
+  raw: unknown,
+): InsightsCohortProgress | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    inProgressCount:
+      o.inProgressCount == null ? undefined : asNum(o.inProgressCount),
+    finalOutcomeCount:
+      o.finalOutcomeCount == null ? undefined : asNum(o.finalOutcomeCount),
+    inProgressPercent:
+      o.inProgressPercent == null ? undefined : asNum(o.inProgressPercent),
+    finalOutcomePercent:
+      o.finalOutcomePercent == null ? undefined : asNum(o.finalOutcomePercent),
+    asOfLabel: o.asOfLabel == null ? null : asStr(o.asOfLabel) || null,
   };
 }
 
@@ -584,13 +740,15 @@ export function normalizeInsightsSalesFunnel(
     definitions: {
       dateField: asStr(defsRaw.dateField),
       reachRule: asStr(defsRaw.reachRule),
-      timezone: asStr(defsRaw.timezone, "UTC"),
+      timezone: asStr(defsRaw.timezone, "Asia/Kolkata"),
     },
     total: {
       count: asNum(totalRaw.count),
       sharePercent: asNum(totalRaw.sharePercent, 100),
       countLabel: asStr(totalRaw.countLabel, "Leads") || "Leads",
     },
+    conversion: normalizeSalesFunnelConversion(root.conversion),
+    cohortProgress: normalizeCohortProgress(root.cohortProgress),
     stages,
     salesFunnel: stages,
   };
@@ -645,6 +803,154 @@ export async function fetchInsightsSalesFunnel(
   }
 
   return normalizeInsightsSalesFunnel(json);
+}
+
+export function buildInsightsPassagesTrendSearchParams(
+  query: InsightsPassagesTrendQuery,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  const granularity = query.granularity ?? "month";
+  params.set("granularity", granularity);
+
+  if (granularity === "week") {
+    params.set(
+      "weeks",
+      String(query.weeks != null && query.weeks > 0 ? query.weeks : 6),
+    );
+    if (query.dateRange?.trim()) params.set("dateRange", query.dateRange.trim());
+    if (query.dateFrom?.trim()) params.set("dateFrom", query.dateFrom.trim());
+    if (query.dateTo?.trim()) params.set("dateTo", query.dateTo.trim());
+  } else {
+    params.set(
+      "months",
+      String(
+        query.months != null && query.months > 0
+          ? query.months
+          : PASSAGES_TREND_MONTHS,
+      ),
+    );
+  }
+
+  const branch = query.branchId.trim();
+  if (branch && branch !== "all") {
+    params.set("branchId", branch);
+  }
+  if (query.salesExecutiveId != null) {
+    params.set("salesExecutiveId", String(query.salesExecutiveId));
+  } else if (query.salesManagerId != null) {
+    params.set("salesManagerId", String(query.salesManagerId));
+  }
+  return params;
+}
+
+/** Week-mode passages trend — Hub dateRange + YYYY-MM-DD bounds from header filter. */
+export function passagesTrendWeekScopeFromDateFilter(
+  dateFilter: BookingDateFilterState,
+): Pick<InsightsPassagesTrendQuery, "dateRange" | "dateFrom" | "dateTo"> {
+  const range = resolveBookingDateRange(dateFilter);
+  const out: Pick<InsightsPassagesTrendQuery, "dateRange" | "dateFrom" | "dateTo"> =
+    {};
+  if (dateFilter.preset === "currentMonth") {
+    out.dateRange = "current_month";
+  } else if (dateFilter.preset === "previousMonth") {
+    out.dateRange = "previous_month";
+  }
+  if (range.submittedFrom?.trim()) {
+    out.dateFrom = range.submittedFrom.trim().slice(0, 10);
+  }
+  if (range.submittedTo?.trim()) {
+    out.dateTo = range.submittedTo.trim().slice(0, 10);
+  }
+  return out;
+}
+
+export function oldSharePercentFromPassagesCounts(
+  newCount: number,
+  oldCount: number,
+): number {
+  const total = newCount + oldCount;
+  if (total <= 0) return 0;
+  return Math.min(100, (oldCount / total) * 100);
+}
+
+export function normalizeInsightsPassagesTrend(
+  raw: unknown,
+): InsightsPassagesTrendResponse {
+  const root = unwrapInsightsPayload(raw);
+  const pointsRaw = asArray<Record<string, unknown>>(
+    root.points ?? root.monthlyTrend ?? root.months,
+  );
+  const points: InsightsPassagesTrendPoint[] = pointsRaw.map((p) => {
+    const newCount = asNum(p.newCount);
+    const oldCount = asNum(p.oldCount);
+    const oldShare =
+      p.oldSharePercent != null
+        ? asNum(p.oldSharePercent)
+        : oldSharePercentFromPassagesCounts(newCount, oldCount);
+    const period = asStr(
+      p.period ?? p.week ?? p.weekKey ?? p.month ?? p.monthKey ?? p.label,
+    );
+    const periodLabel =
+      asStr(p.periodLabel ?? p.weekLabel ?? p.monthLabel ?? p.label, "") ||
+      undefined;
+    const rangeLabel =
+      asStr(p.rangeLabel ?? p.weekRange ?? p.range, "") || undefined;
+    const weekIndex =
+      p.weekIndex != null ? asNum(p.weekIndex) : undefined;
+    const inferredWeek = /^W\d+$/i.test(period);
+    return {
+      period,
+      periodLabel,
+      weekIndex:
+        weekIndex && weekIndex > 0
+          ? weekIndex
+          : inferredWeek
+            ? parseWeekIndex(period)
+            : undefined,
+      rangeLabel: rangeLabel || undefined,
+      month: period,
+      monthLabel: periodLabel,
+      newCount,
+      oldCount,
+      oldSharePercent: oldShare,
+    };
+  });
+  const granularityRaw = asStr(root.granularity, "");
+  let granularity: InsightsTrendGranularity =
+    granularityRaw === "week" ? "week" : granularityRaw === "month" ? "month" : "month";
+  if (!granularityRaw && points.length > 0) {
+    granularity = points.every(isPassagesTrendWeekPoint) ? "week" : "month";
+  }
+  return {
+    hubImplemented: root.hubImplemented === true,
+    months: asNum(root.months, PASSAGES_TREND_MONTHS),
+    weeks: root.weeks != null ? asNum(root.weeks) : undefined,
+    timezone: asStr(root.timezone, "Asia/Kolkata") || "Asia/Kolkata",
+    dateFrom: asStr(root.dateFrom, "") || undefined,
+    dateTo: asStr(root.dateTo, "") || undefined,
+    points,
+    granularity,
+  };
+}
+
+/** Monthly Passages old-lead % — scope filters only, not header date range. */
+export async function fetchInsightsPassagesTrend(
+  query: InsightsPassagesTrendQuery,
+): Promise<InsightsPassagesTrendResponse> {
+  const qs = buildInsightsPassagesTrendSearchParams(query).toString();
+  const res = await fetch(
+    `/api/crm/insights/passages-trend${qs ? `?${qs}` : ""}`,
+    {
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  const json = await readJson<unknown>(res, "Unable to load passages trend.");
+  const normalized = normalizeInsightsPassagesTrend(json);
+  if (query.granularity) {
+    return { ...normalized, granularity: query.granularity };
+  }
+  return normalized;
 }
 
 /** Same Insights scope; omit matrix-only `teamPeriod`. Prefer `dateRange=current_month` for MTD. */

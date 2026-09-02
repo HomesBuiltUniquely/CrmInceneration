@@ -65,7 +65,7 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
   }, []);
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -79,7 +79,7 @@ export default function Header({ role = "sales_admin", workspace = "sales" }: Pr
             onSelectionChange={handleSidebarSelection}
           />
         </div>
-        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen">
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen crm-main-scroll">
           <AppTopBar
             pageLabelOverride={
               activeDashboardView === "design-module" ? "Design Module" : undefined

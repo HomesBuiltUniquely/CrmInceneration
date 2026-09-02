@@ -492,7 +492,7 @@ export default function ImportLeadsClient() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -506,7 +506,7 @@ export default function ImportLeadsClient() {
           />
         </div>
 
-        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen">
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen crm-main-scroll">
           <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
