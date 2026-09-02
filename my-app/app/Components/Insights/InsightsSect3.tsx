@@ -10,14 +10,26 @@ import {
   type InsightsFunnelPathFilter,
   type InsightsFunnelStage,
   type InsightsSalesFunnelResponse,
+  type InsightsPassagesTrendResponse,
 } from "@/lib/crm-insights-api";
 import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
+import {
+  buildApiModeFunnelDisplay,
+  passagesSplitLabel,
+  resolveDiscoveryToClosedSummary,
+  stageHasPassagesSplit,
+  type PassagesAgeSegment,
+} from "@/lib/insights-funnel-api-display";
 import {
   funnelStageHasHoldPath,
   mergeHubHoldPathByStage,
   resolveFunnelCanonicalKey,
   type FunnelStagePathDataMap,
 } from "@/lib/insights-funnel-stage-paths";
+import PassagesOldShareTrendPanel from "./PassagesOldShareTrendPanel";
+import InsightsSegmentedControl from "./InsightsSegmentedControl";
+import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import type { InsightsTrendGranularity } from "@/lib/crm-insights-api";
 
 type Props = {
   salesFunnel: InsightsFunnelStage[];
@@ -31,7 +43,7 @@ type Props = {
   stagePathLoading?: boolean;
   /** When true, stage bars are current-in-milestone inventory (not pool total / cumulative). */
   useCurrentStageInventory?: boolean;
-  /** Measure camera: Current | Passages | New leads. */
+  /** Measure camera: Current | Passages | Cohort. */
   funnelMode?: InsightsFunnelMode;
   onFunnelModeChange?: (mode: InsightsFunnelMode) => void;
   /** Synced path tab (required for Hub passages/cohort). */
@@ -41,8 +53,14 @@ type Props = {
   modeFunnel?: InsightsSalesFunnelResponse | null;
   modeFunnelLoading?: boolean;
   modeFunnelError?: string;
-  /** Passages / New leads — Super Admin only (preview + under construction). */
+  /** Passages / Cohort — Super Admin only (preview + under construction). */
   canUseAdvancedFunnelModes?: boolean;
+  /** Trailing monthly old-lead % (Passages tab only). */
+  passagesTrend?: InsightsPassagesTrendResponse | null;
+  passagesTrendLoading?: boolean;
+  passagesTrendGranularity?: InsightsTrendGranularity;
+  onPassagesTrendGranularityChange?: (value: InsightsTrendGranularity) => void;
+  dateFilter?: BookingDateFilterState;
 };
 
 const FUNNEL_MODE_OPTIONS: Array<{
@@ -63,14 +81,14 @@ const FUNNEL_MODE_OPTIONS: Array<{
     id: "passages",
     label: "Passages",
     short: "Moved",
-    hint: "Who entered each stage in the selected dates — old leads moving still count.",
+    hint: "Stage entries in selected dates — split by leads created in range (New) vs before (Old).",
     previewOnly: true,
   },
   {
     id: "cohort",
-    label: "New leads",
-    short: "New",
-    hint: "Of leads created in the selected dates, how many reached each stage.",
+    label: "Cohort",
+    short: "Cohort",
+    hint: "Leads created in selected dates — stages reached as of today (live snapshot).",
     previewOnly: true,
   },
 ];
@@ -78,11 +96,11 @@ const FUNNEL_MODE_OPTIONS: Array<{
 function funnelModeSubtitle(mode: InsightsFunnelMode): string {
   switch (mode) {
     case "passages":
-      return "Leads that entered each stage in the selected date range (old leads moving still count)";
+      return "Stage entries in the selected dates — New vs Old split by lead created date";
     case "cohort":
-      return "Of leads created in the selected date range — how many reached each milestone";
+      return "Leads created in the selected dates — milestone reach as of today";
     default:
-      return "Current leads in each milestone stage (same as Journey heatmap)";
+      return "Who is in each stage right now (same as Journey heatmap)";
   }
 }
 
@@ -412,10 +430,18 @@ export default function InsightSect3({
   modeFunnelLoading = false,
   modeFunnelError = "",
   canUseAdvancedFunnelModes = false,
+  passagesTrend = null,
+  passagesTrendLoading = false,
+  passagesTrendGranularity = "month",
+  onPassagesTrendGranularityChange,
+  dateFilter,
 }: Props) {
   const [funnelTab, setFunnelTab] = useState<"all" | "won" | "lost" | "hold">(
     pathFilterProp ?? "all",
   );
+  const [passagesAgeSegment, setPassagesAgeSegment] =
+    useState<PassagesAgeSegment>("all");
+  const [passagesTrendPanelOpen, setPassagesTrendPanelOpen] = useState(false);
   const [selectedStagePopup, setSelectedStagePopup] = useState<string | null>(null);
 
   const visibleFunnelModes = useMemo(
@@ -426,9 +452,77 @@ export default function InsightSect3({
     [canUseAdvancedFunnelModes],
   );
 
+  const funnelModeSegments = useMemo(
+    () =>
+      visibleFunnelModes.map((opt) => ({
+        id: opt.id,
+        label: opt.label,
+        shortLabel: opt.short,
+        title: opt.previewOnly
+          ? `${opt.hint} (Under construction — Super Admin preview)`
+          : opt.hint,
+        badge: opt.previewOnly ? "WIP" : undefined,
+      })),
+    [visibleFunnelModes],
+  );
+
+  const passagesAgeSegments = useMemo(
+    () =>
+      (["all", "new", "old"] as const).map((seg) => ({
+        id: seg,
+        label: seg === "all" ? "All" : seg.charAt(0).toUpperCase() + seg.slice(1),
+        activeClassName:
+          seg === "new"
+            ? "bg-emerald-600 shadow-sm"
+            : seg === "old"
+              ? "bg-slate-700 shadow-sm"
+              : "bg-slate-900 shadow-sm",
+      })),
+    [],
+  );
+
+  const pathFilterSegments = useMemo(
+    () =>
+      (["all", "won", "lost", "hold"] as const).map((tab) => ({
+        id: tab,
+        label:
+          tab === "all"
+            ? "All"
+            : tab === "won"
+              ? "Won"
+              : tab === "hold"
+                ? "Hold"
+                : "Lost",
+        activeClassName:
+          tab === "won"
+            ? "bg-emerald-600 shadow-sm"
+            : tab === "lost"
+              ? "bg-red-600 shadow-sm"
+              : tab === "hold"
+                ? "bg-amber-500 shadow-sm"
+                : "bg-slate-900 shadow-sm",
+        inactiveTextClassName:
+          tab === "won"
+            ? "text-slate-600 hover:text-emerald-700"
+            : tab === "lost"
+              ? "text-slate-600 hover:text-red-700"
+              : tab === "hold"
+                ? "text-slate-600 hover:text-amber-800"
+                : "text-slate-600 hover:text-slate-900",
+      })),
+    [],
+  );
+
   const isApiMode =
     canUseAdvancedFunnelModes &&
     (funnelMode === "passages" || funnelMode === "cohort");
+  const isPassagesMode = funnelMode === "passages";
+  const showPassagesTrendGranularityToggle =
+    dateFilter?.preset === "currentMonth" ||
+    dateFilter?.preset === "previousMonth";
+  const isCohortMode = funnelMode === "cohort";
+  /** Won/Lost/Hold tabs — Current inventory only. */
+  const showPathTabs = !isApiMode;
   const showUnderConstruction =
     canUseAdvancedFunnelModes &&
     (funnelMode === "passages" || funnelMode === "cohort");
@@ -438,6 +532,32 @@ export default function InsightSect3({
       setFunnelTab(pathFilterProp);
     }
   }, [pathFilterProp, funnelTab]);
+
+  useEffect(() => {
+    if (isPassagesMode && funnelTab !== "all") {
+      setFunnelTab("all");
+      onPathFilterChange?.("all");
+    }
+  }, [isPassagesMode, funnelTab, onPathFilterChange]);
+
+  useEffect(() => {
+    if (isCohortMode && funnelTab !== "all") {
+      setFunnelTab("all");
+      onPathFilterChange?.("all");
+    }
+  }, [isCohortMode, funnelTab, onPathFilterChange]);
+
+  useEffect(() => {
+    if (!isPassagesMode) {
+      setPassagesTrendPanelOpen(false);
+    }
+  }, [isPassagesMode]);
+
+  useEffect(() => {
+    if (!isPassagesMode && passagesAgeSegment !== "all") {
+      setPassagesAgeSegment("all");
+    }
+  }, [isPassagesMode, passagesAgeSegment]);
 
   const setPathTab = (tab: "all" | "won" | "lost" | "hold") => {
     setFunnelTab(tab);
@@ -451,39 +571,36 @@ export default function InsightSect3({
     [stagePathDataProp, holdPathByStage],
   );
 
-  /** Hub passages/cohort stages — already path-filtered when pathFilter ≠ all. */
-  const apiModeStages = useMemo((): InsightsFunnelStage[] => {
+  const apiRawStageByKey = useMemo(() => {
+    const map: Record<string, InsightsSalesFunnelResponse["stages"][number]> = {};
+    if (!modeFunnel) return map;
+    for (const s of modeFunnel.stages ?? modeFunnel.salesFunnel ?? []) {
+      const k = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+      if (!map[k]) map[k] = s;
+    }
+    return map;
+  }, [modeFunnel]);
+
+  const apiDisplayFunnel = useMemo(() => {
     if (!isApiMode || !modeFunnel) return [];
-    const stages = (modeFunnel.stages?.length
-      ? modeFunnel.stages
-      : modeFunnel.salesFunnel) ?? [];
-    const withoutTotal = stages.filter(
-      (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "total",
-    );
-    const totalFromApi = stages.find(
-      (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === "total",
-    );
-    const milestones =
-      funnelTab === "all"
-        ? withoutTotal
-        : withoutTotal.filter(
-            (s) =>
-              resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !==
-              "fresh_lead",
-          );
-    const totalStage: InsightsFunnelStage = totalFromApi ?? {
-      stageKey: "total",
-      stageLabel: "Total",
-      count:
-        modeFunnel.total?.count != null && modeFunnel.total.count > 0
-          ? modeFunnel.total.count
-          : withoutTotal.reduce((s, x) => s + (Number(x.count) || 0), 0),
-      countLabel: modeFunnel.total?.countLabel || "Leads",
-      value: 0,
-      conversionPercent: 100,
-    };
-    return [totalStage, ...milestones];
-  }, [isApiMode, modeFunnel, funnelTab]);
+    return buildApiModeFunnelDisplay({
+      modeFunnel,
+      funnelMode,
+      passagesSegment: passagesAgeSegment,
+      pathFilter: funnelTab,
+    });
+  }, [
+    isApiMode,
+    modeFunnel,
+    funnelMode,
+    passagesAgeSegment,
+    funnelTab,
+  ]);
+
+  const discoveryConversionSummary = useMemo(
+    () => resolveDiscoveryToClosedSummary(modeFunnel, passagesAgeSegment),
+    [modeFunnel, passagesAgeSegment],
+  );
 
   const apiPathBreakdownByKey = useMemo(() => {
     const map: Record<string, { won: number; lost: number; hold: number }> = {};
@@ -496,7 +613,16 @@ export default function InsightSect3({
   }, [modeFunnel]);
 
   const fullSalesFunnel = useMemo(() => {
-    if (isApiMode) return apiModeStages;
+    if (isApiMode) {
+      return apiDisplayFunnel.map((s) => ({
+        stageKey: s.stageKey,
+        stageLabel: s.stageLabel,
+        count: s.displayCount,
+        countLabel: s.countLabel,
+        value: s.value,
+        conversionPercent: s.conversionPercent,
+      }));
+    }
 
     // Authoritative inventory: never replace Fresh Lead with pool total
     if (useCurrentStageInventory && salesFunnel.length > 0) {
@@ -511,16 +637,10 @@ export default function InsightSect3({
     if (hasFresh) return salesFunnel;
 
     return salesFunnel;
-  }, [salesFunnel, useCurrentStageInventory, isApiMode, apiModeStages]);
+  }, [salesFunnel, useCurrentStageInventory, isApiMode, apiDisplayFunnel]);
 
   const activeSalesFunnel = useMemo(() => {
-    if (isApiMode) {
-      // Hub already returns sharePercent / conversionPercent for the mode
-      return fullSalesFunnel.map((stage) => ({
-        ...stage,
-        conversionPercent: Number(stage.conversionPercent) || 0,
-      }));
-    }
+    if (isApiMode) return fullSalesFunnel;
 
     const withCounts = fullSalesFunnel.map((stage) => {
       const key = stage.stageKey || stage.stageLabel;
@@ -771,57 +891,28 @@ export default function InsightSect3({
                 <h2 className="text-xl font-bold tracking-tight text-slate-900">
                   Sales Funnel
                 </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p
+                  key={funnelMode}
+                  className="mt-0.5 text-xs text-slate-500 animate-in fade-in slide-in-from-bottom-1 duration-300"
+                >
                   {funnelModeSubtitle(funnelMode)}
                 </p>
               </div>
 
               {canUseAdvancedFunnelModes ? (
-                <div
-                  className="flex flex-wrap items-center gap-1 self-start rounded-xl border border-slate-200 bg-slate-50 p-1"
-                  role="tablist"
-                  aria-label="Funnel measure mode"
-                >
-                  {visibleFunnelModes.map((opt) => {
-                    const active = funnelMode === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        title={
-                          opt.previewOnly
-                            ? `${opt.hint} (Under construction — Super Admin preview)`
-                            : opt.hint
-                        }
-                        onClick={() => {
-                          onFunnelModeChange?.(opt.id);
-                          setSelectedStagePopup(null);
-                        }}
-                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-bold tracking-wide transition sm:px-3 sm:text-xs ${
-                          active
-                            ? "bg-slate-900 text-white shadow-sm"
-                            : "text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-xs"
-                        }`}
-                      >
-                        <span className="sm:hidden">{opt.short}</span>
-                        <span className="hidden sm:inline">{opt.label}</span>
-                        {opt.previewOnly ? (
-                          <span
-                            className={`rounded px-1 py-0.5 text-[8px] font-extrabold uppercase tracking-wide ${
-                              active
-                                ? "bg-amber-400/95 text-amber-950"
-                                : "bg-amber-100 text-amber-800"
-                            }`}
-                          >
-                            WIP
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
+                <InsightsSegmentedControl
+                  ariaLabel="Funnel measure mode"
+                  segments={funnelModeSegments}
+                  value={funnelMode}
+                  onChange={(id) => {
+                    onFunnelModeChange?.(id as InsightsFunnelMode);
+                    if (id !== "passages") {
+                      setPassagesAgeSegment("all");
+                    }
+                    setSelectedStagePopup(null);
+                  }}
+                  className="self-start shadow-sm"
+                />
               ) : null}
             </div>
 
@@ -831,7 +922,7 @@ export default function InsightSect3({
                   Under construction
                 </span>
                 <span className="font-medium text-amber-800/90">
-                  Super Admin preview — you can use {funnelMode === "passages" ? "Passages" : "New leads"} now; not launched for other roles yet.
+                  Super Admin preview — you can use {funnelMode === "passages" ? "Passages" : "Cohort"} now; not launched for other roles yet.
                 </span>
               </div>
             ) : null}
@@ -840,33 +931,41 @@ export default function InsightSect3({
               <p className="max-w-xl text-[11px] font-medium leading-snug text-slate-400">
                 {FUNNEL_MODE_OPTIONS.find((o) => o.id === funnelMode)?.hint}
               </p>
-              <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1">
-                {(["all", "won", "lost", "hold"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setPathTab(tab)}
-                    className={`min-w-[3.75rem] cursor-pointer rounded-md px-2.5 py-1.5 text-center text-xs font-semibold transition-all duration-200 ease-out sm:min-w-[4.5rem] sm:px-3 ${
-                      funnelTab === tab
-                        ? tab === "won"
-                          ? "bg-emerald-600 font-bold text-white shadow-xs hover:bg-emerald-500 hover:shadow-md hover:brightness-110"
-                          : tab === "lost"
-                            ? "bg-red-600 font-bold text-white shadow-xs hover:bg-red-500 hover:shadow-md hover:brightness-110"
-                            : tab === "hold"
-                              ? "bg-amber-500 font-bold text-white shadow-xs hover:bg-amber-400 hover:shadow-md hover:brightness-110"
-                              : "bg-slate-900 font-bold text-white shadow-xs hover:bg-slate-800 hover:shadow-md hover:brightness-110"
-                        : tab === "won"
-                          ? "text-gray-600 hover:bg-emerald-100 hover:text-emerald-700 hover:shadow-xs"
-                          : tab === "lost"
-                            ? "text-gray-600 hover:bg-red-100 hover:text-red-700 hover:shadow-xs"
-                            : tab === "hold"
-                              ? "text-gray-600 hover:bg-amber-100 hover:text-amber-800 hover:shadow-xs"
-                              : "text-gray-600 hover:bg-slate-200 hover:text-slate-900 hover:shadow-xs"
-                    }`}
-                  >
-                    {tab === "all" ? "All" : tab === "won" ? "Won" : tab === "hold" ? "Hold" : "Lost"}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center gap-2">
+              {isPassagesMode ? (
+                <>
+                <InsightsSegmentedControl
+                  ariaLabel="Passages lead age"
+                  segments={passagesAgeSegments}
+                  value={passagesAgeSegment}
+                  onChange={(id) => setPassagesAgeSegment(id as PassagesAgeSegment)}
+                />
+                <button
+                  type="button"
+                  aria-label="Old lead share trend"
+                  aria-pressed={passagesTrendPanelOpen}
+                  title="Old lead share trend"
+                  onClick={() => setPassagesTrendPanelOpen((o) => !o)}
+                  className={`inline-flex h-9 w-9 items-center justify-center rounded-xl border transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:scale-[1.04] active:scale-[0.96] ${
+                    passagesTrendPanelOpen
+                      ? "border-slate-900 bg-slate-900 text-white shadow-md ring-2 ring-slate-900/20"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 hover:shadow-sm"
+                  }`}
+                >
+                  <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.75} aria-hidden>
+                    <path d="M3 14l4-5 3 3 7-8" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                </>
+              ) : null}
+              {showPathTabs ? (
+                <InsightsSegmentedControl
+                  ariaLabel="Funnel path filter"
+                  segments={pathFilterSegments}
+                  value={funnelTab}
+                  onChange={(id) => setPathTab(id as InsightsFunnelPathFilter)}
+                />
+              ) : null}
               </div>
             </div>
           </div>
@@ -874,7 +973,7 @@ export default function InsightSect3({
           {isApiMode && modeFunnelLoading ? (
             <div className="flex items-center gap-2 py-10 text-sm font-medium text-slate-500">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-              Loading {funnelMode === "passages" ? "passages" : "new-lead"} funnel…
+              Loading {funnelMode === "passages" ? "passages" : "cohort"} funnel…
             </div>
           ) : isApiMode && modeFunnelError ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
@@ -888,13 +987,98 @@ export default function InsightSect3({
               <p className="font-bold">Passages not available yet</p>
               <p className="mt-1 text-xs font-medium text-amber-800/90">
                 {modeFunnel.passagesUnavailableReason ||
-                  "Stage transition history is empty for this scope. Current and New leads modes still work."}
+                  "Stage transition history is empty for this scope. Current and Cohort modes still work."}
               </p>
             </div>
           ) : displaySalesFunnel.length === 0 ? (
             <p className="text-sm text-gray-500">No funnel data for this filter.</p>
           ) : (
+            <div
+              className={`mx-auto flex w-full max-w-[1300px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                isPassagesMode && passagesTrendPanelOpen
+                  ? "flex-row items-stretch gap-0"
+                  : "flex-col"
+              }`}
+            >
+              <div
+                className={`min-w-0 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                  isPassagesMode && passagesTrendPanelOpen
+                    ? "w-[56%] shrink-0 border-r border-slate-100 pr-4"
+                    : "w-full"
+                }`}
+              >
             <div className="relative mx-auto max-w-5xl pt-1">
+              {isApiMode && discoveryConversionSummary ? (
+                <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-3 py-2.5 sm:col-span-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">
+                      Discovery → Closed
+                      {isPassagesMode && passagesAgeSegment !== "all"
+                        ? ` (${passagesAgeSegment})`
+                        : ""}
+                    </p>
+                    <p className="mt-0.5 text-xl font-bold tabular-nums text-indigo-950">
+                      {formatInsightsPercent(discoveryConversionSummary.overallPercent, 1)}
+                    </p>
+                    <p className="text-[10px] text-indigo-700/80">
+                      From {discoveryConversionSummary.baseStage} base
+                      {discoveryConversionSummary.fromHub
+                        ? ""
+                        : " · estimated locally (Hub conversion block missing)"}
+                    </p>
+                  </div>
+                  {isPassagesMode &&
+                  discoveryConversionSummary.newPercent != null &&
+                  discoveryConversionSummary.oldPercent != null ? (
+                    <>
+                      <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+                          New leads
+                        </p>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums text-emerald-900">
+                          {formatInsightsPercent(discoveryConversionSummary.newPercent, 1)}
+                        </p>
+                        <p className="text-[10px] text-emerald-800/80">Created inside date range</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Old leads
+                        </p>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
+                          {formatInsightsPercent(discoveryConversionSummary.oldPercent, 1)}
+                        </p>
+                        <p className="text-[10px] text-slate-600">Created before range, moved in period</p>
+                      </div>
+                    </>
+                  ) : isCohortMode && modeFunnel?.cohortProgress ? (
+                    <>
+                      <div className="rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                          In progress
+                        </p>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums text-amber-950">
+                          {formatInsightsCount(modeFunnel.cohortProgress.inProgressCount ?? 0)}
+                          {modeFunnel.cohortProgress.inProgressPercent != null
+                            ? ` · ${formatInsightsPercent(modeFunnel.cohortProgress.inProgressPercent, 0)}`
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                          Final outcome
+                        </p>
+                        <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
+                          {formatInsightsCount(modeFunnel.cohortProgress.finalOutcomeCount ?? 0)}
+                          {modeFunnel.cohortProgress.finalOutcomePercent != null
+                            ? ` · ${formatInsightsPercent(modeFunnel.cohortProgress.finalOutcomePercent, 0)}`
+                            : ""}
+                        </p>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
               {selectedStagePopup ? (
                 <div
                   className="pointer-events-none absolute inset-0 z-10 rounded-xl bg-slate-900/[0.04] backdrop-blur-[1px] transition-opacity duration-300"
@@ -976,15 +1160,27 @@ export default function InsightSect3({
                   const isDimmed = Boolean(selectedStagePopup) && !isPopupOpen;
 
                   const showPathBadge =
-                    funnelTab === "all" && !isFreshLead && !isTotal;
+                    showPathTabs && funnelTab === "all" && !isFreshLead && !isTotal;
 
                   const wonLostBadgeClass = isClosedWonStage
                     ? "inline-flex h-4 max-w-[10rem] items-center truncate rounded bg-black/15 px-1 text-[8px] font-semibold whitespace-nowrap text-gray-950 sm:max-w-none sm:px-1.5 sm:text-[9px]"
                     : "inline-flex h-4 max-w-[10rem] items-center truncate rounded bg-white/20 px-1 text-[8px] font-semibold whitespace-nowrap text-white/90 sm:max-w-none sm:px-1.5 sm:text-[9px]";
 
+                  const rawApiStage = apiRawStageByKey[canonicalKey];
+                  const passagesSplit =
+                    isPassagesMode &&
+                    passagesAgeSegment === "all" &&
+                    !isTotal &&
+                    rawApiStage &&
+                    stageHasPassagesSplit(rawApiStage)
+                      ? passagesSplitLabel(rawApiStage)
+                      : null;
+
                   const percentLabel = isTotal
                     ? formatInsightsPercent(100)
-                    : isApiMode
+                    : isApiMode && isFreshLead
+                      ? "—"
+                      : isApiMode
                       ? formatInsightsPercent(stage.conversionPercent)
                       : funnelTab === "lost"
                       ? `${formatInsightsPercent(
@@ -1021,8 +1217,8 @@ export default function InsightSect3({
                       : countText;
 
                   return (
+                    <div key={`${canonicalKey}-${index}`} className="w-full">
                     <div
-                      key={`${canonicalKey}-${index}`}
                       className={`flex w-full items-stretch transition-all duration-500 ease-out ${
                         isDimmed ? "scale-[0.985] opacity-45 blur-[0.3px]" : "opacity-100"
                       }`}
@@ -1076,9 +1272,37 @@ export default function InsightSect3({
                         {percentLabel}
                       </span>
                     </div>
+                  {passagesSplit ? (
+                    <p
+                      className="truncate px-2 text-[9px] font-medium text-slate-500 sm:px-3"
+                      style={{
+                        paddingLeft: `calc(${sideInsetPct}% + 0.5rem)`,
+                        paddingRight: `calc(${sideInsetPct}% + 0.5rem)`,
+                      }}
+                    >
+                      {passagesSplit}
+                    </p>
+                  ) : null}
+                    </div>
                   );
                 })}
               </div>
+            </div>
+              </div>
+
+              {isPassagesMode && passagesTrendPanelOpen ? (
+                <div className="w-[44%] min-w-0 shrink-0 pl-2 animate-in fade-in slide-in-from-right-3 duration-500">
+                  <PassagesOldShareTrendPanel
+                    points={passagesTrend?.points ?? []}
+                    loading={passagesTrendLoading}
+                    hubImplemented={passagesTrend?.hubImplemented ?? false}
+                    granularity={passagesTrendGranularity}
+                    onGranularityChange={onPassagesTrendGranularityChange}
+                    showGranularityToggle={showPassagesTrendGranularityToggle}
+                    onClose={() => setPassagesTrendPanelOpen(false)}
+                  />
+                </div>
+              ) : null}
             </div>
           )}
 

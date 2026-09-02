@@ -260,7 +260,7 @@ export default function IncentivesClient() {
           profileInitials={profileInitials}
         />
 
-        <SlimScrollArea className="min-w-0 xl:h-screen">
+        <SlimScrollArea className="min-w-0 xl:h-screen crm-main-scroll">
           <AppTopBar />
 
           <main className="p-4 md:p-6 lg:p-8">

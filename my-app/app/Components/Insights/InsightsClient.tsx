@@ -13,15 +13,19 @@ import {
   EMPTY_PERFORMANCE_CARDS,
   fetchInsightsDashboard,
   fetchInsightsFilterOptions,
+  fetchInsightsPassagesTrend,
   fetchInsightsPerformanceCards,
   fetchInsightsQuotesSentMonth,
   fetchInsightsSalesFunnel,
   hasHubConversionTrend,
+  passagesTrendWeekScopeFromDateFilter,
+  type InsightsTrendGranularity,
   type InsightsDashboard,
   type InsightsFilterOptions,
   type InsightsFunnelMode,
   type InsightsFunnelPathFilter,
   type InsightsLostFunnelStage,
+  type InsightsPassagesTrendResponse,
   type InsightsSalesFunnelResponse,
   type InsightsTeamMember,
   type PerformanceCards,
@@ -69,7 +73,7 @@ import {
   insightsSalesManagerMilestoneAndTotal,
   filterApiLeadsByInsightsDateRange,
 } from "@/lib/insights-sm-journey-align";
-import { buildInsightsWeekChartsFromLeads, type InsightsWeekCharts } from "@/lib/insights-week-charts";
+import { buildInsightsVolumeChartBundle, type InsightsVolumeChartBundle } from "@/lib/insights-week-charts";
 import type { ApiLead } from "@/lib/leads-filter";
 import {
   computeLostSegmentCounts,
@@ -195,6 +199,13 @@ export default function InsightsClient1() {
   );
   const [modeFunnelLoading, setModeFunnelLoading] = useState(false);
   const [modeFunnelError, setModeFunnelError] = useState("");
+
+  const [passagesTrend, setPassagesTrend] =
+    useState<InsightsPassagesTrendResponse | null>(null);
+  const [passagesTrendLoading, setPassagesTrendLoading] = useState(false);
+  const passagesTrendFetchGen = useRef(0);
+  const [passagesTrendGranularity, setPassagesTrendGranularity] =
+    useState<InsightsTrendGranularity>("month");
 
   /** Achieved/Payoff vs Insights date filter (Incentives engine). */
   const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
@@ -744,6 +755,15 @@ export default function InsightsClient1() {
     void loadPerformanceCards();
   }, [loadPerformanceCards]);
 
+  useEffect(() => {
+    if (
+      (funnelMode === "passages" || funnelMode === "cohort") &&
+      funnelPathFilter !== "all"
+    ) {
+      setFunnelPathFilter("all");
+    }
+  }, [funnelMode, funnelPathFilter]);
+
   // Hub Sales Funnel — passages / cohort (current mode stays on FE-aligned inventory).
   useEffect(() => {
     if (!role || !canAccessCrmInsights(role)) return;
@@ -767,7 +787,7 @@ export default function InsightsClient1() {
           salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
           teamPeriod,
           funnelMode,
-          pathFilter: funnelPathFilter,
+          pathFilter: funnelMode === "passages" || funnelMode === "cohort" ? "all" : funnelPathFilter,
         });
         if (!cancelled) {
           setModeFunnel(data);
@@ -798,6 +818,91 @@ export default function InsightsClient1() {
     teamPeriod,
     isSalesManager,
     viewerUserId,
+  ]);
+
+  useEffect(() => {
+    const isShortMonth =
+      dateFilter.preset === "currentMonth" ||
+      dateFilter.preset === "previousMonth";
+    setPassagesTrendGranularity(isShortMonth ? "week" : "month");
+  }, [dateFilter.preset, dateFilter.customFrom, dateFilter.customTo]);
+
+  // Passages old-lead share trend — week buckets for this month, months for long range.
+  useEffect(() => {
+    if (!role || !canAccessCrmInsights(role)) return;
+    if (!canUseAdvancedFunnelModes || funnelMode !== "passages") {
+      setPassagesTrend(null);
+      setPassagesTrendLoading(false);
+      return;
+    }
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) return;
+
+    if (isSalesManager && (viewerUserId == null || viewerUserId <= 0)) {
+      setPassagesTrendLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const gen = ++passagesTrendFetchGen.current;
+    setPassagesTrendLoading(true);
+    const timeoutMs = 25_000;
+    const timeoutId = window.setTimeout(() => {
+      if (!cancelled && gen === passagesTrendFetchGen.current) {
+        setPassagesTrendLoading(false);
+        setPassagesTrend((prev) => ({
+          hubImplemented: prev?.hubImplemented ?? true,
+          granularity: passagesTrendGranularity,
+          points: prev?.points ?? [],
+        }));
+      }
+    }, timeoutMs);
+
+    void (async () => {
+      try {
+        const data = await fetchInsightsPassagesTrend({
+          branchId: effectiveBranchId,
+          salesManagerId: dashboardPeopleParams.salesManagerId,
+          salesExecutiveId: dashboardPeopleParams.salesExecutiveId,
+          granularity: passagesTrendGranularity,
+          ...(passagesTrendGranularity === "week"
+            ? {
+                weeks: 6,
+                ...passagesTrendWeekScopeFromDateFilter(dateFilter),
+              }
+            : { months: 12 }),
+        });
+        if (!cancelled && gen === passagesTrendFetchGen.current) {
+          setPassagesTrend(data);
+        }
+      } catch {
+        if (!cancelled && gen === passagesTrendFetchGen.current) {
+          setPassagesTrend({
+            hubImplemented: false,
+            granularity: passagesTrendGranularity,
+            points: [],
+          });
+        }
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (!cancelled && gen === passagesTrendFetchGen.current) {
+          setPassagesTrendLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    role,
+    canUseAdvancedFunnelModes,
+    funnelMode,
+    effectiveBranchId,
+    dashboardPeopleParams,
+    isSalesManager,
+    viewerUserId,
+    passagesTrendGranularity,
+    dateFilter,
   ]);
 
   // Achieved + Payoff = same executive-leads API as Incentives page
@@ -1057,17 +1162,17 @@ export default function InsightsClient1() {
    * Volume charts from the same date-scoped inventory.
    * Short range → weeks → days; All time / multi-month → months → weeks → days.
    */
-  const [alignedWeekCharts, setAlignedWeekCharts] = useState<InsightsWeekCharts | null>(
-    null,
-  );
+  const [alignedVolumeChartBundle, setAlignedVolumeChartBundle] =
+    useState<InsightsVolumeChartBundle | null>(null);
 
-  /** Hub conversion line when dashboard returns points; else FE week-chart fallback. */
+  /** Hub conversion when available; Sect6 picks week vs month slice. */
   const conversionTrendForChart = useMemo(
     () =>
       hasHubConversionTrend(dashboard.conversionTrend)
         ? dashboard.conversionTrend
-        : (alignedWeekCharts?.conversionTrend ?? dashboard.conversionTrend),
-    [dashboard.conversionTrend, alignedWeekCharts?.conversionTrend],
+        : (alignedVolumeChartBundle?.week.conversionTrend ??
+          dashboard.conversionTrend),
+    [dashboard.conversionTrend, alignedVolumeChartBundle?.week.conversionTrend],
   );
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
@@ -1132,7 +1237,7 @@ export default function InsightsClient1() {
       setAlignedLostFunnel(null);
       setAlignedDropReasons(null);
       setAlignedSalesFunnel(null);
-      setAlignedWeekCharts(null);
+      setAlignedVolumeChartBundle(null);
       setFunnelMetricsLoading(false);
       return;
     }
@@ -1319,7 +1424,7 @@ export default function InsightsClient1() {
           setStagePathLoading(false);
           setAlignedSalesFunnel(salesFunnelShell);
           // This month / custom: only weeks inside the Insights date window (not Hub multi-month weeks).
-          setAlignedWeekCharts(buildInsightsWeekChartsFromLeads(funnelPool, range));
+          setAlignedVolumeChartBundle(buildInsightsVolumeChartBundle(funnelPool, range));
         }
 
         const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);
@@ -1369,7 +1474,7 @@ export default function InsightsClient1() {
           setAlignedLostFunnel(null);
           setAlignedDropReasons(null);
           setAlignedSalesFunnel(null);
-          setAlignedWeekCharts(null);
+          setAlignedVolumeChartBundle(null);
         }
       }
     })();
@@ -1648,6 +1753,11 @@ export default function InsightsClient1() {
         modeFunnelLoading={modeFunnelLoading}
         modeFunnelError={modeFunnelError}
         canUseAdvancedFunnelModes={canUseAdvancedFunnelModes}
+        passagesTrend={passagesTrend}
+        passagesTrendLoading={passagesTrendLoading}
+        passagesTrendGranularity={passagesTrendGranularity}
+        onPassagesTrendGranularityChange={setPassagesTrendGranularity}
+        dateFilter={dateFilter}
       />
           <InsightsSect4
             dropReasons={alignedDropReasons ?? dashboard.dropReasons}
@@ -1663,14 +1773,13 @@ export default function InsightsClient1() {
           />
           <InsightsSect6
             leadsOverTime={
-              alignedWeekCharts?.leadsOverTime ?? dashboard.leadsOverTime
+              alignedVolumeChartBundle?.week.leadsOverTime ?? dashboard.leadsOverTime
             }
             conversionTrend={conversionTrendForChart}
             revenueForecast={dashboard.revenueForecast}
             grossBookingKpi={dashboard.kpis.grossBooking?.value ?? null}
             dateFilter={dateFilter}
-            volumeCharts={alignedWeekCharts}
-            weekBars={alignedWeekCharts?.weekBars ?? null}
+            volumeChartBundle={alignedVolumeChartBundle}
           />
           </div>
           <div

@@ -91,7 +91,7 @@ export default function BookingTokenClient() {
   }
 
   return (
-    <div className="bt-root min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="bt-root min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <QuickAccessSidebar
           appBadge="HO WS"
@@ -103,7 +103,7 @@ export default function BookingTokenClient() {
           profileInitials="SA"
         />
 
-        <SlimScrollArea className="min-w-0 bg-[var(--bt-bg)] xl:h-screen">
+        <SlimScrollArea className="min-w-0 bg-[var(--bt-bg)] xl:h-screen crm-main-scroll">
           <AppTopBar />
 
           <main className="p-6 lg:p-8">
