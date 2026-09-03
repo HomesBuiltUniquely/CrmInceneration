@@ -618,19 +618,19 @@ export default function InsightsSect6({
   const effectiveLeadsOverTime = activeVolume?.leadsOverTime ?? leadsOverTime;
 
   const resolvedConversionTrend = useMemo(() => {
+    // Same source as Leads over time for the active grain (week ↔ month toggle).
     if (chartGranularity === "week") {
+      const feWeek =
+        volumeChartBundle?.week.conversionTrend ?? activeVolume?.conversionTrend;
+      if (feWeek?.points?.length) return feWeek;
       if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
-      return (
-        volumeChartBundle?.week.conversionTrend ??
-        activeVolume?.conversionTrend ??
-        conversionTrend
-      );
+      return conversionTrend;
     }
-    return (
-      volumeChartBundle?.month.conversionTrend ??
-      activeVolume?.conversionTrend ??
-      conversionTrend
-    );
+    const feMonth =
+      volumeChartBundle?.month.conversionTrend ?? activeVolume?.conversionTrend;
+    if (feMonth?.points?.length) return feMonth;
+    if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
+    return conversionTrend;
   }, [chartGranularity, conversionTrend, activeVolume, volumeChartBundle]);
 
   const showGranularityToggle = volumeChartBundle?.showGranularityToggle ?? false;
@@ -965,23 +965,15 @@ export default function InsightsSect6({
                     side="top"
                     label="How conversion trend is counted"
                     math={
-                      resolvedConversionTrend.numeratorRule
-                        ? "Point = (Closed Won + Booking Done) ÷ Leads created in week × 100. Badge = relative change vs first week."
-                        : "Point = Closed ÷ Leads × 100. Badge = last period % − first period %. Example: 18 − 16 = +2%."
+                      "Point = Closed (Closed Won / Booking Done / Token Done) ÷ Leads created in that week or month × 100. Badge = last period % − first period %."
                     }
                   >
-                    {resolvedConversionTrend.numeratorRule ? (
-                      <>
-                        Each week (W1–W5): leads <strong>created</strong> in that week vs
-                        how many are now Closed Won or Booking Done (Lost and Hold
-                        excluded). The badge compares the last week to the first week.
-                      </>
-                    ) : (
-                      <>
-                        Out of all leads in that {chartGranularity}, how many became a closed
-                        deal. The badge compares the last period to the first.
-                      </>
-                    )}
+                    <>
+                      Same weeks/months as <strong>Leads over time</strong>: for leads{" "}
+                      <strong>created</strong> in that bucket, what share is now Closed
+                      (Lost and Hold excluded). Flat 0% with lead volume means none of
+                      those creates have closed yet — not a missing chart.
+                    </>
                   </InsightsInfoTip>
                 </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">

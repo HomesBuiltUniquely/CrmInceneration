@@ -1,7 +1,13 @@
 import type {
   InsightsFunnelMode,
+  InsightsPassagesTrendPoint,
+  InsightsPassagesTrendResponse,
   InsightsSalesFunnelResponse,
   InsightsSalesFunnelStage,
+} from "@/lib/crm-insights-api";
+import {
+  isPassagesTrendWeekPoint,
+  oldSharePercentFromPassagesCounts,
 } from "@/lib/crm-insights-api";
 import { resolveFunnelCanonicalKey } from "@/lib/insights-funnel-stage-paths";
 
@@ -145,7 +151,7 @@ export type BuildApiFunnelDisplayOpts = {
   modeFunnel: InsightsSalesFunnelResponse;
   funnelMode: InsightsFunnelMode;
   passagesSegment: PassagesAgeSegment;
-  /** Cohort / passages path tab — hide Fresh Lead when not All. */
+  /** Cohort path tab — hide Fresh Lead when not All. Passages always hides Fresh Lead. */
   pathFilter: "all" | "won" | "lost" | "hold";
 };
 
@@ -166,12 +172,17 @@ export function buildApiModeFunnelDisplay(
   );
 
   const milestones =
-    funnelMode === "passages" || pathFilter === "all"
-      ? withoutTotal
-      : withoutTotal.filter(
+    funnelMode === "passages"
+      ? withoutTotal.filter(
           (s) =>
             resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
-        );
+        )
+      : pathFilter === "all"
+        ? withoutTotal
+        : withoutTotal.filter(
+            (s) =>
+              resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
+          );
 
   const byKey = stageByKey(milestones);
   const segment: PassagesAgeSegment =
@@ -243,4 +254,132 @@ export function passagesSplitLabel(stage: InsightsSalesFunnelStage): string | nu
       ? `${oldC.toLocaleString("en-IN")} old (${Math.round(oldP)}%)`
       : `${oldC.toLocaleString("en-IN")} old`;
   return `${newPart} · ${oldPart}`;
+}
+
+function istMonthKey(d = new Date()): string {
+  // Asia/Kolkata calendar month for Passages trend alignment with Hub.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value ?? "1970";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  return `${y}-${m}`;
+}
+
+function istMonthLabel(monthKey: string): string {
+  const [ys, ms] = monthKey.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return monthKey;
+  return new Date(y, m - 1, 1).toLocaleDateString("en-IN", {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** Sum Passages new/old entry counts across milestones (excludes synthetic Total). */
+export function aggregatePassagesNewOldFromFunnel(
+  modeFunnel: InsightsSalesFunnelResponse | null | undefined,
+): { newCount: number; oldCount: number; oldSharePercent: number } {
+  if (!modeFunnel) return { newCount: 0, oldCount: 0, oldSharePercent: 0 };
+  const stages = (modeFunnel.stages?.length
+    ? modeFunnel.stages
+    : modeFunnel.salesFunnel) ?? [];
+  let newCount = 0;
+  let oldCount = 0;
+  for (const s of stages) {
+    const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
+    if (key === "total") continue;
+    newCount += Number(s.newCount ?? 0);
+    oldCount += Number(s.oldCount ?? 0);
+  }
+  return {
+    newCount,
+    oldCount,
+    oldSharePercent: oldSharePercentFromPassagesCounts(newCount, oldCount),
+  };
+}
+
+/**
+ * When Hub `passages-trend` returns empty / all-zero months, seed the current IST
+ * month from the live Passages funnel (same new/old rules) so the chart isn't flat.
+ */
+export function enrichPassagesTrendWithLiveFunnel(
+  trend: InsightsPassagesTrendResponse | null | undefined,
+  modeFunnel: InsightsSalesFunnelResponse | null | undefined,
+): InsightsPassagesTrendResponse | null {
+  if (!trend) return null;
+  const live = aggregatePassagesNewOldFromFunnel(modeFunnel);
+  if (live.newCount + live.oldCount <= 0) return trend;
+
+  const monthKey = istMonthKey();
+  const points = [...(trend.points ?? [])];
+  const monthPoints = points.filter((p) => !isPassagesTrendWeekPoint(p));
+  const allMonthSharesZero =
+    monthPoints.length === 0 ||
+    monthPoints.every((p) => Number(p.oldSharePercent ?? 0) === 0 && Number(p.newCount ?? 0) + Number(p.oldCount ?? 0) === 0);
+
+  const seed: InsightsPassagesTrendPoint = {
+    period: monthKey,
+    periodLabel: istMonthLabel(monthKey),
+    month: monthKey,
+    monthLabel: istMonthLabel(monthKey),
+    newCount: live.newCount,
+    oldCount: live.oldCount,
+    oldSharePercent: live.oldSharePercent,
+  };
+
+  const idx = points.findIndex((p) => {
+    if (isPassagesTrendWeekPoint(p)) return false;
+    const key = (p.period || p.month || "").slice(0, 7);
+    return key === monthKey;
+  });
+
+  if (idx >= 0) {
+    const existing = points[idx]!;
+    const existingTotal = Number(existing.newCount ?? 0) + Number(existing.oldCount ?? 0);
+    if (existingTotal <= 0 || Number(existing.oldSharePercent ?? 0) === 0) {
+      points[idx] = { ...existing, ...seed };
+    }
+  } else if (allMonthSharesZero || monthPoints.length === 0) {
+    points.push(seed);
+  } else {
+    // Hub has other months with data but missing current — append.
+    points.push(seed);
+  }
+
+  // Ensure trailing empty month shells so pager still shows history context.
+  if (monthPoints.length === 0 && points.filter((p) => !isPassagesTrendWeekPoint(p)).length === 1) {
+    for (let i = 11; i >= 1; i -= 1) {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (key === monthKey) continue;
+      if (points.some((p) => (p.period || p.month || "").slice(0, 7) === key)) continue;
+      points.unshift({
+        period: key,
+        periodLabel: istMonthLabel(key),
+        month: key,
+        monthLabel: istMonthLabel(key),
+        newCount: 0,
+        oldCount: 0,
+        oldSharePercent: 0,
+      });
+    }
+  }
+
+  points.sort((a, b) => {
+    if (isPassagesTrendWeekPoint(a) || isPassagesTrendWeekPoint(b)) return 0;
+    return String(a.period).localeCompare(String(b.period));
+  });
+
+  return {
+    ...trend,
+    hubImplemented: trend.hubImplemented || live.newCount + live.oldCount > 0,
+    points,
+    granularity: trend.granularity ?? "month",
+  };
 }

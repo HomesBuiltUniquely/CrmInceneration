@@ -2,7 +2,6 @@ import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
 import { getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
 import { isPresalesExecutiveRole, isUserActive } from "@/lib/user-active";
-import { leadLimitsApi } from "@/lib/lead-limits-api";
 
 type AnyJson = Record<string, unknown>;
 
@@ -125,31 +124,27 @@ function isExcludedPresalesExecListRole(role: string): boolean {
  * Merged presales executives for admin UI — combines GET /v1/PreSales/all,
  * users-by-role(PRESALES_EXECUTIVE|PRE_SALES), and admin pre-sales list.
  * Production backends sometimes return an empty /all list; role queries are a reliable fallback.
+ * Does NOT call lead-limits (that endpoint is often slow and blocked other admin lists).
  */
 async function listPresalesExecutivesMerged(): Promise<AnyJson[]> {
-  const [fromLegacy, fromRole, fromLegacyRole, fromAdmin, fromLeadLimits] = await Promise.all([
+  const [fromLegacy, fromRole, fromLegacyRole, fromAdmin] = await Promise.all([
     listPresalesExecutivesLegacyAll().catch(() => [] as AnyJson[]),
     list(`users-by-role?role=${encodeURIComponent("PRESALES_EXECUTIVE")}`).catch(
       () => [] as AnyJson[],
     ),
     list(`users-by-role?role=${encodeURIComponent("PRE_SALES")}`).catch(() => [] as AnyJson[]),
     list("pre-sales").catch(() => [] as AnyJson[]),
-    leadLimitsApi.listUsers().catch(() => [] as AnyJson[]),
   ]);
 
-  const fromLeadLimitsExecs = fromLeadLimits.filter((u) =>
-    isPresalesExecutiveRole(userRecordRole(u)),
-  );
-
   const executiveSourceIds = new Set<string>();
-  for (const u of [...fromLegacy, ...fromRole, ...fromLegacyRole, ...fromLeadLimitsExecs]) {
+  for (const u of [...fromLegacy, ...fromRole, ...fromLegacyRole]) {
     const k = String(u.id ?? u.userId ?? "").trim();
     if (k) executiveSourceIds.add(k);
   }
 
   const merged = mergeUsersById(
     mergeUsersById(fromLegacy, fromRole),
-    mergeUsersById(fromLegacyRole, mergeUsersById(fromAdmin, fromLeadLimitsExecs)),
+    mergeUsersById(fromLegacyRole, fromAdmin),
   );
 
   return merged.filter((u) => {

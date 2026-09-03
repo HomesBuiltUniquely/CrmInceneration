@@ -386,16 +386,22 @@ export type InsightsPassagesTrendPoint = {
 
 /** True when point is a week bucket (W1…Wn), not a calendar month. */
 export function isPassagesTrendWeekPoint(p: InsightsPassagesTrendPoint): boolean {
+  const period = (p.period || p.month || "").trim();
+  // ISO month keys are never weeks (even if Hub echoes a weekIndex by mistake).
+  if (/^\d{4}-\d{2}/.test(period)) return false;
+  if (/^W\d+$/i.test(period)) return true;
   if (p.weekIndex != null && p.weekIndex > 0) return true;
-  return /^W\d+$/i.test(p.period.trim());
+  return false;
 }
 
 export function isPassagesTrendMonthPoint(p: InsightsPassagesTrendPoint): boolean {
   if (isPassagesTrendWeekPoint(p)) return false;
-  const period = p.period.trim();
-  if (/^\d{4}-\d{2}$/.test(period)) return true;
-  const label = p.periodLabel ?? p.monthLabel ?? "";
-  return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i.test(label);
+  const period = (p.period || p.month || "").trim();
+  if (/^\d{4}-\d{2}/.test(period)) return true;
+  const label = `${p.periodLabel ?? ""} ${p.monthLabel ?? ""}`.trim();
+  return /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)/i.test(
+    label,
+  );
 }
 
 export function filterPassagesTrendPointsByGranularity(
@@ -411,7 +417,10 @@ export function filterPassagesTrendPointsByGranularity(
     }
     return weeks;
   }
-  return points.filter(isPassagesTrendMonthPoint);
+  const months = points.filter(isPassagesTrendMonthPoint);
+  // If Hub omitted ISO keys / labels, keep non-week points rather than empty chart.
+  if (months.length > 0) return months;
+  return points.filter((p) => !isPassagesTrendWeekPoint(p));
 }
 
 function parseWeekIndex(period: string): number {
@@ -873,22 +882,68 @@ export function oldSharePercentFromPassagesCounts(
   return Math.min(100, (oldCount / total) * 100);
 }
 
+/** Parse Hub percent that may be 0–100, 0–1 ratio, or "34.7%". */
+export function normalizePassagesOldSharePercent(
+  raw: unknown,
+  newCount: number,
+  oldCount: number,
+): number {
+  if (newCount + oldCount > 0) {
+    return oldSharePercentFromPassagesCounts(newCount, oldCount);
+  }
+  if (raw == null) return 0;
+  const text = String(raw).trim().replace(/%/g, "");
+  const n = Number(text);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  // Hub sometimes sends a 0–1 fraction when counts are omitted.
+  if (n > 0 && n <= 1) return Math.min(100, n * 100);
+  return Math.min(100, n);
+}
+
+function pickTrendCount(raw: Record<string, unknown>, keys: string[]): number {
+  for (const k of keys) {
+    if (raw[k] != null && raw[k] !== "") return asNum(raw[k]);
+  }
+  return 0;
+}
+
 export function normalizeInsightsPassagesTrend(
   raw: unknown,
 ): InsightsPassagesTrendResponse {
   const root = unwrapInsightsPayload(raw);
+  const nestedTrend =
+    root.trend && typeof root.trend === "object"
+      ? (root.trend as Record<string, unknown>)
+      : null;
   const pointsRaw = asArray<Record<string, unknown>>(
-    root.points ?? root.monthlyTrend ?? root.months,
+    root.points ??
+      root.monthlyTrend ??
+      root.months ??
+      nestedTrend?.points ??
+      nestedTrend?.monthlyTrend,
   );
   const points: InsightsPassagesTrendPoint[] = pointsRaw.map((p) => {
-    const newCount = asNum(p.newCount);
-    const oldCount = asNum(p.oldCount);
-    const oldShare =
-      p.oldSharePercent != null
-        ? asNum(p.oldSharePercent)
-        : oldSharePercentFromPassagesCounts(newCount, oldCount);
+    const newCount = pickTrendCount(p, [
+      "newCount",
+      "new",
+      "newLeads",
+      "newEntries",
+      "newLeadCount",
+    ]);
+    const oldCount = pickTrendCount(p, [
+      "oldCount",
+      "old",
+      "oldLeads",
+      "oldEntries",
+      "oldLeadCount",
+    ]);
+    const oldShare = normalizePassagesOldSharePercent(
+      p.oldSharePercent ?? p.oldShare ?? p.oldPercent ?? p.sharePercent,
+      newCount,
+      oldCount,
+    );
     const period = asStr(
-      p.period ?? p.week ?? p.weekKey ?? p.month ?? p.monthKey ?? p.label,
+      p.period ?? p.week ?? p.weekKey ?? p.month ?? p.monthKey ?? p.label ?? p.key,
     );
     const periodLabel =
       asStr(p.periodLabel ?? p.weekLabel ?? p.monthLabel ?? p.label, "") ||
@@ -898,8 +953,14 @@ export function normalizeInsightsPassagesTrend(
     const weekIndex =
       p.weekIndex != null ? asNum(p.weekIndex) : undefined;
     const inferredWeek = /^W\d+$/i.test(period);
+    // Normalize "2026-03-01" / "2026/03" → "2026-03" for month paging.
+    const monthKeyMatch = period.match(/^(\d{4})[/.-](\d{1,2})/);
+    const normalizedPeriod =
+      !inferredWeek && monthKeyMatch
+        ? `${monthKeyMatch[1]}-${String(monthKeyMatch[2]).padStart(2, "0")}`
+        : period;
     return {
-      period,
+      period: normalizedPeriod,
       periodLabel,
       weekIndex:
         weekIndex && weekIndex > 0
@@ -908,22 +969,23 @@ export function normalizeInsightsPassagesTrend(
             ? parseWeekIndex(period)
             : undefined,
       rangeLabel: rangeLabel || undefined,
-      month: period,
+      month: normalizedPeriod,
       monthLabel: periodLabel,
       newCount,
       oldCount,
       oldSharePercent: oldShare,
     };
   });
-  const granularityRaw = asStr(root.granularity, "");
+  const granularityRaw = asStr(root.granularity ?? nestedTrend?.granularity, "");
   let granularity: InsightsTrendGranularity =
     granularityRaw === "week" ? "week" : granularityRaw === "month" ? "month" : "month";
   if (!granularityRaw && points.length > 0) {
     granularity = points.every(isPassagesTrendWeekPoint) ? "week" : "month";
   }
+  const hubFlag = root.hubImplemented ?? nestedTrend?.hubImplemented;
   return {
-    hubImplemented: root.hubImplemented === true,
-    months: asNum(root.months, PASSAGES_TREND_MONTHS),
+    hubImplemented: hubFlag === false ? false : points.length > 0 ? true : hubFlag === true,
+    months: asNum(root.months ?? nestedTrend?.months, PASSAGES_TREND_MONTHS),
     weeks: root.weeks != null ? asNum(root.weeks) : undefined,
     timezone: asStr(root.timezone, "Asia/Kolkata") || "Asia/Kolkata",
     dateFrom: asStr(root.dateFrom, "") || undefined,
