@@ -2787,31 +2787,90 @@ function LeadLimitSection() {
     useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
   const [limitsLoading, setLimitsLoading] = useState(false);
+  const [limitsError, setLimitsError] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<"standard" | "renovation">("standard");
   const loadGen = useRef(0);
 
   /**
-   * Fast path: only lead-limits endpoints (2 parallel GETs).
-   * Extra users-by-role merges used to block the table on 4 slow round-trips;
-   * those were removed so Standard + Renovation paint as soon as limits return.
+   * Progressive load:
+   * 1) users-by-role roster paints fast (names/roles even if Hub limits are slow)
+   * 2) lead-limits users + default merge in when ready (stats win via mergeUserRowsById)
+   * 3) 12s timeout on lead-limits so UI never waits ~1 min
+   * Initial mount uses cache (no force); Refresh / writes still force.
    */
   const loadLimits = (opts?: { force?: boolean }) => {
     if (!canManageLeadLimits) return;
     const gen = ++loadGen.current;
     setLimitsLoading(true);
-    void Promise.all([
-      leadLimitsApi.listUsers({ force: opts?.force }),
-      leadLimitsApi.getDefault().catch(() => ({} as Record<string, unknown>)),
-    ])
-      .then(([rows, def]) => {
+    setLimitsError(null);
+
+    const defaultP = leadLimitsApi
+      .getDefault({ force: opts?.force })
+      .catch(() => ({} as Record<string, unknown>));
+
+    const limitsP = leadLimitsApi
+      .listUsers({ force: opts?.force })
+      .then((rows) => ({ rows: rows as Array<Record<string, unknown>>, error: null as string | null }))
+      .catch((e: unknown) => ({
+        rows: [] as Array<Record<string, unknown>>,
+        error: e instanceof Error ? e.message : "Lead limits request failed",
+      }));
+
+    const rosterP = Promise.all(
+      Object.values(LIMIT_ROLE_TO_API).map((role) =>
+        adminPanelApi.listUsersByRole(role).catch(() => [] as Array<Record<string, unknown>>),
+      ),
+    ).then((groups) => mergeUserRowsById(...groups));
+
+    // Paint roster as soon as it arrives so the table isn't blank for ~1 min.
+    void Promise.all([rosterP, defaultP]).then(([roster, def]) => {
+      if (gen !== loadGen.current) return;
+      const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
+      const fallback = d ?? (Number(defaultLimit) || 50);
+      if (d !== undefined) setDefaultLimit(String(d));
+      if (roster.length === 0) return;
+      setUsers((prev) => {
+        if (prev.length > 0) return prev;
+        return roster.map((r, i) =>
+          mapLimitUser(
+            {
+              ...r,
+              limit: pickNumber(r, ["limit", "monthlyLimit", "monthlyLeadLimit", "leadLimit", "maxLeads"]) ?? fallback,
+            },
+            i,
+          ),
+        );
+      });
+    });
+
+    void Promise.all([defaultP, limitsP, rosterP])
+      .then(([def, limits, roster]) => {
         if (gen !== loadGen.current) return;
-        setUsers((rows as Array<Record<string, unknown>>).map((r, i) => mapLimitUser(r, i)));
         const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
+        const fallback = d ?? (Number(defaultLimit) || 50);
         if (d !== undefined) setDefaultLimit(String(d));
+
+        const rosterWithDefault = roster.map((r) => ({
+          ...r,
+          limit:
+            pickNumber(r, ["limit", "monthlyLimit", "monthlyLeadLimit", "leadLimit", "maxLeads"]) ??
+            fallback,
+        }));
+
+        const merged = mergeUserRowsById(rosterWithDefault, limits.rows);
+        setUsers(merged.map((r, i) => mapLimitUser(r, i)));
+
+        if (limits.error && merged.length === 0) {
+          setLimitsError(limits.error);
+        } else if (limits.error && limits.rows.length === 0) {
+          setLimitsError(`Usage stats unavailable (${limits.error}). Showing users with default limit.`);
+        } else {
+          setLimitsError(null);
+        }
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         if (gen !== loadGen.current) return;
-        setUsers([]);
+        setLimitsError(e instanceof Error ? e.message : "Failed to load lead limits");
       })
       .finally(() => {
         if (gen !== loadGen.current) return;
@@ -2821,7 +2880,8 @@ function LeadLimitSection() {
 
   useEffect(() => {
     if (!canManageLeadLimits) return;
-    loadLimits({ force: true });
+    // Use warm cache from AdminPanelContent prefetch — do not force-bust on mount.
+    loadLimits();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load on role gate only
   }, [canManageLeadLimits]);
 
@@ -3104,6 +3164,11 @@ function LeadLimitSection() {
           >
             <span style={{ fontSize: 13, color: C.muted }}>
               {limitsLoading ? "Loading…" : `${users.length} users`}
+              {limitsError ? (
+                <span style={{ marginLeft: 10, color: C.danger, fontWeight: 500, fontSize: 12 }}>
+                  {limitsError}
+                </span>
+              ) : null}
             </span>
             <label
               style={{
@@ -3264,7 +3329,9 @@ function LeadLimitSection() {
                 ) : users.length === 0 ? (
                   <tr>
                     <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                      No users returned from lead-limits API.
+                      {limitsError
+                        ? `Could not load users: ${limitsError}`
+                        : "No users found for lead limits."}
                     </td>
                   </tr>
                 ) : (

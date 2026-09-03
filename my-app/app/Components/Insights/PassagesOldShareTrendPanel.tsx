@@ -173,8 +173,20 @@ export default function PassagesOldShareTrendPanel({
       setMonthPage(0);
       return;
     }
-    setMonthPage(Math.max(0, Math.ceil(filteredPoints.length / MONTH_PAGE_SIZE) - 1));
-  }, [filteredPoints.length, isWeekMode, granularity]);
+    // Prefer the page that contains the newest non-zero month (not an all-zero history page).
+    let bestIdx = filteredPoints.length - 1;
+    for (let i = filteredPoints.length - 1; i >= 0; i -= 1) {
+      const p = filteredPoints[i]!;
+      if (
+        Number(p.oldSharePercent ?? 0) > 0 ||
+        Number(p.newCount ?? 0) + Number(p.oldCount ?? 0) > 0
+      ) {
+        bestIdx = i;
+        break;
+      }
+    }
+    setMonthPage(Math.max(0, Math.floor(bestIdx / MONTH_PAGE_SIZE)));
+  }, [filteredPoints, isWeekMode, granularity]);
 
   useEffect(() => {
     setMonthPage((p) => Math.min(p, Math.max(0, monthPageCount - 1)));

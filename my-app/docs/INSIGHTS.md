@@ -428,8 +428,8 @@ Negative `trendDays` = faster than prior period (good).
 
 ### 8.4 Charts + forecast (Sect6)
 
-- **Leads over time** — Hub points, or FE `buildInsightsWeekChartsFromLeads` when rebuilding from aligned pool.  
-- **Conversion trend** — prefer Hub when `conversionTrend.points.length > 0`.  
+- **Leads over time** — FE `buildInsightsVolumeChartBundle`: weeks from date-scoped pool; **months from full inventory** (so trailing months aren’t empty when filter is “this month”).  
+- **Conversion trend** — same FE week/month series (Closed ÷ created-in-bucket). Hub `conversionTrend` only if FE series missing.  
 - **Revenue forecast** — Hub `revenueForecast`; Actual should align with `kpis.grossBooking` when `actualScope = grossBooking`.
 
 Volume chart drill-down: month → week → day depending on date range length.

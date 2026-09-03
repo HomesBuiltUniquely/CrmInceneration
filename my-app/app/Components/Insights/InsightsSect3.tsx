@@ -15,6 +15,7 @@ import {
 import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib/insights-sales-funnel-investment";
 import {
   buildApiModeFunnelDisplay,
+  enrichPassagesTrendWithLiveFunnel,
   passagesSplitLabel,
   resolveDiscoveryToClosedSummary,
   stageHasPassagesSplit,
@@ -601,6 +602,11 @@ export default function InsightSect3({
     () => resolveDiscoveryToClosedSummary(modeFunnel, passagesAgeSegment),
     [modeFunnel, passagesAgeSegment],
   );
+
+  const enrichedPassagesTrend = useMemo(() => {
+    if (!isPassagesMode) return passagesTrend;
+    return enrichPassagesTrendWithLiveFunnel(passagesTrend, modeFunnel);
+  }, [isPassagesMode, passagesTrend, modeFunnel]);
 
   const apiPathBreakdownByKey = useMemo(() => {
     const map: Record<string, { won: number; lost: number; hold: number }> = {};
@@ -1293,9 +1299,9 @@ export default function InsightSect3({
               {isPassagesMode && passagesTrendPanelOpen ? (
                 <div className="w-[44%] min-w-0 shrink-0 pl-2 animate-in fade-in slide-in-from-right-3 duration-500">
                   <PassagesOldShareTrendPanel
-                    points={passagesTrend?.points ?? []}
+                    points={enrichedPassagesTrend?.points ?? []}
                     loading={passagesTrendLoading}
-                    hubImplemented={passagesTrend?.hubImplemented ?? false}
+                    hubImplemented={enrichedPassagesTrend?.hubImplemented ?? false}
                     granularity={passagesTrendGranularity}
                     onGranularityChange={onPassagesTrendGranularityChange}
                     showGranularityToggle={showPassagesTrendGranularityToggle}

@@ -1165,15 +1165,17 @@ export default function InsightsClient1() {
   const [alignedVolumeChartBundle, setAlignedVolumeChartBundle] =
     useState<InsightsVolumeChartBundle | null>(null);
 
-  /** Hub conversion when available; Sect6 picks week vs month slice. */
-  const conversionTrendForChart = useMemo(
-    () =>
-      hasHubConversionTrend(dashboard.conversionTrend)
-        ? dashboard.conversionTrend
-        : (alignedVolumeChartBundle?.week.conversionTrend ??
-          dashboard.conversionTrend),
-    [dashboard.conversionTrend, alignedVolumeChartBundle?.week.conversionTrend],
-  );
+  /**
+   * Sect6 picks week vs month from volumeChartBundle; this prop is Hub/FE fallback only.
+   */
+  const conversionTrendForChart = useMemo(() => {
+    if (hasHubConversionTrend(dashboard.conversionTrend)) {
+      return dashboard.conversionTrend;
+    }
+    return (
+      alignedVolumeChartBundle?.week.conversionTrend ?? dashboard.conversionTrend
+    );
+  }, [dashboard.conversionTrend, alignedVolumeChartBundle?.week.conversionTrend]);
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
   useEffect(() => {
@@ -1329,6 +1331,15 @@ export default function InsightsClient1() {
         const funnelPool = scopedRows;
         const lostCountPool = salesInsightCountLeads(lostScopeRows);
 
+        // Month charts need inventory WITHOUT the Insights date cut — otherwise trailing
+        // months (Aug, …) stay at 0 leads / 0% conversion when filter is “this month”.
+        const monthChartPool = insightsSalesManagerMilestoneAndTotal(
+          filterInsightsScopeLeadsKeepRows(quotesSentScopePool, {
+            branchId: effectiveBranchId,
+            filterOptions,
+          }),
+        ).pool;
+
         // leadView "default" does not re-scope (pool already Hub-scoped / assignee filtered).
         const insightOpts = salesAdminPoolInsightOpts(
           "",
@@ -1423,8 +1434,12 @@ export default function InsightsClient1() {
           setStagePathData(buildInsightsFunnelStagePathData(funnelPool, subMappings));
           setStagePathLoading(false);
           setAlignedSalesFunnel(salesFunnelShell);
-          // This month / custom: only weeks inside the Insights date window (not Hub multi-month weeks).
-          setAlignedVolumeChartBundle(buildInsightsVolumeChartBundle(funnelPool, range));
+          // Weeks = date-scoped funnelPool; months = full inventory for real trailing conversion.
+          setAlignedVolumeChartBundle(
+            buildInsightsVolumeChartBundle(funnelPool, range, {
+              monthLeads: monthChartPool,
+            }),
+          );
         }
 
         const opts = buildInsightsQuoteSentCountOpts(range.submittedFrom, range.submittedTo);

@@ -5,7 +5,9 @@
  * - Short range (≤ ~40 days, e.g. this month) → main chart = weeks → tap week → days
  * - Long range / All time → main chart = months → tap month → weeks → tap week → days
  *
- * Built from lead `createdAt` inside the Insights date window (or full inventory for All time).
+ * Week series: leads inside the Insights date window.
+ * Month series (when toggling Month on a short range): prefer a wider inventory so
+ * trailing months still have volume + conversion (not stuck at 0 outside the filter).
  */
 
 import type { InsightsDashboard } from "@/lib/crm-insights-api";
@@ -100,10 +102,49 @@ function toMonthKey(d: Date): string {
   return `${y}-${m}`;
 }
 
-/** Closed phase for conversion % (same top-stage idea as funnel Closed). */
+/** Closed Won path for conversion % (matches Sales Funnel Closed bar). */
 function isClosedPhaseLead(lead: ApiLead): boolean {
   const s = crmLeadTopLevelStage(lead).trim().toLowerCase();
-  return s === "closed" || s.startsWith("closed");
+  if (s === "closed" || s.startsWith("closed")) return true;
+  // Defensive: some rows keep category/substage without canonical stage label.
+  const r = lead as Record<string, unknown>;
+  const st =
+    r.stageBlock && typeof r.stageBlock === "object" && !Array.isArray(r.stageBlock)
+      ? (r.stageBlock as Record<string, unknown>)
+      : null;
+  const category = String(
+    st?.milestoneStageCategory ?? r.milestoneStageCategory ?? r.stageCategory ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  const sub = String(
+    st?.milestoneSubStage ?? r.milestoneSubStage ?? r.subStage ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  if (category.includes("closed won")) return true;
+  if (sub.includes("booking done") || sub.includes("token done")) return true;
+  return false;
+}
+
+/**
+ * Badge for conversion: compare last bucket that had leads to the previous one
+ * with leads (skip empty trailing months so Month toggle isn't stuck at 0%).
+ */
+function conversionChangePercent(
+  leadCounts: number[],
+  conversionPercents: number[],
+): number | null {
+  if (leadCounts.length === 0 || conversionPercents.length === 0) return null;
+  let lastIdx = leadCounts.length - 1;
+  while (lastIdx > 0 && (leadCounts[lastIdx] ?? 0) === 0) lastIdx -= 1;
+  if ((leadCounts[lastIdx] ?? 0) === 0) return 0;
+  let prevIdx = lastIdx - 1;
+  while (prevIdx >= 0 && (leadCounts[prevIdx] ?? 0) === 0) prevIdx -= 1;
+  if (prevIdx < 0) return 0;
+  const last = conversionPercents[lastIdx] ?? 0;
+  const prev = conversionPercents[prevIdx] ?? 0;
+  return pctChange(prev, last);
 }
 
 type WeekBucket = {
@@ -399,10 +440,6 @@ function buildWeekRoot(
     };
   });
 
-  const firstConv = conversionPoints[0]?.conversionPercent ?? 0;
-  const lastConv =
-    conversionPoints[conversionPoints.length - 1]?.conversionPercent ?? 0;
-
   return {
     rootLevel: "week",
     weekBars,
@@ -412,8 +449,13 @@ function buildWeekRoot(
       points: leadPoints,
     },
     conversionTrend: {
-      changePercent: pctChange(firstConv, lastConv),
+      changePercent: conversionChangePercent(
+        leadCounts,
+        conversionPoints.map((p) => p.conversionPercent),
+      ),
       points: conversionPoints,
+      numeratorRule: "closed_won_or_booking_token_done",
+      denominatorRule: "leads_created_in_bucket",
     },
   };
 }
@@ -472,10 +514,6 @@ function buildMonthRoot(
     };
   });
 
-  const firstConv = conversionPoints[0]?.conversionPercent ?? 0;
-  const lastConv =
-    conversionPoints[conversionPoints.length - 1]?.conversionPercent ?? 0;
-
   return {
     rootLevel: "month",
     weekBars: [],
@@ -485,8 +523,13 @@ function buildMonthRoot(
       points: leadPoints,
     },
     conversionTrend: {
-      changePercent: pctChange(firstConv, lastConv),
+      changePercent: conversionChangePercent(
+        leadCounts,
+        conversionPoints.map((p) => p.conversionPercent),
+      ),
       points: conversionPoints,
+      numeratorRule: "closed_won_or_booking_token_done",
+      denominatorRule: "leads_created_in_bucket",
     },
   };
 }
@@ -519,10 +562,14 @@ function buildTrailingMonthRoot(
 /**
  * Builds week + month chart data. Short ranges expose a Week | Month toggle;
  * long ranges default to months only.
+ *
+ * @param leads Date-scoped inventory (drives week bars for “this month”).
+ * @param opts.monthLeads Wider inventory (no date cut) for trailing-month volume + conversion.
  */
 export function buildInsightsVolumeChartBundle(
   leads: ApiLead[],
   range: InsightsDateRange,
+  opts?: { monthLeads?: ApiLead[] },
 ): InsightsVolumeChartBundle | null {
   const window = resolveChartWindow(leads, range);
   if (!window) return null;
@@ -530,13 +577,17 @@ export function buildInsightsVolumeChartBundle(
   const { from, to } = window;
   const spanDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
   const isShortRange = spanDays <= 40;
+  const monthLeads =
+    opts?.monthLeads && opts.monthLeads.length > 0 ? opts.monthLeads : leads;
 
   if (isShortRange) {
     const week = buildWeekRoot(leads, from, to);
     if (!week) return null;
+    // Month toggle must use unscoped (or wider) leads — otherwise Aug/Jul stay 0
+    // forever when Insights date filter is “this month”, and conversion looks broken.
     const month =
-      buildTrailingMonthRoot(leads, to, 12) ??
-      buildMonthRoot(leads, from, to) ??
+      buildTrailingMonthRoot(monthLeads, to, 12) ??
+      buildMonthRoot(monthLeads, from, to) ??
       week;
     return {
       defaultGranularity: "week",
@@ -546,7 +597,7 @@ export function buildInsightsVolumeChartBundle(
     };
   }
 
-  const month = buildMonthRoot(leads, from, to);
+  const month = buildMonthRoot(monthLeads, from, to);
   if (!month) return null;
   return {
     defaultGranularity: "month",
