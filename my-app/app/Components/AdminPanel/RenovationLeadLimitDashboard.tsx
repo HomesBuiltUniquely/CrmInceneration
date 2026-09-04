@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, ChangeEvent } from "react";
-import { adminPanelApi } from "@/lib/admin-panel-api";
 import { extractLeadLimitUsers, leadLimitsApi } from "@/lib/lead-limits-api";
-import { mergeUserRowsById, pickNumber } from "@/lib/api-normalize";
+import { pickNumber } from "@/lib/api-normalize";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
@@ -104,80 +103,34 @@ export default function RenovationLeadLimitDashboard() {
   const [currentEditingUser, setCurrentEditingUser] = useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
 
-  /**
-   * Progressive load: roster from users-by-role paints fast; renovation stats merge when ready.
-   * Lead-limits renovation call is hard-capped (~12s) so UI never waits ~1 min.
-   */
+  /** Original Hub renovation limits only — keep loading until real rows arrive. */
   const loadLimits = (opts?: { force?: boolean }) => {
     if (!canManageLeadLimits) return;
     const gen = ++loadGen.current;
     setLimitsLoading(true);
     setLimitsError(null);
 
-    const renoP = leadLimitsApi
+    void leadLimitsApi
       .getRenovationLimits({ force: opts?.force })
       .then((apiResult) => {
-        const apiData = (apiResult ?? {}) as Record<string, unknown>;
-        return {
-          rows: extractLeadLimitUsers(apiData),
-          default: pickNumber(apiData, [
-            "defaultRenovationLimit",
-            "defaultLimit",
-            "limit",
-            "value",
-            "default",
-          ]),
-          error: null as string | null,
-        };
-      })
-      .catch((e: unknown) => ({
-        rows: [] as Array<Record<string, unknown>>,
-        default: undefined as number | undefined,
-        error: e instanceof Error ? e.message : "Renovation limits request failed",
-      }));
-
-    const rosterP = Promise.all([
-      adminPanelApi.listUsersByRole("SALES_MANAGER").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("SALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
-    ]).then((groups) => mergeUserRowsById(...groups));
-
-    void rosterP.then((roster) => {
-      if (gen !== loadGen.current) return;
-      if (roster.length === 0) return;
-      const fallback = Number(defaultLimit) || 20;
-      setUsers((prev) => {
-        if (prev.length > 0) return prev;
-        return roster.map((r, i) => mapLimitUser(r, i, fallback));
-      });
-    });
-
-    void Promise.all([renoP, rosterP])
-      .then(([reno, roster]) => {
         if (gen !== loadGen.current) return;
-        const finalDefault = reno.default !== undefined ? reno.default : Number(defaultLimit) || 20;
-        if (reno.default !== undefined) setDefaultLimit(String(reno.default));
-
-        const rosterWithDefault = roster.map((r) => ({
-          ...r,
-          renovationLimit:
-            pickNumber(r, ["renovationLimit", "limit", "monthlyLimit"]) ?? finalDefault,
-        }));
-
-        const merged = mergeUserRowsById(rosterWithDefault, reno.rows);
-        setUsers(merged.map((r, i) => mapLimitUser(r, i, finalDefault)));
-
-        if (reno.error && merged.length === 0) {
-          setLimitsError(reno.error);
-        } else if (reno.error && reno.rows.length === 0) {
-          setLimitsError(
-            `Renovation stats unavailable (${reno.error}). Showing users with default limit.`,
-          );
-        } else {
-          setLimitsError(null);
-        }
+        const apiData = (apiResult ?? {}) as Record<string, unknown>;
+        const rawUsers = extractLeadLimitUsers(apiData);
+        const d = pickNumber(apiData, [
+          "defaultRenovationLimit",
+          "defaultLimit",
+          "limit",
+          "value",
+          "default",
+        ]);
+        const finalDefault = d !== undefined ? d : 20;
+        if (d !== undefined) setDefaultLimit(String(d));
+        setUsers(rawUsers.map((r, i) => mapLimitUser(r, i, finalDefault)));
+        setLimitsError(null);
       })
       .catch((e: unknown) => {
         if (gen !== loadGen.current) return;
+        setUsers([]);
         setLimitsError(e instanceof Error ? e.message : "Failed to load renovation limits");
       })
       .finally(() => {

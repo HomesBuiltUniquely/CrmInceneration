@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
-/** Cap Hub wait so the browser never sits on a ~60s gateway hang. */
-const UPSTREAM_TIMEOUT_MS = 12_000;
+/**
+ * Hub lead-limits list can exceed 12s in production. Keep waiting so usage stats
+ * can still arrive; the Admin UI already paints the user roster from a fast path.
+ */
+const UPSTREAM_TIMEOUT_MS = 90_000;
 
 function buildUrl(req: NextRequest, path: string[]) {
   const joined = path.join("/");
@@ -42,7 +45,9 @@ async function proxy(req: NextRequest, path: string[], method: string) {
       (e instanceof Error && e.name === "AbortError");
     if (aborted) {
       return NextResponse.json(
-        { message: `Lead limits upstream timed out after ${Math.round(UPSTREAM_TIMEOUT_MS / 1000)}s` },
+        {
+          message: `Lead limits upstream timed out after ${Math.round(UPSTREAM_TIMEOUT_MS / 1000)}s`,
+        },
         { status: 504 },
       );
     }
