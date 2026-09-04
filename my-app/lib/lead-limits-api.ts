@@ -8,40 +8,34 @@ const inflightGet = new Map<string, Promise<unknown>>();
 /** Short memory cache — limits change on write (we clear), so 45s is safe for UX speed. */
 const memCache = new Map<string, { at: number; data: unknown }>();
 const CACHE_TTL_MS = 45_000;
-/** Fail fast instead of hanging ~60s on a stuck Hub / gateway. */
-const FETCH_TIMEOUT_MS = 12_000;
+/**
+ * Hub `/v1/lead-limits/users` is often slow in prod. Do NOT abort early —
+ * roster UI paints from users-by-role; stats merge when this finally returns.
+ * Hard ceiling only to avoid forever-hung tabs (proxy aligns with this).
+ */
+const FETCH_TIMEOUT_MS = 90_000;
+/** Lightweight paths (default limit) should fail faster. */
+const FAST_PATH_TIMEOUT_MS = 20_000;
 
 function cacheKey(path: string, method: string): string {
   return `${method}:${path}`;
 }
 
-function invalidateLeadLimitsCache(): void {
-  memCache.clear();
-  // Leave inflight alone so the request in progress still resolves once.
+function pathTimeoutMs(path: string): number {
+  const p = path.replace(/^\//, "").split("?")[0] ?? path;
+  if (p === "default" || p === "renovation/default") return FAST_PATH_TIMEOUT_MS;
+  return FETCH_TIMEOUT_MS;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
-    }, ms);
-    promise.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(timer);
-        reject(e);
-      },
-    );
-  });
+function invalidateLeadLimitsCache(): void {
+  memCache.clear();
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const key = cacheKey(path, method);
   const isMutation = method !== "GET";
+  const timeoutMs = pathTimeoutMs(path);
 
   if (method === "GET") {
     const hit = memCache.get(key);
@@ -54,7 +48,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
   const run = (async (): Promise<T> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`/api/lead-limits/${path}`, {
         ...init,
@@ -74,11 +68,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
       }
       return data;
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") {
-        throw new Error(`Lead limits request timed out after ${Math.round(FETCH_TIMEOUT_MS / 1000)}s`);
-      }
-      if (e instanceof Error && e.name === "AbortError") {
-        throw new Error(`Lead limits request timed out after ${Math.round(FETCH_TIMEOUT_MS / 1000)}s`);
+      if (
+        (e instanceof DOMException && e.name === "AbortError") ||
+        (e instanceof Error && e.name === "AbortError")
+      ) {
+        throw new Error(
+          `Lead limits request timed out after ${Math.round(timeoutMs / 1000)}s`,
+        );
       }
       throw e;
     } finally {
@@ -87,15 +83,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   })();
 
   if (method === "GET") {
-    const guarded = withTimeout(run, FETCH_TIMEOUT_MS + 1500, "Lead limits");
-    inflightGet.set(key, guarded);
+    inflightGet.set(key, run);
     try {
-      const data = await guarded;
+      const data = await run;
       memCache.set(key, { at: Date.now(), data });
       return data;
-    } catch (e) {
-      // Don't cache failures — next open/refresh can retry.
-      throw e;
     } finally {
       inflightGet.delete(key);
     }
