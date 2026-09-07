@@ -15,6 +15,7 @@ import ActivityHistoryWithConnector, {
   type ActivityHistoryHandle,
 } from "./ActivityHistoryWithConnector";
 import LeadPaymentLinkBanner from "./LeadPaymentLinkBanner";
+import LeadPaymentLinkStatusChip from "./LeadPaymentLinkStatusChip";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
 import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
@@ -386,6 +387,13 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
             <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
               Lead came {leadComeCount} times
             </span>
+            {canUsePaymentLinkIntegration(viewerRoleKey) ? (
+              <LeadPaymentLinkStatusChip
+                leadType={leadType}
+                leadId={leadId}
+                activities={lead.activities}
+              />
+            ) : null}
           </div>
 
           <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">

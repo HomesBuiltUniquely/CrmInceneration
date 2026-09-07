@@ -669,14 +669,23 @@ function normalizeSalesFunnelStage(
       : null,
   };
 
-  if (raw.newCount != null || raw.oldCount != null) {
-    stage.newCount = asNum(raw.newCount);
-    stage.oldCount = asNum(raw.oldCount);
-    if (raw.newSharePercent != null) {
-      stage.newSharePercent = asNum(raw.newSharePercent);
+  if (
+    raw.newCount != null ||
+    raw.oldCount != null ||
+    raw.new_count != null ||
+    raw.old_count != null
+  ) {
+    stage.newCount = asNum(raw.newCount ?? raw.new_count);
+    stage.oldCount = asNum(raw.oldCount ?? raw.old_count);
+    if (raw.newSharePercent != null || raw.new_share_percent != null) {
+      stage.newSharePercent = asNum(
+        raw.newSharePercent ?? raw.new_share_percent,
+      );
     }
-    if (raw.oldSharePercent != null) {
-      stage.oldSharePercent = asNum(raw.oldSharePercent);
+    if (raw.oldSharePercent != null || raw.old_share_percent != null) {
+      stage.oldSharePercent = asNum(
+        raw.oldSharePercent ?? raw.old_share_percent,
+      );
     }
   }
 
@@ -688,11 +697,16 @@ function normalizeSalesFunnelConversion(
 ): InsightsSalesFunnelConversion | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
+  const newRaw = o.newPercent ?? o.new_percent ?? o.newConversionPercent;
+  const oldRaw = o.oldPercent ?? o.old_percent ?? o.oldConversionPercent;
   return {
-    baseStage: asStr(o.baseStage, "discovery") || "discovery",
-    overallPercent: asNum(o.overallPercent),
-    newPercent: o.newPercent == null ? null : asNum(o.newPercent),
-    oldPercent: o.oldPercent == null ? null : asNum(o.oldPercent),
+    baseStage:
+      asStr(o.baseStage ?? o.base_stage, "discovery") || "discovery",
+    overallPercent: asNum(
+      o.overallPercent ?? o.overall_percent ?? o.percent,
+    ),
+    newPercent: newRaw == null ? null : asNum(newRaw),
+    oldPercent: oldRaw == null ? null : asNum(oldRaw),
   };
 }
 
@@ -925,6 +939,7 @@ export function normalizeInsightsPassagesTrend(
   const points: InsightsPassagesTrendPoint[] = pointsRaw.map((p) => {
     const newCount = pickTrendCount(p, [
       "newCount",
+      "new_count",
       "new",
       "newLeads",
       "newEntries",
@@ -932,13 +947,19 @@ export function normalizeInsightsPassagesTrend(
     ]);
     const oldCount = pickTrendCount(p, [
       "oldCount",
+      "old_count",
       "old",
       "oldLeads",
       "oldEntries",
       "oldLeadCount",
     ]);
     const oldShare = normalizePassagesOldSharePercent(
-      p.oldSharePercent ?? p.oldShare ?? p.oldPercent ?? p.sharePercent,
+      p.oldSharePercent ??
+        p.old_share_percent ??
+        p.oldShare ??
+        p.oldPercent ??
+        p.old_percent ??
+        p.sharePercent,
       newCount,
       oldCount,
     );
@@ -949,7 +970,15 @@ export function normalizeInsightsPassagesTrend(
       asStr(p.periodLabel ?? p.weekLabel ?? p.monthLabel ?? p.label, "") ||
       undefined;
     const rangeLabel =
-      asStr(p.rangeLabel ?? p.weekRange ?? p.range, "") || undefined;
+      asStr(
+        p.rangeLabel ??
+          p.range_label ??
+          p.weekRange ??
+          p.week_range ??
+          p.dateRangeLabel ??
+          p.range,
+        "",
+      ) || undefined;
     const weekIndex =
       p.weekIndex != null ? asNum(p.weekIndex) : undefined;
     const inferredWeek = /^W\d+$/i.test(period);

@@ -16,8 +16,10 @@ import { recalcFunnelConversionPercents, recalcFunnelSharePercents } from "@/lib
 import {
   buildApiModeFunnelDisplay,
   enrichPassagesTrendWithLiveFunnel,
+  enrichPassagesTrendWeekRangeLabels,
   passagesSplitLabel,
   resolveDiscoveryToClosedSummary,
+  resolvePassagesEntryShareSummary,
   stageHasPassagesSplit,
   type PassagesAgeSegment,
 } from "@/lib/insights-funnel-api-display";
@@ -30,6 +32,7 @@ import {
 import PassagesOldShareTrendPanel from "./PassagesOldShareTrendPanel";
 import InsightsSegmentedControl from "./InsightsSegmentedControl";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import { resolveBookingDateRange } from "@/lib/booking-token-date-filter";
 import type { InsightsTrendGranularity } from "@/lib/crm-insights-api";
 
 type Props = {
@@ -44,7 +47,7 @@ type Props = {
   stagePathLoading?: boolean;
   /** When true, stage bars are current-in-milestone inventory (not pool total / cumulative). */
   useCurrentStageInventory?: boolean;
-  /** Measure camera: Current | Passages | Cohort. */
+  /** Measure camera: Current | Movement (Passages) | New batch (Cohort). */
   funnelMode?: InsightsFunnelMode;
   onFunnelModeChange?: (mode: InsightsFunnelMode) => void;
   /** Synced path tab (required for Hub passages/cohort). */
@@ -80,16 +83,17 @@ const FUNNEL_MODE_OPTIONS: Array<{
   },
   {
     id: "passages",
-    label: "Passages",
-    short: "Moved",
-    hint: "Stage entries in selected dates — split by leads created in range (New) vs before (Old).",
+    // Easy label + Hub/API name in parentheses for new devs.
+    label: "Movement (Passages)",
+    short: "Movement",
+    hint: "Movement (API: passages) — stage entries in selected dates; New vs Old by lead created date.",
     previewOnly: true,
   },
   {
     id: "cohort",
-    label: "Cohort",
-    short: "Cohort",
-    hint: "Leads created in selected dates — stages reached as of today (live snapshot).",
+    label: "New batch (Cohort)",
+    short: "New batch",
+    hint: "New batch (API: cohort) — leads created in selected dates; stages reached as of today.",
     previewOnly: true,
   },
 ];
@@ -97,9 +101,9 @@ const FUNNEL_MODE_OPTIONS: Array<{
 function funnelModeSubtitle(mode: InsightsFunnelMode): string {
   switch (mode) {
     case "passages":
-      return "Stage entries in the selected dates — New vs Old split by lead created date";
+      return "Movement (Passages) — stage entries in the selected dates; New vs Old by lead created date";
     case "cohort":
-      return "Leads created in the selected dates — milestone reach as of today";
+      return "New batch (Cohort) — leads created in the selected dates; milestone reach as of today";
     default:
       return "Who is in each stage right now (same as Journey heatmap)";
   }
@@ -603,10 +607,32 @@ export default function InsightSect3({
     [modeFunnel, passagesAgeSegment],
   );
 
+  const passagesEntryShare = useMemo(
+    () =>
+      isPassagesMode ? resolvePassagesEntryShareSummary(modeFunnel) : null,
+    [isPassagesMode, modeFunnel],
+  );
+
   const enrichedPassagesTrend = useMemo(() => {
     if (!isPassagesMode) return passagesTrend;
-    return enrichPassagesTrendWithLiveFunnel(passagesTrend, modeFunnel);
-  }, [isPassagesMode, passagesTrend, modeFunnel]);
+    const withLive = enrichPassagesTrendWithLiveFunnel(passagesTrend, modeFunnel);
+    if (!withLive) return null;
+    const range = dateFilter ? resolveBookingDateRange(dateFilter) : null;
+    const dateFrom =
+      withLive.dateFrom ||
+      range?.submittedFrom?.slice(0, 10) ||
+      null;
+    const dateTo =
+      withLive.dateTo || range?.submittedTo?.slice(0, 10) || null;
+    return {
+      ...withLive,
+      points: enrichPassagesTrendWeekRangeLabels(
+        withLive.points,
+        dateFrom,
+        dateTo,
+      ),
+    };
+  }, [isPassagesMode, passagesTrend, modeFunnel, dateFilter]);
 
   const apiPathBreakdownByKey = useMemo(() => {
     const map: Record<string, { won: number; lost: number; hold: number }> = {};
@@ -928,7 +954,11 @@ export default function InsightSect3({
                   Under construction
                 </span>
                 <span className="font-medium text-amber-800/90">
-                  Super Admin preview — you can use {funnelMode === "passages" ? "Passages" : "Cohort"} now; not launched for other roles yet.
+                  Super Admin preview — you can use{" "}
+                  {funnelMode === "passages"
+                    ? "Movement (Passages)"
+                    : "New batch (Cohort)"}{" "}
+                  now; not launched for other roles yet.
                 </span>
               </div>
             ) : null}
@@ -941,7 +971,7 @@ export default function InsightSect3({
               {isPassagesMode ? (
                 <>
                 <InsightsSegmentedControl
-                  ariaLabel="Passages lead age"
+                  ariaLabel="Movement (Passages) lead age"
                   segments={passagesAgeSegments}
                   value={passagesAgeSegment}
                   onChange={(id) => setPassagesAgeSegment(id as PassagesAgeSegment)}
@@ -979,7 +1009,11 @@ export default function InsightSect3({
           {isApiMode && modeFunnelLoading ? (
             <div className="flex items-center gap-2 py-10 text-sm font-medium text-slate-500">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-              Loading {funnelMode === "passages" ? "passages" : "cohort"} funnel…
+              Loading{" "}
+              {funnelMode === "passages"
+                ? "Movement (Passages)"
+                : "New batch (Cohort)"}{" "}
+              funnel…
             </div>
           ) : isApiMode && modeFunnelError ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
@@ -990,10 +1024,10 @@ export default function InsightSect3({
             modeFunnel &&
             modeFunnel.passagesAvailable === false ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-              <p className="font-bold">Passages not available yet</p>
+              <p className="font-bold">Movement (Passages) not available yet</p>
               <p className="mt-1 text-xs font-medium text-amber-800/90">
                 {modeFunnel.passagesUnavailableReason ||
-                  "Stage transition history is empty for this scope. Current and Cohort modes still work."}
+                  "Stage transition history is empty for this scope. Current and New batch (Cohort) modes still work."}
               </p>
             </div>
           ) : displaySalesFunnel.length === 0 ? (
@@ -1034,26 +1068,65 @@ export default function InsightSect3({
                     </p>
                   </div>
                   {isPassagesMode &&
-                  discoveryConversionSummary.newPercent != null &&
-                  discoveryConversionSummary.oldPercent != null ? (
+                  (passagesEntryShare != null ||
+                    (discoveryConversionSummary.newPercent != null &&
+                      discoveryConversionSummary.oldPercent != null)) ? (
                     <>
                       <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2.5">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
                           New leads
                         </p>
                         <p className="mt-0.5 text-lg font-bold tabular-nums text-emerald-900">
-                          {formatInsightsPercent(discoveryConversionSummary.newPercent, 1)}
+                          {formatInsightsPercent(
+                            passagesEntryShare?.newSharePercent ??
+                              discoveryConversionSummary.newPercent ??
+                              0,
+                            1,
+                          )}
                         </p>
-                        <p className="text-[10px] text-emerald-800/80">Created inside date range</p>
+                        <p className="text-[10px] text-emerald-800/80">
+                          {passagesEntryShare
+                            ? `${formatInsightsCount(passagesEntryShare.newCount)} Movement · created in range`
+                            : "Disc→Closed · created in range"}
+                        </p>
+                        {passagesEntryShare &&
+                        discoveryConversionSummary.newPercent != null ? (
+                          <p className="mt-0.5 text-[10px] tabular-nums text-emerald-700/70">
+                            Disc→Closed{" "}
+                            {formatInsightsPercent(
+                              discoveryConversionSummary.newPercent,
+                              1,
+                            )}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
                           Old leads
                         </p>
                         <p className="mt-0.5 text-lg font-bold tabular-nums text-slate-900">
-                          {formatInsightsPercent(discoveryConversionSummary.oldPercent, 1)}
+                          {formatInsightsPercent(
+                            passagesEntryShare?.oldSharePercent ??
+                              discoveryConversionSummary.oldPercent ??
+                              0,
+                            1,
+                          )}
                         </p>
-                        <p className="text-[10px] text-slate-600">Created before range, moved in period</p>
+                        <p className="text-[10px] text-slate-600">
+                          {passagesEntryShare
+                            ? `${formatInsightsCount(passagesEntryShare.oldCount)} Movement · created before range`
+                            : "Disc→Closed · moved in period"}
+                        </p>
+                        {passagesEntryShare &&
+                        discoveryConversionSummary.oldPercent != null ? (
+                          <p className="mt-0.5 text-[10px] tabular-nums text-slate-500">
+                            Disc→Closed{" "}
+                            {formatInsightsPercent(
+                              discoveryConversionSummary.oldPercent,
+                              1,
+                            )}
+                          </p>
+                        ) : null}
                       </div>
                     </>
                   ) : isCohortMode && modeFunnel?.cohortProgress ? (
@@ -1305,6 +1378,24 @@ export default function InsightSect3({
                     granularity={passagesTrendGranularity}
                     onGranularityChange={onPassagesTrendGranularityChange}
                     showGranularityToggle={showPassagesTrendGranularityToggle}
+                    dateFrom={
+                      enrichedPassagesTrend?.dateFrom ??
+                      (dateFilter
+                        ? resolveBookingDateRange(dateFilter).submittedFrom?.slice(
+                            0,
+                            10,
+                          )
+                        : null)
+                    }
+                    dateTo={
+                      enrichedPassagesTrend?.dateTo ??
+                      (dateFilter
+                        ? resolveBookingDateRange(dateFilter).submittedTo?.slice(
+                            0,
+                            10,
+                          )
+                        : null)
+                    }
                     onClose={() => setPassagesTrendPanelOpen(false)}
                   />
                 </div>

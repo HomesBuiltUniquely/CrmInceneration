@@ -6,6 +6,7 @@ import {
   type InsightsPassagesTrendPoint,
   type InsightsTrendGranularity,
 } from "@/lib/crm-insights-api";
+import { buildRangeWeekBuckets } from "@/lib/insights-week-charts";
 import InsightsChartGranularityToggle from "./InsightsChartGranularityToggle";
 
 type ViewMode = "chart" | "table";
@@ -17,6 +18,9 @@ type Props = {
   granularity?: InsightsTrendGranularity;
   onGranularityChange?: (value: InsightsTrendGranularity) => void;
   showGranularityToggle?: boolean;
+  /** YYYY-MM-DD bounds — used to label W1…W5 date ranges when Hub omits rangeLabel. */
+  dateFrom?: string | null;
+  dateTo?: string | null;
   onClose?: () => void;
 };
 
@@ -24,16 +28,30 @@ const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
 const MONTH_PAGE_SIZE = 5;
 const WEEK_PLACEHOLDER_COUNT = 5;
 
-function buildEmptyWeekPlaceholders(): InsightsPassagesTrendPoint[] {
-  return Array.from({ length: WEEK_PLACEHOLDER_COUNT }, (_, i) => ({
-    period: `W${i + 1}`,
-    periodLabel: `W${i + 1}`,
-    weekIndex: i + 1,
-    month: `W${i + 1}`,
-    newCount: 0,
-    oldCount: 0,
-    oldSharePercent: 0,
-  }));
+function buildEmptyWeekPlaceholders(
+  dateFrom?: string | null,
+  dateTo?: string | null,
+): InsightsPassagesTrendPoint[] {
+  const buckets =
+    dateFrom && dateTo
+      ? buildRangeWeekBuckets(
+          { submittedFrom: dateFrom, submittedTo: dateTo },
+          WEEK_PLACEHOLDER_COUNT,
+        )
+      : [];
+  return Array.from({ length: WEEK_PLACEHOLDER_COUNT }, (_, i) => {
+    const rangeLabel = buckets[i]?.label;
+    return {
+      period: `W${i + 1}`,
+      periodLabel: rangeLabel ? `W${i + 1} · ${rangeLabel}` : `W${i + 1}`,
+      weekIndex: i + 1,
+      month: `W${i + 1}`,
+      rangeLabel,
+      newCount: 0,
+      oldCount: 0,
+      oldSharePercent: 0,
+    };
+  });
 }
 
 function buildEmptyMonthPlaceholders(count = MONTH_PAGE_SIZE): InsightsPassagesTrendPoint[] {
@@ -131,10 +149,13 @@ export default function PassagesOldShareTrendPanel({
   granularity = "month",
   onGranularityChange,
   showGranularityToggle = false,
+  dateFrom = null,
+  dateTo = null,
   onClose,
 }: Props) {
   const [view, setView] = useState<ViewMode>("chart");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [pinnedIdx, setPinnedIdx] = useState<number | null>(null);
   const [monthPage, setMonthPage] = useState(0);
 
   const isWeekMode = granularity === "week";
@@ -156,16 +177,26 @@ export default function PassagesOldShareTrendPanel({
   const displayPoints = useMemo(() => {
     if (loading) return [];
     if (filteredPoints.length === 0) {
-      return isWeekMode ? buildEmptyWeekPlaceholders() : buildEmptyMonthPlaceholders();
+      return isWeekMode
+        ? buildEmptyWeekPlaceholders(dateFrom, dateTo)
+        : buildEmptyMonthPlaceholders();
     }
     if (isWeekMode) return filteredPoints;
     if (filteredPoints.length <= MONTH_PAGE_SIZE) return filteredPoints;
     const start = monthPageClamped * MONTH_PAGE_SIZE;
     return filteredPoints.slice(start, start + MONTH_PAGE_SIZE);
-  }, [filteredPoints, isWeekMode, monthPageClamped, loading]);
+  }, [
+    filteredPoints,
+    isWeekMode,
+    monthPageClamped,
+    loading,
+    dateFrom,
+    dateTo,
+  ]);
 
   useEffect(() => {
     setHoverIdx(null);
+    setPinnedIdx(null);
   }, [granularity, view, monthPageClamped]);
 
   useEffect(() => {
@@ -173,7 +204,6 @@ export default function PassagesOldShareTrendPanel({
       setMonthPage(0);
       return;
     }
-    // Prefer the page that contains the newest non-zero month (not an all-zero history page).
     let bestIdx = filteredPoints.length - 1;
     for (let i = filteredPoints.length - 1; i >= 0; i -= 1) {
       const p = filteredPoints[i]!;
@@ -224,15 +254,17 @@ export default function PassagesOldShareTrendPanel({
     return coords.map((c, i) => `${i === 0 ? "M" : "L"} ${c.x} ${c.y}`).join(" ");
   }, [coords]);
 
-  const activeIdx = hoverIdx;
+  const activeIdx = pinnedIdx ?? hoverIdx;
+  const activePoint =
+    activeIdx != null && !isPlaceholder ? displayPoints[activeIdx] : null;
 
   const subtitle = isWeekMode
-    ? "W1–W5 this month · % of passages that were old leads"
-    : `Trailing months · old-lead share (${MONTH_PAGE_SIZE} per page)`;
+    ? "W1–W5 this month · % of Movement that were old leads · tap a point for dates"
+    : `Trailing months · old-lead share of Movement (${MONTH_PAGE_SIZE} per page)`;
 
   const emptyHint = isWeekMode
-    ? "No passages in this range yet — chart shows W1–W5 at 0%."
-    : "No passages history yet — chart shows recent months at 0%.";
+    ? "No Movement in this range yet — chart shows W1–W5 at 0%."
+    : "No Movement history yet — chart shows recent months at 0%.";
 
   function renderChartFootnote() {
     if (!isPlaceholder) return null;
@@ -287,6 +319,28 @@ export default function PassagesOldShareTrendPanel({
           />
         </svg>
       </button>
+    );
+  }
+
+  function DetailBox({ point }: { point: InsightsPassagesTrendPoint }) {
+    const oldPct = Math.round(Number(point.oldSharePercent ?? 0));
+    const range = point.rangeLabel?.trim();
+    return (
+      <div className="pointer-events-none absolute left-1/2 top-0 z-10 w-[min(100%,11.5rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-center shadow-md">
+        <p className="text-[10px] font-semibold text-slate-700">
+          {periodShortLabel(point, isWeekMode)}
+          {range ? (
+            <span className="font-medium text-slate-500"> · {range}</span>
+          ) : null}
+        </p>
+        <p className="text-sm font-bold tabular-nums text-blue-600">
+          {oldPct}%
+          <span className="text-xs font-medium text-slate-500"> old</span>
+        </p>
+        <p className="text-[10px] tabular-nums text-slate-500">
+          New {point.newCount} · Old {point.oldCount}
+        </p>
+      </div>
     );
   }
 
@@ -369,7 +423,7 @@ export default function PassagesOldShareTrendPanel({
                     <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       <th className="px-3 py-2.5">{periodNoun}</th>
                       {isWeekMode ? (
-                        <th className="hidden px-3 py-2.5 sm:table-cell">Range</th>
+                        <th className="px-3 py-2.5">Dates</th>
                       ) : null}
                       <th className="px-3 py-2.5 text-right">Old %</th>
                       <th className="hidden px-3 py-2.5 text-right sm:table-cell">New</th>
@@ -388,7 +442,7 @@ export default function PassagesOldShareTrendPanel({
                           {periodShortLabel(p, isWeekMode)}
                         </td>
                         {isWeekMode ? (
-                          <td className="hidden px-3 py-2.5 text-slate-500 sm:table-cell">
+                          <td className="px-3 py-2.5 text-slate-500">
                             {p.rangeLabel?.trim() || "—"}
                           </td>
                         ) : null}
@@ -429,7 +483,8 @@ export default function PassagesOldShareTrendPanel({
                   onClick={() => setMonthPage((p) => Math.max(0, p - 1))}
                 />
               ) : null}
-              <div className="relative min-w-0 flex-1">
+              <div className="relative min-w-0 flex-1 pt-14">
+                {activePoint ? <DetailBox point={activePoint} /> : null}
                 <svg
                   viewBox="0 0 280 160"
                   className="h-auto w-full"
@@ -472,12 +527,21 @@ export default function PassagesOldShareTrendPanel({
                       <circle
                         cx={c.x}
                         cy={c.y}
-                        r={hoverIdx === i && !isPlaceholder ? 6 : 3.5}
+                        r={
+                          activeIdx === i && !isPlaceholder
+                            ? 6
+                            : 3.5
+                        }
                         fill={isPlaceholder ? "#cbd5e1" : "#2563eb"}
                         stroke="#fff"
                         strokeWidth={2}
-                        className="transition-all duration-200"
+                        className="cursor-pointer transition-all duration-200"
                         onMouseEnter={() => !isPlaceholder && setHoverIdx(i)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isPlaceholder) return;
+                          setPinnedIdx((prev) => (prev === i ? null : i));
+                        }}
                       />
                       {!isPlaceholder ? (
                         <rect
@@ -486,23 +550,17 @@ export default function PassagesOldShareTrendPanel({
                           width={36}
                           height={160}
                           fill="transparent"
+                          className="cursor-pointer"
                           onMouseEnter={() => setHoverIdx(i)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPinnedIdx((prev) => (prev === i ? null : i));
+                          }}
                         />
                       ) : null}
                     </g>
                   ))}
                 </svg>
-                {!isPlaceholder && activeIdx != null && displayPoints[activeIdx] ? (
-                  <div className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-center shadow-md">
-                    <p className="text-[10px] font-medium text-slate-500">
-                      {periodFullLabel(displayPoints[activeIdx]!, isWeekMode)}
-                    </p>
-                    <p className="text-sm font-bold tabular-nums text-blue-600">
-                      {Math.round(Number(displayPoints[activeIdx]!.oldSharePercent ?? 0))}%
-                      <span className="text-xs font-medium text-slate-500"> old</span>
-                    </p>
-                  </div>
-                ) : null}
               </div>
               {canPageMonths ? (
                 <PagerButton
@@ -517,14 +575,29 @@ export default function PassagesOldShareTrendPanel({
             {renderPager()}
             <div className="mt-2 flex justify-between gap-0.5 px-1">
               {displayPoints.map((p, i) => (
-                <span
+                <button
                   key={p.period}
-                  className={`flex-1 text-center text-[10px] font-semibold transition-colors ${
-                    !isPlaceholder && activeIdx === i ? "text-blue-600" : "text-slate-400"
-                  }`}
+                  type="button"
+                  disabled={isPlaceholder}
+                  onClick={() =>
+                    !isPlaceholder &&
+                    setPinnedIdx((prev) => (prev === i ? null : i))
+                  }
+                  className={`flex flex-1 flex-col items-center gap-0.5 text-center transition-colors ${
+                    !isPlaceholder && activeIdx === i
+                      ? "text-blue-600"
+                      : "text-slate-400"
+                  } ${isPlaceholder ? "cursor-default" : "cursor-pointer hover:text-slate-600"}`}
                 >
-                  {periodShortLabel(p, isWeekMode)}
-                </span>
+                  <span className="text-[10px] font-semibold">
+                    {periodShortLabel(p, isWeekMode)}
+                  </span>
+                  {isWeekMode && p.rangeLabel?.trim() ? (
+                    <span className="max-w-[4.5rem] truncate text-[8px] font-medium leading-tight text-slate-400">
+                      {p.rangeLabel.trim()}
+                    </span>
+                  ) : null}
+                </button>
               ))}
             </div>
             {renderChartFootnote()}

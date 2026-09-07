@@ -322,11 +322,12 @@ function pickMeetingTypeFromDetail(detail: Record<string, unknown>): string {
 
 function resolveDesignerNameForSave(
   leadDesignerName: string,
-  _base: Record<string, unknown>,
+  base: Record<string, unknown>,
 ): string {
   const fromLead = leadDesignerName.trim();
-  if (!fromLead || isUiPlaceholderToken(fromLead)) return "";
-  return fromLead;
+  if (fromLead && !isUiPlaceholderToken(fromLead)) return fromLead;
+  // Never blank an assigned designer on incidental lead PUT (contact save, milestone, etc.).
+  return pickDesignerDisplay(base);
 }
 
 export function pickConfigurationFromDetail(
@@ -922,25 +923,27 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyPin = lead.pincode;
   next.zip = lead.pincode;
   next.budget = lead.budget;
-  next.designerName = resolvedDesignerName;
+  if (resolvedDesignerName) {
+    next.designerName = resolvedDesignerName;
+    const prevDesigner = base.designer;
+    if (typeof prevDesigner === "object" && prevDesigner !== null) {
+      next.designer = {
+        ...(prevDesigner as Record<string, unknown>),
+        name: resolvedDesignerName,
+        fullName: resolvedDesignerName,
+        ...(lead.designerEmail?.trim()
+          ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
+          : {}),
+      };
+    }
+  }
   if (lead.designerEmail !== undefined) {
     const de = lead.designerEmail.trim();
-    next.designerEmail = de;
-    next.designEmail = de;
-    next.designPreferenceEmail = de;
-  }
-  const prevDesigner = base.designer;
-  if (typeof prevDesigner === "object" && prevDesigner !== null) {
-    next.designer = {
-      ...(prevDesigner as Record<string, unknown>),
-      name: resolvedDesignerName,
-      fullName: resolvedDesignerName,
-      ...(lead.designerEmail?.trim()
-        ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
-        : {}),
-    };
-  } else if (!resolvedDesignerName) {
-    next.designer = "";
+    if (de) {
+      next.designerEmail = de;
+      next.designEmail = de;
+      next.designPreferenceEmail = de;
+    }
   }
 
   const prevAssignee = base.assignee;
@@ -1174,7 +1177,16 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase().replace(/\s+/g, "_");
   if (u.includes("QUOTE_SENT_TO_CUSTOMER") || u === "QUOTE_SENT") return "quote_sent_to_customer";
-  if (u.startsWith("BOOKING_PAYMENT_") || u.includes("BOOKING_TOKEN")) return "booking_token";
+  if (
+    u.startsWith("BOOKING_PAYMENT_") ||
+    u.startsWith("PAYMENT_LINK_") ||
+    u === "LINK_SENT" ||
+    u === "LINK_DELETED" ||
+    u === "LINK_CANCELLED"
+  ) {
+    return "payment";
+  }
+  if (u.includes("BOOKING_TOKEN")) return "booking_token";
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";

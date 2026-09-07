@@ -8,6 +8,9 @@ import {
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { formatCrmDateTime } from "@/lib/date-time-format";
 import {
+  attemptHasPaymentFailures,
+  attemptPaymentFailureCount,
+  formatPaymentFailureStatusLabel,
   isActivePaymentLinkStatus,
   isSmsFallback,
   type PaymentLinkAttempt,
@@ -20,6 +23,7 @@ type Props = {
   onResend: () => void;
   onEdit: (amount: number) => void;
   onSwitchOffline: () => void;
+  onDelete?: () => void;
 };
 
 function formatRelativePast(iso?: string | null): string {
@@ -113,6 +117,18 @@ function EditIcon() {
   );
 }
 
+function DeleteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-[13px] w-[13px]" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M19 6l-1 14H6L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
+
 function WhatsAppIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-[12px] w-[12px]" fill="currentColor" aria-hidden>
@@ -149,6 +165,7 @@ export default function PaymentLinkPendingBanner({
   onResend,
   onEdit,
   onSwitchOffline,
+  onDelete,
 }: Props) {
   const [, setTick] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -179,6 +196,11 @@ export default function PaymentLinkPendingBanner({
 
   const sendCount = attempt.sendCount ?? 1;
   const copyCount = attempt.copyCount ?? 0;
+  const failureCount = attemptPaymentFailureCount(attempt);
+  const showFailureStrip = attemptHasPaymentFailures(attempt);
+  const lastFailureStatus = formatPaymentFailureStatusLabel(attempt.lastPaymentFailureStatus);
+  const lastFailureReason = attempt.lastPaymentFailureReason?.trim() ?? "";
+  const lastFailureLine = [lastFailureStatus, lastFailureReason].filter(Boolean).join(" · ");
 
   const handleSaveEdit = () => {
     const amount = parsePaymentAmountInput(editAmount);
@@ -187,7 +209,8 @@ export default function PaymentLinkPendingBanner({
   };
 
   return (
-    <div className="rounded-[10px] border border-slate-200 bg-white px-3.5 py-2.5 transition-shadow hover:border-slate-300 hover:shadow-[0_3px_10px_-6px_rgba(15,23,42,0.12)]">
+    <div className="space-y-1.5">
+      <div className="rounded-[10px] border border-slate-200 bg-white px-3.5 py-2.5 transition-shadow hover:border-slate-300 hover:shadow-[0_3px_10px_-6px_rgba(15,23,42,0.12)]">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <p className="min-w-0 truncate text-[13px] font-semibold text-slate-900" title={`Payment Link — ${amountLabel} · Online (UPI/Card/Netbanking)`}>
@@ -232,6 +255,24 @@ export default function PaymentLinkPendingBanner({
             >
               <EditIcon />
             </IconActionButton>
+            {onDelete ? (
+              <IconActionButton
+                label="Delete payment link"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Delete this payment link? Customer will no longer be able to pay with it. You can send a new link after deleting.",
+                    )
+                  ) {
+                    return;
+                  }
+                  onDelete();
+                }}
+              >
+                <DeleteIcon />
+              </IconActionButton>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -294,14 +335,35 @@ export default function PaymentLinkPendingBanner({
           ) : null}
           {attempt.salesUserName ? <> · by {attempt.salesUserName}</> : null}
         </p>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onSwitchOffline}
-          className="shrink-0 text-[10.5px] font-semibold text-[#2563eb] underline-offset-2 hover:underline disabled:opacity-60"
-        >
-          Switch to offline
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          {onDelete ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "Delete this payment link? Customer will no longer be able to pay with it. You can send a new link after deleting.",
+                  )
+                ) {
+                  return;
+                }
+                onDelete();
+              }}
+              className="text-[10.5px] font-semibold text-red-600 underline-offset-2 hover:underline disabled:opacity-60"
+            >
+              Delete link
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onSwitchOffline}
+            className="text-[10.5px] font-semibold text-[#2563eb] underline-offset-2 hover:underline disabled:opacity-60"
+          >
+            Switch to offline
+          </button>
+        </div>
       </div>
 
       {editing ? (
@@ -324,6 +386,20 @@ export default function PaymentLinkPendingBanner({
           </button>
         </div>
       ) : null}
+    </div>
+    {showFailureStrip ? (
+      <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-3.5 py-2">
+        <p className="text-[12px] font-semibold text-amber-950">
+          Customer payment failed {Math.max(1, failureCount)}×
+        </p>
+        {lastFailureLine ? (
+          <p className="mt-0.5 text-[11px] font-medium text-amber-900">Last: {lastFailureLine}</p>
+        ) : null}
+        <p className="mt-0.5 text-[10.5px] font-semibold text-amber-800">
+          Link is still open — customer can retry
+        </p>
+      </div>
+    ) : null}
     </div>
   );
 }

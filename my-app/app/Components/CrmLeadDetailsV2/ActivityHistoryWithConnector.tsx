@@ -23,16 +23,28 @@ import {
   pickQuoteSentMotivateLine,
 } from "@/lib/quote-sent-motivate";
 import {
+  classifyPaymentActivityBucket,
+  detectPaymentReceivedKind,
+  formatBookingPaymentActivityDetail,
   formatBookingPaymentActivityTitle,
   isBookingPaymentActivityType,
+  isBookingPaymentFailedActivity,
+  isBookingPaymentStageActivity,
+  isOnlinePaymentReceivedActivity,
+  paymentReceivedHeadline,
+  paymentStageHeadline,
+  pickPaymentReceivedMotivateLine,
+  type PaymentActivityBucket,
+  type PaymentReceivedKind,
 } from "@/lib/booking-payment-activity";
 
 export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
 };
 
-type ActivityKind = "note" | "update" | "call" | "booking_token";
-type FilterId = "all" | "calls" | "notes" | "updates" | "booking_token";
+type ActivityKind = "note" | "update" | "call" | "booking_token" | "payment";
+type FilterId = "all" | "calls" | "notes" | "updates" | "booking_token" | "payments";
+type PaymentSubFilter = "all" | "links" | "settlements";
 
 type DisplayActivityItem = {
   id: string;
@@ -42,6 +54,11 @@ type DisplayActivityItem = {
   author: string;
   detail: string;
   isQuoteSent?: boolean;
+  isPaymentReceived?: boolean;
+  isPaymentStage?: boolean;
+  isPaymentFailed?: boolean;
+  paymentKind?: PaymentReceivedKind;
+  paymentBucket?: PaymentActivityBucket;
   motivateLine?: string;
 };
 
@@ -87,11 +104,15 @@ const MOCK_FILTER_COUNTS = {
   notes: 3,
   updates: 25,
   booking_token: 0,
+  payments: 0,
+  payment_links: 0,
+  payment_settlements: 0,
 };
 
 function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
   if (type === "note") return "note";
   if (type === "call") return "call";
+  if (type === "payment") return "payment";
   if (type === "booking_token") return "booking_token";
   return "update";
 }
@@ -106,19 +127,72 @@ function extractQuoteIdFromActivityText(...parts: Array<string | null | undefine
 }
 
 function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
-  const detail =
-    activity.note?.trim() ||
-    (activity.change
-      ? `${activity.change.old || "—"} → ${activity.change.new || "—"}`
-      : activity.description);
   const isQuoteSent =
     activity.type === "quote_sent_to_customer" ||
     isQuoteSentActivityText(
       activity.type,
       activity.description,
-      detail,
+      activity.note,
       activity.change?.new,
     );
+  const isPaymentFailed =
+    !isQuoteSent && isBookingPaymentFailedActivity(activity.rawActivityType);
+  const paymentActivityDetail = formatBookingPaymentActivityDetail(activity);
+  const detail =
+    isPaymentFailed || isBookingPaymentActivityType(activity.rawActivityType)
+      ? paymentActivityDetail || activity.description
+      : activity.note?.trim() ||
+        (activity.change
+          ? `${activity.change.old || "—"} → ${activity.change.new || "—"}`
+          : activity.description);
+  const isPaymentStage =
+    !isQuoteSent &&
+    !isPaymentFailed &&
+    isBookingPaymentStageActivity(
+      activity.rawActivityType,
+      activity.description,
+      detail,
+      activity.change?.new,
+      activity.change?.old,
+    );
+  const isPaymentReceived =
+    !isQuoteSent &&
+    !isPaymentFailed &&
+    !isPaymentStage &&
+    isOnlinePaymentReceivedActivity(
+      activity.rawActivityType,
+      activity.type,
+      activity.description,
+      detail,
+      activity.note,
+      activity.change?.new,
+    );
+  const paymentKind =
+    isPaymentReceived || isPaymentStage
+      ? detectPaymentReceivedKind(
+          activity.rawActivityType,
+          activity.description,
+          detail,
+          activity.note,
+          activity.change?.new,
+          activity.change?.old,
+        )
+      : undefined;
+  const paymentBucket =
+    isPaymentFailed ||
+    isPaymentStage ||
+    isPaymentReceived ||
+    isBookingPaymentActivityType(activity.rawActivityType) ||
+    activity.type === "payment"
+      ? classifyPaymentActivityBucket(
+          activity.rawActivityType,
+          activity.description,
+          detail,
+          activity.note,
+          activity.change?.new,
+          activity.change?.old,
+        )
+      : undefined;
   const quoteId = extractQuoteIdFromActivityText(
     activity.description,
     detail,
@@ -128,18 +202,45 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
     ? quoteId
       ? `Quote Sent to Customer ⭐ · #${quoteId}`
       : "Quote Sent to Customer ⭐"
-    : isBookingPaymentActivityType(activity.rawActivityType)
-      ? formatBookingPaymentActivityTitle(activity.rawActivityType, activity.description)
-      : formatActivitySummaryTitle(activity.description);
+    : isPaymentFailed
+      ? formatBookingPaymentActivityTitle(
+          activity.rawActivityType,
+          activity.description,
+        )
+      : isPaymentStage && paymentKind
+        ? paymentStageHeadline(paymentKind)
+        : isPaymentReceived && paymentKind
+          ? paymentReceivedHeadline(paymentKind)
+          : isBookingPaymentActivityType(activity.rawActivityType) || activity.type === "payment"
+            ? formatBookingPaymentActivityTitle(
+                activity.rawActivityType,
+                activity.description,
+              )
+            : formatActivitySummaryTitle(activity.description);
+  const kind: ActivityKind =
+    paymentBucket != null || activity.type === "payment"
+      ? "payment"
+      : mapApiTypeToKind(activity.type);
   return {
     id: activity.id,
-    kind: mapApiTypeToKind(activity.type),
+    kind,
     title,
     timestamp: formatActivityDisplayTime(activity.timestamp),
     author: activity.by,
     detail: formatActivityDetailText(detail),
     isQuoteSent,
-    motivateLine: isQuoteSent ? pickQuoteSentMotivateLine(activity.id) : undefined,
+    isPaymentReceived,
+    isPaymentStage,
+    isPaymentFailed,
+    paymentKind,
+    paymentBucket,
+    motivateLine: isQuoteSent
+      ? pickQuoteSentMotivateLine(activity.id)
+      : isPaymentReceived && paymentKind
+        ? pickPaymentReceivedMotivateLine(paymentKind, activity.id)
+        : isPaymentStage && paymentKind
+          ? pickPaymentReceivedMotivateLine(paymentKind, `${activity.id}-stage`)
+          : undefined,
   };
 }
 
@@ -248,12 +349,25 @@ const ActivityHistoryWithConnector = forwardRef<
         id: item.id,
         title: item.title,
         time: item.timestamp,
+        isQuoteSent: Boolean(item.isQuoteSent),
+        isPaymentReceived: Boolean(item.isPaymentReceived),
+        isPaymentStage: Boolean(item.isPaymentStage),
+        isPaymentFailed: Boolean(item.isPaymentFailed),
+        paymentKind: item.paymentKind,
+        paymentBucket: item.paymentBucket,
+        motivateLine: item.motivateLine,
         icon:
-          item.kind === "call"
-            ? ("phone" as const)
-            : item.kind === "note"
-              ? ("user-plus" as const)
-              : ("calendar" as const),
+          item.isQuoteSent
+            ? ("quote" as const)
+            : item.isPaymentReceived || item.isPaymentStage
+              ? ("payment" as const)
+              : item.isPaymentFailed
+                ? ("payment_failed" as const)
+                : item.kind === "call"
+                  ? ("phone" as const)
+                  : item.kind === "note"
+                    ? ("user-plus" as const)
+                    : ("calendar" as const),
       })),
     [displayActivities],
   );
@@ -268,9 +382,23 @@ const ActivityHistoryWithConnector = forwardRef<
               if (item.kind === "note") acc.notes += 1;
               if (item.kind === "update") acc.updates += 1;
               if (item.kind === "booking_token") acc.booking_token += 1;
+              if (item.kind === "payment") {
+                acc.payments += 1;
+                if (item.paymentBucket === "link") acc.payment_links += 1;
+                else acc.payment_settlements += 1;
+              }
               return acc;
             },
-            { all: 0, calls: 0, notes: 0, updates: 0, booking_token: 0 },
+            {
+              all: 0,
+              calls: 0,
+              notes: 0,
+              updates: 0,
+              booking_token: 0,
+              payments: 0,
+              payment_links: 0,
+              payment_settlements: 0,
+            },
           )
         : MOCK_FILTER_COUNTS,
     [displayActivities, hasApiActivities],
@@ -293,6 +421,7 @@ const ActivityHistoryWithConnector = forwardRef<
   }, []);
 
   const [filter, setFilter] = useState<FilterId>("all");
+  const [paymentSubFilter, setPaymentSubFilter] = useState<PaymentSubFilter>("all");
   const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
 
   const filteredActivities = useMemo(
@@ -302,9 +431,15 @@ const ActivityHistoryWithConnector = forwardRef<
         if (filter === "calls") return item.kind === "call";
         if (filter === "notes") return item.kind === "note";
         if (filter === "booking_token") return item.kind === "booking_token";
+        if (filter === "payments") {
+          if (item.kind !== "payment") return false;
+          if (paymentSubFilter === "links") return item.paymentBucket === "link";
+          if (paymentSubFilter === "settlements") return item.paymentBucket === "settlement";
+          return true;
+        }
         return item.kind === "update";
       }),
-    [displayActivities, filter],
+    [displayActivities, filter, paymentSubFilter],
   );
 
   const selected =
@@ -522,13 +657,57 @@ const ActivityHistoryWithConnector = forwardRef<
                     icon="🏷️"
                   />
                 ) : null}
+                {filterCounts.payments > 0 ? (
+                  <FilterPill
+                    active={filter === "payments"}
+                    onClick={() => {
+                      setFilter("payments");
+                      setPaymentSubFilter("all");
+                    }}
+                    label={`Payments ${filterCounts.payments}`}
+                    icon="₹"
+                  />
+                ) : null}
               </div>
+
+              {filter === "payments" ? (
+                <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] bg-[#fafbfc] px-5 py-2">
+                  <FilterPill
+                    active={paymentSubFilter === "all"}
+                    onClick={() => setPaymentSubFilter("all")}
+                    label={`All payments ${filterCounts.payments}`}
+                  />
+                  <FilterPill
+                    active={paymentSubFilter === "links"}
+                    onClick={() => setPaymentSubFilter("links")}
+                    label={`Links ${filterCounts.payment_links}`}
+                    icon="🔗"
+                  />
+                  <FilterPill
+                    active={paymentSubFilter === "settlements"}
+                    onClick={() => setPaymentSubFilter("settlements")}
+                    label={`Received ${filterCounts.payment_settlements}`}
+                    icon="✓"
+                  />
+                </div>
+              ) : null}
 
               <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="flex min-h-0 flex-col border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
                   <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2">
                     <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                      {filteredActivities.length} In {filter === "all" ? "All" : filter}
+                      {filteredActivities.length} In{" "}
+                      {filter === "all"
+                        ? "All"
+                        : filter === "payments"
+                          ? paymentSubFilter === "links"
+                            ? "Payment links"
+                            : paymentSubFilter === "settlements"
+                              ? "Payments received"
+                              : "Payments"
+                          : filter === "booking_token"
+                            ? "Booking & Token"
+                            : filter}
                     </p>
                     <p className="text-[10px] font-medium text-[#94a3b8]">
                       Click once to view details
@@ -537,60 +716,139 @@ const ActivityHistoryWithConnector = forwardRef<
                   <ul className="min-h-0 flex-1 overflow-y-auto">
                     {filteredActivities.map((item) => {
                       const isQuote = Boolean(item.isQuoteSent);
+                      const isPay =
+                        Boolean(item.isPaymentReceived) || Boolean(item.isPaymentStage);
+                      const isPayFail = Boolean(item.isPaymentFailed);
+                      const isPayLink =
+                        item.kind === "payment" &&
+                        item.paymentBucket === "link" &&
+                        !isPay &&
+                        !isPayFail;
+                      const payBooking = item.paymentKind === "booking";
                       const selectedRow = selected?.id === item.id;
+                      const rowClass = isQuote
+                        ? selectedRow
+                          ? "border-emerald-200 bg-[#d1fae5]"
+                          : `border-emerald-100 bg-[#ecfdf5] text-[#065f46] ${V2_BTN_LIST_ITEM}`
+                        : isPayFail
+                          ? selectedRow
+                            ? "border-amber-300 bg-amber-100"
+                            : `border-amber-200 bg-amber-50 text-amber-950 ${V2_BTN_LIST_ITEM}`
+                          : isPay
+                            ? payBooking
+                              ? selectedRow
+                                ? "border-violet-200 bg-[#ddd6fe]"
+                                : `border-violet-100 bg-[#f5f3ff] text-violet-950 ${V2_BTN_LIST_ITEM}`
+                              : selectedRow
+                                ? "border-amber-200 bg-[#fde68a]"
+                                : `border-amber-100 bg-[#fffbeb] text-amber-950 ${V2_BTN_LIST_ITEM}`
+                            : isPayLink
+                              ? selectedRow
+                                ? "border-sky-200 bg-[#bae6fd]"
+                                : `border-sky-100 bg-[#f0f9ff] text-sky-950 ${V2_BTN_LIST_ITEM}`
+                              : selectedRow
+                                ? "border-[#f1f5f9] bg-[#eff6ff]"
+                                : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`;
+                      const labelClass = isQuote
+                        ? "text-emerald-700"
+                        : isPayFail
+                          ? "text-amber-800"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-700"
+                              : "text-amber-800"
+                            : isPayLink
+                              ? "text-sky-700"
+                              : "text-[#9ca3af]";
+                      const titleClass = isQuote
+                        ? "text-emerald-950"
+                        : isPayFail
+                          ? "text-amber-950"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-950"
+                              : "text-amber-950"
+                            : isPayLink
+                              ? "text-sky-950"
+                              : "text-[#111827]";
+                      const motivateClass = isQuote
+                        ? "text-emerald-800"
+                        : isPay
+                          ? payBooking
+                            ? "text-violet-800"
+                            : "text-amber-900"
+                          : "text-[#64748b]";
+                      const metaClass = isQuote
+                        ? "text-emerald-700/70"
+                        : isPayFail
+                          ? "text-amber-800/70"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-700/70"
+                              : "text-amber-800/70"
+                            : isPayLink
+                              ? "text-sky-700/70"
+                              : "text-[#9ca3af]";
+                      const eyebrow = isQuote
+                        ? "Quote Sent to Customer ⭐"
+                        : isPayFail
+                          ? "Payment failed"
+                          : isPay
+                            ? payBooking
+                              ? item.isPaymentStage
+                                ? "Booking milestone"
+                                : "Booking payment"
+                              : item.isPaymentStage
+                                ? "Token milestone"
+                                : "Token payment"
+                            : isPayLink
+                              ? "Payment link"
+                              : item.kind === "payment"
+                                ? "Payment"
+                                : item.kind;
                       return (
                       <li key={item.id}>
                         <button
                           type="button"
                           onClick={() => selectActivity(item.id)}
                           aria-pressed={selectedRow}
-                          className={`w-full border-b px-4 py-3 text-left ${
-                            isQuote
-                              ? selectedRow
-                                ? "border-emerald-200 bg-[#d1fae5]"
-                                : `border-emerald-100 bg-[#ecfdf5] text-[#065f46] ${V2_BTN_LIST_ITEM}`
-                              : selectedRow
-                                ? "border-[#f1f5f9] bg-[#eff6ff]"
-                                : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`
-                          }`}
+                          className={`w-full border-b px-4 py-3 text-left ${rowClass}`}
                         >
                           <div className="flex items-start gap-3">
-                            <KindBadge kind={item.kind} quoteSent={isQuote} />
+                            <KindBadge
+                              kind={item.kind}
+                              quoteSent={isQuote}
+                              paymentKind={isPay ? item.paymentKind : undefined}
+                              paymentFailed={isPayFail}
+                              paymentBucket={
+                                item.kind === "payment" ? item.paymentBucket : undefined
+                              }
+                            />
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center justify-between gap-2">
                                 <p
-                                  className={`text-[10px] font-bold uppercase tracking-wide ${
-                                    isQuote ? "text-emerald-700" : "text-[#9ca3af]"
-                                  }`}
+                                  className={`text-[10px] font-bold uppercase tracking-wide ${labelClass}`}
                                 >
-                                  {isQuote ? "Quote Sent to Customer ⭐" : item.kind}
+                                  {eyebrow}
                                 </p>
-                                <p
-                                  className={`shrink-0 text-[10px] ${
-                                    isQuote ? "text-emerald-600/80" : "text-[#9ca3af]"
-                                  }`}
-                                >
+                                <p className={`shrink-0 text-[10px] ${metaClass}`}>
                                   {item.timestamp}
                                 </p>
                               </div>
                               <p
-                                className={`mt-1 line-clamp-2 text-[12px] font-semibold leading-snug ${
-                                  isQuote ? "text-emerald-950" : "text-[#111827]"
-                                }`}
+                                className={`mt-1 line-clamp-2 text-[12px] font-semibold leading-snug ${titleClass}`}
                                 title={item.title}
                               >
                                 {item.title}
                               </p>
-                              {isQuote && item.motivateLine ? (
-                                <p className="mt-1 line-clamp-2 text-[11px] font-medium italic leading-snug text-emerald-800">
+                              {(isQuote || isPay) && item.motivateLine ? (
+                                <p
+                                  className={`mt-1 line-clamp-2 text-[11px] font-medium italic leading-snug ${motivateClass}`}
+                                >
                                   {item.motivateLine}
                                 </p>
                               ) : null}
-                              <p
-                                className={`mt-1 truncate text-[11px] ${
-                                  isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
-                                }`}
-                              >
+                              <p className={`mt-1 truncate text-[11px] ${metaClass}`}>
                                 {item.author}
                               </p>
                             </div>
@@ -609,7 +867,19 @@ const ActivityHistoryWithConnector = forwardRef<
                   {selected ? (
                     <div className="mt-3">
                       <div className="flex items-start justify-between gap-2">
-                        <KindBadge kind={selected.kind} quoteSent={Boolean(selected.isQuoteSent)} />
+                        <KindBadge
+                          kind={selected.kind}
+                          quoteSent={Boolean(selected.isQuoteSent)}
+                          paymentKind={
+                            selected.isPaymentReceived || selected.isPaymentStage
+                              ? selected.paymentKind
+                              : undefined
+                          }
+                          paymentFailed={Boolean(selected.isPaymentFailed)}
+                          paymentBucket={
+                            selected.kind === "payment" ? selected.paymentBucket : undefined
+                          }
+                        />
                         <p className="text-[10px] text-[#9ca3af]">{selected.timestamp}</p>
                       </div>
                       <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
@@ -625,11 +895,59 @@ const ActivityHistoryWithConnector = forwardRef<
                           </p>
                         </div>
                       ) : null}
+                      {(selected.isPaymentReceived || selected.isPaymentStage) &&
+                      selected.motivateLine ? (
+                        <div
+                          className={`mt-3 rounded-lg border px-3 py-2.5 ${
+                            selected.paymentKind === "booking"
+                              ? "border-violet-200 bg-[#f5f3ff]"
+                              : "border-amber-200 bg-[#fffbeb]"
+                          }`}
+                        >
+                          <p
+                            className={`text-[10px] font-bold uppercase tracking-[0.1em] ${
+                              selected.paymentKind === "booking"
+                                ? "text-violet-700"
+                                : "text-amber-800"
+                            }`}
+                          >
+                            {selected.paymentKind === "booking"
+                              ? "Booking secured"
+                              : "Token locked in"}
+                          </p>
+                          <p
+                            className={`mt-1 text-[13px] font-semibold leading-snug ${
+                              selected.paymentKind === "booking"
+                                ? "text-violet-950"
+                                : "text-amber-950"
+                            }`}
+                          >
+                            {selected.motivateLine}
+                          </p>
+                        </div>
+                      ) : null}
+                      {selected.isPaymentFailed ? (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-800">
+                            Link still open
+                          </p>
+                          <p className="mt-1 text-[13px] font-semibold leading-snug text-amber-950">
+                            Customer payment attempt failed. Link is still open — customer
+                            can retry.
+                          </p>
+                        </div>
+                      ) : null}
                       <div
                         className={`mt-3 rounded-lg border p-3 ${
                           selected.isQuoteSent
                             ? "border-emerald-100 bg-[#f0fdf4]"
-                            : "border-[#e5e7eb] bg-[#f9fafb]"
+                            : selected.isPaymentFailed
+                              ? "border-amber-100 bg-amber-50"
+                              : selected.isPaymentReceived || selected.isPaymentStage
+                                ? selected.paymentKind === "booking"
+                                  ? "border-violet-100 bg-[#f5f3ff]"
+                                  : "border-amber-100 bg-[#fffbeb]"
+                                : "border-[#e5e7eb] bg-[#f9fafb]"
                         }`}
                       >
                         <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#374151]">
@@ -657,43 +975,84 @@ const ActivityHistoryWithConnector = forwardRef<
 
         <ul className="mt-3 divide-y divide-[#f1f5f9]">
           {summaryItems.map((item) => {
-            const full = displayActivities.find((a) => a.id === item.id);
-            const isQuote = Boolean(full?.isQuoteSent);
+            const isQuote = Boolean(item.isQuoteSent);
+            const isPay =
+              Boolean(item.isPaymentReceived) || Boolean(item.isPaymentStage);
+            const isPayFail = Boolean(item.isPaymentFailed);
+            const payBooking = item.paymentKind === "booking";
             return (
             <li key={item.id} className="first:pt-0 last:pb-0">
               <button
                 type="button"
                 onClick={() => openPanel(item.id)}
                 className={`flex w-full gap-3 rounded-lg px-1 py-3 text-left ${
-                  isQuote ? "bg-[#ecfdf5]" : ""
+                  isQuote
+                    ? "bg-[#ecfdf5]"
+                    : isPayFail
+                      ? "bg-amber-50"
+                      : isPay
+                        ? payBooking
+                          ? "bg-[#f5f3ff]"
+                          : "bg-[#fffbeb]"
+                        : ""
                 } ${V2_BTN_LIST_ITEM}`}
               >
                 <div
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
                     isQuote
                       ? "bg-[#d1fae5] text-emerald-700"
-                      : "bg-[#f3f4f6] text-[#6b7280]"
+                      : isPayFail
+                        ? "bg-amber-100 text-amber-800"
+                        : isPay
+                          ? payBooking
+                            ? "bg-[#ddd6fe] text-violet-800"
+                            : "bg-[#fde68a] text-amber-900"
+                          : "bg-[#f3f4f6] text-[#6b7280]"
                   }`}
                 >
-                  <SummaryIcon type={isQuote ? "quote" : item.icon} />
+                  <SummaryIcon type={item.icon} />
                 </div>
                 <div className="min-w-0 flex-1 self-center">
                   <p
                     className={`line-clamp-2 text-[13px] font-semibold leading-snug ${
-                      isQuote ? "text-emerald-950" : "text-[#111827]"
+                      isQuote
+                        ? "text-emerald-950"
+                        : isPayFail
+                          ? "text-amber-950"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-950"
+                              : "text-amber-950"
+                            : "text-[#111827]"
                     }`}
                     title={item.title}
                   >
                     {item.title}
                   </p>
-                  {isQuote && full?.motivateLine ? (
-                    <p className="mt-1 line-clamp-1 text-[11px] font-medium italic text-emerald-800">
-                      {full.motivateLine}
+                  {(isQuote || isPay) && item.motivateLine ? (
+                    <p
+                      className={`mt-1 line-clamp-1 text-[11px] font-medium italic ${
+                        isQuote
+                          ? "text-emerald-800"
+                          : payBooking
+                            ? "text-violet-800"
+                            : "text-amber-900"
+                      }`}
+                    >
+                      {item.motivateLine}
                     </p>
                   ) : null}
                   <p
                     className={`mt-1 text-[11px] leading-none ${
-                      isQuote ? "text-emerald-700/70" : "text-[#9ca3af]"
+                      isQuote
+                        ? "text-emerald-700/70"
+                        : isPayFail
+                          ? "text-amber-800/70"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-700/70"
+                              : "text-amber-800/70"
+                            : "text-[#9ca3af]"
                     }`}
                   >
                     {item.time}
@@ -766,11 +1125,57 @@ function FilterPill({
   );
 }
 
-function KindBadge({ kind, quoteSent }: { kind: ActivityKind; quoteSent?: boolean }) {
+function KindBadge({
+  kind,
+  quoteSent,
+  paymentKind,
+  paymentFailed,
+  paymentBucket,
+}: {
+  kind: ActivityKind;
+  quoteSent?: boolean;
+  paymentKind?: PaymentReceivedKind;
+  paymentFailed?: boolean;
+  paymentBucket?: PaymentActivityBucket;
+}) {
   if (quoteSent) {
     return (
       <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#bbf7d0] text-[10px] font-bold uppercase text-emerald-800">
         Q
+      </span>
+    );
+  }
+  if (paymentFailed) {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-amber-100 text-[10px] font-bold uppercase text-amber-800">
+        !
+      </span>
+    );
+  }
+  if (paymentKind === "booking") {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#ddd6fe] text-[10px] font-bold uppercase text-violet-900">
+        B
+      </span>
+    );
+  }
+  if (paymentKind === "token") {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#fde68a] text-[10px] font-bold uppercase text-amber-900">
+        T
+      </span>
+    );
+  }
+  if (kind === "payment" || paymentBucket) {
+    return (
+      <span
+        className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-bold uppercase ${
+          paymentBucket === "link"
+            ? "bg-[#e0f2fe] text-[#0369a1]"
+            : "bg-[#d1fae5] text-[#047857]"
+        }`}
+      >
+        {paymentBucket === "link" ? "L" : "₹"}
       </span>
     );
   }
@@ -779,23 +1184,38 @@ function KindBadge({ kind, quoteSent }: { kind: ActivityKind; quoteSent?: boolea
       ? "bg-[#fef3c7] text-[#d97706]"
       : kind === "call"
         ? "bg-[#fee2e2] text-[#dc2626]"
-        : "bg-[#dbeafe] text-[#2563eb]";
+        : kind === "booking_token"
+          ? "bg-[#ffedd5] text-[#c2410c]"
+          : "bg-[#dbeafe] text-[#2563eb]";
 
   return (
     <span
       className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-bold uppercase ${styles}`}
     >
-      {kind === "note" ? "N" : kind === "call" ? "C" : "U"}
+      {kind === "note" ? "N" : kind === "call" ? "C" : kind === "booking_token" ? "BT" : "U"}
     </span>
   );
 }
 
-function SummaryIcon({ type }: { type: "user-plus" | "calendar" | "phone" | "quote" }) {
+function SummaryIcon({
+  type,
+}: {
+  type: "user-plus" | "calendar" | "phone" | "quote" | "payment" | "payment_failed";
+}) {
   if (type === "quote") {
     return (
       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M9 11l3 3L22 4" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    );
+  }
+  if (type === "payment" || type === "payment_failed") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="2" y="5" width="20" height="14" rx="2" />
+        <path d="M2 10h20" />
+        <path d="M6 15h4" />
       </svg>
     );
   }

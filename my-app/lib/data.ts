@@ -12,8 +12,10 @@ export type ActivityType =
   | "design_qa_invite"
   /** Backend `DESIGN_QA_SUBMITTED` — customer submitted external Design QA form. */
   | "design_qa_submitted"
-  /** Booking & Token handoff, cancel, restore, refund audit events. */
-  | "booking_token";
+  /** Booking & Token handoff, cancel, restore, refund audit events (non-payment). */
+  | "booking_token"
+  /** Easebuzz / payment link + settlement events (`BOOKING_PAYMENT_*`). */
+  | "payment";
 
 export interface ActivityItem {
   id: string;

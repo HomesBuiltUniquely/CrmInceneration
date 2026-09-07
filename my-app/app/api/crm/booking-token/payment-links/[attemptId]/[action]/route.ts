@@ -5,7 +5,14 @@ import {
   type PaymentLinkAction,
 } from "@/lib/booking-payment-link-upstream";
 
-const ACTIONS = new Set<PaymentLinkAction>(["copy", "resend", "edit", "switch-offline"]);
+const ACTIONS = new Set<PaymentLinkAction>([
+  "copy",
+  "resend",
+  "edit",
+  "switch-offline",
+  "cancel",
+  "delete",
+]);
 
 export async function POST(
   req: NextRequest,

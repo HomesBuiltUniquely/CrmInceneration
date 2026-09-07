@@ -344,6 +344,10 @@ export type BookingTokenConvertResponse = {
   bookingStatus?: string;
   designLeadId?: number | null;
   designSyncError?: string | null;
+  financeHandlingMode?: string | null;
+  financeSection?: string | null;
+  projectStage?: string | null;
+  approvedBy?: string | null;
   bookingApprovalMode?: "FULL_10" | "BUFFER_9_9" | "PENDING" | string;
   bufferApplied?: boolean;
   financeBufferNote?: string | null;

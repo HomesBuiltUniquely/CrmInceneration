@@ -845,3 +845,22 @@ Design Module must register the same `HUB_SYNC_API_KEY` for ingest routes.
 | **E2E QA** | Run §11 checklist across Easebuzz / offline / buffer / re-sync |
 
 **One-line summary:** On convert sync, Design Module writes payment data to `lead_hub_booking_sync`, finance mode to `leads.payload`, stage to `leads.project_stage` — auto-approves Easebuzz + APPROVED to `10-20%` (Finance Auto approved + CC), else Manual queue — idempotent on `booking_token_record_id`.
+
+---
+
+## 14. CRM FE align (2026-09-05) — Design re-wire verify fields
+
+Convert payload (`buildDesignModuleConvertPayload`) now forwards Design-required Easebuzz verify identity per `paymentHistory[]` row:
+
+| Field | Notes |
+|-------|--------|
+| `paymentKind` | `"Easebuzz"` \| `"Offline"` (channel for Design auto path) |
+| `bookingPaymentKind` | CRM milestone `TOKEN` \| `FULL_10%` |
+| `gatewayVerified` | Hub flag, else Easebuzz+txn id, else finance `APPROVED` |
+| `easebuzzTxnId` / `txnId` / `gatewayPaymentId` | From Hub gateway id aliases |
+| `paymentChannel` / `source` | `ONLINE`/`OFFLINE` · `EASEBUZZ` when online |
+| `autoFinanceEligible` / `completionPaymentSource` | Top-level hints (`EASEBUZZ` \| `OFFLINE` \| `MIXED`) |
+
+Convert API response surfaces Design `financeHandlingMode` / `financeSection` / `projectStage` for CRM UI (“Finance auto-approved” vs “Awaiting Design finance”).
+
+**Hub dependency:** webhook rows must still carry txn id / verify data — FE cannot invent Easebuzz txn ids.

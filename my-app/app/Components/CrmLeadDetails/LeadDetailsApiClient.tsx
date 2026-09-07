@@ -566,7 +566,6 @@ async function postExternalIntakeLead(args: {
     externalLeadId,
     pid: externalLeadId,
     sourceProject: "crm-inceneration",
-    designerName: "",
     salesExecutive: "",
     salesExecutiveEmail: "",
   };
@@ -586,7 +585,7 @@ async function postExternalIntakeLead(args: {
       pickUserLikeName(args.baseDetail.designer) ||
       pickUserLikeName(args.baseDetail.interiorDesigner),
   );
-  payload.designerName = resolvedDesignerName;
+  if (resolvedDesignerName) payload.designerName = resolvedDesignerName;
   const salesExecutive = normalizeOptionalPersonField(
     pickText(args.lead.assignee) ||
     pickText(args.baseDetail.assignedTo) ||
@@ -3263,7 +3262,7 @@ export default function LeadDetailsApiClient({
             followUpDate = slotDate;
           }
           const meetingDesignerName = args.meetingAppointment.designerName;
-          designerName = meetingDesignerName;
+          designerName = meetingDesignerName?.trim() || lead.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
