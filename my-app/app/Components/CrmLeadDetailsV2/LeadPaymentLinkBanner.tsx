@@ -5,6 +5,7 @@ import PaymentLinkPendingBanner from "@/app/Components/BookingToken/components/P
 import {
   PAYMENT_LINK_POLL_MS,
   PAYMENT_LINK_UPDATED_EVENT,
+  cancelPaymentLink,
   copyPaymentLinkToClipboard,
   editPaymentLinkAmount,
   fetchLeadPaymentLinkActive,
@@ -17,6 +18,7 @@ import {
   resendPaymentLink,
   switchPaymentLinkOffline,
   writeCachedPaymentLinkAttempt,
+  markPaymentLinkOnlineSuccess,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
@@ -54,8 +56,10 @@ export default function LeadPaymentLinkBanner({
 
   const applyAttempt = useCallback(
     (next: PaymentLinkAttempt | null | undefined) => {
+      const paid = String(next?.status ?? "").toUpperCase() === "PAID";
       const bannerAttempt = isBannerPaymentLink(next) ? next ?? null : null;
       writeCachedPaymentLinkAttempt(leadType, leadId, bannerAttempt);
+      if (paid) markPaymentLinkOnlineSuccess(leadType, leadId);
       setAttempt(bannerAttempt);
     },
     [leadId, leadType],
@@ -229,6 +233,29 @@ export default function LeadPaymentLinkBanner({
     }
   }, [attempt, leadId, leadType, onSwitchOffline]);
 
+  const handleDelete = useCallback(async () => {
+    if (!attempt) return;
+    setBusy(true);
+    setError("");
+    try {
+      await cancelPaymentLink(attempt.id);
+      notifyPaymentLinkUpdated(leadType, leadId, null);
+      setAttempt(null);
+      dispatchCrmLeadsInvalidate();
+    } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActive();
+      }
+      if (err instanceof PaymentLinkApiError) {
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Unable to delete payment link.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [attempt, leadId, leadType, loadActive]);
+
   if (!canUsePaymentLinks) return null;
   if (!isBannerPaymentLink(attempt) || !attempt) {
     if (!loading) return null;
@@ -242,7 +269,7 @@ export default function LeadPaymentLinkBanner({
   }
 
   return (
-    <div>
+    <div className="mt-3">
       <PaymentLinkPendingBanner
         attempt={attempt}
         busy={busy}
@@ -250,6 +277,7 @@ export default function LeadPaymentLinkBanner({
         onResend={() => void handleResend()}
         onEdit={(amount) => void handleEdit(amount)}
         onSwitchOffline={() => void handleSwitchOffline()}
+        onDelete={() => void handleDelete()}
       />
       {copied ? (
         <p className="mt-1 text-[12px] font-semibold text-emerald-700">Link copied</p>

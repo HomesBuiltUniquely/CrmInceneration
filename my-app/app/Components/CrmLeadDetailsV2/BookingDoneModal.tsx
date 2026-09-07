@@ -62,6 +62,7 @@ import { isClosedWonCustomerSubstage } from "@/lib/milestone-substage-map";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import {
   PAYMENT_LINK_POLL_MS,
+  cancelPaymentLink,
   copyPaymentLinkToClipboard,
   createLeadPaymentLink,
   editPaymentLinkAmount,
@@ -70,7 +71,9 @@ import {
   isBannerPaymentLink,
   isStalePaymentLinkAction,
   notifyPaymentLinkUpdated,
+  markPaymentLinkOnlineSuccess,
   PaymentLinkApiError,
+  isPaymentLinkActiveConflict,
   resolveSwitchOfflineAmount,
   resendPaymentLink,
   switchPaymentLinkOffline,
@@ -319,9 +322,11 @@ export default function BookingDoneModal({
   }, [leadId, leadType, open]);
 
   const applyAttempt = useCallback((attempt: PaymentLinkAttempt | null | undefined) => {
+    const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
     const next = isBannerPaymentLink(attempt) ? attempt ?? null : null;
     setActiveAttempt(next);
     notifyPaymentLinkUpdated(leadType, leadId, next);
+    if (paid) markPaymentLinkOnlineSuccess(leadType, leadId);
   }, [leadId, leadType]);
 
   const loadActiveAttempt = useCallback(async () => {
@@ -513,6 +518,12 @@ export default function BookingDoneModal({
       setHandoffError("Invalid lead type.");
       return;
     }
+    if (isBannerPaymentLink(activeAttempt)) {
+      setHandoffError(
+        "A payment link is already active. Delete it, wait for payment, or switch to offline.",
+      );
+      return;
+    }
     if (!selectedQuote || selectedQuote.amount == null) {
       setHandoffError("Select a quotation version before sending a payment link.");
       return;
@@ -543,7 +554,13 @@ export default function BookingDoneModal({
         setHandoffError(result.warnings.join(" · "));
       }
     } catch (err) {
-      if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
+      if (isPaymentLinkActiveConflict(err)) {
+        if (err.attempt) applyAttempt(err.attempt);
+        setHandoffError(
+          err.message ||
+            "A payment link is already active. Delete it, wait for payment, or switch to offline.",
+        );
+      } else if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
         setHandoffError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
       } else {
@@ -626,6 +643,24 @@ export default function BookingDoneModal({
       }
     } catch (err) {
       setHandoffError(err instanceof Error ? err.message : "Unable to switch to offline payment.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }
+
+  async function handleDeleteLeadPaymentLink() {
+    if (!activeAttempt) return;
+    setLinkBusy(true);
+    setHandoffError("");
+    try {
+      await cancelPaymentLink(activeAttempt.id);
+      setActiveAttempt(null);
+      notifyPaymentLinkUpdated(leadType, leadId, null);
+    } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
+      setHandoffError(err instanceof Error ? err.message : "Unable to delete payment link.");
     } finally {
       setLinkBusy(false);
     }
@@ -789,6 +824,7 @@ export default function BookingDoneModal({
                 onResend={() => void handleResendLeadPaymentLink()}
                 onEdit={(amount) => void handleEditLeadPaymentLink(amount)}
                 onSwitchOffline={() => void handleSwitchLeadOffline()}
+                onDelete={() => void handleDeleteLeadPaymentLink()}
               />
             </div>
           ) : (

@@ -1,5 +1,6 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { copyTextToClipboard } from "@/lib/copy-text-to-clipboard";
+import type { PaymentLinkAction } from "@/lib/booking-payment-link-upstream";
 
 export type PaymentLinkStatus =
   | "PENDING"
@@ -33,6 +34,11 @@ export type PaymentLinkAttempt = {
   paymentChannel?: string | null;
   paymentMethod?: string | null;
   bookingTokenRecordId?: string | null;
+  paymentFailureCount?: number;
+  hasPaymentFailures?: boolean;
+  lastPaymentFailureAt?: string | null;
+  lastPaymentFailureStatus?: string | null;
+  lastPaymentFailureReason?: string | null;
 };
 
 export type PaymentLinkResponse = {
@@ -43,6 +49,7 @@ export type PaymentLinkResponse = {
   userMessage?: string;
   error?: string;
   message?: string;
+  code?: string;
   paymentLinkUrl?: string | null;
   switchedToOffline?: boolean;
   amount?: number;
@@ -62,12 +69,21 @@ export type CreateLeadPaymentLinkInput = {
 export class PaymentLinkApiError extends Error {
   status: number;
   useOfflineFallback: boolean;
+  code?: string;
+  attempt?: PaymentLinkAttempt | null;
 
-  constructor(message: string, status: number, useOfflineFallback = false) {
+  constructor(
+    message: string,
+    status: number,
+    useOfflineFallback = false,
+    extras?: { code?: string; attempt?: PaymentLinkAttempt | null },
+  ) {
     super(message);
     this.name = "PaymentLinkApiError";
     this.status = status;
     this.useOfflineFallback = useOfflineFallback;
+    this.code = extras?.code;
+    this.attempt = extras?.attempt ?? null;
   }
 }
 
@@ -88,6 +104,16 @@ function pickStr(row: Record<string, unknown>, ...keys: string[]): string {
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
+}
+
+function pickBool(row: Record<string, unknown>, ...keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1" || String(value).toLowerCase() === "true") return true;
+    if (value === 0 || value === "0" || String(value).toLowerCase() === "false") return false;
+  }
+  return undefined;
 }
 
 function pickNum(row: Record<string, unknown>, ...keys: string[]): number | undefined {
@@ -138,7 +164,37 @@ export function parsePaymentLinkAttempt(raw: unknown): PaymentLinkAttempt | null
     bookingTokenRecordId:
       pickStr(row, "bookingTokenRecordId", "booking_token_record_id", "recordId", "dealId") || null,
     currency: pickStr(row, "currency") || "INR",
+    paymentFailureCount: pickNum(row, "paymentFailureCount", "payment_failure_count"),
+    hasPaymentFailures: pickBool(row, "hasPaymentFailures", "has_payment_failures"),
+    lastPaymentFailureAt:
+      pickStr(row, "lastPaymentFailureAt", "last_payment_failure_at") || null,
+    lastPaymentFailureStatus:
+      pickStr(row, "lastPaymentFailureStatus", "last_payment_failure_status") || null,
+    lastPaymentFailureReason:
+      pickStr(row, "lastPaymentFailureReason", "last_payment_failure_reason") || null,
   };
+}
+
+export function attemptPaymentFailureCount(attempt?: PaymentLinkAttempt | null): number {
+  const count = attempt?.paymentFailureCount;
+  if (typeof count === "number" && Number.isFinite(count) && count > 0) return Math.floor(count);
+  return 0;
+}
+
+export function attemptHasPaymentFailures(attempt?: PaymentLinkAttempt | null): boolean {
+  if (!attempt) return false;
+  return attempt.hasPaymentFailures === true || attemptPaymentFailureCount(attempt) > 0;
+}
+
+export function formatPaymentFailureStatusLabel(status?: string | null): string {
+  const raw = String(status ?? "").trim();
+  if (!raw) return "";
+  const spaced = raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 function parsePaymentLinkResponse(text: string): PaymentLinkResponse {
@@ -155,6 +211,7 @@ function parsePaymentLinkResponse(text: string): PaymentLinkResponse {
       userMessage: typeof parsed.userMessage === "string" ? parsed.userMessage : undefined,
       error: typeof parsed.error === "string" ? parsed.error : undefined,
       message: typeof parsed.message === "string" ? parsed.message : undefined,
+      code: typeof parsed.code === "string" ? parsed.code : undefined,
       paymentLinkUrl: pickStr(parsed, "paymentLinkUrl", "payment_link_url") || null,
       switchedToOffline: parsed.switchedToOffline === true,
       amount: pickNum(parsed, "amount"),
@@ -168,7 +225,10 @@ function parseApiError(text: string, fallback: string, status: number): PaymentL
   const parsed = parsePaymentLinkResponse(text);
   const message =
     parsed.userMessage?.trim() || parsed.error?.trim() || parsed.message?.trim() || fallback;
-  return new PaymentLinkApiError(message, status, parsed.useOfflineFallback === true);
+  return new PaymentLinkApiError(message, status, parsed.useOfflineFallback === true, {
+    code: parsed.code,
+    attempt: parsed.attempt,
+  });
 }
 
 async function readJsonResponse(res: Response, fallback: string): Promise<PaymentLinkResponse> {
@@ -253,7 +313,7 @@ export async function fetchDealPaymentLinkActive(
 
 async function postPaymentLinkAction(
   attemptId: string,
-  action: "copy" | "resend" | "edit" | "switch-offline",
+  action: PaymentLinkAction,
   body?: Record<string, unknown>,
 ): Promise<PaymentLinkResponse> {
   const res = await fetch(
@@ -286,6 +346,25 @@ export function editPaymentLinkAmount(
 
 export function switchPaymentLinkOffline(attemptId: string): Promise<PaymentLinkResponse> {
   return postPaymentLinkAction(attemptId, "switch-offline");
+}
+
+/** Cancel/delete unpaid active link. Tries `cancel`, then `delete` on 404. */
+export async function cancelPaymentLink(attemptId: string): Promise<PaymentLinkResponse> {
+  try {
+    return await postPaymentLinkAction(attemptId, "cancel");
+  } catch (err) {
+    if (err instanceof PaymentLinkApiError && err.status === 404) {
+      return postPaymentLinkAction(attemptId, "delete");
+    }
+    throw err;
+  }
+}
+
+export function isPaymentLinkActiveConflict(err: unknown): err is PaymentLinkApiError {
+  return (
+    err instanceof PaymentLinkApiError &&
+    (err.status === 409 || err.code === "PAYMENT_LINK_ACTIVE")
+  );
 }
 
 export function resolveCopiedPaymentLinkUrl(
@@ -339,11 +418,39 @@ export function isSmsFallback(attempt?: PaymentLinkAttempt | null): boolean {
 
 export const PAYMENT_LINK_POLL_MS = 20_000;
 export const PAYMENT_LINK_UPDATED_EVENT = "crm-payment-link-updated";
+export const PAYMENT_LINK_STATE_EVENT = "crm-payment-link-state";
 
 const activePaymentLinkCache = new Map<string, PaymentLinkAttempt | null>();
+const paymentLinkSuccessCache = new Map<string, boolean>();
 
 export function paymentLinkCacheKey(leadType: string, leadId: string): string {
   return `${leadType}:${leadId}`;
+}
+
+function emitPaymentLinkState(
+  leadType: string,
+  leadId: string,
+  attempt: PaymentLinkAttempt | null,
+): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent(PAYMENT_LINK_STATE_EVENT, {
+      detail: { leadType, leadId, attempt },
+    }),
+  );
+}
+
+export function readPaymentLinkOnlineSuccess(leadType: string, leadId: string): boolean {
+  return paymentLinkSuccessCache.get(paymentLinkCacheKey(leadType, leadId)) === true;
+}
+
+export function clearPaymentLinkOnlineSuccess(leadType: string, leadId: string): void {
+  paymentLinkSuccessCache.delete(paymentLinkCacheKey(leadType, leadId));
+}
+
+export function markPaymentLinkOnlineSuccess(leadType: string, leadId: string): void {
+  paymentLinkSuccessCache.set(paymentLinkCacheKey(leadType, leadId), true);
+  emitPaymentLinkState(leadType, leadId, readCachedPaymentLinkAttempt(leadType, leadId));
 }
 
 export function readCachedPaymentLinkAttempt(
@@ -359,10 +466,10 @@ export function writeCachedPaymentLinkAttempt(
   leadId: string,
   attempt: PaymentLinkAttempt | null | undefined,
 ): void {
-  activePaymentLinkCache.set(
-    paymentLinkCacheKey(leadType, leadId),
-    isBannerPaymentLink(attempt) ? attempt ?? null : null,
-  );
+  const banner = isBannerPaymentLink(attempt) ? attempt ?? null : null;
+  if (banner) clearPaymentLinkOnlineSuccess(leadType, leadId);
+  activePaymentLinkCache.set(paymentLinkCacheKey(leadType, leadId), banner);
+  emitPaymentLinkState(leadType, leadId, banner);
 }
 
 export function notifyPaymentLinkUpdated(

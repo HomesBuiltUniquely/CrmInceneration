@@ -707,7 +707,7 @@ export default function DealsTable({
     setConvertSubmitting(true);
     setConvertError("");
     try {
-      await convertBookingTokenDeal(convertTarget.id);
+      const result = await convertBookingTokenDeal(convertTarget.id);
       if (isCrmLeadType(convertTarget.leadType)) {
         await persistClosedWonBookingDoneMilestone(
           convertTarget.leadType as CrmLeadType,
@@ -717,6 +717,16 @@ export default function DealsTable({
       await loadDeals();
       onDealsChanged?.();
       onConvertedToBooking?.();
+      const mode = String(result.financeHandlingMode ?? "").toUpperCase();
+      if (mode === "AUTO_APPROVED") {
+        window.alert(
+          "Converted. Finance auto-approved via Easebuzz — Design stage moved toward 10–20%.",
+        );
+      } else if (mode === "MANUAL_QUEUE") {
+        window.alert(
+          "Converted. Awaiting Design finance approval (offline / proofs or mixed payments).",
+        );
+      }
     } catch (error) {
       setConvertError(error instanceof Error ? error.message : "Unable to convert to booking.");
       throw error;

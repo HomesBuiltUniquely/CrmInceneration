@@ -1,5 +1,6 @@
-import type { PaymentHistoryResponse } from "@/lib/booking-payment-history-api";
+import type { PaymentHistoryEntry, PaymentHistoryResponse } from "@/lib/booking-payment-history-api";
 import { bookingPaymentHistoryUpstreamUrl } from "@/lib/booking-payment-upstream";
+import { isEasebuzzPayment } from "@/lib/booking-payment-display";
 import {
   BOOKING_BUFFER_RATE,
   calculateBufferThresholdAmount,
@@ -40,6 +41,126 @@ function readPaymentHistoryField<T>(
     if (value !== undefined && value !== null) return value as T;
   }
   return undefined;
+}
+
+function readEntryField<T>(
+  entry: PaymentHistoryEntry,
+  ...keys: string[]
+): T | undefined {
+  const row = entry as PaymentHistoryEntry & Record<string, unknown>;
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && value !== "") return value as T;
+  }
+  return undefined;
+}
+
+function resolveEasebuzzTxnId(entry: PaymentHistoryEntry): string | null {
+  const raw =
+    readEntryField<string>(
+      entry,
+      "easebuzzTxnId",
+      "easebuzz_txn_id",
+      "txnId",
+      "txn_id",
+      "gatewayPaymentId",
+      "gateway_payment_id",
+      "transactionId",
+      "transaction_id",
+    ) ?? null;
+  const value = String(raw ?? "").trim();
+  return value || null;
+}
+
+function resolveGatewayVerified(entry: PaymentHistoryEntry): boolean {
+  const explicit = readEntryField<boolean | string>(
+    entry,
+    "gatewayVerified",
+    "gateway_verified",
+    "verified",
+  );
+  if (explicit === true || String(explicit).toLowerCase() === "true") return true;
+  if (explicit === false || String(explicit).toLowerCase() === "false") return false;
+  if (!isEasebuzzPayment(entry)) return false;
+  if (resolveEasebuzzTxnId(entry)) return true;
+  // Hub may mark gateway settle as finance APPROVED without a separate verify flag.
+  return String(entry.financeReviewStatus ?? "").toUpperCase() === "APPROVED";
+}
+
+/** Design Module channel label (Easebuzz / Offline) — not CRM milestone TOKEN|FULL_10%. */
+function resolveDesignChannelPaymentKind(entry: PaymentHistoryEntry): "Easebuzz" | "Offline" {
+  return isEasebuzzPayment(entry) ? "Easebuzz" : "Offline";
+}
+
+function resolvePaymentChannel(entry: PaymentHistoryEntry): string {
+  const channel = String(entry.paymentChannel ?? "").trim().toUpperCase();
+  if (channel === "ONLINE" || channel === "OFFLINE") return channel;
+  return isEasebuzzPayment(entry) ? "ONLINE" : "OFFLINE";
+}
+
+function mapPaymentHistoryEntryForDesign(entry: PaymentHistoryEntry, recordId: string) {
+  const easebuzzTxnId = resolveEasebuzzTxnId(entry);
+  const gatewayVerified = resolveGatewayVerified(entry);
+  const channelKind = resolveDesignChannelPaymentKind(entry);
+  const paymentChannel = resolvePaymentChannel(entry);
+
+  return {
+    id: entry.id,
+    sequence: entry.sequence,
+    amount: entry.amount,
+    extraAmount: entry.extraAmount ?? 0,
+    cumulativeReceived: entry.cumulativeReceived,
+    remainingAfter: entry.remainingAfter,
+    /** Design auto-finance: Easebuzz | Offline */
+    paymentKind: channelKind,
+    /** CRM milestone: TOKEN | FULL_10% */
+    bookingPaymentKind: entry.paymentKind ?? null,
+    source: entry.source ?? (channelKind === "Easebuzz" ? "EASEBUZZ" : entry.source),
+    paymentChannel,
+    paymentMethod: entry.paymentMethod ?? null,
+    gatewayVerified,
+    easebuzzTxnId,
+    txnId: easebuzzTxnId,
+    gatewayPaymentId: entry.gatewayPaymentId ?? easebuzzTxnId,
+    paymentAttemptId: entry.paymentAttemptId ?? null,
+    notes: entry.notes,
+    createdAt: entry.createdAt,
+    financeReviewStatus: entry.financeReviewStatus,
+    financeReviewAt: entry.financeReviewAt ?? null,
+    financeReviewBy: entry.financeReviewBy ?? null,
+    financeRejectReason: entry.financeRejectReason ?? null,
+    proofs: (entry.proofs ?? []).map((proof) => ({
+      id: proof.id,
+      originalFileName: proof.originalFileName,
+      mimeType: proof.mimeType,
+      sizeBytes: proof.sizeBytes,
+      uploadedAt: proof.uploadedAt,
+      contentPath:
+        proof.viewUrl?.trim() ||
+        hubProofContentPath(recordId, proof.id),
+    })),
+  };
+}
+
+function resolveCompletionPaymentSource(
+  history: PaymentHistoryEntry[],
+): "EASEBUZZ" | "OFFLINE" | "MIXED" | null {
+  const paid = history.filter((entry) => Number(entry.amount) > 0);
+  if (!paid.length) return null;
+  const online = paid.filter((entry) => isEasebuzzPayment(entry));
+  const offline = paid.filter((entry) => !isEasebuzzPayment(entry));
+  if (online.length && offline.length) return "MIXED";
+  if (online.length) return "EASEBUZZ";
+  return "OFFLINE";
+}
+
+function resolveAutoFinanceEligible(
+  history: PaymentHistoryEntry[],
+  completionSource: "EASEBUZZ" | "OFFLINE" | "MIXED" | null,
+): boolean {
+  if (completionSource !== "EASEBUZZ") return false;
+  const paid = history.filter((entry) => Number(entry.amount) > 0);
+  return paid.length > 0 && paid.every((entry) => resolveGatewayVerified(entry));
 }
 
 export type FinanceSyncEligibility = {
@@ -116,29 +237,14 @@ export function buildDesignModuleConvertPayload(
     paymentHistory.history.find((entry) => Number(entry.remainingAfter) === 0) ??
     paymentHistory.history[paymentHistory.history.length - 1];
 
-  const paymentHistoryPayload = paymentHistory.history.map((entry) => ({
-    id: entry.id,
-    sequence: entry.sequence,
-    amount: entry.amount,
-    extraAmount: entry.extraAmount ?? 0,
-    cumulativeReceived: entry.cumulativeReceived,
-    remainingAfter: entry.remainingAfter,
-    paymentKind: entry.paymentKind,
-    source: entry.source,
-    notes: entry.notes,
-    createdAt: entry.createdAt,
-    financeReviewStatus: entry.financeReviewStatus,
-    proofs: (entry.proofs ?? []).map((proof) => ({
-      id: proof.id,
-      originalFileName: proof.originalFileName,
-      mimeType: proof.mimeType,
-      sizeBytes: proof.sizeBytes,
-      uploadedAt: proof.uploadedAt,
-      contentPath:
-        proof.viewUrl?.trim() ||
-        hubProofContentPath(recordId, proof.id),
-    })),
-  }));
+  const paymentHistoryPayload = paymentHistory.history.map((entry) =>
+    mapPaymentHistoryEntryForDesign(entry, recordId),
+  );
+  const completionPaymentSource = resolveCompletionPaymentSource(paymentHistory.history);
+  const autoFinanceEligible = resolveAutoFinanceEligible(
+    paymentHistory.history,
+    completionPaymentSource,
+  );
 
   const remainingAmount = Math.max(0, paymentHistory.remainingAmount ?? 0);
   const extraAmountReceived = Math.max(
@@ -189,6 +295,8 @@ export function buildDesignModuleConvertPayload(
       completionEntry?.paymentKind,
     paymentHistory: paymentHistoryPayload,
     hubProofBaseUrl: HUB_PROOF_BASE_URL,
+    autoFinanceEligible,
+    completionPaymentSource,
     experience: {
       quoteId:
         (paymentHistory as { quoteId?: string | number }).quoteId ?? null,
@@ -253,7 +361,15 @@ export async function syncConvertBookingToDesignModule(
   recordId: string,
   authHeaders: AuthHeaders,
   appOrigin?: string,
-): Promise<{ designLeadId?: number; bookingTokenRecordId?: string }> {
+): Promise<{
+  designLeadId?: number;
+  bookingTokenRecordId?: string;
+  financeHandlingMode?: string;
+  financeSection?: string;
+  projectStage?: string;
+  approvedBy?: string;
+  ok?: boolean;
+}> {
   const paymentHistory = await fetchDealPaymentHistory(recordId, authHeaders, appOrigin);
   if (!paymentHistory.leadType || !paymentHistory.leadId) {
     throw new Error("Payment history missing leadType or leadId.");
@@ -285,7 +401,15 @@ export async function syncConvertBookingToDesignModule(
     const text = await res.text();
     if (res.ok) {
       try {
-        return JSON.parse(text) as { designLeadId?: number; bookingTokenRecordId?: string };
+        return JSON.parse(text) as {
+          designLeadId?: number;
+          bookingTokenRecordId?: string;
+          financeHandlingMode?: string;
+          financeSection?: string;
+          projectStage?: string;
+          approvedBy?: string;
+          ok?: boolean;
+        };
       } catch {
         return {};
       }
@@ -321,29 +445,9 @@ function mapPaymentHistoryPayload(
   paymentHistory: PaymentHistoryResponse,
   recordId: string,
 ) {
-  return paymentHistory.history.map((entry) => ({
-    id: entry.id,
-    sequence: entry.sequence,
-    amount: entry.amount,
-    extraAmount: entry.extraAmount ?? 0,
-    cumulativeReceived: entry.cumulativeReceived,
-    remainingAfter: entry.remainingAfter,
-    paymentKind: entry.paymentKind,
-    source: entry.source,
-    notes: entry.notes,
-    createdAt: entry.createdAt,
-    financeReviewStatus: entry.financeReviewStatus,
-    proofs: (entry.proofs ?? []).map((proof) => ({
-      id: proof.id,
-      originalFileName: proof.originalFileName,
-      mimeType: proof.mimeType,
-      sizeBytes: proof.sizeBytes,
-      uploadedAt: proof.uploadedAt,
-      contentPath:
-        proof.viewUrl?.trim() ||
-        hubProofContentPath(recordId, proof.id),
-    })),
-  }));
+  return paymentHistory.history.map((entry) =>
+    mapPaymentHistoryEntryForDesign(entry, recordId),
+  );
 }
 
 function readRefundTotals(paymentHistory: PaymentHistoryResponse) {

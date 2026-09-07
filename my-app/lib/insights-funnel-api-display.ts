@@ -9,6 +9,7 @@ import {
   isPassagesTrendWeekPoint,
   oldSharePercentFromPassagesCounts,
 } from "@/lib/crm-insights-api";
+import { buildRangeWeekBuckets } from "@/lib/insights-week-charts";
 import { resolveFunnelCanonicalKey } from "@/lib/insights-funnel-stage-paths";
 
 /** Passages only — which lead-age slice to show on stage bars. */
@@ -121,6 +122,14 @@ export function resolveDiscoveryToClosedSummary(
     : modeFunnel.salesFunnel ?? [];
   if (stages.length === 0) return null;
 
+  const feNew = computeDiscoveryToClosedPercent(stages, "new");
+  const feOld = computeDiscoveryToClosedPercent(stages, "old");
+  const feOverall = computeDiscoveryToClosedPercent(stages, passagesSegment);
+  const byKey = stageByKey(stages);
+  const discovery = byKey.get(FUNNEL_CONVERSION_BASE_STAGE);
+  const discoveryNew = discovery ? passagesSegmentCount(discovery, "new") : 0;
+  const discoveryOld = discovery ? passagesSegmentCount(discovery, "old") : 0;
+
   const hub = modeFunnel.conversion;
   if (hub) {
     const pickOverall =
@@ -129,21 +138,58 @@ export function resolveDiscoveryToClosedSummary(
         : passagesSegment === "old" && hub.oldPercent != null
           ? hub.oldPercent
           : hub.overallPercent;
+
+    // Prefer Hub; override 0/null when stage new/old counts imply a real rate.
+    const newPercent =
+      hub.newPercent != null &&
+      !(hub.newPercent === 0 && feNew > 0 && discoveryNew > 0)
+        ? hub.newPercent
+        : discoveryNew > 0 || feNew > 0
+          ? feNew
+          : (hub.newPercent ?? null);
+    const oldPercent =
+      hub.oldPercent != null &&
+      !(hub.oldPercent === 0 && feOld > 0 && discoveryOld > 0)
+        ? hub.oldPercent
+        : discoveryOld > 0 || feOld > 0
+          ? feOld
+          : (hub.oldPercent ?? null);
+
     return {
       baseStage: hub.baseStage || FUNNEL_CONVERSION_BASE_STAGE,
       overallPercent: pickOverall,
-      newPercent: hub.newPercent ?? null,
-      oldPercent: hub.oldPercent ?? null,
+      newPercent,
+      oldPercent,
       fromHub: true,
     };
   }
 
   return {
     baseStage: FUNNEL_CONVERSION_BASE_STAGE,
-    overallPercent: computeDiscoveryToClosedPercent(stages, passagesSegment),
-    newPercent: computeDiscoveryToClosedPercent(stages, "new"),
-    oldPercent: computeDiscoveryToClosedPercent(stages, "old"),
+    overallPercent: feOverall,
+    newPercent: feNew,
+    oldPercent: feOld,
     fromHub: false,
+  };
+}
+
+/** New vs Old share of Movement (Passages) entries — complements Disc→Closed rates. */
+export function resolvePassagesEntryShareSummary(
+  modeFunnel: InsightsSalesFunnelResponse | null | undefined,
+): {
+  newCount: number;
+  oldCount: number;
+  newSharePercent: number;
+  oldSharePercent: number;
+} | null {
+  const agg = aggregatePassagesNewOldFromFunnel(modeFunnel);
+  if (agg.newCount + agg.oldCount <= 0) return null;
+  const total = agg.newCount + agg.oldCount;
+  return {
+    newCount: agg.newCount,
+    oldCount: agg.oldCount,
+    newSharePercent: Math.min(100, (agg.newCount / total) * 100),
+    oldSharePercent: agg.oldSharePercent,
   };
 }
 
@@ -151,18 +197,20 @@ export type BuildApiFunnelDisplayOpts = {
   modeFunnel: InsightsSalesFunnelResponse;
   funnelMode: InsightsFunnelMode;
   passagesSegment: PassagesAgeSegment;
-  /** Cohort path tab — hide Fresh Lead when not All. Passages always hides Fresh Lead. */
+  /** Kept for callers; Fresh Lead is always hidden for Passages + Cohort. */
   pathFilter: "all" | "won" | "lost" | "hold";
 };
 
 /**
  * Build display rows for Passages / Cohort Hub modes.
- * Applies segment counts, Discovery-based conversion %, and preserves Total unchanged.
+ * Fresh Lead is not a funnel stage in these modes — omit it.
+ * Total = Hub cohort/entry size (unique leads or entries), never Fresh Lead mirror.
+ * Fallback when Hub omits Total: sum of remaining milestone counts.
  */
 export function buildApiModeFunnelDisplay(
   opts: BuildApiFunnelDisplayOpts,
 ): ApiFunnelDisplayStage[] {
-  const { modeFunnel, funnelMode, passagesSegment, pathFilter } = opts;
+  const { modeFunnel, funnelMode, passagesSegment } = opts;
   const rawStages = (modeFunnel.stages?.length
     ? modeFunnel.stages
     : modeFunnel.salesFunnel) ?? [];
@@ -171,18 +219,11 @@ export function buildApiModeFunnelDisplay(
     (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "total",
   );
 
-  const milestones =
-    funnelMode === "passages"
-      ? withoutTotal.filter(
-          (s) =>
-            resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
-        )
-      : pathFilter === "all"
-        ? withoutTotal
-        : withoutTotal.filter(
-            (s) =>
-              resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
-          );
+  // Passages + Cohort: Fresh Lead is not a sales milestone on this chart.
+  const milestones = withoutTotal.filter(
+    (s) =>
+      resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
+  );
 
   const byKey = stageByKey(milestones);
   const segment: PassagesAgeSegment =
@@ -192,27 +233,6 @@ export function buildApiModeFunnelDisplay(
   const totalFromApi = rawStages.find(
     (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === "total",
   );
-
-  const totalStage: ApiFunnelDisplayStage = {
-    ...(totalFromApi ?? {
-      stageKey: "total",
-      stageLabel: "Total",
-      count:
-        modeFunnel.total?.count != null && modeFunnel.total.count > 0
-          ? modeFunnel.total.count
-          : withoutTotal.reduce((s, x) => s + (Number(x.count) || 0), 0),
-      countLabel: modeFunnel.total?.countLabel || "Leads",
-      value: 0,
-      conversionPercent: 100,
-      sharePercent: 100,
-    }),
-    displayCount:
-      totalFromApi?.count ??
-      (modeFunnel.total?.count != null && modeFunnel.total.count > 0
-        ? modeFunnel.total.count
-        : withoutTotal.reduce((s, x) => s + (Number(x.count) || 0), 0)),
-    conversionFromDiscovery: 100,
-  };
 
   const milestoneRows: ApiFunnelDisplayStage[] = milestones.map((stage) => {
     const key = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
@@ -235,6 +255,36 @@ export function buildApiModeFunnelDisplay(
       conversionFromDiscovery,
     };
   });
+
+  const milestonesSum = milestoneRows.reduce(
+    (sum, s) => sum + (Number(s.displayCount) || 0),
+    0,
+  );
+
+  // Prefer Hub Total (cohort size / entry total). Do not use Fresh Lead count.
+  // If Hub Total missing, fall back to sum of visible stages.
+  const hubTotal =
+    totalFromApi?.count ??
+    (modeFunnel.total?.count != null && modeFunnel.total.count > 0
+      ? modeFunnel.total.count
+      : null);
+  const totalCount = hubTotal != null ? Number(hubTotal) || 0 : milestonesSum;
+
+  const totalStage: ApiFunnelDisplayStage = {
+    ...(totalFromApi ?? {
+      stageKey: "total",
+      stageLabel: "Total",
+      count: totalCount,
+      countLabel: modeFunnel.total?.countLabel || "Leads",
+      value: 0,
+      conversionPercent: 100,
+      sharePercent: 100,
+    }),
+    count: totalCount,
+    displayCount: totalCount,
+    countLabel: modeFunnel.total?.countLabel || "Leads",
+    conversionFromDiscovery: 100,
+  };
 
   return [totalStage, ...milestoneRows];
 }
@@ -279,7 +329,7 @@ function istMonthLabel(monthKey: string): string {
   });
 }
 
-/** Sum Passages new/old entry counts across milestones (excludes synthetic Total). */
+/** Sum Passages new/old entry counts across milestones (excludes Total + Fresh Lead). */
 export function aggregatePassagesNewOldFromFunnel(
   modeFunnel: InsightsSalesFunnelResponse | null | undefined,
 ): { newCount: number; oldCount: number; oldSharePercent: number } {
@@ -291,7 +341,7 @@ export function aggregatePassagesNewOldFromFunnel(
   let oldCount = 0;
   for (const s of stages) {
     const key = resolveFunnelCanonicalKey(s.stageKey || s.stageLabel);
-    if (key === "total") continue;
+    if (key === "total" || key === "fresh_lead") continue;
     newCount += Number(s.newCount ?? 0);
     oldCount += Number(s.oldCount ?? 0);
   }
@@ -382,4 +432,40 @@ export function enrichPassagesTrendWithLiveFunnel(
     points,
     granularity: trend.granularity ?? "month",
   };
+}
+
+/**
+ * Fill missing week `rangeLabel` (e.g. "1–7 Sep") from Insights date bounds
+ * so W1…W5 are identifiable when Hub only sends weekIndex.
+ */
+export function enrichPassagesTrendWeekRangeLabels(
+  points: InsightsPassagesTrendPoint[],
+  dateFrom?: string | null,
+  dateTo?: string | null,
+): InsightsPassagesTrendPoint[] {
+  if (!dateFrom?.trim() || !dateTo?.trim() || points.length === 0) return points;
+  const buckets = buildRangeWeekBuckets(
+    { submittedFrom: dateFrom.trim(), submittedTo: dateTo.trim() },
+    6,
+  );
+  if (buckets.length === 0) return points;
+
+  return points.map((p) => {
+    if (!isPassagesTrendWeekPoint(p)) return p;
+    if (p.rangeLabel?.trim()) return p;
+    const weekNum =
+      p.weekIndex && p.weekIndex > 0
+        ? p.weekIndex
+        : Number((p.period.match(/^W(\d+)$/i) || [])[1] || 0);
+    const bucket = weekNum > 0 ? buckets[weekNum - 1] : undefined;
+    if (!bucket) return p;
+    return {
+      ...p,
+      rangeLabel: bucket.label,
+      periodLabel:
+        p.periodLabel && !/^W\d+$/i.test(p.periodLabel)
+          ? p.periodLabel
+          : `W${weekNum} · ${bucket.label}`,
+    };
+  });
 }

@@ -2,7 +2,7 @@ import { BASE_URL } from "@/lib/base-url";
 import { crmLeadTypeToFloorPlanLeadType } from "@/lib/floor-plan";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
-export type PaymentLinkAction = "copy" | "resend" | "edit" | "switch-offline";
+export type PaymentLinkAction = "copy" | "resend" | "edit" | "switch-offline" | "cancel" | "delete";
 
 export function leadPaymentLinksUpstreamCandidates(
   leadType: CrmLeadType,
@@ -47,5 +47,7 @@ export function paymentLinkActionUpstreamCandidates(
   return [
     `${BASE_URL}/v1/booking-token/payment-links/${id}/${action}`,
     `${BASE_URL}/api/crm/booking-token/payment-links/${id}/${action}`,
+    `${BASE_URL}/v1/leads/payment-links/${id}/${action}`,
+    `${BASE_URL}/api/crm/lead/payment-links/${id}/${action}`,
   ];
 }
