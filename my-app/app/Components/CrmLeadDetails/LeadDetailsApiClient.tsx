@@ -1813,6 +1813,26 @@ export default function LeadDetailsApiClient({
     salesClosureAuthUser,
   ]);
 
+  const refreshActivities = useCallback(async () => {
+    if (!validLeadType) return;
+    const lt = leadTypeParam as CrmLeadType;
+    try {
+      const actJson = await getLeadActivities(lt, leadId);
+      setLead((prev) => ({
+        ...prev,
+        activities: mapLeadActivitiesJson(actJson, lt, leadId),
+      }));
+    } catch {
+      /* ignore */
+    }
+  }, [leadId, leadTypeParam, validLeadType]);
+
+  const refreshLeadAfterSalesClosure = useCallback(() => {
+    notifyInfo("Refreshing latest lead updates...");
+    void load();
+    void refreshActivities();
+  }, [load, notifyInfo, refreshActivities]);
+
   const redirectToStrictSalesClosure = useCallback(
     async (previousStage: Lead["stageBlock"]) => {
       if (!canClosedLeadHeader) {
@@ -1839,12 +1859,12 @@ export default function LeadDetailsApiClient({
         "focus",
         () => {
           console.info("[sales-closure] user returned to CRM, refreshing lead...");
+          refreshLeadAfterSalesClosure();
         },
         { once: true }
       );
     },
-    [buildStrictSalesClosureUrl, canClosedLeadHeader, leadId, leadType, notifyError],
-  );
+[buildStrictSalesClosureUrl, canClosedLeadHeader, leadId, leadType, notifyError, refreshLeadAfterSalesClosure],  );
 
   const openStrictSalesClosureNewTab = useCallback(async () => {
     if (!canClosedLeadHeader) {
@@ -1955,26 +1975,6 @@ export default function LeadDetailsApiClient({
     notifySuccess,
     validLeadType,
   ]);
-
-  const refreshActivities = useCallback(async () => {
-    if (!validLeadType) return;
-    const lt = leadTypeParam as CrmLeadType;
-    try {
-      const actJson = await getLeadActivities(lt, leadId);
-      setLead((prev) => ({
-        ...prev,
-        activities: mapLeadActivitiesJson(actJson, lt, leadId),
-      }));
-    } catch {
-      /* ignore */
-    }
-  }, [leadId, leadTypeParam, validLeadType]);
-
-  const refreshLeadAfterSalesClosure = useCallback(() => {
-    notifyInfo("Refreshing latest lead updates...");
-    void load();
-    void refreshActivities();
-  }, [load, notifyInfo, refreshActivities]);
 
   const maybeOpenSalesClosureAfterWon = useCallback(
     (statusCandidates: unknown[]) => {
@@ -3563,6 +3563,19 @@ export default function LeadDetailsApiClient({
     // Milestone updates after payment handoff — open popup on lead details (no full-page navigation).
     setBookingDoneOpen(true);
   }, [lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
+
+  useEffect(() => {
+    if (!validLeadType || typeof window === "undefined") return;
+    const onFocus = () => {
+      console.info("[LeadDetailsApiClient] window focused, reloading lead details...");
+      void load();
+      void refreshActivities();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [load, refreshActivities, validLeadType]);
 
   if (!validLeadType) {
     return (
