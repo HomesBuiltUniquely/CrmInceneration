@@ -151,3 +151,45 @@ Status **409** preferred.
 3. Delete calls `cancel`/`delete` → clears banner → Send enabled.
 4. Payment history click opens payment detail; “Back to send payment” returns to Online/Offline composer.
 5. Paid / expired / deleted / switch-offline all clear active via `GET …/active` (FE also polls).
+
+## After payment success — customer WhatsApp + email (Hub, not CRM)
+
+When Easebuzz webhook marks the attempt **PAID**, Hub must send a receipt to the customer on **WhatsApp + Email** (same channels as the payment link). CRM frontend must **not** send this — polling / multiple tabs would duplicate or miss it.
+
+**When:** immediately after payment is recorded (same transaction as `BOOKING_PAYMENT_PAID`). **Once per paid attempt** (idempotent).
+
+**Channels:** WhatsApp first, Email always. If WhatsApp fails, SMS fallback (same as link send). Offline cash/cheque proofs do **not** use this template unless product later asks.
+
+**Suggested copy (replace `{name}`, `{amount}`):**
+
+WhatsApp:
+
+```
+Hi {name},
+
+We have received your payment of {amount}. Thank you for trusting Hub Interior with your home.
+
+"A house is walls and rooms. A home is the life you build inside it."
+
+Warm wishes,
+Team Hub Interior
+```
+
+Email subject: `Payment received — Hub Interior`
+
+Email body:
+
+```
+Dear {name},
+
+We have received your payment of {amount}. Thank you for trusting Hub Interior with your home.
+
+"A house is walls and rooms. A home is the life you build inside it."
+
+We are glad to walk this journey with you.
+
+Warm regards,
+Team Hub Interior
+```
+
+Optional activity: `BOOKING_PAYMENT_RECEIPT_SENT` (channels + attemptId). Do not add a second payment-history row.

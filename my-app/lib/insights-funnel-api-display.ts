@@ -57,6 +57,62 @@ export function passagesSegmentCount(
   return Number(stage.count ?? 0);
 }
 
+/**
+ * Distinct Total count for Passages All | New | Old.
+ * New/Old require Hub total.newCount / total.oldCount — never fall back to All.count.
+ */
+export function passagesSegmentTotalCount(
+  modeFunnel: InsightsSalesFunnelResponse,
+  totalStage: InsightsSalesFunnelStage | undefined,
+  segment: PassagesAgeSegment,
+): number | null {
+  const hubTotal = modeFunnel.total;
+  if (segment === "new") {
+    if (hubTotal?.newCount != null) return Number(hubTotal.newCount);
+    if (totalStage?.newCount != null) return Number(totalStage.newCount);
+    return null;
+  }
+  if (segment === "old") {
+    if (hubTotal?.oldCount != null) return Number(hubTotal.oldCount);
+    if (totalStage?.oldCount != null) return Number(totalStage.oldCount);
+    return null;
+  }
+  if (hubTotal?.count != null && Number(hubTotal.count) > 0) {
+    return Number(hubTotal.count);
+  }
+  if (totalStage?.count != null) return Number(totalStage.count);
+  return null;
+}
+
+/** Hub segment conversion % (may exceed 100). Null → Fresh Lead "—". */
+export function passagesSegmentConversionPercent(
+  stage: InsightsSalesFunnelStage,
+  segment: PassagesAgeSegment,
+  stageKey: string,
+  discoverySegmentCount: number,
+): number | null {
+  const key = resolveFunnelCanonicalKey(stageKey);
+  if (key === "fresh_lead") return null;
+  if (key === "total" || key === FUNNEL_CONVERSION_BASE_STAGE) {
+    return discoverySegmentCount > 0 ? 100 : 0;
+  }
+  if (segment === "new" && stage.newConversionPercent != null) {
+    return Number(stage.newConversionPercent);
+  }
+  if (segment === "old" && stage.oldConversionPercent != null) {
+    return Number(stage.oldConversionPercent);
+  }
+  if (segment === "all" && stage.conversionPercent != null) {
+    return Number(stage.conversionPercent);
+  }
+  // FE fallback — no clamp (Old mid-funnel can exceed Discovery-in-window).
+  return conversionPercentFromDiscovery(
+    key,
+    passagesSegmentCount(stage, segment),
+    discoverySegmentCount,
+  );
+}
+
 export function stageHasPassagesSplit(stage: InsightsSalesFunnelStage): boolean {
   return (
     stage.newCount != null ||
@@ -66,7 +122,7 @@ export function stageHasPassagesSplit(stage: InsightsSalesFunnelStage): boolean 
   );
 }
 
-/** Stage-to-stage % from Discovery base for one segment slice. */
+/** Stage-to-stage % from Discovery base — do NOT clamp at 100. */
 export function conversionPercentFromDiscovery(
   stageKey: string,
   displayCount: number,
@@ -79,7 +135,7 @@ export function conversionPercentFromDiscovery(
     return discoveryBaseCount > 0 ? 100 : 0;
   }
   if (discoveryBaseCount <= 0) return 0;
-  return Math.min(100, (displayCount / discoveryBaseCount) * 100);
+  return (displayCount / discoveryBaseCount) * 100;
 }
 
 function discoveryCountForSegment(
@@ -109,7 +165,7 @@ export function computeDiscoveryToClosedPercent(
   const base = discoveryCountForSegment(byKey, segment);
   const closed = closedCountForSegment(byKey, segment);
   if (base <= 0) return 0;
-  return Math.min(100, (closed / base) * 100);
+  return (closed / base) * 100;
 }
 
 export function resolveDiscoveryToClosedSummary(
@@ -173,7 +229,7 @@ export function resolveDiscoveryToClosedSummary(
   };
 }
 
-/** New vs Old share of Movement (Passages) entries — complements Disc→Closed rates. */
+/** New vs Old share of Movement volume — prefer Hub conversion.movementNew/Old. */
 export function resolvePassagesEntryShareSummary(
   modeFunnel: InsightsSalesFunnelResponse | null | undefined,
 ): {
@@ -182,14 +238,25 @@ export function resolvePassagesEntryShareSummary(
   newSharePercent: number;
   oldSharePercent: number;
 } | null {
+  if (!modeFunnel) return null;
+  const hubNew = modeFunnel.conversion?.movementNew;
+  const hubOld = modeFunnel.conversion?.movementOld;
   const agg = aggregatePassagesNewOldFromFunnel(modeFunnel);
-  if (agg.newCount + agg.oldCount <= 0) return null;
-  const total = agg.newCount + agg.oldCount;
+  const newCount =
+    hubNew != null && Number.isFinite(Number(hubNew))
+      ? Number(hubNew)
+      : agg.newCount;
+  const oldCount =
+    hubOld != null && Number.isFinite(Number(hubOld))
+      ? Number(hubOld)
+      : agg.oldCount;
+  if (newCount + oldCount <= 0) return null;
+  const total = newCount + oldCount;
   return {
-    newCount: agg.newCount,
-    oldCount: agg.oldCount,
-    newSharePercent: Math.min(100, (agg.newCount / total) * 100),
-    oldSharePercent: agg.oldSharePercent,
+    newCount,
+    oldCount,
+    newSharePercent: (newCount / total) * 100,
+    oldSharePercent: (oldCount / total) * 100,
   };
 }
 
@@ -197,15 +264,13 @@ export type BuildApiFunnelDisplayOpts = {
   modeFunnel: InsightsSalesFunnelResponse;
   funnelMode: InsightsFunnelMode;
   passagesSegment: PassagesAgeSegment;
-  /** Kept for callers; Fresh Lead is always hidden for Passages + Cohort. */
+  /** Passages: always hide Fresh Lead. Cohort: hide Fresh Lead (Hub omits; FE strips if present). */
   pathFilter: "all" | "won" | "lost" | "hold";
 };
 
 /**
  * Build display rows for Passages / Cohort Hub modes.
- * Fresh Lead is not a funnel stage in these modes — omit it.
- * Total = Hub cohort/entry size (unique leads or entries), never Fresh Lead mirror.
- * Fallback when Hub omits Total: sum of remaining milestone counts.
+ * Fresh Lead omitted. Passages Total / % follow All|New|Old segment.
  */
 export function buildApiModeFunnelDisplay(
   opts: BuildApiFunnelDisplayOpts,
@@ -219,7 +284,6 @@ export function buildApiModeFunnelDisplay(
     (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "total",
   );
 
-  // Passages + Cohort: Fresh Lead is not a sales milestone on this chart.
   const milestones = withoutTotal.filter(
     (s) =>
       resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) !== "fresh_lead",
@@ -234,17 +298,58 @@ export function buildApiModeFunnelDisplay(
     (s) => resolveFunnelCanonicalKey(s.stageKey || s.stageLabel) === "total",
   );
 
+  const cohortTotalFallback =
+    modeFunnel.total?.count != null && modeFunnel.total.count > 0
+      ? modeFunnel.total.count
+      : withoutTotal.reduce((s, x) => s + (Number(x.count) || 0), 0);
+
+  let hubTotalCount: number;
+  if (funnelMode === "passages") {
+    const segmentTotal = passagesSegmentTotalCount(
+      modeFunnel,
+      totalFromApi,
+      segment,
+    );
+    // Never leave New/Old stuck on All.count when Hub segment totals missing.
+    hubTotalCount = segmentTotal != null ? segmentTotal : 0;
+  } else {
+    hubTotalCount =
+      totalFromApi?.count ??
+      (Number(cohortTotalFallback) || 0);
+  }
+
+  const totalStage: ApiFunnelDisplayStage = {
+    ...(totalFromApi ?? {
+      stageKey: "total",
+      stageLabel: "Total",
+      count: hubTotalCount,
+      countLabel: modeFunnel.total?.countLabel || "Leads",
+      value: 0,
+      conversionPercent: 100,
+      sharePercent: 100,
+    }),
+    count: hubTotalCount,
+    displayCount: hubTotalCount,
+    countLabel: modeFunnel.total?.countLabel || "Leads",
+    conversionPercent: 100,
+    conversionFromDiscovery: 100,
+  };
+
   const milestoneRows: ApiFunnelDisplayStage[] = milestones.map((stage) => {
     const key = resolveFunnelCanonicalKey(stage.stageKey || stage.stageLabel);
     const displayCount =
       funnelMode === "passages"
         ? passagesSegmentCount(stage, segment)
         : Number(stage.count ?? 0);
-    const conversionFromDiscovery = conversionPercentFromDiscovery(
-      key,
-      displayCount,
-      discoveryBase,
-    );
+    const conversionFromDiscovery =
+      funnelMode === "passages"
+        ? passagesSegmentConversionPercent(
+            stage,
+            segment,
+            key,
+            discoveryBase,
+          )
+        : conversionPercentFromDiscovery(key, displayCount, discoveryBase);
 
     return {
       ...stage,
@@ -255,36 +360,6 @@ export function buildApiModeFunnelDisplay(
       conversionFromDiscovery,
     };
   });
-
-  const milestonesSum = milestoneRows.reduce(
-    (sum, s) => sum + (Number(s.displayCount) || 0),
-    0,
-  );
-
-  // Prefer Hub Total (cohort size / entry total). Do not use Fresh Lead count.
-  // If Hub Total missing, fall back to sum of visible stages.
-  const hubTotal =
-    totalFromApi?.count ??
-    (modeFunnel.total?.count != null && modeFunnel.total.count > 0
-      ? modeFunnel.total.count
-      : null);
-  const totalCount = hubTotal != null ? Number(hubTotal) || 0 : milestonesSum;
-
-  const totalStage: ApiFunnelDisplayStage = {
-    ...(totalFromApi ?? {
-      stageKey: "total",
-      stageLabel: "Total",
-      count: totalCount,
-      countLabel: modeFunnel.total?.countLabel || "Leads",
-      value: 0,
-      conversionPercent: 100,
-      sharePercent: 100,
-    }),
-    count: totalCount,
-    displayCount: totalCount,
-    countLabel: modeFunnel.total?.countLabel || "Leads",
-    conversionFromDiscovery: 100,
-  };
 
   return [totalStage, ...milestoneRows];
 }

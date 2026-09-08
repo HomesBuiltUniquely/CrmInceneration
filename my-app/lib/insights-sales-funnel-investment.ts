@@ -7,16 +7,31 @@ function normStage(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Funnel depth index for reached-stage value roll-up (Fresh Lead = 0 … Closed Won = 5). */
+/** Funnel depth index for reached-stage value roll-up (Fresh Lead = 0 … Closed Won = 5).
+ * Aligns with Hub checkpoint map: Meeting Successful / Quote Sent → Exp & Design (3).
+ */
 export function salesFunnelStageIndex(lead: ApiLead): number {
   const raw = crmLeadTopLevelStage(lead);
   const key = normStage(raw);
 
   if (key.includes("closed") || key.includes("booking") || key.includes("token")) return 5;
   if (key.includes("decision")) return 4;
-  if (key.includes("experience") || (key.includes("exp") && key.includes("design"))) return 3;
+  if (
+    key.includes("meeting successful") ||
+    key.includes("quote sent") ||
+    key.includes("experience") ||
+    (key.includes("exp") && key.includes("design"))
+  ) {
+    return 3;
+  }
   if (key.includes("design") && !key.includes("fresh")) return 3;
-  if (key.includes("connection") || key.includes("connect")) return 2;
+  if (
+    key.includes("meeting scheduled") ||
+    key.includes("connection") ||
+    key.includes("connect")
+  ) {
+    return 2;
+  }
   if (key.includes("discovery") || key.includes("discover")) return 1;
   return 0;
 }

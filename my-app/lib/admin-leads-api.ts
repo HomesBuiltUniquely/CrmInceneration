@@ -211,6 +211,13 @@ function canonicalSalesMilestoneLabel(raw: string): (typeof SALES_CANONICAL_PHAS
   if (key.includes("token") && key.includes("done")) return "Closed";
   if (key.includes("fresh")) return "Fresh Lead";
   if (key.includes("discover")) return "Discovery";
+  if (key.includes("meeting scheduled")) return "Connection";
+  if (
+    key.includes("meeting successful") ||
+    key.includes("quote sent")
+  ) {
+    return "Experience & Design";
+  }
   if (key.includes("connect")) return "Connection";
   if (key.includes("experience") || key.includes("design")) return "Experience & Design";
   if (key.includes("decision")) return "Decision";

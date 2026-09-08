@@ -555,6 +555,31 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
   if (!stageKey || stageKey === "initial stage" || stageKey === "initial") {
     return "Fresh Lead";
   }
+
+  // Hub Insights checkpoint map — substages can sit under the wrong milestoneStage.
+  // Meeting Successful / Quote Sent → Exp & Design (never Decision).
+  // Meeting Scheduled → Connection.
+  const subKey = normalizeStageKey(subStage);
+  if (
+    subKey.includes("meeting successful") ||
+    subKey === "quote sent" ||
+    subKey.includes("quote sent")
+  ) {
+    return "Experience & Design";
+  }
+  if (subKey.includes("meeting scheduled")) {
+    return "Connection";
+  }
+  if (
+    stageKey.includes("meeting successful") ||
+    stageKey.includes("quote sent")
+  ) {
+    return "Experience & Design";
+  }
+  if (stageKey.includes("meeting scheduled")) {
+    return "Connection";
+  }
+
   return stage;
 }
 

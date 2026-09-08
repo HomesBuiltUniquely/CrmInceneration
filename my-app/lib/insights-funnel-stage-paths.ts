@@ -182,7 +182,13 @@ function emptyPathBreakdown(): FunnelStagePathBreakdown {
   };
 }
 
-/** Map funnel stage key / label to canonical bucket used in Insights funnel bars. */
+/** Map funnel stage key / label to canonical bucket used in Insights funnel bars.
+ * Hub checkpoint map (Passages / Cohort / Current align):
+ * Fresh Lead → fresh_lead · Discovery → discovery ·
+ * Connection | Meeting Scheduled → connection ·
+ * Meeting Successful | Quote Sent → exp_design ·
+ * Literal Decision only → decision · Closed Won → closed
+ */
 export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
   const key = norm(stageKeyOrLabel);
   if (key === "total") return "total";
@@ -190,6 +196,15 @@ export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
     return "fresh_lead";
   }
   if (key.includes("discovery") || key.includes("discover")) return "discovery";
+  // Before generic "meeting" / decision — Hub fixed map.
+  if (key.includes("meeting scheduled")) return "connection";
+  if (
+    key.includes("meeting successful") ||
+    key.includes("quote sent") ||
+    key === "quote_sent"
+  ) {
+    return "exp_design";
+  }
   if (key.includes("connection") || key.includes("connect")) return "connection";
   if (key.includes("experience") || (key.includes("exp") && key.includes("design"))) {
     return "exp_design";
