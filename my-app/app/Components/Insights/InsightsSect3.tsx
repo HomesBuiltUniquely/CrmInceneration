@@ -47,7 +47,7 @@ type Props = {
   stagePathLoading?: boolean;
   /** When true, stage bars are current-in-milestone inventory (not pool total / cumulative). */
   useCurrentStageInventory?: boolean;
-  /** Measure camera: Current | Movement (Passages) | New batch (Cohort). */
+  /** Measure camera: Current | Movement | New batch. */
   funnelMode?: InsightsFunnelMode;
   onFunnelModeChange?: (mode: InsightsFunnelMode) => void;
   /** Synced path tab (required for Hub passages/cohort). */
@@ -83,15 +83,15 @@ const FUNNEL_MODE_OPTIONS: Array<{
   },
   {
     id: "passages",
-    // Easy label + Hub/API name in parentheses for new devs.
-    label: "Movement (Passages)",
+    // Easy label; Hub/API name stays in hint/title for new devs.
+    label: "Movement",
     short: "Movement",
     hint: "Movement (API: passages) — stage entries in selected dates; New vs Old by lead created date.",
     previewOnly: true,
   },
   {
     id: "cohort",
-    label: "New batch (Cohort)",
+    label: "New batch",
     short: "New batch",
     hint: "New batch (API: cohort) — leads created in selected dates; stages reached as of today.",
     previewOnly: true,
@@ -101,9 +101,9 @@ const FUNNEL_MODE_OPTIONS: Array<{
 function funnelModeSubtitle(mode: InsightsFunnelMode): string {
   switch (mode) {
     case "passages":
-      return "Movement (Passages) — stage entries in the selected dates; New vs Old by lead created date";
+      return "Movement — stage entries in the selected dates; New vs Old by lead created date";
     case "cohort":
-      return "New batch (Cohort) — leads created in the selected dates; milestone reach as of today";
+      return "New batch — leads created in the selected dates; milestone reach as of today";
     default:
       return "Who is in each stage right now (same as Journey heatmap)";
   }
@@ -955,10 +955,8 @@ export default function InsightSect3({
                 </span>
                 <span className="font-medium text-amber-800/90">
                   Super Admin preview — you can use{" "}
-                  {funnelMode === "passages"
-                    ? "Movement (Passages)"
-                    : "New batch (Cohort)"}{" "}
-                  now; not launched for other roles yet.
+                  {funnelMode === "passages" ? "Movement" : "New batch"} now;
+                  not launched for other roles yet.
                 </span>
               </div>
             ) : null}
@@ -971,7 +969,7 @@ export default function InsightSect3({
               {isPassagesMode ? (
                 <>
                 <InsightsSegmentedControl
-                  ariaLabel="Movement (Passages) lead age"
+                  ariaLabel="Movement lead age"
                   segments={passagesAgeSegments}
                   value={passagesAgeSegment}
                   onChange={(id) => setPassagesAgeSegment(id as PassagesAgeSegment)}
@@ -1009,10 +1007,7 @@ export default function InsightSect3({
           {isApiMode && modeFunnelLoading ? (
             <div className="flex items-center gap-2 py-10 text-sm font-medium text-slate-500">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-              Loading{" "}
-              {funnelMode === "passages"
-                ? "Movement (Passages)"
-                : "New batch (Cohort)"}{" "}
+              Loading {funnelMode === "passages" ? "Movement" : "New batch"}{" "}
               funnel…
             </div>
           ) : isApiMode && modeFunnelError ? (
@@ -1024,10 +1019,10 @@ export default function InsightSect3({
             modeFunnel &&
             modeFunnel.passagesAvailable === false ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-              <p className="font-bold">Movement (Passages) not available yet</p>
+              <p className="font-bold">Movement not available yet</p>
               <p className="mt-1 text-xs font-medium text-amber-800/90">
                 {modeFunnel.passagesUnavailableReason ||
-                  "Stage transition history is empty for this scope. Current and New batch (Cohort) modes still work."}
+                  "Stage transition history is empty for this scope. Current and New batch modes still work."}
               </p>
             </div>
           ) : displaySalesFunnel.length === 0 ? (
@@ -1256,11 +1251,11 @@ export default function InsightSect3({
                       : null;
 
                   const percentLabel = isTotal
-                    ? formatInsightsPercent(100)
+                    ? formatInsightsPercent(100, 1)
                     : isApiMode && isFreshLead
                       ? "—"
                       : isApiMode
-                      ? formatInsightsPercent(stage.conversionPercent)
+                      ? formatInsightsPercent(stage.conversionPercent, 1)
                       : funnelTab === "lost"
                       ? `${formatInsightsPercent(
                           lostStages.find(

@@ -313,6 +313,10 @@ export type InsightsSalesFunnelStage = InsightsFunnelStage & {
   oldCount?: number;
   newSharePercent?: number;
   oldSharePercent?: number;
+  /** Passages — Discovery-base conversion for New segment (may be >100). */
+  newConversionPercent?: number;
+  /** Passages — Discovery-base conversion for Old segment (may be >100). */
+  oldConversionPercent?: number;
 };
 
 /** Discovery→Closed conversion summary (Passages + Cohort). */
@@ -323,6 +327,10 @@ export type InsightsSalesFunnelConversion = {
   newPercent?: number | null;
   /** Passages only — leads created before range. */
   oldPercent?: number | null;
+  /** Passages — sum of stage newCounts (movement volume, ≠ distinct Total.newCount). */
+  movementNew?: number | null;
+  /** Passages — sum of stage oldCounts. */
+  movementOld?: number | null;
 };
 
 /** Cohort live snapshot — optional Hub block. */
@@ -346,6 +354,10 @@ export type InsightsSalesFunnelResponse = {
   };
   total: {
     count: number;
+    /** Passages — distinct leads with ≥1 new entry in window. */
+    newCount?: number;
+    /** Passages — distinct leads with ≥1 old entry in window. */
+    oldCount?: number;
     sharePercent: number;
     countLabel?: string;
   };
@@ -618,7 +630,7 @@ export function buildInsightsSalesFunnelSearchParams(
         : "current";
   params.set("funnelMode", mode);
 
-  // Passages = stage entries in range; path split (won/lost/hold) does not apply.
+  // Passages = stage entries in range; Hub ignores pathFilter — do not send it.
   if (mode !== "passages") {
     const path = query.pathFilter ?? "all";
     if (path === "won" || path === "lost" || path === "hold" || path === "all") {
@@ -645,21 +657,27 @@ function normalizePathFilter(value: unknown): InsightsFunnelPathFilter {
 function normalizeSalesFunnelStage(
   raw: Record<string, unknown>,
 ): InsightsSalesFunnelStage {
-  const share = asNum(
-    raw.sharePercent ?? raw.conversionPercent ?? raw.percent,
+  const conversionPct = asNum(
+    raw.conversionPercent ?? raw.conversion_percent ?? raw.percent,
+  );
+  const sharePct = asNum(
+    raw.sharePercent ?? raw.share_percent ?? raw.conversionPercent ?? raw.percent,
   );
   const breakdownRaw =
     raw.pathBreakdown && typeof raw.pathBreakdown === "object"
       ? (raw.pathBreakdown as Record<string, unknown>)
       : null;
   const stage: InsightsSalesFunnelStage = {
-    stageKey: asStr(raw.stageKey),
-    stageLabel: asStr(raw.stageLabel, asStr(raw.stageKey)),
+    stageKey: asStr(raw.stageKey ?? raw.stage_key),
+    stageLabel: asStr(
+      raw.stageLabel ?? raw.stage_label,
+      asStr(raw.stageKey ?? raw.stage_key),
+    ),
     count: asNum(raw.count),
-    countLabel: asStr(raw.countLabel, "Leads"),
+    countLabel: asStr(raw.countLabel ?? raw.count_label, "Leads"),
     value: asNum(raw.value),
-    conversionPercent: share,
-    sharePercent: share,
+    conversionPercent: conversionPct,
+    sharePercent: sharePct,
     pathBreakdown: breakdownRaw
       ? {
           won: asNum(breakdownRaw.won ?? breakdownRaw.wonTotal),
@@ -689,6 +707,23 @@ function normalizeSalesFunnelStage(
     }
   }
 
+  if (
+    raw.newConversionPercent != null ||
+    raw.new_conversion_percent != null
+  ) {
+    stage.newConversionPercent = asNum(
+      raw.newConversionPercent ?? raw.new_conversion_percent,
+    );
+  }
+  if (
+    raw.oldConversionPercent != null ||
+    raw.old_conversion_percent != null
+  ) {
+    stage.oldConversionPercent = asNum(
+      raw.oldConversionPercent ?? raw.old_conversion_percent,
+    );
+  }
+
   return stage;
 }
 
@@ -697,8 +732,11 @@ function normalizeSalesFunnelConversion(
 ): InsightsSalesFunnelConversion | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  const newRaw = o.newPercent ?? o.new_percent ?? o.newConversionPercent;
-  const oldRaw = o.oldPercent ?? o.old_percent ?? o.oldConversionPercent;
+  // Disc→Closed rates only — do not alias stage newConversionPercent here.
+  const newRaw = o.newPercent ?? o.new_percent;
+  const oldRaw = o.oldPercent ?? o.old_percent;
+  const movementNewRaw = o.movementNew ?? o.movement_new;
+  const movementOldRaw = o.movementOld ?? o.movement_old;
   return {
     baseStage:
       asStr(o.baseStage ?? o.base_stage, "discovery") || "discovery",
@@ -707,6 +745,8 @@ function normalizeSalesFunnelConversion(
     ),
     newPercent: newRaw == null ? null : asNum(newRaw),
     oldPercent: oldRaw == null ? null : asNum(oldRaw),
+    movementNew: movementNewRaw == null ? null : asNum(movementNewRaw),
+    movementOld: movementOldRaw == null ? null : asNum(movementOldRaw),
   };
 }
 
@@ -752,6 +792,21 @@ export function normalizeInsightsSalesFunnel(
         ? true
         : true;
 
+  const totalStage = stages.find(
+    (s) =>
+      resolveFunnelCanonicalKeyLocal(s.stageKey || s.stageLabel) === "total",
+  );
+
+  const totalCount = asNum(totalRaw.count ?? totalStage?.count);
+  const totalNew =
+    totalRaw.newCount != null || totalRaw.new_count != null
+      ? asNum(totalRaw.newCount ?? totalRaw.new_count)
+      : totalStage?.newCount;
+  const totalOld =
+    totalRaw.oldCount != null || totalRaw.old_count != null
+      ? asNum(totalRaw.oldCount ?? totalRaw.old_count)
+      : totalStage?.oldCount;
+
   return {
     funnelMode: normalizeFunnelMode(root.funnelMode),
     pathFilter: normalizePathFilter(root.pathFilter),
@@ -766,15 +821,25 @@ export function normalizeInsightsSalesFunnel(
       timezone: asStr(defsRaw.timezone, "Asia/Kolkata"),
     },
     total: {
-      count: asNum(totalRaw.count),
-      sharePercent: asNum(totalRaw.sharePercent, 100),
-      countLabel: asStr(totalRaw.countLabel, "Leads") || "Leads",
+      count: totalCount,
+      newCount: totalNew,
+      oldCount: totalOld,
+      sharePercent: asNum(totalRaw.sharePercent ?? totalRaw.share_percent, 100),
+      countLabel:
+        asStr(totalRaw.countLabel ?? totalRaw.count_label, "Leads") || "Leads",
     },
     conversion: normalizeSalesFunnelConversion(root.conversion),
     cohortProgress: normalizeCohortProgress(root.cohortProgress),
     stages,
     salesFunnel: stages,
   };
+}
+
+/** Local total-key check — avoid circular import with funnel-stage-paths. */
+function resolveFunnelCanonicalKeyLocal(stageKeyOrLabel: string): string {
+  const key = stageKeyOrLabel.trim().toLowerCase().replace(/\s+/g, " ");
+  if (key === "total" || key.startsWith("total ")) return "total";
+  return key;
 }
 
 /**
