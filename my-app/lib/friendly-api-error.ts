@@ -1,3 +1,5 @@
+import { META_LEAD_CREATE_DISABLED_MESSAGE } from "@/lib/crm-lead-endpoints";
+
 type JsonRecord = Record<string, unknown>;
 
 const TECHNICAL_ERROR_PATTERNS: RegExp[] = [
@@ -138,5 +140,15 @@ export async function getFriendlyApiErrorMessage(
 
   const payloadMessage = pickPayloadMessage(payload);
   const rawMessage = payloadMessage || text.trim();
+
+  // Hub closed sheet/Zapier Meta create: POST /v1/MetaLead → 410 Gone
+  const looksLikeMetaCreateDisabled =
+    /meta\s+lead\s+create.*disabled/i.test(rawMessage) ||
+    /instant\s+form\s+leads\s+must\s+come\s+from\s+meta\s+webhook/i.test(rawMessage) ||
+    (response.status === 410 && /meta|instant\s+form|webhook/i.test(rawMessage));
+  if (looksLikeMetaCreateDisabled) {
+    return META_LEAD_CREATE_DISABLED_MESSAGE;
+  }
+
   return sanitizeErrorMessage(rawMessage, fallbackMessage);
 }

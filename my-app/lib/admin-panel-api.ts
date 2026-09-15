@@ -124,7 +124,7 @@ function isExcludedPresalesExecListRole(role: string): boolean {
  * Merged presales executives for admin UI — combines GET /v1/PreSales/all,
  * users-by-role(PRESALES_EXECUTIVE|PRE_SALES), and admin pre-sales list.
  * Production backends sometimes return an empty /all list; role queries are a reliable fallback.
- * Does NOT call lead-limits (that endpoint is often slow and blocked other admin lists).
+ * Does NOT call lead-limits (separate admin section; keeps this list independent).
  */
 async function listPresalesExecutivesMerged(): Promise<AnyJson[]> {
   const [fromLegacy, fromRole, fromLegacyRole, fromAdmin] = await Promise.all([

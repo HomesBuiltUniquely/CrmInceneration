@@ -83,7 +83,6 @@ const FUNNEL_MODE_OPTIONS: Array<{
   },
   {
     id: "passages",
-    // Easy label; Hub/API name stays in hint/title for new devs.
     label: "Movement",
     short: "Movement",
     hint: "Movement (API: passages) — stage entries in selected dates; New vs Old by lead created date.",
@@ -463,10 +462,7 @@ export default function InsightSect3({
         id: opt.id,
         label: opt.label,
         shortLabel: opt.short,
-        title: opt.previewOnly
-          ? `${opt.hint} (Under construction — Super Admin preview)`
-          : opt.hint,
-        badge: opt.previewOnly ? "WIP" : undefined,
+        title: opt.hint,
       })),
     [visibleFunnelModes],
   );
@@ -528,9 +524,6 @@ export default function InsightSect3({
   const isCohortMode = funnelMode === "cohort";
   /** Won/Lost/Hold tabs — Current inventory only. */
   const showPathTabs = !isApiMode;
-  const showUnderConstruction =
-    canUseAdvancedFunnelModes &&
-    (funnelMode === "passages" || funnelMode === "cohort");
 
   useEffect(() => {
     if (pathFilterProp && pathFilterProp !== funnelTab) {
@@ -947,19 +940,6 @@ export default function InsightSect3({
                 />
               ) : null}
             </div>
-
-            {showUnderConstruction ? (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">
-                <span className="rounded-md bg-amber-400/90 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-amber-950">
-                  Under construction
-                </span>
-                <span className="font-medium text-amber-800/90">
-                  Super Admin preview — you can use{" "}
-                  {funnelMode === "passages" ? "Movement" : "New batch"} now;
-                  not launched for other roles yet.
-                </span>
-              </div>
-            ) : null}
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
               <p className="max-w-xl text-[11px] font-medium leading-snug text-slate-400">

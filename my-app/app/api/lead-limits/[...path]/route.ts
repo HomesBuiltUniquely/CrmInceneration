@@ -3,10 +3,10 @@ import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
 /**
- * Hub lead-limits list can exceed 12s in production. Keep waiting so usage stats
- * can still arrive; the Admin UI already paints the user roster from a fast path.
+ * Hub lead-limits (`/users`, `/renovation`) scan each lead table once and
+ * aggregate in memory. Modest timeout for cold starts; no longer needs 90s.
  */
-const UPSTREAM_TIMEOUT_MS = 90_000;
+const UPSTREAM_TIMEOUT_MS = 30_000;
 
 function buildUrl(req: NextRequest, path: string[]) {
   const joined = path.join("/");

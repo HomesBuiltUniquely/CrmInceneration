@@ -67,6 +67,7 @@ import {
   requiresReassignReason,
   validateReassignReason,
 } from "@/lib/assignment-reassign";
+import { crmLeadTypeToAssignmentLabel } from "@/lib/crm-lead-type-label";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
   canLoadAllUsers,
@@ -820,7 +821,8 @@ async function fetchMergedPage(
       return pageFromIvrLeads(leads);
     }
 
-    const pageSize = 500;
+    // One large page: BFF rebuilds full mergeAll per request — avoid N×500 rebuilds.
+    const pageSize = 50_000;
     const all: ApiLead[] = [];
     let totalPages = 1;
     for (let pageNum = 0; pageNum < totalPages; pageNum += 1) {
@@ -923,7 +925,8 @@ async function fetchMergedPage(
     leadView === "combined"
   ) {
     const fetchRoleViewAllPages = async (roleView: "my" | "team"): Promise<ApiLead[]> => {
-      const pageSize = 500;
+      // One large page: BFF rebuilds full mergeAll per request — avoid N×500 rebuilds.
+      const pageSize = 50_000;
       const all: ApiLead[] = [];
       let totalPages = 1;
       for (let pageNum = 0; pageNum < totalPages; pageNum += 1) {
@@ -1270,15 +1273,7 @@ async function fetchFilterOptions(
 }
 
 function toAssignmentLeadType(leadType: string): string {
-  if (leadType === "formlead") return "Form Lead";
-  if (leadType === "glead") return "G Lead";
-  if (leadType === "mlead") return "M Lead";
-  if (leadType === "addlead") return "Add Lead";
-  if (isIvrLeadTypeKey(leadType)) return "IVR Lead";
-  if (leadType === "websitelead") return "Website Lead";
-  if (leadType === "walkinlead") return "Walk-in Lead";
-  if (leadType === "whatsapplead") return "WhatsApp";
-  return "Form Lead";
+  return crmLeadTypeToAssignmentLabel(leadType);
 }
 
 function deleteBucketForRow(row: LeadRowModel): string {
@@ -4556,6 +4551,7 @@ export default function LeadsDataSection({
         .join(" · "),
     [selectedLeadsByType],
   );
+  // Presales Manager can transfer Meta Ads / Google / Form / etc. — same assign UI for all types.
   const canBulkAssign =
     currentRole === "SUPER_ADMIN" ||
     currentRole === "ADMIN" ||
@@ -4572,6 +4568,7 @@ export default function LeadsDataSection({
       : currentRole === "PRESALES_MANAGER"
         ? "Your team — Presales Executives"
         : null;
+  // Admin / Super Admin only — Meta bulk/single delete mirrors Google (`bulk-delete-mleads`).
   const canBulkDelete = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
   const showDeleteAll = currentRole === "ADMIN";
   const canDeleteAll = showDeleteAll;

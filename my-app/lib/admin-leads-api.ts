@@ -462,53 +462,66 @@ export async function fetchAllAdminLeads(
  * Full sales CRM inventory for Super Admin / SA / Admin journey heatmap.
  * Hub `/admin/sales` omits walk-in & blank-assignee rows, so Fresh can be ~9 while a single
  * manager filter (using filter merge) shows Fresh ~16. Always use filter mergeAll for sales.
+ *
+ * Important: `/api/crm/leads?mergeAll=1` rebuilds the full multi-type merge on every page.
+ * Request one large page (same as admin-pool-merge-fallback) so Lead / Opportunity cards
+ * wait for one merge, not N×500 rebuilds.
  */
 export async function fetchAllSalesFilterMergeLeads(
   input: AdminLeadsFilterInput,
   headers?: HeadersInit,
   maxPages = 80,
 ): Promise<{ leads: ApiLead[]; totalElements: number }> {
-  const pageSize = 500;
-  const leads: ApiLead[] = [];
-  let totalElements = 0;
-  let page = 0;
-  let totalPages = 1;
+  const pageSize = 50_000;
+  const qs = new URLSearchParams();
+  qs.set("mergeAll", "1");
+  qs.set("page", "0");
+  qs.set("size", String(pageSize));
+  const lt = (input.leadType ?? "all").trim().toLowerCase() || "all";
+  qs.set("leadType", hubLeadTypeForFilterKey(lt) || "all");
+  appendAdminLeadsFilters(qs, {
+    ...input,
+    workspace: "sales",
+    crmMilestoneScope: true,
+  });
+  if (!qs.get("sort")) {
+    qs.set("sort", (input.sort ?? "updatedAt,desc").trim() || "updatedAt,desc");
+  }
 
-  while (page < maxPages && page < totalPages) {
-    const qs = new URLSearchParams();
-    qs.set("mergeAll", "1");
-    qs.set("page", String(page));
-    qs.set("size", String(pageSize));
-    const lt = (input.leadType ?? "all").trim().toLowerCase() || "all";
-    qs.set("leadType", hubLeadTypeForFilterKey(lt) || "all");
-    appendAdminLeadsFilters(qs, {
-      ...input,
-      workspace: "sales",
-      crmMilestoneScope: true,
-    });
-    if (!qs.get("sort")) {
-      qs.set("sort", (input.sort ?? "updatedAt,desc").trim() || "updatedAt,desc");
-    }
+  const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Sales filter merge failed (HTTP ${res.status})`);
+  }
+  const json = (await res.json().catch(() => ({}))) as SpringPage<ApiLead>;
+  const leads: ApiLead[] = Array.isArray(json.content) ? [...json.content] : [];
+  let totalElements = Number(json.totalElements ?? leads.length);
+  let totalPages = Math.max(1, Number(json.totalPages ?? 1));
 
-    const res = await fetch(`/api/crm/leads?${qs.toString()}`, {
-      cache: "no-store",
-      credentials: "include",
-      headers,
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(text || `Sales filter merge failed (HTTP ${res.status})`);
+  // Rare: pool larger than pageSize — finish remaining pages in parallel.
+  if (leads.length < totalElements && totalPages > 1 && maxPages > 1) {
+    const followUps: Promise<ApiLead[]>[] = [];
+    for (let page = 1; page < Math.min(totalPages, maxPages); page++) {
+      const next = new URLSearchParams(qs);
+      next.set("page", String(page));
+      followUps.push(
+        fetch(`/api/crm/leads?${next.toString()}`, {
+          cache: "no-store",
+          credentials: "include",
+          headers,
+        }).then(async (r) => {
+          if (!r.ok) return [] as ApiLead[];
+          const body = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
+          return Array.isArray(body.content) ? body.content : [];
+        }),
+      );
     }
-    const json = (await res.json().catch(() => ({}))) as SpringPage<ApiLead>;
-    const chunk = Array.isArray(json.content) ? json.content : [];
-    if (page === 0) {
-      totalElements = Number(json.totalElements ?? chunk.length);
-      totalPages = Math.max(1, Number(json.totalPages ?? 1));
-    }
-    if (chunk.length === 0) break;
-    leads.push(...chunk);
-    if (chunk.length < pageSize) break;
-    page += 1;
+    const rest = await Promise.all(followUps);
+    for (const chunk of rest) leads.push(...chunk);
   }
 
   return {
@@ -662,26 +675,33 @@ export async function fetchAdminLeadsHeatmapData(
   };
 
   const promise = (async (): Promise<AdminLeadsHeatmapData> => {
-    let countsJson: AdminLeadsCountsResponse | null = null;
-    try {
-      countsJson = await fetchAdminLeadsCounts(poolInput, headers);
-    } catch {
-      countsJson = null;
-    }
-
     /**
      * Sales journey inventory must come from filter mergeAll (includes walk-in /
      * blank-assignee Fresh). Hub `/admin/sales` alone under-counts Fresh (e.g.
      * global Fresh 9 while Kulwanth-filter shows Fresh 16).
+     *
+     * Run `/counts` in parallel with merge so Lead/Opportunity cards aren't
+     * blocked on a sequential counts round-trip before the heavy merge starts.
      */
+    let countsJson: AdminLeadsCountsResponse | null = null;
     let leads: ApiLead[] = [];
     let totalElements = 0;
+
     if (input.workspace === "sales") {
       try {
-        const merged = await fetchAllSalesFilterMergeLeads(poolInput, headers);
+        const [counts, merged] = await Promise.all([
+          fetchAdminLeadsCounts(poolInput, headers).catch(() => null),
+          fetchAllSalesFilterMergeLeads(poolInput, headers),
+        ]);
+        countsJson = counts;
         leads = merged.leads;
         totalElements = merged.totalElements;
       } catch {
+        try {
+          countsJson = await fetchAdminLeadsCounts(poolInput, headers);
+        } catch {
+          countsJson = null;
+        }
         const admin = await fetchAllAdminLeads(poolInput, headers);
         leads = admin.leads;
         totalElements = admin.totalElements;
@@ -694,6 +714,11 @@ export async function fetchAdminLeadsHeatmapData(
       }
       totalElements = leads.length;
     } else {
+      try {
+        countsJson = await fetchAdminLeadsCounts(poolInput, headers);
+      } catch {
+        countsJson = null;
+      }
       const admin = await fetchAllAdminLeads(poolInput, headers);
       leads = admin.leads;
       totalElements = admin.totalElements;

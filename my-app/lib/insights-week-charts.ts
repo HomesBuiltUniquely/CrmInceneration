@@ -106,14 +106,20 @@ function toMonthKey(d: Date): string {
 function isClosedPhaseLead(lead: ApiLead): boolean {
   const s = crmLeadTopLevelStage(lead).trim().toLowerCase();
   if (s === "closed" || s.startsWith("closed")) return true;
+  if (s.includes("booking done") || s.includes("token done")) return true;
   // Defensive: some rows keep category/substage without canonical stage label.
   const r = lead as Record<string, unknown>;
   const st =
     r.stageBlock && typeof r.stageBlock === "object" && !Array.isArray(r.stageBlock)
       ? (r.stageBlock as Record<string, unknown>)
-      : null;
+      : lead.stage && typeof lead.stage === "object" && !Array.isArray(lead.stage)
+        ? (lead.stage as Record<string, unknown>)
+        : null;
   const category = String(
-    st?.milestoneStageCategory ?? r.milestoneStageCategory ?? r.stageCategory ?? "",
+    st?.milestoneStageCategory ??
+      r.milestoneStageCategory ??
+      r.stageCategory ??
+      "",
   )
     .trim()
     .toLowerCase();
@@ -122,8 +128,22 @@ function isClosedPhaseLead(lead: ApiLead): boolean {
   )
     .trim()
     .toLowerCase();
-  if (category.includes("closed won")) return true;
-  if (sub.includes("booking done") || sub.includes("token done")) return true;
+  const stage = String(
+    st?.milestoneStage ?? r.milestoneStage ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  if (category.includes("closed won") || category.includes("closed (won)")) {
+    return true;
+  }
+  if (
+    sub.includes("booking done") ||
+    sub.includes("token done") ||
+    sub.includes("closed won")
+  ) {
+    return true;
+  }
+  if (stage.includes("closed") && !stage.includes("lost")) return true;
   return false;
 }
 

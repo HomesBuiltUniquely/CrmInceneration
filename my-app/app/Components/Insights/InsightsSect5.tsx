@@ -161,9 +161,18 @@ export default function InsightSect5({
                 <div className="text-left">Salesperson</div>
                 <div className="text-right">Leads</div>
                 <div className="text-right">Meetings</div>
-                <div className="text-right">Proposals</div>
-                <div className="text-right">Closed</div>
-                <div className="text-right">Conv %</div>
+                <div className="text-right" title="Quotes sent in the Insights date window">
+                  Proposals
+                </div>
+                <div className="text-right" title="Closed won in the Insights date window">
+                  Closed
+                </div>
+                <div
+                  className="text-right"
+                  title="Conversion = Closed ÷ Leads × 100 (not Closed ÷ Proposals)"
+                >
+                  Conv %
+                </div>
                 <div className="text-right text-sky-600/90">Achieved ↓</div>
                 {SHOW_PAYOFF_COLUMN ? (
                   <div className="text-right text-sky-600/90">Payoff</div>
