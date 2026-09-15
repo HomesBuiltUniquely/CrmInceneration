@@ -3,6 +3,7 @@ import { Geist_Mono, Manrope } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { CRM_THEME_STORAGE_KEY } from "@/lib/theme";
+import { HALLWAY_HANDOFF_BOOTSTRAP } from "@/lib/auth/hallway-handoff-bootstrap";
 import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
 import { ActiveModuleProvider } from "./Components/Shared/ActiveModuleContext";
 import ModuleHubHost from "./Components/Shared/ModuleHubHost";
@@ -48,6 +49,9 @@ export default function RootLayout({
       >
         <Script id="crm-theme-bootstrap" strategy="beforeInteractive">
           {themeBootstrap}
+        </Script>
+        <Script id="crm-hallway-handoff-bootstrap" strategy="beforeInteractive">
+          {HALLWAY_HANDOFF_BOOTSTRAP}
         </Script>
         <GlobalNotifierProvider>
           <ActiveModuleProvider>

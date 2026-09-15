@@ -23,6 +23,7 @@ import {
   login,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -35,6 +36,12 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Cross-origin Hallway handoff may land on /login#payload=...
+    const landing = tryConsumeHallwayHandoffFromUrl();
+    if (landing) {
+      router.replace(landing);
+      return;
+    }
     if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
       const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
       router.replace(landingPathByRole(role));
