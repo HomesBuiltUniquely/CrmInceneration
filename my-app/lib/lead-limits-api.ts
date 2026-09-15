@@ -9,13 +9,12 @@ const inflightGet = new Map<string, Promise<unknown>>();
 const memCache = new Map<string, { at: number; data: unknown }>();
 const CACHE_TTL_MS = 45_000;
 /**
- * Hub `/v1/lead-limits/users` is often slow in prod. Do NOT abort early —
- * roster UI paints from users-by-role; stats merge when this finally returns.
- * Hard ceiling only to avoid forever-hung tabs (proxy aligns with this).
+ * Hub `/v1/lead-limits/users` + `/renovation` now scan each lead table once
+ * (not per-user findAll). Keep a modest ceiling for cold starts / large orgs.
  */
-const FETCH_TIMEOUT_MS = 90_000;
+const FETCH_TIMEOUT_MS = 30_000;
 /** Lightweight paths (default limit) should fail faster. */
-const FAST_PATH_TIMEOUT_MS = 20_000;
+const FAST_PATH_TIMEOUT_MS = 15_000;
 
 function cacheKey(path: string, method: string): string {
   return `${method}:${path}`;

@@ -360,7 +360,15 @@ function PhaseCard({
   );
 }
 
-function SummaryCard({ label, total }: { label: string; total: number }) {
+function SummaryCard({
+  label,
+  total,
+  loading = false,
+}: {
+  label: string;
+  total: number;
+  loading?: boolean;
+}) {
   return (
     <div className="relative flex min-h-[152px] w-full flex-col justify-between rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-5 md:min-h-[160px] md:px-6">
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
@@ -372,7 +380,7 @@ function SummaryCard({ label, total }: { label: string; total: number }) {
         </div>
         <div className="shrink-0 text-right">
           <div className="text-[28px] font-semibold leading-none text-[var(--crm-text-primary)] md:text-[30px]">
-            {total.toLocaleString()}
+            {loading && total <= 0 ? "…" : total.toLocaleString()}
           </div>
           <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-[var(--crm-warning-text)]">
             total leads
@@ -970,7 +978,8 @@ export default function JourneyPhaseHeatmap({
         query.set("milestoneScope", "crm");
         appendLeadPoolQuery(query, leadsWorkspace);
         query.set("page", "0");
-        query.set("size", "500");
+        // One large page: BFF rebuilds full mergeAll per request — avoid N×500 round-trips.
+        query.set("size", "50000");
         query.set("sort", "updatedAt,desc");
 
         const fetchAllPages = async (base: URLSearchParams): Promise<ApiLead[]> => {
@@ -985,27 +994,29 @@ export default function JourneyPhaseHeatmap({
           }
           const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
           const all: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+          const totalElements = Number(firstPage.totalElements ?? all.length);
           const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
-          if (totalPages > 1) {
-            const followUps = [];
-            for (let p = 1; p < totalPages; p++) {
-              const nextQuery = new URLSearchParams(base);
-              nextQuery.set("page", String(p));
-              followUps.push(
-                fetch(`/api/crm/leads?${nextQuery.toString()}`, {
-                  cache: "no-store",
-                  credentials: "include",
-                  headers: getCrmAuthHeaders(),
-                }).then(async (r) => {
-                  if (!r.ok) return [] as ApiLead[];
-                  const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
-                  return Array.isArray(json.content) ? json.content : [];
-                }),
-              );
-            }
-            const rest = await Promise.all(followUps);
-            for (const chunk of rest) all.push(...chunk);
+          if (all.length >= totalElements || totalPages <= 1) {
+            return all;
           }
+          const followUps = [];
+          for (let p = 1; p < totalPages; p++) {
+            const nextQuery = new URLSearchParams(base);
+            nextQuery.set("page", String(p));
+            followUps.push(
+              fetch(`/api/crm/leads?${nextQuery.toString()}`, {
+                cache: "no-store",
+                credentials: "include",
+                headers: getCrmAuthHeaders(),
+              }).then(async (r) => {
+                if (!r.ok) return [] as ApiLead[];
+                const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
+                return Array.isArray(json.content) ? json.content : [];
+              }),
+            );
+          }
+          const rest = await Promise.all(followUps);
+          for (const chunk of rest) all.push(...chunk);
           return all;
         };
 
@@ -1263,7 +1274,11 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={leadOpen}
               >
                 <div className="relative w-full">
-                  <SummaryCard label="Lead" total={summaryLeadTotal} />
+                  <SummaryCard
+                    label="Lead"
+                    total={summaryLeadTotal}
+                    loading={loading && summaryLeadTotal <= 0}
+                  />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {leadOpen ? "Hide" : "Open"}
                   </span>
@@ -1300,7 +1315,11 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={opportunityOpen}
               >
                 <div className="relative w-full">
-                  <SummaryCard label="Opportunity" total={summaryOpportunityTotal} />
+                  <SummaryCard
+                    label="Opportunity"
+                    total={summaryOpportunityTotal}
+                    loading={loading && summaryOpportunityTotal <= 0}
+                  />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {opportunityOpen ? "Hide" : "Open"}
                   </span>

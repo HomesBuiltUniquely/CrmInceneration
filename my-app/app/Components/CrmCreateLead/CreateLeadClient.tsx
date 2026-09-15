@@ -510,6 +510,19 @@ export default function CreateLeadClient() {
                 </div>
               ) : null}
 
+              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
+                <p className="font-semibold text-[var(--crm-text-primary)]">
+                  Meta Ads / Instant Forms
+                </p>
+                <p className="mt-1 leading-relaxed">
+                  Meta Instant Form leads sync automatically from Facebook. New
+                  leads start as Unverified and go to Presales. After
+                  verification they move to Sales, same as Google leads. Manual /
+                  Sheet create for Meta Ads is turned off — use this form for
+                  Add Lead only.
+                </p>
+              </div>
+
               {success ? (
                 <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-success-text)]">
                   <div>{success}</div>

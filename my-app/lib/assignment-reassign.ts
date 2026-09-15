@@ -14,6 +14,7 @@ export function isGmwLeadType(leadType: string): boolean {
     t === "websitelead" ||
     t === "googleads" ||
     t === "metaads" ||
+    t === "meta" ||
     t === "wlead"
   );
 }

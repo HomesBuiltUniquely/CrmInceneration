@@ -1006,12 +1006,12 @@ export default function InsightsClient1() {
         const uid = Number(m.userId);
         const leads = Number(m.leads) || 0;
         const closed = Number(m.closed) || 0;
-        const hubConv = Number(m.conversionPercent);
-        const conversionPercent = Number.isFinite(hubConv)
-          ? Math.round(hubConv * 10) / 10
-          : leads > 0
-            ? Math.round((closed / leads) * 1000) / 10
-            : 0;
+        const proposals = Number(m.proposals) || 0;
+        const meetings = Number(m.meetings) || 0;
+        // Conv % = Closed ÷ Leads (product rule). Always derive from displayed
+        // leads/closed so Hub's conversionPercent cannot drift from those columns.
+        const conversionPercent =
+          leads > 0 ? Math.round((closed / leads) * 1000) / 10 : 0;
         const inc =
           Number.isFinite(uid) && uid > 0
             ? teamIncentiveByUser.get(uid)
@@ -1023,6 +1023,8 @@ export default function InsightsClient1() {
         return {
           ...m,
           leads,
+          meetings,
+          proposals,
           closed,
           conversionPercent,
           achievedIncentive,
@@ -1166,16 +1168,13 @@ export default function InsightsClient1() {
     useState<InsightsVolumeChartBundle | null>(null);
 
   /**
-   * Sect6 picks week vs month from volumeChartBundle; this prop is Hub/FE fallback only.
+   * Hub dashboard.conversionTrend is authoritative for Week (W1…Wn).
+   * Sect6 may FE-aggregate Month trailing series only when Hub week is not in play.
    */
-  const conversionTrendForChart = useMemo(() => {
-    if (hasHubConversionTrend(dashboard.conversionTrend)) {
-      return dashboard.conversionTrend;
-    }
-    return (
-      alignedVolumeChartBundle?.week.conversionTrend ?? dashboard.conversionTrend
-    );
-  }, [dashboard.conversionTrend, alignedVolumeChartBundle?.week.conversionTrend]);
+  const conversionTrendForChart = useMemo(
+    () => dashboard.conversionTrend,
+    [dashboard.conversionTrend],
+  );
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
   useEffect(() => {

@@ -99,12 +99,19 @@ export type InsightsChartPoint = {
   label: string;
   count?: number;
   conversionPercent?: number;
+  /** Hub conversion trend — leads created in bucket. */
+  leadCount?: number;
+  /** Hub conversion trend — closed won / token / booking in bucket. */
+  convertedCount?: number;
 };
 
-/** Hub conversion trend line — prefer over FE lead-pool recompute when points present. */
+/** Hub conversion trend line — prefer over FE when points present. */
 export type InsightsConversionTrend = {
   changePercent?: number | null;
   points: InsightsChartPoint[];
+  /** week | month | day — Hub This/Previous month sends week. */
+  granularity?: "week" | "month" | "day" | null;
+  timezone?: string | null;
   bucketField?: string | null;
   numeratorRule?: string | null;
   denominatorRule?: string | null;
@@ -1398,17 +1405,83 @@ function normalizeHoldPathByStage(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeConversionPercentValue(raw: unknown): number {
+  if (raw == null || raw === "") return 0;
+  const text = String(raw).trim().replace(/%/g, "");
+  const n = Number(text);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  // Hub sometimes sends 0–1 fraction when counts are omitted.
+  if (n > 0 && n <= 1) return Math.round(n * 1000) / 10;
+  return Math.round(n * 10) / 10;
+}
+
 function normalizeConversionTrend(raw: unknown): InsightsConversionTrend {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const pointsRaw = asArray<Record<string, unknown>>(
+    o.points ?? o.weeks ?? o.months ?? o.series,
+  );
+  const granularityRaw = asStr(o.granularity, "").toLowerCase();
+  const granularity =
+    granularityRaw === "week" || granularityRaw === "month" || granularityRaw === "day"
+      ? (granularityRaw as "week" | "month" | "day")
+      : null;
   return {
-    changePercent: o.changePercent == null ? null : asNum(o.changePercent),
-    points: asArray<Record<string, unknown>>(o.points).map((p) => ({
-      label: asStr(p.label),
-      conversionPercent: asNum(p.conversionPercent),
-    })),
-    bucketField: o.bucketField == null ? null : asStr(o.bucketField),
-    numeratorRule: o.numeratorRule == null ? null : asStr(o.numeratorRule),
-    denominatorRule: o.denominatorRule == null ? null : asStr(o.denominatorRule),
+    changePercent:
+      o.changePercent == null && o.change_percent == null
+        ? null
+        : asNum(o.changePercent ?? o.change_percent),
+    granularity,
+    timezone:
+      o.timezone == null ? null : asStr(o.timezone, "Asia/Kolkata") || null,
+    points: pointsRaw.map((p, i) => {
+      const label =
+        asStr(
+          p.label ??
+            p.periodLabel ??
+            p.weekLabel ??
+            p.monthLabel ??
+            p.period ??
+            p.week ??
+            p.month,
+          "",
+        ) || `W${i + 1}`;
+      const pct = normalizeConversionPercentValue(
+        p.conversionPercent ??
+          p.conversion_percent ??
+          p.closedRate ??
+          p.closed_rate ??
+          p.rate ??
+          p.percent ??
+          p.value,
+      );
+      const leadCountRaw =
+        p.leadCount ?? p.lead_count ?? p.leads ?? p.denominator ?? p.count;
+      const convertedRaw =
+        p.convertedCount ??
+        p.converted_count ??
+        p.closedCount ??
+        p.closed_count ??
+        p.numerator;
+      return {
+        label,
+        conversionPercent: pct,
+        leadCount: leadCountRaw == null ? undefined : asNum(leadCountRaw),
+        convertedCount: convertedRaw == null ? undefined : asNum(convertedRaw),
+        count: leadCountRaw == null ? undefined : asNum(leadCountRaw),
+      };
+    }),
+    bucketField:
+      o.bucketField == null && o.bucket_field == null
+        ? null
+        : asStr(o.bucketField ?? o.bucket_field),
+    numeratorRule:
+      o.numeratorRule == null && o.numerator_rule == null
+        ? null
+        : asStr(o.numeratorRule ?? o.numerator_rule),
+    denominatorRule:
+      o.denominatorRule == null && o.denominator_rule == null
+        ? null
+        : asStr(o.denominatorRule ?? o.denominator_rule),
   };
 }
 

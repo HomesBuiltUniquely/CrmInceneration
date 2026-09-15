@@ -48,7 +48,17 @@ function changeArrow(value: number | null | undefined): string {
   return v > 0 ? "↑ " : "↓ ";
 }
 
-/** Compact axis: prefer short W1…Wn from full "W1 · 1–7 Aug" labels. */
+/** Axis label — plot Hub label exactly (W1…Wn / JAN / MON). No Mon→W1 remap. */
+function conversionAxisLabel(raw: string, index: number): string {
+  const label = String(raw ?? "").trim();
+  if (!label) return `W${index + 1}`;
+  const wOnly = label.match(/^(W\d+)\b/i);
+  if (wOnly) return wOnly[1]!.toUpperCase();
+  if (label.length <= 12) return label;
+  return label.slice(0, 10);
+}
+
+/** Compact axis for leads-over-time bars (may still shorten long FE labels). */
 function shortChartLabel(raw: string, index: number): string {
   const label = String(raw ?? "").trim();
   if (!label) return `W${index + 1}`;
@@ -63,10 +73,19 @@ function shortChartLabel(raw: string, index: number): string {
     return mon[2] ? `${abbr} ${mon[2]}` : abbr;
   }
   if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(label)) {
-    return label.slice(0, 3);
+    return label.slice(0, 3).toUpperCase();
   }
   if (label.length <= 8) return label;
   return label.slice(0, 7);
+}
+
+/** Secondary date range from "W1 · 1–7 Sep" — optional; Hub W1-only has none. */
+function chartRangeSecondary(raw: string): string | null {
+  const label = String(raw ?? "").trim();
+  if (!label) return null;
+  const afterDot = label.split("·").map((s) => s.trim());
+  if (afterDot.length >= 2 && afterDot[1]) return afterDot[1]!;
+  return null;
 }
 
 function isCalendarMonthPreset(dateFilter?: BookingDateFilterState): boolean {
@@ -590,6 +609,7 @@ export default function InsightsSect6({
 }: Props) {
   const [chartGranularity, setChartGranularity] = useState<ChartGranularity>("week");
   const [conversionHoverIdx, setConversionHoverIdx] = useState<number | null>(null);
+  const [conversionPinnedIdx, setConversionPinnedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (volumeChartBundle) {
@@ -601,6 +621,11 @@ export default function InsightsSect6({
     dateFilter?.customFrom,
     dateFilter?.customTo,
   ]);
+
+  useEffect(() => {
+    setConversionHoverIdx(null);
+    setConversionPinnedIdx(null);
+  }, [chartGranularity]);
 
   const activeVolume = useMemo(() => {
     if (!volumeChartBundle) return volumeChartsProp ?? null;
@@ -618,19 +643,26 @@ export default function InsightsSect6({
   const effectiveLeadsOverTime = activeVolume?.leadsOverTime ?? leadsOverTime;
 
   const resolvedConversionTrend = useMemo(() => {
-    // Same source as Leads over time for the active grain (week ↔ month toggle).
+    // Week (This / Previous month): Hub W1…Wn only — never FE Mon–Sun rebuild.
     if (chartGranularity === "week") {
-      const feWeek =
-        volumeChartBundle?.week.conversionTrend ?? activeVolume?.conversionTrend;
-      if (feWeek?.points?.length) return feWeek;
       if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
+      return conversionTrend ?? { changePercent: 0, points: [] };
+    }
+    // Month: Hub month series if present; else FE trailing-month aggregate.
+    const hubLooksWeek = (conversionTrend?.points ?? []).every((p) =>
+      /^W\d+/i.test(String(p.label ?? "").trim()),
+    );
+    if (
+      hasHubConversionTrend(conversionTrend) &&
+      (conversionTrend.granularity === "month" ||
+        (conversionTrend.granularity == null && !hubLooksWeek))
+    ) {
       return conversionTrend;
     }
     const feMonth =
       volumeChartBundle?.month.conversionTrend ?? activeVolume?.conversionTrend;
     if (feMonth?.points?.length) return feMonth;
-    if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
-    return conversionTrend;
+    return conversionTrend ?? { changePercent: 0, points: [] };
   }, [chartGranularity, conversionTrend, activeVolume, volumeChartBundle]);
 
   const showGranularityToggle = volumeChartBundle?.showGranularityToggle ?? false;
@@ -683,6 +715,11 @@ export default function InsightsSect6({
     setMonthPage((p) => Math.min(p, Math.max(0, monthPageCount - 1)));
   }, [monthPageCount]);
 
+  useEffect(() => {
+    setConversionHoverIdx(null);
+    setConversionPinnedIdx(null);
+  }, [monthPageClamped]);
+
   const leadPoints = effectiveLeadsOverTime.points ?? [];
   const maxLeadCount = useMemo(() => {
     if (rootLevel === "month" && monthBars.length > 0) {
@@ -720,7 +757,7 @@ export default function InsightsSect6({
     return values.map((_, index) => conversionPointCoords(values, index));
   }, [visibleConversionPoints]);
 
-  const activeConversionIdx = conversionHoverIdx;
+  const activeConversionIdx = conversionPinnedIdx ?? conversionHoverIdx;
 
   const conversionPath = useMemo(() => {
     if (conversionCoords.length === 0) return "";
@@ -978,8 +1015,8 @@ export default function InsightsSect6({
                 </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
                   {chartGranularity === "week"
-                    ? "Closed rate by week in the selected range"
-                    : "Closed rate by month"}
+                    ? "Closed rate by week (Hub W1…Wn) · tap for counts"
+                    : "Closed rate by month · tap for details"}
                 </p>
               </div>
               <span
@@ -1023,7 +1060,7 @@ export default function InsightsSect6({
                       </svg>
                     </button>
                   ) : null}
-                  <div className="relative min-w-0 flex-1 flex h-44 items-center justify-center">
+                  <div className="relative min-w-0 flex-1 flex h-44 items-center justify-center pt-10">
                   <svg
                     viewBox="0 0 320 140"
                     className="h-auto w-full max-w-[320px]"
@@ -1060,8 +1097,12 @@ export default function InsightsSect6({
                           fill={activeConversionIdx === i ? "#22c55e" : "#111827"}
                           stroke="#fff"
                           strokeWidth={2}
-                          className="transition-all duration-200"
+                          className="cursor-pointer transition-all duration-200"
                           onMouseEnter={() => setConversionHoverIdx(i)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConversionPinnedIdx((prev) => (prev === i ? null : i));
+                          }}
                         />
                         <rect
                           x={c.x - 16}
@@ -1069,16 +1110,44 @@ export default function InsightsSect6({
                           width={32}
                           height={140}
                           fill="transparent"
+                          className="cursor-pointer"
                           onMouseEnter={() => setConversionHoverIdx(i)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConversionPinnedIdx((prev) => (prev === i ? null : i));
+                          }}
                         />
                       </g>
                     ))}
                   </svg>
-                  {activeConversionIdx != null && visibleConversionPoints[activeConversionIdx] ? (
-                    <div className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-1.5 text-center shadow-md backdrop-blur-sm">
-                      <p className="text-sm font-bold tabular-nums text-slate-900">
-                        {Number(visibleConversionPoints[activeConversionIdx]!.conversionPercent ?? 0).toFixed(1)}%
+                  {activeConversionIdx != null &&
+                  visibleConversionPoints[activeConversionIdx] ? (
+                    <div className="pointer-events-none absolute left-1/2 top-0 z-10 w-[min(100%,12rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-center shadow-md">
+                      <p className="text-[10px] font-semibold text-slate-600">
+                        {String(
+                          visibleConversionPoints[activeConversionIdx]!.label ??
+                            "",
+                        )}
                       </p>
+                      <p className="text-sm font-bold tabular-nums text-emerald-700">
+                        {Number(
+                          visibleConversionPoints[activeConversionIdx]!
+                            .conversionPercent ?? 0,
+                        ).toFixed(1)}
+                        %
+                      </p>
+                      {(() => {
+                        const pt = visibleConversionPoints[activeConversionIdx]!;
+                        const leads = pt.leadCount ?? pt.count;
+                        const converted = pt.convertedCount;
+                        if (leads == null && converted == null) return null;
+                        return (
+                          <p className="text-[10px] tabular-nums text-slate-500">
+                            {Number(converted ?? 0)}/{Number(leads ?? 0)} ={" "}
+                            {Number(pt.conversionPercent ?? 0).toFixed(1)}%
+                          </p>
+                        );
+                      })()}
                     </div>
                   ) : null}
                   </div>
@@ -1119,17 +1188,37 @@ export default function InsightsSect6({
                 ) : null}
                 <div className="flex justify-between gap-1">
                   {visibleConversionPoints.map((p, i) => {
-                    const short = shortChartLabel(String(p.label ?? ""), i);
+                    const short = conversionAxisLabel(String(p.label ?? ""), i);
+                    const range = chartRangeSecondary(String(p.label ?? ""));
+                    const leads = p.leadCount ?? p.count;
+                    const converted = p.convertedCount;
+                    const tip =
+                      leads != null || converted != null
+                        ? `${p.label}: ${Number(converted ?? 0)}/${Number(leads ?? 0)} = ${Number(p.conversionPercent ?? 0).toFixed(1)}%`
+                        : `${p.label}: ${Number(p.conversionPercent ?? 0).toFixed(1)}%`;
                     return (
-                      <span
+                      <button
                         key={`${p.label}-${i}`}
-                        className={`min-w-[2rem] flex-1 text-center text-[10px] font-semibold transition-colors duration-200 sm:text-[11px] ${
-                          activeConversionIdx === i ? "text-emerald-600" : "text-gray-600"
+                        type="button"
+                        onClick={() =>
+                          setConversionPinnedIdx((prev) => (prev === i ? null : i))
+                        }
+                        className={`min-w-[2rem] flex-1 text-center transition-colors duration-200 ${
+                          activeConversionIdx === i
+                            ? "text-emerald-600"
+                            : "text-gray-600 hover:text-slate-800"
                         }`}
-                        title={`${p.label}: ${Number(p.conversionPercent ?? 0).toFixed(1)}%`}
+                        title={tip}
                       >
-                        {short}
-                      </span>
+                        <span className="block text-[10px] font-semibold sm:text-[11px]">
+                          {short}
+                        </span>
+                        {range ? (
+                          <span className="mt-0.5 block max-w-full truncate text-[8px] font-medium leading-tight text-slate-400">
+                            {range}
+                          </span>
+                        ) : null}
+                      </button>
                     );
                   })}
                 </div>

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
+import { formatAdditionalLeadSourcesLabel } from "@/lib/lead-source-utils";
 import { isLeadHandedOffToSales } from "@/lib/presales-milestone";
 import {
   canViewBothMilestonePipelines,
@@ -155,6 +156,16 @@ export default function LeadHeader({
         <div className="flex flex-wrap items-center gap-2.5">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
+          {(lead.additionalLeadSourcesList?.length ?? 0) > 0 ? (
+            <span
+              title={`Additional sources: ${formatAdditionalLeadSourcesLabel(
+                lead.additionalLeadSourcesList,
+              )}`}
+              className="inline-flex h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-3 text-[11px] font-semibold text-rose-800"
+            >
+              Re-inquiry
+            </span>
+          ) : null}
           {lead.verified ? (
             <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-800">
               Verified

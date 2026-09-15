@@ -235,11 +235,21 @@ export function StatusPill({ status }: { status: string }) {
 export function LeadSourceTag({ primary, extras }: { primary: string; extras?: string[] }) {
   const deduped = dedupeLeadSources([primary, ...(extras ?? [])]);
   const main = deduped[0] ?? "External Lead";
+  const additional = deduped.slice(1);
   return (
-    <span className="inline-flex items-center">
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <span className="inline-flex rounded-full border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-accent)]">
         {formatLeadSourceLabel(main)}
       </span>
+      {additional.map((source) => (
+        <span
+          key={source}
+          title="Additional / reinquiry source"
+          className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-[11px] font-semibold text-rose-800"
+        >
+          {formatLeadSourceLabel(source)}
+        </span>
+      ))}
     </span>
   );
 }
