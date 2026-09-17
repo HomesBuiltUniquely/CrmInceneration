@@ -856,9 +856,13 @@ export default function JourneyPhaseHeatmap({
       : summaryTotalsOverride?.opportunity ?? opportunityTotal;
   const adminGrandTotal =
     isAdminHeatmapViewer && !usePresalesSummaryUi
-      ? summaryTotalsOverride != null
-        ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
-        : (adminPoolTotalLocal ?? adminLeadSummaryTotal + adminOppSummaryTotal)
+      ? Math.max(
+          // Prefer Hub `/counts.totalElements` (full CRM scope) — not Lead+Opportunity card sum.
+          Number(adminPoolTotalLocal ?? 0),
+          summaryTotalsOverride != null
+            ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
+            : adminLeadSummaryTotal + adminOppSummaryTotal,
+        )
       : 0;
   const shareGrandTotal =
     adminGrandTotal > 0 ? adminGrandTotal : summaryLeadTotal + summaryOpportunityTotal;
@@ -909,7 +913,11 @@ export default function JourneyPhaseHeatmap({
         adminCountsFetchKeyRef.current = fetchKey;
         setAdminCountsLocal(data.milestoneCounts);
         setAdminPoolTotalLocal(
-          data.uniquePrimaryTotal ?? data.pipelineTotal ?? data.totalElements,
+          Math.max(
+            Number(data.totalElements ?? 0),
+            Number(data.uniquePrimaryTotal ?? 0),
+            Number(data.pipelineTotal ?? 0),
+          ) || null,
         );
         setPoolLeads(data.leads);
         if (leadsWorkspace === "presales") {

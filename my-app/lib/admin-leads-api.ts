@@ -768,18 +768,33 @@ export async function fetchAdminLeadsHeatmapData(
     const fromRowsTypes = computeLeadTypeCountsFromRows(
       input.workspace === "sales" ? salesJourneyRows : leads,
     );
-    const leadTypeCounts =
-      countsJson?.byLeadType && Object.keys(countsJson.byLeadType).length > 0
-        ? adminByLeadTypeToSourceCounts(countsJson.byLeadType, authoritativeTotal)
-        : fromRowsTypes;
-    if (leadTypeCounts.all === 0 && fromRowsTypes.all > 0) {
-      leadTypeCounts.all = fromRowsTypes.all;
+    const hubByLeadType = countsJson?.byLeadType;
+    const hubHasByLeadType = Boolean(hubByLeadType && Object.keys(hubByLeadType).length > 0);
+    const hubTotalElements = Number(countsJson?.totalElements ?? 0);
+    /**
+     * Prefer Hub `/counts` for Total + source tiles (esp. `byLeadType.ivrlead`).
+     * Journey-row counts only fill gaps — they under-count IVR at Decision/Closed
+     * when merge inventory is incomplete (Aman 34 vs 37 / IVR 3 vs 6).
+     */
+    const leadTypeCounts = hubHasByLeadType
+      ? adminByLeadTypeToSourceCounts(
+          hubByLeadType,
+          Math.max(hubTotalElements, authoritativeTotal, fromRowsTypes.all),
+        )
+      : fromRowsTypes;
+    if (hubHasByLeadType) {
+      leadTypeCounts.all = Math.max(
+        hubTotalElements,
+        Number(leadTypeCounts.all ?? 0),
+        fromRowsTypes.all,
+      );
       for (const t of CRM_LEAD_TYPES) {
-        leadTypeCounts[t] = fromRowsTypes[t];
+        const hubN = Number(hubByLeadType?.[t] ?? 0);
+        const rowN = Number(fromRowsTypes[t] ?? 0);
+        // Never lower Hub IVR (full-stage). Other types: take the higher signal.
+        leadTypeCounts[t] = t === "ivrlead" ? Math.max(hubN, rowN) : Math.max(hubN, rowN);
       }
-    }
-    // Prefer journey-row type counts for sales so source tiles match heatmap inventory.
-    if (input.workspace === "sales" && fromRowsTypes.all > 0) {
+    } else if (leadTypeCounts.all === 0 && fromRowsTypes.all > 0) {
       leadTypeCounts.all = fromRowsTypes.all;
       for (const t of CRM_LEAD_TYPES) {
         leadTypeCounts[t] = fromRowsTypes[t];
@@ -798,10 +813,19 @@ export async function fetchAdminLeadsHeatmapData(
           : leads;
 
     let leadTypeCountsForUi = leadTypeCounts;
+    // Sales source tiles must stay on Hub byLeadType (not phone-primary undercount).
     let leadTypeAllRowsForUi =
-      input.workspace === "sales" ? fromRowsTypes : pool.leadTypeAllRows;
+      input.workspace === "sales" && hubHasByLeadType ? { ...leadTypeCounts } : fromRowsTypes;
     let leadTypePrimaryForUi =
-      input.workspace === "sales" ? fromRowsTypes : pool.leadTypePrimaryUnique;
+      input.workspace === "sales" && hubHasByLeadType
+        ? { ...leadTypeCounts }
+        : input.workspace === "sales"
+          ? fromRowsTypes
+          : pool.leadTypePrimaryUnique;
+    if (input.workspace !== "sales") {
+      leadTypeAllRowsForUi = pool.leadTypeAllRows;
+      leadTypePrimaryForUi = pool.leadTypePrimaryUnique;
+    }
     const dateFrom = (poolInput.dateFrom ?? "").trim();
     const dateTo = (poolInput.dateTo ?? "").trim();
     const externalLeadCtx = {
@@ -850,7 +874,7 @@ export async function fetchAdminLeadsHeatmapData(
       // Walk-in / WhatsApp augment is optional; admin pool must still load.
     }
 
-    // Hub byLeadType is table-based; reconcile ivrlead + addlead after all augment steps.
+    // Raise IVR from rows only when Hub under-counts legacy add-lead IVR — never drop Hub.
     leadTypeCountsForUi = overlayIvrLeadTypeCountsFromRows(leadTypeCountsForUi, ivrOverlayRows);
     if (input.workspace !== "sales") {
       leadTypeAllRowsForUi = overlayIvrLeadTypeCountsFromRows(leadTypeAllRowsForUi, leads);
@@ -858,6 +882,9 @@ export async function fetchAdminLeadsHeatmapData(
         leadTypePrimaryForUi,
         pool.primaryRows.length > 0 ? pool.primaryRows : leads,
       );
+    } else if (hubHasByLeadType) {
+      leadTypeAllRowsForUi = { ...leadTypeCountsForUi };
+      leadTypePrimaryForUi = { ...leadTypeCountsForUi };
     }
 
     const journeyTotal =
@@ -867,11 +894,17 @@ export async function fetchAdminLeadsHeatmapData(
             totalFromMilestoneCountMap(milestoneCounts),
           )
         : 0;
-    // Sales: Total Leads = journey inventory only (same basis as milestones).
-    // Do not max with Hub `/admin/sales` or `/counts` (those omit WI/blank-assignee).
+    /**
+     * Sales Total Leads pill: Hub `/counts.totalElements` when present (full CRM scope).
+     * Do not use Lead+Opportunity card sum (can omit Decision/Closed / incomplete merge).
+     */
     const displayTotal =
       input.workspace === "sales"
-        ? Math.max(journeyTotal, leadTypeCountsForUi.all || 0)
+        ? Math.max(
+            hubTotalElements,
+            journeyTotal,
+            leadTypeCountsForUi.all || 0,
+          )
         : Math.max(
             authoritativeTotal,
             leadTypeCountsForUi.all,
@@ -879,12 +912,16 @@ export async function fetchAdminLeadsHeatmapData(
             leadTypeAllRowsForUi.all,
           );
 
+    const salesUniqueTotal =
+      input.workspace === "sales"
+        ? Math.max(hubTotalElements, salesJourneyRows.length, displayTotal)
+        : pool.uniquePrimaryTotal;
+
     return finalizeAdminHeatmapData(
       milestoneCounts,
       input.workspace,
       displayTotal,
-      // Sales: id-merge journey length (= phase sum). Not phone primary (under-counts rows).
-      input.workspace === "sales" ? salesJourneyRows.length : pool.uniquePrimaryTotal,
+      salesUniqueTotal,
       countsJson?.verifiedCount !== undefined && input.workspace !== "sales"
         ? Number(countsJson.verifiedCount)
         : verifiedPrimary,

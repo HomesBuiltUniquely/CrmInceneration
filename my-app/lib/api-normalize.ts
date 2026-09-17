@@ -29,13 +29,16 @@ const LIMIT_STAT_KEYS = ["limit", "monthlyLimit", "monthlyLeadLimit", "leadLimit
 const CURRENT_STAT_KEYS = [
   "current",
   "currentCount",
+  "newThisMonthCount",
+  "oldAssignedThisMonthCount",
+  "totalAssignedThisMonthCount",
   "used",
   "leadsCount",
   "activeLeads",
   "usedLeads",
   "leadsUsed",
 ];
-const REMAINING_STAT_KEYS = ["remaining", "remainingLeads"];
+const REMAINING_STAT_KEYS = ["remaining", "remainingLeads", "percentageUsed"];
 
 function rowHasLimitStats(u: Record<string, unknown>): boolean {
   return (

@@ -108,7 +108,10 @@ function filterTargetUsers(
 }
 
 function sumMonthlyTargets(users: SalesTargetUserRow[]): number {
-  return users.reduce((sum, user) => sum + Math.max(0, user.monthlyTargetInr), 0);
+  return users.reduce((sum, user) => {
+    if (user.active === false) return sum;
+    return sum + Math.max(0, user.monthlyTargetInr);
+  }, 0);
 }
 
 /**

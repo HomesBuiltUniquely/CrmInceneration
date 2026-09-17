@@ -159,6 +159,25 @@ export const leadLimitsApi = {
     const raw = await call<unknown>("users");
     return extractLeadLimitUsers(raw);
   },
+  /** Full users payload including Hub meta (defaultLimit, limitUses, monthZone). */
+  listUsersWithMeta: async (opts?: { force?: boolean }) => {
+    if (opts?.force) invalidateLeadLimitsCache();
+    const raw = await call<unknown>("users");
+    const o = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as AnyJson)
+      : {};
+    return {
+      users: extractLeadLimitUsers(raw),
+      defaultLimit:
+        typeof o.defaultLimit === "number"
+          ? o.defaultLimit
+          : typeof o.defaultLimit === "string"
+            ? Number(o.defaultLimit)
+            : undefined,
+      limitUses: typeof o.limitUses === "string" ? o.limitUses : undefined,
+      monthZone: typeof o.monthZone === "string" ? o.monthZone : undefined,
+    };
+  },
   getRenovationLimits: (opts?: { force?: boolean }) => {
     if (opts?.force) invalidateLeadLimitsCache();
     return call<AnyJson>("renovation");

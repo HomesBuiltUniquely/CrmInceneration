@@ -15,7 +15,9 @@ import {
   monthSelectOptions,
   parseTargetInrInput,
   type SalesTargetUserRow,
+  type SalesTargetsListMeta,
 } from "@/lib/sales-targets";
+import { formatInsightsInrCompact } from "@/lib/crm-insights-api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 function mapExecRow(row: Record<string, unknown>, index: number): SalesTargetUserRow {
@@ -38,6 +40,8 @@ function mapExecRow(row: Record<string, unknown>, index: number): SalesTargetUse
     h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
     h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
     isCustom: false,
+    usesDefault: true,
+    active: row.active == null && row.isActive == null ? true : Boolean(row.active ?? row.isActive),
   };
 }
 
@@ -56,6 +60,7 @@ function mergeExecWithTargets(
         h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
         h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
         isCustom: false,
+        usesDefault: true,
       };
     }
     return {
@@ -64,6 +69,8 @@ function mergeExecWithTargets(
       h1TargetInr: fromApi.h1TargetInr,
       h2TargetInr: fromApi.h2TargetInr,
       isCustom: fromApi.isCustom,
+      usesDefault: fromApi.usesDefault,
+      active: fromApi.active ?? exec.active,
     };
   });
 }
@@ -74,6 +81,7 @@ export default function SalesTargetSection() {
   const [month, setMonth] = useState(currentSalesTargetMonth());
   const [defaultTarget, setDefaultTarget] = useState(String(DEFAULT_MONTHLY_SALES_TARGET_INR));
   const [executives, setExecutives] = useState<SalesTargetUserRow[]>([]);
+  const [listMeta, setListMeta] = useState<SalesTargetsListMeta | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkTarget, setBulkTarget] = useState("");
   const [loading, setLoading] = useState(false);
@@ -93,6 +101,26 @@ export default function SalesTargetSection() {
     if (!canManage) return;
     setLoading(true);
     try {
+      const detailed = await salesTargetsApi.listUsersDetailed(month).catch(() => null);
+
+      if (detailed && detailed.targets.length > 0) {
+        setDefaultTarget(String(detailed.defaultMonthlyTargetInr));
+        setListMeta({
+          yearMonth: detailed.yearMonth,
+          defaultMonthlyTargetInr: detailed.defaultMonthlyTargetInr,
+          activeExecutiveCount: detailed.activeExecutiveCount,
+          inactiveExecutiveCount: detailed.inactiveExecutiveCount,
+          totalExecutiveCount: detailed.totalExecutiveCount,
+          activeMonthlyTargetInr: detailed.activeMonthlyTargetInr,
+          inactiveMonthlyTargetInr: detailed.inactiveMonthlyTargetInr,
+          totalMonthlyTargetInr: detailed.totalMonthlyTargetInr,
+          insightsTargetInr: detailed.insightsTargetInr,
+        });
+        setExecutives(detailed.targets);
+        setSelectedIds([]);
+        return;
+      }
+
       const [legacyExecs, roleExecs, targetRows, defaultRes] = await Promise.all([
         adminPanelApi.listSalesExecutivesLegacyAll().catch(() => [] as Record<string, unknown>[]),
         adminPanelApi.listUsersByRole("SALES_EXECUTIVE").catch(() => [] as Record<string, unknown>[]),
@@ -115,11 +143,13 @@ export default function SalesTargetSection() {
         ]) ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
 
       setDefaultTarget(String(defaultInr));
+      setListMeta(null);
       setExecutives(mergeExecWithTargets(execList, targetRows, defaultInr));
       setSelectedIds([]);
     } catch (error) {
       notifyError(error instanceof Error ? error.message : "Unable to load sales targets.");
       setExecutives([]);
+      setListMeta(null);
     } finally {
       setLoading(false);
     }
@@ -274,6 +304,46 @@ export default function SalesTargetSection() {
         </div>
       </div>
 
+      {listMeta ? (
+        <div className="mb-6 grid gap-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 sm:grid-cols-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Insights target (active)
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[var(--crm-text-primary)]">
+              {listMeta.activeExecutiveCount} active ·{" "}
+              {formatInsightsInrCompact(listMeta.insightsTargetInr)}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--crm-text-muted)]">
+              {listMeta.activeExecutiveCount} ×{" "}
+              {formatTargetLakhs(listMeta.defaultMonthlyTargetInr)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Including inactive
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[var(--crm-text-primary)]">
+              {listMeta.totalExecutiveCount} total ·{" "}
+              {formatInsightsInrCompact(listMeta.totalMonthlyTargetInr)}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--crm-text-muted)]">
+              {listMeta.inactiveExecutiveCount} inactive ·{" "}
+              {formatInsightsInrCompact(listMeta.inactiveMonthlyTargetInr)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Roster note
+            </p>
+            <p className="mt-1 text-xs leading-snug text-[var(--crm-text-muted)]">
+              Insights chart uses active sum only. Activate / deactivate SEs and totals
+              recalculate on next load — no fixed Cr target on FE.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       {selectedIds.length > 0 ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
           <span className="text-sm font-semibold text-amber-900">
@@ -311,7 +381,11 @@ export default function SalesTargetSection() {
 
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm text-[var(--crm-text-muted)]">
-          {loading ? "Loading…" : `${executives.length} sales executives`}
+          {loading
+            ? "Loading…"
+            : listMeta
+              ? `${listMeta.totalExecutiveCount} sales executives (${listMeta.activeExecutiveCount} active)`
+              : `${executives.length} sales executives`}
         </span>
         <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-[var(--crm-text-primary)]">
           <input
@@ -360,7 +434,14 @@ export default function SalesTargetSection() {
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <div className="font-semibold text-[var(--crm-text-primary)]">{exec.name}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-semibold text-[var(--crm-text-primary)]">{exec.name}</div>
+                      {exec.active === false ? (
+                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">
+                          Inactive
+                        </span>
+                      ) : null}
+                    </div>
                     {exec.branch ? (
                       <div className="text-xs text-[var(--crm-text-muted)]">{exec.branch}</div>
                     ) : null}
@@ -373,7 +454,7 @@ export default function SalesTargetSection() {
                     <div className="text-xs text-[var(--crm-text-muted)]">
                       H1 {formatTargetLakhs(exec.h1TargetInr)} · H2{" "}
                       {formatTargetLakhs(exec.h2TargetInr)}
-                      {exec.isCustom ? " · Custom" : " · Default"}
+                      {exec.usesDefault === false || exec.isCustom ? " · Custom" : " · Default"}
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right">

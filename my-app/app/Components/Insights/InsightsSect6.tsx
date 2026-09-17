@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   formatInsightsChangePercent,
   formatInsightsInrCompact,
   hasHubConversionTrend,
   type InsightsDashboard,
+  type InsightsRevenueForecast,
 } from "@/lib/crm-insights-api";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import { formatTargetLakhs } from "@/lib/sales-targets";
 import type {
   InsightsMonthBarPoint,
   InsightsWeekBarPoint,
@@ -19,6 +21,174 @@ import InsightsChartGranularityToggle, {
   type ChartGranularity,
 } from "./InsightsChartGranularityToggle";
 import InsightsInfoTip from "./InsightsInfoTip";
+
+/** Caption: `9 active × ₹60L = ₹5.4Cr` from Hub roster totals (no FE hardcode). */
+function revenueForecastTargetCaption(rf: InsightsRevenueForecast | null | undefined): {
+  primary: string | null;
+  includingInactive: string | null;
+} {
+  if (!rf) return { primary: null, includingInactive: null };
+  const activeCount = rf.activeExecutiveCount;
+  const defaultInr = rf.defaultMonthlyTargetInr;
+  const activeTarget = Number(rf.activeTargetInr ?? rf.target ?? 0) || 0;
+  const totalTarget = Number(rf.totalTargetInr ?? 0) || 0;
+  const totalCount = rf.totalExecutiveCount;
+
+  const primary =
+    activeCount != null &&
+    Number.isFinite(activeCount) &&
+    defaultInr != null &&
+    Number.isFinite(defaultInr) &&
+    activeTarget > 0
+      ? `${Math.round(activeCount)} active × ${formatTargetLakhs(defaultInr)} = ${formatInsightsInrCompact(activeTarget)}`
+      : null;
+
+  const includingInactive =
+    totalCount != null &&
+    Number.isFinite(totalCount) &&
+    totalTarget > 0 &&
+    (rf.inactiveExecutiveCount ?? 0) > 0
+      ? `Including inactive (${Math.round(totalCount)}): ${formatInsightsInrCompact(totalTarget)}`
+      : null;
+
+  return { primary, includingInactive };
+}
+
+/** Classic click popover for active / inactive target roster lines. */
+function TargetRosterPopover({
+  primary,
+  includingInactive,
+}: {
+  primary: string | null;
+  includingInactive: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setVisible(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  if (!primary && !includingInactive) return null;
+
+  return (
+    <div className="relative inline-flex" ref={rootRef}>
+      <button
+        type="button"
+        aria-label="Target roster details"
+        aria-expanded={open}
+        title="Active & inactive target"
+        onClick={() => setOpen((v) => !v)}
+        className={`inline-flex h-6 w-6 items-center justify-center rounded-full border transition-all duration-200 ease-out ${
+          open
+            ? "border-slate-800 bg-slate-800 text-white shadow-sm"
+            : "border-slate-300 bg-white text-slate-500 hover:border-slate-400 hover:text-slate-800 hover:shadow-sm"
+        }`}
+      >
+        <svg
+          viewBox="0 0 20 20"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+          aria-hidden
+        >
+          <circle cx="7" cy="7" r="2.25" />
+          <circle cx="13.5" cy="8" r="2" />
+          <path
+            d="M3.5 15.5c.6-2 2-3 3.5-3s2.9 1 3.5 3"
+            strokeLinecap="round"
+          />
+          <path
+            d="M11 15.5c.4-1.4 1.4-2.2 2.5-2.2 1 0 1.9.6 2.4 1.7"
+            strokeLinecap="round"
+          />
+        </svg>
+      </button>
+
+      {open ? (
+        <div
+          role="dialog"
+          aria-label="Target roster"
+          className={`absolute left-0 top-[calc(100%+8px)] z-40 w-[min(280px,calc(100vw-2rem))] origin-top-left overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_32px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.03] transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+            visible
+              ? "translate-y-0 scale-100 opacity-100"
+              : "pointer-events-none -translate-y-1 scale-95 opacity-0"
+          }`}
+        >
+          <div className="border-b border-slate-100 bg-slate-50/90 px-3.5 py-2.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Target roster
+            </p>
+            <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+              How the grey Target bar is built
+            </p>
+          </div>
+          <div className="space-y-3 px-3.5 py-3">
+            {primary ? (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  Active executives
+                </p>
+                <p className="mt-1 text-[13px] font-semibold leading-snug text-slate-800">
+                  {primary}
+                </p>
+              </div>
+            ) : null}
+            {includingInactive ? (
+              <div className="border-t border-slate-100 pt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  With inactive
+                </p>
+                <p className="mt-1 text-[12px] font-medium leading-snug text-slate-600">
+                  {includingInactive}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function revenueForecastTargetMath(rf: InsightsRevenueForecast | null | undefined): string {
+  if (rf?.actualScope === "grossBooking") {
+    if (rf.targetSource === "sales_targets" || rf.targetSource === "incentives") {
+      return (
+        rf.targetFormula ??
+        "Actual = Token + Booking (grossBooking). Projected = pace to period end. Target = sum of active SE monthly targets. Including inactive = active + inactive."
+      );
+    }
+    if (rf.targetSource === "config_default") {
+      return "Actual = Token + Booking. Target = config fallback until sales-targets roster totals are available from Hub.";
+    }
+    return "Actual = Token + Booking (grossBooking). Projected = (actual ÷ days elapsed) × days in period. Target = Hub booking target.";
+  }
+  return "Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal (active SE sum). Bars scale to the largest of the three.";
+}
 
 type Props = {
   leadsOverTime: InsightsDashboard["leadsOverTime"];
@@ -779,6 +949,7 @@ export default function InsightsSect6({
       : hubActual;
   const forecastMax = Math.max(1, target, actual, projected);
   const bar = (v: number) => Math.max(8, Math.round((v / forecastMax) * 144));
+  const targetCaption = revenueForecastTargetCaption(revenueForecast);
 
   const openWeek = (week: InsightsWeekBarPoint, month?: InsightsMonthBarPoint | null) => {
     setWeekFromMonth(month ?? null);
@@ -1234,25 +1405,22 @@ export default function InsightsSect6({
                 <InsightsInfoTip
                   side="top"
                   label="How forecast is counted"
-                  math={
-                    revenueForecast?.actualScope === "grossBooking"
-                      ? revenueForecast?.targetSource === "incentives"
-                        ? "Actual = Token + Booking (grossBooking). Projected = pace to period end. Target = sum of Incentives H1+H2 for scoped execs in this month."
-                        : revenueForecast?.targetSource === "config_default"
-                          ? "Actual = Token + Booking. Target = config fallback (₹3 Cr) until Incentives targets are loaded in Hub."
-                          : "Actual = Token + Booking (grossBooking). Projected = (actual ÷ days elapsed) × days in period. Target = Hub booking target."
-                      : "Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal. Bars scale to the largest of the three."
-                  }
+                  math={revenueForecastTargetMath(revenueForecast)}
                 >
                   Green is money already booked (Token + Booking deals in your
                   filter window). Dark is where we are heading if we keep this
                   pace till the period ends. Grey is the monthly booking goal
-                  {revenueForecast?.targetSource === "incentives"
-                    ? " from Incentives targets."
+                  {revenueForecast?.targetSource === "sales_targets" ||
+                  revenueForecast?.targetSource === "incentives"
+                    ? " from active sales-executive targets."
                     : revenueForecast?.targetSource === "config_default"
                       ? " (default until targets are set)."
                       : "."}
                 </InsightsInfoTip>
+                <TargetRosterPopover
+                  primary={targetCaption.primary}
+                  includingInactive={targetCaption.includingInactive}
+                />
               </div>
               <p className="mt-0.5 text-[11px] font-medium text-gray-400">
                 Booked so far, heading to, and the goal

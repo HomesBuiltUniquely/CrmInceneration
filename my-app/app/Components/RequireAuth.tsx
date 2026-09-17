@@ -1,6 +1,6 @@
 "use client";
 
-import { CRM_TOKEN_STORAGE_KEY, landingPathByRole, CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
+import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
 import { useLayoutEffect, useState } from "react";
 
@@ -26,18 +26,8 @@ export default function RequireAuth({ children }: Props) {
       return;
     }
 
-    // If role landing differs from current path (e.g. presales landed on /Leads), correct it.
-    const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    const expected = landingPathByRole(role);
-    if (
-      role &&
-      expected &&
-      expected !== window.location.pathname &&
-      (expected === "/presales-leads" || window.location.pathname === "/presales-leads")
-    ) {
-      window.location.replace(`${window.location.origin}${expected}`);
-      return;
-    }
+    // Do NOT force landingPathByRole here — admins/sales must be able to open
+    // /presales-leads via the module switcher without being bounced back to /Leads.
 
     setAllowed(true);
   }, []);

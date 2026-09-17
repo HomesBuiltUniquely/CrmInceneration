@@ -1,51 +1,62 @@
 "use client";
-import { useState, useEffect, useRef, ChangeEvent } from "react";
+
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  type ChangeEvent,
+  type CSSProperties,
+} from "react";
 import { extractLeadLimitUsers, leadLimitsApi } from "@/lib/lead-limits-api";
 import { pickNumber } from "@/lib/api-normalize";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { isUserActive } from "@/lib/user-active";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
-// Reuse the colour tokens
 const C = {
-  bg: "var(--crm-app-bg)",
   card: "var(--crm-surface)",
   surface: "var(--crm-surface-subtle)",
-  elevated: "var(--crm-surface-elevated)",
-  primary: "var(--crm-accent)",
-  primaryHover: "var(--crm-accent-strong)",
   accent: "var(--crm-accent)",
   danger: "var(--crm-danger)",
-  dangerBg: "var(--crm-danger-bg)",
-  dangerText: "var(--crm-danger-text)",
-  success: "var(--crm-success)",
-  successBg: "var(--crm-success-bg)",
-  successText: "var(--crm-success-text)",
-  warningBg: "var(--crm-warning-bg)",
-  warningText: "var(--crm-warning-text)",
-  info: "var(--crm-info)",
-  infoBg: "var(--crm-info-bg)",
-  infoText: "var(--crm-info-text)",
-  neutral: "var(--crm-neutral)",
-  neutralBg: "var(--crm-neutral-bg)",
-  neutralText: "var(--crm-neutral-text)",
   border: "var(--crm-border)",
-  borderStrong: "var(--crm-border-strong)",
   text: "var(--crm-text-primary)",
   muted: "var(--crm-text-muted)",
-  badgeBg: "var(--crm-accent-soft)",
-  badgeText: "var(--crm-accent)",
-  inputBg: "var(--crm-input-bg)",
+  warningText: "var(--crm-warning-text)",
   overlay: "var(--crm-overlay)",
-  tabGrad: "var(--crm-tab-grad)",
   white: "#fff",
-  disabled: "var(--crm-border-strong)",
 };
+
+type RoleFilter =
+  | "all"
+  | "SALES_EXECUTIVE"
+  | "SALES_MANAGER"
+  | "PRESALES_EXECUTIVE"
+  | "PRESALES_MANAGER";
+
+const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "SALES_EXECUTIVE", label: "Sales Exec" },
+  { id: "SALES_MANAGER", label: "Sales Mgr" },
+  { id: "PRESALES_EXECUTIVE", label: "Presales Exec" },
+  { id: "PRESALES_MANAGER", label: "Presales Mgr" },
+];
+
+const VIEWPORT_ROWS = 7;
+const VIEWPORT_PX = 36 + VIEWPORT_ROWS * 44;
+
+const COLOR_LEGEND = [
+  { color: "rgba(234, 179, 8, 0.55)", label: "Inactive" },
+  { color: "rgba(185, 28, 28, 0.55)", label: "Limit 0" },
+  { color: "rgba(22, 163, 74, 0.55)", label: "Usage > 80%" },
+] as const;
 
 interface UserLimit {
   userId: number;
   name: string;
   role: string;
   branch: string;
+  active: boolean;
   current: number;
   limit: number;
   remaining: number;
@@ -65,14 +76,19 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
     pickNumber(u, ["renovationAssignedThisMonth", "current", "used", "currentCount"]) ?? 0;
   const remaining =
     pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
+  const pctRaw = pickNumber(u, ["renovationUsagePercent", "usagePercent", "percentageUsed", "pct"]);
   const pct =
-    pickNumber(u, ["renovationUsagePercent", "usagePercent", "pct"]) ??
-    (limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0);
+    pctRaw != null
+      ? Math.round(pctRaw * 10) / 10
+      : limit > 0
+        ? Math.round((current / limit) * 1000) / 10
+        : 0;
   return {
     userId,
     name: String(u.fullName ?? u.name ?? u.username ?? `User ${userId}`),
     role: normalizedUserRole(u),
     branch: String(u.branch ?? ""),
+    active: isUserActive(u as { active?: boolean; isActive?: boolean }),
     current,
     limit,
     remaining,
@@ -80,30 +96,205 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
   };
 }
 
+function rowBackground(u: UserLimit): string {
+  if (!u.active) return "rgba(234, 179, 8, 0.32)";
+  if (u.limit === 0) return "rgba(185, 28, 28, 0.22)";
+  if (u.pct > 80) return "rgba(22, 163, 74, 0.38)";
+  return C.card;
+}
+
+const th: CSSProperties = {
+  padding: "8px 10px",
+  textAlign: "left",
+  fontSize: 11,
+  fontWeight: 600,
+  color: C.muted,
+  letterSpacing: "0.03em",
+  textTransform: "uppercase",
+  background: C.surface,
+  borderBottom: `1px solid ${C.border}`,
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  whiteSpace: "nowrap",
+};
+
+const td: CSSProperties = {
+  padding: "11px 10px",
+  fontSize: 13,
+  color: C.text,
+  borderBottom: `1px solid ${C.border}`,
+  verticalAlign: "middle",
+};
+
+function RoleFilterMenu({
+  value,
+  onChange,
+}: {
+  value: RoleFilter;
+  onChange: (next: RoleFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current = ROLE_FILTERS.find((o) => o.id === value) ?? ROLE_FILTERS[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: Event) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: Event) => {
+      if ((e as KeyboardEvent).key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        title={`Role: ${current.label}`}
+        aria-label="Filter by role"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 32,
+          padding: "0 10px",
+          borderRadius: 8,
+          border: `1px solid ${C.border}`,
+          background: open ? C.surface : C.card,
+          color: C.text,
+          cursor: "pointer",
+          fontSize: 12,
+          fontWeight: 600,
+          transition: "background 0.2s ease, box-shadow 0.2s ease",
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 7h16M7 12h10M10 17h4"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span
+          style={{
+            maxWidth: 92,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {current.label}
+        </span>
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <path
+            d="M3 4.5L6 7.5L9 4.5"
+            stroke={C.muted}
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          role="listbox"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 6px)",
+            zIndex: 40,
+            minWidth: 168,
+            padding: 4,
+            borderRadius: 12,
+            border: `1px solid ${C.border}`,
+            background: C.card,
+            boxShadow: "0 10px 28px rgba(15,23,42,0.14)",
+            animation: "leadLimitFadeSlide 0.22s cubic-bezier(0.32, 0.72, 0, 1)",
+          }}
+        >
+          {ROLE_FILTERS.map((opt) => {
+            const active = value === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(opt.id);
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
+                  color: active ? C.accent : C.text,
+                  background: active ? C.surface : "transparent",
+                  transition: "background 0.15s ease",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function RenovationLeadLimitDashboard() {
   const { notifySuccess, notifyError } = useGlobalNotifier();
   const [viewerRole, setViewerRole] = useState("");
   const loadGen = useRef(0);
+  const [listKey, setListKey] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
-    setViewerRole(normalizeRole(role));
+    setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
   }, []);
 
   const canManageLeadLimits = viewerRole === "SUPER_ADMIN" || viewerRole === "SALES_ADMIN";
 
-  const [defaultLimit, setDefaultLimit] = useState<string>("20");
+  const [defaultLimit, setDefaultLimit] = useState("20");
   const [users, setUsers] = useState<UserLimit[]>([]);
   const [limitsLoading, setLimitsLoading] = useState(false);
   const [limitsError, setLimitsError] = useState<string | null>(null);
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
-  // Single edit modal state
   const [showModal, setShowModal] = useState(false);
   const [currentEditingUser, setCurrentEditingUser] = useState<UserLimit | null>(null);
-  const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
+  const [currentEditingLimit, setCurrentEditingLimit] = useState("");
 
-  /** Original Hub renovation limits only — keep loading until real rows arrive. */
+  const sortedUsers = useMemo(() => {
+    const filtered =
+      roleFilter === "all" ? users : users.filter((u) => u.role === roleFilter);
+    return [...filtered].sort((a, b) => {
+      const byCurrent = b.current - a.current;
+      if (byCurrent !== 0) return byCurrent;
+      const byPct = b.pct - a.pct;
+      if (byPct !== 0) return byPct;
+      return a.name.localeCompare(b.name);
+    });
+  }, [users, roleFilter]);
+
   const loadLimits = (opts?: { force?: boolean }) => {
     if (!canManageLeadLimits) return;
     const gen = ++loadGen.current;
@@ -147,66 +338,75 @@ export default function RenovationLeadLimitDashboard() {
 
   if (!canManageLeadLimits) {
     return (
-      <div>
-        <p style={{ fontSize: 13, color: C.muted, marginBottom: 0 }}>
-          Lead limit management is available only for Sales Admin and Super Admin.
-        </p>
-      </div>
+      <p style={{ fontSize: 13, color: C.muted, margin: 0 }}>
+        Lead limit management is available only for Sales Admin and Super Admin.
+      </p>
     );
   }
 
+  const openEdit = (u: UserLimit) => {
+    setCurrentEditingUser(u);
+    setCurrentEditingLimit(String(u.limit) || "");
+    setShowModal(true);
+  };
+
   return (
     <div>
+      {/* Slim default renovation limit */}
       <div
         style={{
-          background: C.tabGrad,
-          borderRadius: 16,
-          padding: "20px 24px",
-          marginBottom: 24,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 24,
+          gap: 12,
           flexWrap: "wrap",
+          marginBottom: 16,
+          padding: "10px 14px",
+          borderRadius: 12,
+          border: `1px solid ${C.border}`,
+          background: C.surface,
         }}
       >
-        <div>
-          <p style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, margin: 0 }}>
-            Default monthly Renovation limit for users
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: C.muted,
+            }}
+          >
+            Default renovation limit
           </p>
-          <p style={{ color: C.white, fontSize: 13, marginTop: 6, fontWeight: 600 }}>
-            📌 Current: <strong style={{ fontSize: 14 }}>{defaultLimit} leads/month</strong>
+          <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 600, color: C.text }}>
+            {defaultLimit} leads / month for new users
           </p>
         </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
             type="number"
             value={defaultLimit}
             onChange={(e: ChangeEvent<HTMLInputElement>) => setDefaultLimit(e.target.value)}
+            aria-label="Default renovation monthly limit"
             style={{
-              width: 80,
-              padding: "8px 14px",
+              width: 72,
+              height: 32,
+              padding: "0 10px",
               borderRadius: 8,
-              border: "none",
-              fontSize: 14,
-              fontWeight: 700,
+              border: `1px solid ${C.border}`,
+              fontSize: 13,
+              fontWeight: 600,
               textAlign: "center",
               outline: "none",
               background: C.card,
               color: C.text,
+              fontVariantNumeric: "tabular-nums",
             }}
           />
           <button
-            style={{
-              background: C.success,
-              color: "white",
-              padding: "8px 18px",
-              borderRadius: 8,
-              border: "none",
-              fontWeight: 600,
-              cursor: "pointer",
-              fontSize: 13,
-            }}
+            type="button"
             onClick={() => {
               const n = Number(defaultLimit);
               if (Number.isNaN(n)) return;
@@ -220,179 +420,328 @@ export default function RenovationLeadLimitDashboard() {
                   notifyError(e instanceof Error ? e.message : "Failed to update default limit."),
                 );
             }}
+            style={{
+              height: 32,
+              padding: "0 12px",
+              borderRadius: 8,
+              border: "none",
+              background: C.accent,
+              color: C.white,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
           >
-            Update Default
+            Save
           </button>
         </div>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <span style={{ fontSize: 13, color: C.muted }}>
-          {limitsLoading ? "Loading…" : `${users.length} users`}
-          {limitsError ? (
-            <span style={{ marginLeft: 10, color: C.danger, fontWeight: 500, fontSize: 12 }}>
-              {limitsError}
-            </span>
-          ) : null}
-        </span>
-        <button
-          onClick={() => loadLimits({ force: true })}
-          style={{
-            background: C.accent,
-            color: "white",
-            padding: "7px 16px",
-            borderRadius: "8px",
-            fontSize: 13,
-            fontWeight: 600,
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          ↻ Refresh
-        </button>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 10,
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: C.muted }}>
+            {limitsLoading ? "Loading…" : `${sortedUsers.length} users · top movers first`}
+            {roleFilter !== "all" ? (
+              <span style={{ marginLeft: 6 }}>
+                · {ROLE_FILTERS.find((o) => o.id === roleFilter)?.label}
+              </span>
+            ) : null}
+            {limitsError ? (
+              <span style={{ marginLeft: 8, color: C.danger }}>{limitsError}</span>
+            ) : null}
+          </span>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 10,
+              fontSize: 11,
+              color: C.muted,
+            }}
+            aria-label="Row color meaning"
+          >
+            {COLOR_LEGEND.map((item) => (
+              <span
+                key={item.label}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+              >
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 3,
+                    background: item.color,
+                    border: `1px solid ${C.border}`,
+                    flexShrink: 0,
+                  }}
+                />
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <RoleFilterMenu
+            value={roleFilter}
+            onChange={(next) => {
+              setRoleFilter(next);
+              setListKey((k) => k + 1);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => loadLimits({ force: true })}
+            style={{
+              height: 32,
+              padding: "0 12px",
+              borderRadius: 8,
+              border: "none",
+              background: C.accent,
+              color: C.white,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead style={{ borderBottom: `2px solid ${C.border}` }}>
-            <tr style={{ background: C.surface }}>
-              {["Name", "Role", "Branch", "Current", "Limit", "Remaining", "Usage", "Action"].map(
-                (c) => (
-                  <th
-                    key={c}
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {c}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {limitsLoading && users.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  Loading renovation limits…
-                </td>
-              </tr>
-            ) : users.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  {limitsError
-                    ? `Could not load users: ${limitsError}`
-                    : "No users found for renovation limit."}
-                </td>
-              </tr>
-            ) : (
-              users.map((u, i) => {
-                const barColor =
-                  u.pct === 0
-                    ? C.borderStrong
-                    : u.pct < 50
-                      ? C.success
-                      : u.pct < 80
-                        ? "var(--crm-warning-text)"
-                        : C.danger;
-                return (
-                  <tr
-                    key={u.userId}
-                    style={{
-                      background: u.limit === 0 ? C.dangerBg : i % 2 === 0 ? C.card : C.surface,
-                      color: C.text,
-                      opacity: limitsLoading ? 0.72 : 1,
-                    }}
-                  >
-                    <td style={{ padding: "12px 14px", fontWeight: 600, fontSize: 14 }}>{u.name}</td>
-                    <td style={{ padding: "12px 14px" }}>
-                      <span
+      <div
+        key={listKey}
+        style={{
+          borderRadius: 12,
+          border: `1px solid ${C.border}`,
+          background: C.card,
+          overflow: "hidden",
+          animation: "leadLimitFadeSlide 0.28s cubic-bezier(0.32, 0.72, 0, 1)",
+        }}
+      >
+        <div style={{ maxHeight: VIEWPORT_PX, overflowY: "auto", overflowX: "auto" }}>
+          {limitsLoading && sortedUsers.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>
+              Loading renovation limits…
+            </div>
+          ) : sortedUsers.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>
+              {limitsError
+                ? `Could not load users: ${limitsError}`
+                : "No users found for renovation limit."}
+            </div>
+          ) : (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                minWidth: 640,
+              }}
+            >
+              <thead>
+                <tr>
+                  <th style={{ ...th, paddingLeft: 12 }}>Name</th>
+                  <th style={th}>Role</th>
+                  <th style={th}>Branch</th>
+                  <th style={{ ...th, textAlign: "right" }}>Current</th>
+                  <th style={{ ...th, textAlign: "right" }}>Limit</th>
+                  <th style={{ ...th, textAlign: "right" }}>Left</th>
+                  <th style={{ ...th, minWidth: 100 }}>Usage</th>
+                  <th style={{ ...th, paddingRight: 14 }}> </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedUsers.map((u, i) => {
+                  const last = i === sortedUsers.length - 1;
+                  const border = last ? "none" : td.borderBottom;
+                  return (
+                    <tr
+                      key={u.userId}
+                      title={
+                        !u.active
+                          ? "Inactive"
+                          : u.limit === 0
+                            ? "Limit is 0"
+                            : u.pct > 80
+                              ? `Usage ${u.pct}%`
+                              : undefined
+                      }
+                      style={{
+                        background: rowBackground(u),
+                        opacity: limitsLoading ? 0.75 : 1,
+                        transition: "background 0.2s ease, opacity 0.2s ease",
+                      }}
+                    >
+                      <td style={{ ...td, paddingLeft: 12, fontWeight: 600, borderBottom: border }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <span
+                            style={{
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                              maxWidth: 160,
+                            }}
+                          >
+                            {u.name}
+                          </span>
+                          {!u.active ? (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 10,
+                                fontWeight: 600,
+                                color: C.warningText,
+                              }}
+                            >
+                              Inactive
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td style={{ ...td, color: C.muted, fontSize: 12, borderBottom: border }}>
+                        {u.role.replace(/_/g, " ")}
+                      </td>
+                      <td style={{ ...td, color: C.muted, fontSize: 12, borderBottom: border }}>
+                        {u.branch ? u.branch.replace(/_/g, " ") : "—"}
+                      </td>
+                      <td
                         style={{
-                          background: C.badgeBg,
-                          color: C.badgeText,
-                          padding: "2px 8px",
-                          borderRadius: 12,
-                          fontSize: 12,
+                          ...td,
+                          textAlign: "right",
                           fontWeight: 600,
+                          fontVariantNumeric: "tabular-nums",
+                          borderBottom: border,
                         }}
                       >
-                        {u.role}
-                      </span>
-                    </td>
-                    <td style={{ padding: "12px 14px", fontSize: 14 }}>{u.branch}</td>
-                    <td
-                      style={{
-                        padding: "12px 14px",
-                        fontSize: 14,
-                        color: u.current === 0 ? C.danger : C.text,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {u.current}
-                    </td>
-                    <td style={{ padding: "12px 14px", fontSize: 14, fontWeight: 600 }}>{u.limit}</td>
-                    <td
-                      style={{
-                        padding: "12px 14px",
-                        fontSize: 14,
-                        color: u.remaining === 0 ? C.danger : C.success,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {u.remaining}
-                    </td>
-                    <td style={{ padding: "12px 14px", minWidth: 140 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 6, background: C.borderStrong, borderRadius: 3 }}>
+                        {u.current}
+                      </td>
+                      <td
+                        style={{
+                          ...td,
+                          textAlign: "right",
+                          fontWeight: 600,
+                          fontVariantNumeric: "tabular-nums",
+                          color: u.limit === 0 ? C.danger : C.text,
+                          borderBottom: border,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => openEdit(u)}
+                          title="Edit limit"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            cursor: "pointer",
+                            color: "inherit",
+                            font: "inherit",
+                            fontVariantNumeric: "tabular-nums",
+                            textDecoration: "underline",
+                            textDecorationColor: C.border,
+                            textUnderlineOffset: 3,
+                          }}
+                        >
+                          {u.limit}
+                        </button>
+                      </td>
+                      <td
+                        style={{
+                          ...td,
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: u.remaining === 0 ? C.danger : C.muted,
+                          borderBottom: border,
+                        }}
+                      >
+                        {u.remaining}
+                      </td>
+                      <td style={{ ...td, borderBottom: border }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 88 }}>
                           <div
                             style={{
-                              width: `${Math.min(100, Math.max(0, u.pct))}%`,
-                              height: "100%",
-                              background: barColor,
-                              borderRadius: 3,
+                              flex: 1,
+                              height: 3,
+                              background: C.border,
+                              borderRadius: 2,
+                              overflow: "hidden",
                             }}
-                          />
+                          >
+                            <div
+                              style={{
+                                width: `${Math.min(100, Math.max(0, u.pct))}%`,
+                                height: "100%",
+                                background: C.text,
+                                opacity: 0.45,
+                                borderRadius: 2,
+                                transition: "width 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+                              }}
+                            />
+                          </div>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: C.muted,
+                              fontVariantNumeric: "tabular-nums",
+                              minWidth: 36,
+                              textAlign: "right",
+                            }}
+                          >
+                            {u.pct}%
+                          </span>
                         </div>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: barColor, minWidth: 38 }}>
-                          {u.pct}%
-                        </span>
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 14px" }}>
-                      <button
-                        style={{
-                          background: C.primary,
-                          color: "white",
-                          padding: "5px 12px",
-                          borderRadius: 8,
-                          border: "none",
-                          fontSize: 12,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                        }}
-                        onClick={() => {
-                          setCurrentEditingUser(u);
-                          setCurrentEditingLimit(String(u.limit) || "");
-                          setShowModal(true);
-                        }}
-                      >
-                        Set Limit
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                      </td>
+                      <td style={{ ...td, paddingRight: 14, borderBottom: border }}>
+                        <button
+                          type="button"
+                          onClick={() => openEdit(u)}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            padding: 0,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: C.accent,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {sortedUsers.length > VIEWPORT_ROWS ? (
+          <div
+            style={{
+              padding: "7px 12px",
+              borderTop: `1px solid ${C.border}`,
+              fontSize: 11,
+              color: C.muted,
+              background: C.surface,
+              textAlign: "center",
+            }}
+          >
+            Showing top {VIEWPORT_ROWS} · scroll for {sortedUsers.length - VIEWPORT_ROWS} more
+          </div>
+        ) : null}
       </div>
 
-      {showModal && currentEditingUser && (
+      {showModal && currentEditingUser ? (
         <div
           style={{
             position: "fixed",
@@ -402,69 +751,102 @@ export default function RenovationLeadLimitDashboard() {
             alignItems: "center",
             justifyContent: "center",
             background: C.overlay,
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+            animation: "leadLimitFadeSlide 0.22s ease",
           }}
+          onClick={() => setShowModal(false)}
         >
-          <div style={{ width: "90%", maxWidth: 500, background: C.card, borderRadius: 12, overflow: "hidden" }}>
+          <div
+            style={{
+              width: "90%",
+              maxWidth: 400,
+              background: C.card,
+              borderRadius: 16,
+              border: `1px solid ${C.border}`,
+              boxShadow: "0 16px 40px rgba(15,23,42,0.18)",
+              overflow: "hidden",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div
               style={{
-                background: C.tabGrad,
-                padding: "16px 20px",
-                color: "white",
-                fontWeight: "bold",
+                padding: "14px 16px",
+                borderBottom: `1px solid ${C.border}`,
                 display: "flex",
                 justifyContent: "space-between",
+                alignItems: "center",
               }}
             >
-              <span>Set Renovation Monthly Limit</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+                Renovation limit
+              </span>
               <button
+                type="button"
                 onClick={() => setShowModal(false)}
                 style={{
-                  background: "transparent",
                   border: "none",
-                  color: "white",
+                  background: "transparent",
+                  color: C.muted,
                   cursor: "pointer",
                   fontSize: 16,
+                  lineHeight: 1,
                 }}
               >
                 ✕
               </button>
             </div>
-            <div style={{ padding: 24 }}>
-              <p style={{ margin: "0 0 16px 0", color: C.text, fontWeight: 600 }}>
-                Setting limit for: <strong>{currentEditingUser.name}</strong>
+            <div style={{ padding: 16 }}>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.muted }}>
+                {currentEditingUser.name}
               </p>
               <input
                 type="number"
                 value={currentEditingLimit}
                 onChange={(e) => setCurrentEditingLimit(e.target.value)}
+                autoFocus
                 style={{
                   width: "100%",
-                  padding: "12px",
-                  borderRadius: 8,
-                  border: `2px solid ${C.primary}`,
-                  fontSize: 16,
+                  height: 40,
+                  padding: "0 12px",
+                  borderRadius: 10,
+                  border: `1px solid ${C.border}`,
+                  fontSize: 15,
+                  fontWeight: 600,
                   boxSizing: "border-box",
                   background: C.surface,
                   color: C.text,
+                  fontVariantNumeric: "tabular-nums",
+                  outline: "none",
                 }}
-                autoFocus
               />
-              <div style={{ display: "flex", gap: 12, marginTop: 24, justifyContent: "flex-end" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  marginTop: 16,
+                  justifyContent: "flex-end",
+                }}
+              >
                 <button
+                  type="button"
                   onClick={() => setShowModal(false)}
                   style={{
-                    padding: "8px 16px",
+                    height: 34,
+                    padding: "0 14px",
                     borderRadius: 8,
-                    border: "none",
-                    background: C.surface,
+                    border: `1px solid ${C.border}`,
+                    background: C.card,
                     color: C.text,
                     fontWeight: 600,
+                    fontSize: 12,
                     cursor: "pointer",
                   }}
                 >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={() => {
                     const lim = Number(currentEditingLimit);
                     if (Number.isNaN(lim)) return;
@@ -476,26 +858,30 @@ export default function RenovationLeadLimitDashboard() {
                         notifySuccess("Renovation limit updated.");
                       })
                       .catch((e) =>
-                        notifyError(e instanceof Error ? e.message : "Failed to update limit."),
+                        notifyError(
+                          e instanceof Error ? e.message : "Failed to update limit.",
+                        ),
                       );
                   }}
                   style={{
-                    padding: "8px 16px",
+                    height: 34,
+                    padding: "0 14px",
                     borderRadius: 8,
                     border: "none",
-                    background: C.success,
-                    color: "white",
+                    background: C.accent,
+                    color: C.white,
                     fontWeight: 600,
+                    fontSize: 12,
                     cursor: "pointer",
                   }}
                 >
-                  Save Limit
+                  Save
                 </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

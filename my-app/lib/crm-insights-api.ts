@@ -125,13 +125,33 @@ export function hasHubConversionTrend(
 
 /** Hub revenue forecast bars — Actual aligns with kpis.grossBooking when actualScope is set. */
 export type InsightsRevenueForecast = {
+  /** Primary Insights target = sum of active SE monthly targets. */
   target: number;
   actual: number;
   projected: number;
   /** e.g. "grossBooking" — same as Token + Booking KPI strip. */
   actualScope?: string | null;
+  /** e.g. "sales_targets" | "incentives" | "config_default" */
   targetSource?: string | null;
+  /** Same as `target` when Hub sends explicit active sum. */
+  activeTargetInr?: number | null;
+  inactiveTargetInr?: number | null;
+  /** Active + inactive monthly target sum. */
+  totalTargetInr?: number | null;
+  activeExecutiveCount?: number | null;
+  inactiveExecutiveCount?: number | null;
+  totalExecutiveCount?: number | null;
+  /** Per-SE default (usually ₹60L) unless admin override. */
+  defaultMonthlyTargetInr?: number | null;
+  targetYearMonth?: string | null;
+  targetFormula?: string | null;
 };
+
+function normalizeOptionalNum(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
 
 function normalizeRevenueForecast(raw: unknown): InsightsRevenueForecast {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -141,6 +161,15 @@ function normalizeRevenueForecast(raw: unknown): InsightsRevenueForecast {
     projected: asNum(o.projected),
     actualScope: o.actualScope == null ? null : asStr(o.actualScope),
     targetSource: o.targetSource == null ? null : asStr(o.targetSource),
+    activeTargetInr: normalizeOptionalNum(o.activeTargetInr ?? o.activeMonthlyTargetInr),
+    inactiveTargetInr: normalizeOptionalNum(o.inactiveTargetInr ?? o.inactiveMonthlyTargetInr),
+    totalTargetInr: normalizeOptionalNum(o.totalTargetInr ?? o.totalMonthlyTargetInr),
+    activeExecutiveCount: normalizeOptionalNum(o.activeExecutiveCount),
+    inactiveExecutiveCount: normalizeOptionalNum(o.inactiveExecutiveCount),
+    totalExecutiveCount: normalizeOptionalNum(o.totalExecutiveCount),
+    defaultMonthlyTargetInr: normalizeOptionalNum(o.defaultMonthlyTargetInr),
+    targetYearMonth: o.targetYearMonth == null ? null : asStr(o.targetYearMonth),
+    targetFormula: o.targetFormula == null ? null : asStr(o.targetFormula),
   };
 }
 
@@ -617,6 +646,18 @@ export function buildInsightsDashboardSearchParams(
     params.set("salesExecutiveId", String(query.salesExecutiveId));
   } else if (query.salesManagerId != null) {
     params.set("salesManagerId", String(query.salesManagerId));
+  }
+
+  /**
+   * Same as performance-cards: Hub calendar-month semantics need
+   * `dateRange=current_month`. Without it, Hub may only honor UTC dateFrom/dateTo
+   * and under-count proposals/closed vs a direct `current_month` API check.
+   */
+  if (
+    query.dateFilter.preset === "currentMonth" &&
+    !params.has("dateRange")
+  ) {
+    params.set("dateRange", "current_month");
   }
 
   params.set("teamPeriod", query.teamPeriod);
@@ -1184,6 +1225,156 @@ function asNum(value: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Team matrix counts — Hub may send a bare number, numeric string, or
+ * `{ count }` / `{ value }` object. Plain `Number({})` is NaN → showed as 0.
+ */
+function asMetricCount(value: unknown, fallback = 0): number {
+  if (value == null) return fallback;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : fallback;
+  }
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/,/g, "").trim();
+    if (!cleaned) return fallback;
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    return asMetricCount(
+      o.count ?? o.value ?? o.total ?? o.amount ?? o.qty ?? o.quantity,
+      fallback,
+    );
+  }
+  return fallback;
+}
+
+function firstPresent(...values: unknown[]): unknown {
+  for (const v of values) {
+    if (v != null) return v;
+  }
+  return undefined;
+}
+
+function normalizeTeamPerformanceMember(
+  m: Record<string, unknown>,
+): InsightsTeamMember {
+  // Some Hub builds nest counts under metrics / stats / activity.
+  const nested =
+    (m.metrics && typeof m.metrics === "object"
+      ? (m.metrics as Record<string, unknown>)
+      : null) ??
+    (m.stats && typeof m.stats === "object"
+      ? (m.stats as Record<string, unknown>)
+      : null) ??
+    (m.activity && typeof m.activity === "object"
+      ? (m.activity as Record<string, unknown>)
+      : null) ??
+    {};
+
+  const pick = (...keys: string[]): unknown => {
+    for (const key of keys) {
+      if (m[key] != null) return m[key];
+      if (nested[key] != null) return nested[key];
+    }
+    return undefined;
+  };
+
+  const leads = asMetricCount(
+    firstPresent(pick("leads", "leadCount", "leadsCount", "lead_count", "totalLeads")),
+  );
+  const meetings = asMetricCount(
+    firstPresent(
+      pick(
+        "meetings",
+        "meetingCount",
+        "meetingsCount",
+        "meeting_count",
+        "appointments",
+      ),
+    ),
+  );
+  const proposals = asMetricCount(
+    firstPresent(
+      pick(
+        "proposals",
+        "proposalCount",
+        "proposalsCount",
+        "proposal_count",
+        "quotesSent",
+        "quotes_sent",
+        "quoteSent",
+        "quoteSentCount",
+        "quotesSentCount",
+      ),
+    ),
+  );
+  const closed = asMetricCount(
+    firstPresent(
+      pick(
+        "closed",
+        "closedCount",
+        "closed_count",
+        "closedWon",
+        "closed_won",
+        "closedWonCount",
+        "wonCount",
+        "won",
+      ),
+    ),
+  );
+  const closedValue = asMetricCount(
+    firstPresent(
+      pick("closedValue", "closed_value", "closedWonValue", "wonValue"),
+    ),
+  );
+  const hubConversion = asMetricCount(
+    firstPresent(
+      pick("conversionPercent", "conversion_percent", "convPercent", "conversion"),
+    ),
+    Number.NaN,
+  );
+  // Prefer derive from displayed closed÷leads so Conv matches Closed column.
+  const conversionPercent =
+    leads > 0
+      ? Math.round((closed / leads) * 1000) / 10
+      : Number.isFinite(hubConversion)
+        ? hubConversion
+        : 0;
+
+  return {
+    userId: (m.userId as number | string) ?? (m.user_id as number | string) ?? "",
+    name: asStr(m.name ?? m.fullName ?? m.username),
+    role: asStr(m.role ?? m.userRole),
+    leads,
+    meetings,
+    proposals,
+    closed,
+    closedValue,
+    conversionPercent,
+    active:
+      typeof m.active === "boolean"
+        ? m.active
+        : m.active == null
+          ? undefined
+          : Boolean(m.active),
+    targetIncentive:
+      m.targetIncentive != null ? asMetricCount(m.targetIncentive) : undefined,
+    achievedIncentive:
+      m.achievedIncentive != null
+        ? asMetricCount(m.achievedIncentive)
+        : undefined,
+    payoff:
+      m.payoff != null
+        ? asMetricCount(m.payoff)
+        : m.incentivePayout != null
+          ? asMetricCount(m.incentivePayout)
+          : undefined,
+  };
+}
+
 function asStr(value: unknown, fallback = ""): string {
   if (value == null) return fallback;
   return String(value);
@@ -1487,7 +1678,16 @@ function normalizeConversionTrend(raw: unknown): InsightsConversionTrend {
 
 /** Normalize Hub payload so UI can rely on a stable shape. */
 export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
-  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  // Prefer `data` envelope (same as other Insights endpoints).
+  const unwrapped = unwrapInsightsPayload(raw);
+  const root =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  // Merge so top-level extras still work if Hub mixes shapes.
+  const r: Record<string, unknown> = { ...root, ...unwrapped };
+  // Drop success wrapper noise
+  delete r.success;
+  delete r.message;
+
   const kpis = (r.kpis && typeof r.kpis === "object" ? r.kpis : {}) as Record<
     string,
     unknown
@@ -1495,7 +1695,9 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
   const revenue = (
     r.revenueDistribution && typeof r.revenueDistribution === "object"
       ? r.revenueDistribution
-      : {}
+      : r.revenue_distribution && typeof r.revenue_distribution === "object"
+        ? r.revenue_distribution
+        : {}
   ) as Record<string, unknown>;
   const drop = (
     r.dropReasons && typeof r.dropReasons === "object" ? r.dropReasons : {}
@@ -1513,6 +1715,10 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       ? r.revenueForecast
       : {}
   ) as Record<string, unknown>;
+
+  const teamRaw = asArray<Record<string, unknown>>(
+    r.teamPerformance ?? r.team_performance ?? r.teamMatrix ?? r.team,
+  );
 
   return {
     filtersApplied:
@@ -1563,33 +1769,7 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       avgDays: asNum(v.avgDays),
       trendDays: asNum(v.trendDays),
     })),
-    teamPerformance: asArray<Record<string, unknown>>(r.teamPerformance).map(
-      (m) => ({
-        userId: (m.userId as number | string) ?? "",
-        name: asStr(m.name),
-        role: asStr(m.role),
-        leads: asNum(m.leads),
-        meetings: asNum(m.meetings),
-        proposals: asNum(m.proposals),
-        closed: asNum(m.closed),
-        closedValue: asNum(m.closedValue),
-        conversionPercent: asNum(m.conversionPercent),
-        active:
-          typeof m.active === "boolean"
-            ? m.active
-            : m.active == null
-              ? undefined
-              : Boolean(m.active),
-        targetIncentive: m.targetIncentive != null ? asNum(m.targetIncentive) : undefined,
-        achievedIncentive: m.achievedIncentive != null ? asNum(m.achievedIncentive) : undefined,
-        payoff:
-          m.payoff != null
-            ? asNum(m.payoff)
-            : m.incentivePayout != null
-              ? asNum(m.incentivePayout)
-              : undefined,
-      }),
-    ),
+    teamPerformance: teamRaw.map((m) => normalizeTeamPerformanceMember(m)),
     leadsOverTime: {
       changePercent:
         leadsOt.changePercent == null ? null : asNum(leadsOt.changePercent),
@@ -1811,7 +1991,22 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
   teamPerformance: [],
   leadsOverTime: { changePercent: 0, points: [] },
   conversionTrend: { changePercent: 0, points: [] },
-  revenueForecast: { target: 0, actual: 0, projected: 0, actualScope: null, targetSource: null },
+  revenueForecast: {
+    target: 0,
+    actual: 0,
+    projected: 0,
+    actualScope: null,
+    targetSource: null,
+    activeTargetInr: null,
+    inactiveTargetInr: null,
+    totalTargetInr: null,
+    activeExecutiveCount: null,
+    inactiveExecutiveCount: null,
+    totalExecutiveCount: null,
+    defaultMonthlyTargetInr: null,
+    targetYearMonth: null,
+    targetFormula: null,
+  },
 };
 
 export const EMPTY_PERFORMANCE_CARDS: PerformanceCards = {

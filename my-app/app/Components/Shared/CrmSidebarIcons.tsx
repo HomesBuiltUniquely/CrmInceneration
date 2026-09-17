@@ -11,13 +11,17 @@ export const FLATICON_ICON_SRC: Record<string, string> = {
   "presales-dashboard-flaticon": "/icons/presales-dashboard-flaticon.png",
 };
 
-/** Full Hows module tiles (already include the blue rounded mark). */
+/** Full Hows module tiles (already include the blue rounded mark).
+ * Use 128px `-sm` assets — launcher shows ~34px; old 3k module-*.png were ~200KB each. */
 export const MODULE_TILE_ICON_SRC: Record<string, string> = {
-  "hows-presales": "/icons/module-presales.png",
-  "hows-design": "/icons/module-design.png",
-  "hows-crm": "/icons/module-crm.png",
-  "hows-admin": "/icons/module-admin.png",
+  "hows-presales": "/icons/module-presales-sm.png",
+  "hows-design": "/icons/module-design-sm.png",
+  "hows-crm": "/icons/module-crm-sm.png",
+  "hows-admin": "/icons/module-admin-sm.png",
 };
+
+/** Paths to warm in the browser cache as soon as the shell mounts. */
+export const MODULE_TILE_PRELOAD_HREFS = Object.values(MODULE_TILE_ICON_SRC);
 
 /** White-on-black PNGs rendered on the blue app tile via screen blend. */
 const BLEND_SCREEN_ICON_SRC: Record<string, string> = {
@@ -58,6 +62,11 @@ export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
       <img
         src={moduleSrc}
         alt=""
+        width={34}
+        height={34}
+        decoding="async"
+        fetchPriority="high"
+        loading="eager"
         aria-hidden="true"
         className={cn("h-9 w-9 object-contain", className)}
       />
@@ -70,6 +79,10 @@ export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
       <img
         src={blendSrc}
         alt=""
+        width={20}
+        height={20}
+        decoding="async"
+        loading="lazy"
         aria-hidden="true"
         className={cn("h-5 w-5 object-contain mix-blend-screen", className)}
       />
@@ -82,6 +95,10 @@ export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
       <img
         src={imageSrc}
         alt=""
+        width={20}
+        height={20}
+        decoding="async"
+        loading="lazy"
         aria-hidden="true"
         className={cn("h-5 w-5 object-contain", className)}
       />

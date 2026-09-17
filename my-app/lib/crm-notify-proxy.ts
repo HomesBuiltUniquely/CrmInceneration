@@ -5,6 +5,9 @@ import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
 const LOG_PREFIX = "[NotifyProxy]";
 
+/** Avoid flooding logs / Next overlay when NOTIFY_API_URL is unset during bell polling. */
+let missingNotifyUrlWarned = false;
+
 /**
  * Base URL of the NotifyProject Go REST server.
  * Resolved from (in priority order):
@@ -16,11 +19,8 @@ function notifyBaseUrl(): string | null {
     process.env.NOTIFY_API_URL ??
     process.env.NEXT_PUBLIC_NOTIFY_API_URL ??
     null;
-  console.log(`${LOG_PREFIX} notifyBaseUrl: url=${url}`);
   if (!url) return null;
-  const cleanUrl = url.replace(/\/$/, "");
-  console.log(`${LOG_PREFIX} notifyBaseUrl: returning ${cleanUrl}`);
-  return cleanUrl;
+  return url.replace(/\/$/, "");
 }
 
 /**
@@ -44,7 +44,10 @@ export async function proxyNotifyGet(
 
   if (!base) {
     const message = "NOTIFY_API_URL is not configured. Set it in .env.local.";
-    console.error(`${LOG_PREFIX} ${message}`);
+    if (!missingNotifyUrlWarned) {
+      missingNotifyUrlWarned = true;
+      console.warn(`${LOG_PREFIX} ${message}`);
+    }
     return NextResponse.json(
       { success: false, userMessage: message, error: message },
       { status: 502 },
@@ -67,7 +70,7 @@ export async function proxyNotifyGet(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "NotifyProject server unreachable";
-    console.error(`${LOG_PREFIX} fetch error for ${upstreamUrl}:`, message);
+    console.warn(`${LOG_PREFIX} fetch error for ${upstreamUrl}:`, message);
     return NextResponse.json(
       { success: false, userMessage: message, error: message },
       { status: 502 },

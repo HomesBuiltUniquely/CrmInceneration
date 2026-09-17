@@ -31,9 +31,11 @@ import {
 import {
   adminByLeadTypeToSourceCounts,
   fetchAllAdminLeads,
+  fetchAdminLeadsCounts,
   fetchAdminLeadsHeatmapData,
   fetchAdminLeadsMilestoneFiltered,
   fetchAdminLeadsPage,
+  fetchAllSalesFilterMergeLeads,
   milestoneCountsFromLeads,
   presalesSummaryMetricsFromLeads,
   salesJourneySummaryFromMilestoneCounts,
@@ -762,17 +764,18 @@ async function fetchMergedPage(
           );
 
   /**
-   * IVR Lead tile is a business filter, not a Hub table filter.
-   * `/v1/leads/filter?leadType=ivrlead` only returns the ivrlead table — load the
-   * merged pool (`leadType=all`) and client-filter with isIvrInboundLead().
+   * IVR Lead tile: keep every IVR row (incl. Decision/Closed), plus legacy
+   * addlead + IVR Call. Do not phone-collapse before filtering — that hid IVRs
+   * when an earlier non-IVR shared the phone (Aman IVR 3 vs Hub 6).
    */
   if (isIvrCallFilterKey(normalizedLeadType)) {
     const pageFromIvrLeads = (leads: ApiLead[]): SpringPage<ApiLead> => {
       const sorted = [...leads].sort(
         (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
       );
+      // Id-merge only — never pickPrimarySourceRows before IVR filter.
       const countBasis =
-        leadsWorkspace === "sales" ? pickPrimarySourceRows(sorted) : sorted;
+        leadsWorkspace === "sales" ? dedupeAdminPoolLeads(sorted) : sorted;
       const filtered = filterIvrCallLeads(countBasis);
       const totalElements = filtered.length;
       const start = Math.max(0, page * size);
@@ -797,27 +800,30 @@ async function fetchMergedPage(
       (usesAdminLeadsApi(viewerRole) || managerAssigneePoolScope) &&
       !usesRoleEndpoint
     ) {
-      const { leads } = await fetchAllAdminLeads(
-        {
-          workspace: leadsWorkspace,
-          search,
-          assignee,
-          sort,
-          dateFrom,
-          dateTo,
-          dateField,
-          crmMonthWindow,
-          verificationStatus: resolvedVerification,
-          reinquiry,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          // Full pool (same as heatmap tile counts), then client-filter IVR.
-          leadType: "all",
-          assigneeAliasSet,
-        },
-        getCrmAuthHeaders(),
-      );
+      const poolInput = {
+        workspace: leadsWorkspace,
+        search,
+        assignee,
+        sort,
+        dateFrom,
+        dateTo,
+        dateField,
+        crmMonthWindow,
+        verificationStatus: resolvedVerification,
+        reinquiry,
+        milestoneStage,
+        milestoneStageCategory,
+        milestoneSubStage,
+        leadType: "all" as const,
+        assigneeAliasSet,
+      };
+      // Sales: filter mergeAll matches Hub counts scope (admin/sales omits stages).
+      const { leads } =
+        leadsWorkspace === "sales"
+          ? await fetchAllSalesFilterMergeLeads(poolInput, getCrmAuthHeaders()).catch(() =>
+              fetchAllAdminLeads(poolInput, getCrmAuthHeaders()),
+            )
+          : await fetchAllAdminLeads(poolInput, getCrmAuthHeaders());
       return pageFromIvrLeads(leads);
     }
 
@@ -3333,22 +3339,73 @@ export default function LeadsDataSection({
         const salesScopedAssigneeFilterActive =
           leadsWorkspace === "sales" && salesHierarchyFilterActive;
         if (salesScopedAssigneeFilterActive) {
-          // Full journey for heatmap (ignore STAGE toolbar) — blank → Fresh must match SM login.
-          const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc", {
-            ignoreMilestoneFilter: true,
-          });
+          const resolvedVerificationForScope =
+            summaryLeadType === "verified"
+              ? "verified"
+              : debouncedSearch.trim()
+                ? ""
+                : verificationStatusFromHeader.trim() ||
+                  defaultVerificationForLeadTypeFilter(
+                    summaryLeadType,
+                    leadsWorkspace,
+                    verificationStatusFromHeader,
+                    roleKey,
+                  );
+          // Journey rows for heatmap phases; Hub `/counts` for Total + byLeadType (IVR).
+          const [scopedRows, hubCounts] = await Promise.all([
+            fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc", {
+              ignoreMilestoneFilter: true,
+            }),
+            fetchAdminLeadsCounts(
+              {
+                workspace: "sales",
+                search: debouncedSearch,
+                assignee: effectiveAssignee,
+                assigneeAliasSet:
+                  activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
+                dateFrom,
+                dateTo,
+                dateField,
+                crmMonthWindow: crmMonthWindowProp,
+                verificationStatus: resolvedVerificationForScope,
+                reinquiry,
+                milestoneStage: "",
+                milestoneStageCategory: "",
+                milestoneSubStage: "",
+                leadType: summaryLeadType,
+              },
+              getCrmAuthHeaders(),
+            ).catch(() => null),
+          ]);
           if (cancelled) return;
-          // Same journey inventory as Sales Manager (id-merge rows, blank → Fresh Lead).
-          const journeyRows =
-            leadsWorkspace === "sales"
-              ? dedupeAdminPoolLeads(scopedRows)
-              : scopedRows;
-          const baseCounts = computeLeadTypeCountsFromRows(journeyRows);
+          const journeyRows = dedupeAdminPoolLeads(scopedRows);
+          const fromRows = computeLeadTypeCountsFromRows(journeyRows);
+          const hubByLeadType = hubCounts?.byLeadType;
+          const hubHasByLeadType = Boolean(
+            hubByLeadType && Object.keys(hubByLeadType).length > 0,
+          );
+          const hubTotal = Number(hubCounts?.totalElements ?? 0);
+          const baseCounts = hubHasByLeadType
+            ? adminByLeadTypeToSourceCounts(
+                hubByLeadType,
+                Math.max(hubTotal, fromRows.all, journeyRows.length),
+              )
+            : fromRows;
+          if (hubHasByLeadType) {
+            baseCounts.all = Math.max(hubTotal, Number(baseCounts.all ?? 0), fromRows.all);
+            for (const t of CRM_LEAD_TYPES) {
+              baseCounts[t] = Math.max(
+                Number(hubByLeadType?.[t] ?? 0),
+                Number(fromRows[t] ?? 0),
+              );
+            }
+          }
+          const ivrRaised = overlayIvrLeadTypeCountsFromRows(baseCounts, journeyRows);
           const verifiedCount = journeyRows.filter((lead) => isCrmLeadVerified(lead)).length;
           const summaryTotals = computeJourneySummaryCounts(journeyRows);
           const milestoneMap = milestoneCountsFromLeads(journeyRows, "sales");
-          setLeadTypeCountsPrimary(baseCounts);
-          setLeadTypeCountsAllRows(baseCounts);
+          setLeadTypeCountsPrimary(ivrRaised);
+          setLeadTypeCountsAllRows(ivrRaised);
           const adminInsightOpts = salesAdminPoolInsightOpts(
             currentUserName ?? "",
             activeAssigneeScope.length > 0
@@ -3366,8 +3423,8 @@ export default function LeadsDataSection({
                 })
               : journeyRows;
           const countsWithInsights = roleUsesAdminPoolInsightTiles(roleKey)
-            ? mergeSalesPoolInsightCounts(baseCounts, insightPool, adminInsightOpts)
-            : { ...baseCounts };
+            ? mergeSalesPoolInsightCounts(ivrRaised, insightPool, adminInsightOpts)
+            : { ...ivrRaised };
           setLeadTypeCounts({
             ...countsWithInsights,
             verified: verifiedCount,
@@ -3384,11 +3441,11 @@ export default function LeadsDataSection({
             lastAdminMilestoneCountsKeyRef.current = milestoneKey;
             onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
           }
-          setVisibleFilteredTotal(journeyRows.length);
-          // Journey id-merge only — same Total as SM dashboard (no phone-collapse / dual count).
+          const displayTotal = Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
+          setVisibleFilteredTotal(displayTotal);
           setAdminPoolDisplayTotals({
-            uniquePrimary: journeyRows.length,
-            totalRows: journeyRows.length,
+            uniquePrimary: displayTotal,
+            totalRows: displayTotal,
           });
           return;
         }
@@ -3481,11 +3538,16 @@ export default function LeadsDataSection({
           // Lead-type / IVR tile filters own table totals — do not reset to full pool.
           summaryLeadTypeRaw === "all"
         ) {
-          const customers = uniquePrimaryPool > 0 ? uniquePrimaryPool : poolTotal;
-          // Sales journey inventory is id-merge: Total Leads == phase sum (no dual primary/rows).
+          const customers =
+            leadsWorkspace === "sales"
+              ? Math.max(poolTotal, uniquePrimaryPool)
+              : uniquePrimaryPool > 0
+                ? uniquePrimaryPool
+                : poolTotal;
+          // Sales: Total Leads = Hub `/counts.totalElements` (not Lead+Opportunity sum).
           const rows =
             leadsWorkspace === "sales"
-              ? customers
+              ? Math.max(poolTotal, customers)
               : Math.max(poolTotal, customers);
           if (customers > 0 || rows > 0) {
             setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
@@ -3965,6 +4027,17 @@ export default function LeadsDataSection({
           return;
         }
 
+        // Sales hierarchy (e.g. Aman): Hub `/counts.totalElements` owns Total —
+        // do not replace with incomplete merge page length (34 vs 37).
+        if (
+          leadsWorkspace === "sales" &&
+          salesHierarchyFilterActive &&
+          !isIvrCallFilterKey(requestLeadType) &&
+          (requestLeadType.trim().toLowerCase() || "all") === "all"
+        ) {
+          return;
+        }
+
         setVisibleFilteredTotal(
           Number.isFinite(uniquePrimary) && uniquePrimary > 0
             ? uniquePrimary
@@ -4048,11 +4121,23 @@ export default function LeadsDataSection({
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
-          setLeadTypeCounts((prev) => ({
-            ...prev,
-            ...sourceCounts,
-            all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
-          }));
+          // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
+          setLeadTypeCounts((prev) => {
+            const nextAll = Math.max(
+              Number(prev.all ?? 0),
+              Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
+            );
+            const nextIvr = Math.max(
+              Number(prev.ivrlead ?? 0),
+              Number(sourceCounts.ivrlead ?? 0),
+            );
+            return {
+              ...prev,
+              ...sourceCounts,
+              all: nextAll,
+              ivrlead: nextIvr,
+            };
+          });
         }
         if (pageJson.accessDeniedLeadTypes?.length) {
           notifyError(

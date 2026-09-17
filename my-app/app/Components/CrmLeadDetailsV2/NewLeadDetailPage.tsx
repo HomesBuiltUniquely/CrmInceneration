@@ -1191,7 +1191,11 @@ function LeadProfileCard() {
   } = useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
   const [editingContact, setEditingContact] = useState(false);
-  const [contactDraft, setContactDraft] = useState({ phone: "", email: "" });
+  const [contactDraft, setContactDraft] = useState({
+    name: "",
+    phone: "",
+    email: "",
+  });
   const pincodeValue = lead.pincode?.trim() || "—";
   const possessionDateRaw = lead.possessionDate?.trim() ?? "";
   const possessionDateFormatted = formatCrmDateTime(lead.possessionDate);
@@ -1204,25 +1208,39 @@ function LeadProfileCard() {
   const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", shouldMaskLeadPhone);
 
   const startContactEdit = () => {
-    setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
+    setContactDraft({
+      name: lead.name ?? "",
+      phone: lead.phone ?? "",
+      email: lead.email ?? "",
+    });
     setEditingContact(true);
   };
 
   const cancelContactEdit = () => {
     setEditingContact(false);
-    setContactDraft({ phone: lead.phone ?? "", email: lead.email ?? "" });
+    setContactDraft({
+      name: lead.name ?? "",
+      phone: lead.phone ?? "",
+      email: lead.email ?? "",
+    });
   };
 
   const contactDirty =
     editingContact &&
-    (contactDraft.phone.trim() !== (lead.phone ?? "").trim() ||
+    (contactDraft.name.trim() !== (lead.name ?? "").trim() ||
+      contactDraft.phone.trim() !== (lead.phone ?? "").trim() ||
       contactDraft.email.trim() !== (lead.email ?? "").trim());
 
   useEffect(() => {
     if (!contactDirty) return;
     return registerLeadDetailPendingFlush(async () => {
-      const before = { phone: lead.phone ?? "", email: lead.email ?? "" };
+      const before = {
+        name: lead.name ?? "",
+        phone: lead.phone ?? "",
+        email: lead.email ?? "",
+      };
       const patch = {
+        name: contactDraft.name.trim(),
         phone: contactDraft.phone.trim(),
         email: contactDraft.email.trim(),
       };
@@ -1235,10 +1253,20 @@ function LeadProfileCard() {
       setEditingContact(false);
       return labels;
     });
-  }, [contactDirty, contactDraft.email, contactDraft.phone, lead.email, lead.phone, onLeadContactSave]);
+  }, [
+    contactDirty,
+    contactDraft.email,
+    contactDraft.name,
+    contactDraft.phone,
+    lead.email,
+    lead.name,
+    lead.phone,
+    onLeadContactSave,
+  ]);
 
   const saveContactEdit = async () => {
     const patch = {
+      name: contactDraft.name.trim(),
       phone: contactDraft.phone.trim(),
       email: contactDraft.email.trim(),
     };
@@ -1255,18 +1283,49 @@ function LeadProfileCard() {
       <div className="mb-4 flex items-start gap-3">
         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-[#d9e0ea]" />
         <div className="min-w-0 flex-1">
-          <p className="text-[20px] font-extrabold leading-tight text-[#111827]">{lead.name || "—"}</p>
-          <p className="mt-0.5 text-[11px] text-[#9ca3af]">
-            ID: #
-            {resolveLeadDisplayIdentifier(
-              {
-                externalReferenceId: lead.externalReferenceId,
-                leadId: lead.leadId,
-                customerId: lead.customerId,
-              },
-              leadId,
-            )}
-          </p>
+          {editingContact ? (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                Full name
+              </p>
+              <Input
+                value={contactDraft.name}
+                onChange={(e) =>
+                  setContactDraft((prev) => ({ ...prev, name: e.target.value }))
+                }
+                className={`mt-1 ${V2_INPUT}`}
+                placeholder="Customer name"
+              />
+              <p className="mt-1 text-[11px] text-[#9ca3af]">
+                ID: #
+                {resolveLeadDisplayIdentifier(
+                  {
+                    externalReferenceId: lead.externalReferenceId,
+                    leadId: lead.leadId,
+                    customerId: lead.customerId,
+                  },
+                  leadId,
+                )}
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-[20px] font-extrabold leading-tight text-[#111827]">
+                {lead.name || "—"}
+              </p>
+              <p className="mt-0.5 text-[11px] text-[#9ca3af]">
+                ID: #
+                {resolveLeadDisplayIdentifier(
+                  {
+                    externalReferenceId: lead.externalReferenceId,
+                    leadId: lead.leadId,
+                    customerId: lead.customerId,
+                  },
+                  leadId,
+                )}
+              </p>
+            </>
+          )}
         </div>
         {canEditLeadPhoneEmail ? (
           <div className="flex items-center gap-2">
@@ -1297,7 +1356,7 @@ function LeadProfileCard() {
               <button
                 type="button"
                 onClick={startContactEdit}
-                aria-label="Update phone and email"
+                aria-label="Update name, phone and email"
                 className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

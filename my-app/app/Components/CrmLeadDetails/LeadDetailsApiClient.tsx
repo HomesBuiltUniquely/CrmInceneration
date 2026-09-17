@@ -152,7 +152,7 @@ import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist"
 import { openWhatsAppChat } from "@/lib/whatsapp-chat";
 import {
   canEditLeadEmailAndPhone,
-  stripUnauthorizedLeadEmailPhoneFromPutBody,
+  stripUnauthorizedLeadIdentityFromPutBody,
 } from "@/lib/lead-identity-edit-access";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
@@ -2044,9 +2044,12 @@ export default function LeadDetailsApiClient({
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
       if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
       }
+      // WhatsApp one-time name flow: don't commit name on general save unless
+      // this viewer has privileged identity edit (SA / Admin / Super Admin / SM team).
       if (
+        !canEditLeadEmailPhone &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2121,9 +2124,10 @@ export default function LeadDetailsApiClient({
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
       if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
       }
       if (
+        !canEditLeadEmailPhone &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2276,13 +2280,20 @@ export default function LeadDetailsApiClient({
   const handleLeadContactSave = useCallback(
     async (patch: Partial<Lead>, options?: { silent?: boolean }) => {
       if (!validLeadType) return;
+      if (!canEditLeadEmailPhone) {
+        throw new Error("You cannot edit name or contact on this lead.");
+      }
       const lt = leadTypeParam as CrmLeadType;
       const mergedLead = { ...lead, ...patch };
       setLead((prev) => ({ ...prev, ...patch }));
       setSavingSecondBox(true);
       setSecondBoxError(null);
       try {
-        const body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        let body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        // Still strip if somehow unauthorized mid-request
+        if (!canEditLeadEmailPhone) {
+          body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
+        }
         const updated = await putLeadDetail(lt, leadId, body);
         const stickyQuote = pickPersistedQuoteLink(updated, mergedLead);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -2309,7 +2320,15 @@ export default function LeadDetailsApiClient({
         setSavingSecondBox(false);
       }
     },
-    [baseDetail, lead, leadId, leadTypeParam, notifySuccess, validLeadType],
+    [
+      baseDetail,
+      canEditLeadEmailPhone,
+      lead,
+      leadId,
+      leadTypeParam,
+      notifySuccess,
+      validLeadType,
+    ],
   );
 
   const handleConnectionPhaseSave = useCallback(
@@ -2752,10 +2771,11 @@ export default function LeadDetailsApiClient({
       whatsappNameLockedFromServer,
     ],
   );
-  const nameFieldLocked = useMemo(
-    () => resolveWhatsappPresalesNameLocked(whatsappNameLockInput),
-    [whatsappNameLockInput],
-  );
+  const nameFieldLocked = useMemo(() => {
+    // Privileged identity editors unlock name (gated in LeadInfoTab via ✎ Update).
+    if (canEditLeadEmailPhone) return false;
+    return resolveWhatsappPresalesNameLocked(whatsappNameLockInput);
+  }, [canEditLeadEmailPhone, whatsappNameLockInput]);
   const showWhatsappPresalesNameHint = useMemo(
     () => shouldShowWhatsappPresalesNameHint(whatsappNameLockInput),
     [whatsappNameLockInput],
@@ -3664,7 +3684,7 @@ export default function LeadDetailsApiClient({
       onLeadPatch: patchLead,
       onConnectionPhaseSave: handleConnectionPhaseSave,
       connectionPhaseSaving: savingSecondBox,
-      canEditLeadPhoneEmail: canEditLeadPhoneAndEmail(viewerRoleKey),
+      canEditLeadPhoneEmail: canEditLeadEmailPhone,
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,

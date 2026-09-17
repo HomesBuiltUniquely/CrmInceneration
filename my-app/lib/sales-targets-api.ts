@@ -4,7 +4,12 @@ import {
   DEFAULT_INCENTIVE_HALF_TARGET_INR,
   DEFAULT_MONTHLY_SALES_TARGET_INR,
   type SalesTargetUserRow,
+  type SalesTargetsListMeta,
 } from "@/lib/sales-targets";
+
+export type IncentiveSalesTargetsList = SalesTargetsListMeta & {
+  targets: SalesTargetUserRow[];
+};
 
 type AnyJson = Record<string, unknown>;
 
@@ -74,13 +79,19 @@ function mapTargetUser(row: AnyJson): SalesTargetUserRow {
     "target",
     "monthlyTarget",
   ]);
-  const hasExplicitHalf =
-    row.h1TargetInr != null ||
-    row.h2TargetInr != null ||
-    row.h1_target_inr != null ||
-    row.h2_target_inr != null;
-  const isCustom = Boolean(row.isCustom ?? row.custom ?? hasExplicitHalf ?? monthlyOverride != null);
+  const usesDefault =
+    row.usesDefault != null
+      ? Boolean(row.usesDefault)
+      : !Boolean(row.isCustom ?? row.custom);
+  const isCustom =
+    row.isCustom != null || row.custom != null
+      ? Boolean(row.isCustom ?? row.custom)
+      : !usesDefault;
   const monthlyTargetInr = monthlyOverride ?? h1 + h2;
+  const active =
+    row.active == null && row.isActive == null
+      ? true
+      : Boolean(row.active ?? row.isActive);
   return {
     userId,
     name: String(row.name ?? row.userName ?? row.fullName ?? `User #${userId}`),
@@ -91,6 +102,8 @@ function mapTargetUser(row: AnyJson): SalesTargetUserRow {
     h2TargetInr: h2,
     monthlyTargetInr,
     isCustom,
+    usesDefault,
+    active,
   };
 }
 
@@ -101,12 +114,63 @@ function extractTargetRows(raw: unknown): AnyJson[] {
   return normalizeToArray<AnyJson>(r.targets ?? r.users ?? r.items ?? r.data ?? r);
 }
 
+function normalizeSalesTargetsList(
+  raw: unknown,
+  fallbackYearMonth: string,
+): IncentiveSalesTargetsList {
+  const targets = extractTargetRows(raw).map(mapTargetUser);
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as AnyJson) : {};
+  const defaultMonthlyTargetInr =
+    pickNumber(o, ["defaultMonthlyTargetInr", "defaultTargetInr", "defaultTarget"]) ??
+    DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const activeFromRows = targets.filter((t) => t.active !== false);
+  const inactiveFromRows = targets.filter((t) => t.active === false);
+  const activeMonthlyTargetInr =
+    pickNumber(o, ["activeMonthlyTargetInr", "activeTargetInr", "insightsTargetInr"]) ??
+    activeFromRows.reduce((sum, t) => sum + Math.max(0, t.monthlyTargetInr), 0);
+  const inactiveMonthlyTargetInr =
+    pickNumber(o, ["inactiveMonthlyTargetInr", "inactiveTargetInr"]) ??
+    inactiveFromRows.reduce((sum, t) => sum + Math.max(0, t.monthlyTargetInr), 0);
+  const totalMonthlyTargetInr =
+    pickNumber(o, ["totalMonthlyTargetInr", "totalTargetInr"]) ??
+    activeMonthlyTargetInr + inactiveMonthlyTargetInr;
+  const insightsTargetInr =
+    pickNumber(o, ["insightsTargetInr"]) ?? activeMonthlyTargetInr;
+  const activeExecutiveCount =
+    pickNumber(o, ["activeExecutiveCount"]) ?? activeFromRows.length;
+  const inactiveExecutiveCount =
+    pickNumber(o, ["inactiveExecutiveCount"]) ?? inactiveFromRows.length;
+  const totalExecutiveCount =
+    pickNumber(o, ["totalExecutiveCount"]) ??
+    activeExecutiveCount + inactiveExecutiveCount;
+
+  return {
+    yearMonth: String(o.yearMonth ?? o.month ?? fallbackYearMonth),
+    defaultMonthlyTargetInr,
+    activeExecutiveCount,
+    inactiveExecutiveCount,
+    totalExecutiveCount,
+    activeMonthlyTargetInr,
+    inactiveMonthlyTargetInr,
+    totalMonthlyTargetInr,
+    insightsTargetInr,
+    targets,
+  };
+}
+
 export const incentivesSalesTargetsApi = {
-  list: async (query: IncentiveSalesTargetsQuery): Promise<SalesTargetUserRow[]> => {
+  /** Full Hub payload including roster-dynamic Insights totals. */
+  listDetailed: async (
+    query: IncentiveSalesTargetsQuery,
+  ): Promise<IncentiveSalesTargetsList> => {
     const raw = await call<unknown>(
       `/api/crm/incentives/sales-targets?${buildQuery(query)}`,
     );
-    return extractTargetRows(raw).map(mapTargetUser);
+    return normalizeSalesTargetsList(raw, query.yearMonth);
+  },
+  list: async (query: IncentiveSalesTargetsQuery): Promise<SalesTargetUserRow[]> => {
+    const detailed = await incentivesSalesTargetsApi.listDetailed(query);
+    return detailed.targets;
   },
   save: (payload: {
     yearMonth: string;
@@ -127,16 +191,20 @@ function monthQuery(month?: string): string {
 }
 
 export const salesTargetsApi = {
-  getDefault: async (_month?: string) => ({
-    defaultTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR,
-  }),
+  getDefault: async (month?: string) => {
+    try {
+      return await salesTargetsApi.getDefaultFromList(month);
+    } catch {
+      return { defaultTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR };
+    }
+  },
   setDefault: async (defaultTargetInr: number, yearMonth?: string) => {
     if (!yearMonth) {
       throw new Error("Month is required to apply default targets.");
     }
     const half = Math.round(defaultTargetInr / 2);
     const rows = await incentivesSalesTargetsApi.list({ yearMonth });
-    const toUpdate = rows.filter((row) => !row.isCustom);
+    const toUpdate = rows.filter((row) => row.usesDefault !== false && !row.isCustom);
     if (toUpdate.length === 0) {
       throw new Error("No executives without custom targets to update.");
     }
@@ -153,6 +221,18 @@ export const salesTargetsApi = {
   listUsers: (month?: string, scope?: Omit<IncentiveSalesTargetsQuery, "yearMonth">) => {
     const yearMonth = month ?? new Date().toISOString().slice(0, 7);
     return incentivesSalesTargetsApi.list({ yearMonth, ...scope });
+  },
+  listUsersDetailed: (
+    month?: string,
+    scope?: Omit<IncentiveSalesTargetsQuery, "yearMonth">,
+  ) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    return incentivesSalesTargetsApi.listDetailed({ yearMonth, ...scope });
+  },
+  getDefaultFromList: async (month?: string) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    const list = await incentivesSalesTargetsApi.listDetailed({ yearMonth });
+    return { defaultTargetInr: list.defaultMonthlyTargetInr };
   },
   setUserTarget: (
     userId: number | string,

@@ -18,6 +18,24 @@ export type SalesTargetUserRow = {
   monthlyTargetInr: number;
   /** True when admin set explicit H1/H2 for this month. */
   isCustom: boolean;
+  /** Roster active flag from Hub sales-targets (Insights target uses active only). */
+  active?: boolean;
+  /** True when monthly target is the org/default (no admin override). */
+  usesDefault?: boolean;
+};
+
+/** Hub GET `/v1/crm/incentives/sales-targets` summary (roster-dynamic totals). */
+export type SalesTargetsListMeta = {
+  yearMonth: string;
+  defaultMonthlyTargetInr: number;
+  activeExecutiveCount: number;
+  inactiveExecutiveCount: number;
+  totalExecutiveCount: number;
+  activeMonthlyTargetInr: number;
+  inactiveMonthlyTargetInr: number;
+  totalMonthlyTargetInr: number;
+  /** Same as active monthly — primary Insights target. */
+  insightsTargetInr: number;
 };
 
 /** `YYYY-MM` for the selected incentives / target month. */

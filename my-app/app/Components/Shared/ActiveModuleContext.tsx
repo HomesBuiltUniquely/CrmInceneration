@@ -93,18 +93,24 @@ export function ActiveModuleProvider({ children }: { children: ReactNode }) {
     setHydrated(true);
   }, []);
 
-  // Auto-sync module to current pathname so sidebar matches the page.
+  // Sync module FROM pathname only when the URL changes.
+  // Do not depend on activeModuleId — otherwise clicking Presales while still on
+  // /Leads immediately overwrites "presales" back to "crm" before navigation finishes.
   useEffect(() => {
     if (!hydrated) return;
     if (pathname === "/login" || pathname.startsWith("/login/")) return;
     const fromPath = moduleFromPathname(pathname);
-    if (fromPath && fromPath !== activeModuleId) {
-      setActiveModuleIdState(fromPath);
+    if (!fromPath) return;
+    setActiveModuleIdState((prev) => {
+      if (prev === fromPath) return prev;
       try {
         window.localStorage.setItem(CRM_ACTIVE_MODULE_KEY, fromPath);
-      } catch { /* ignore */ }
-    }
-  }, [pathname, hydrated, activeModuleId]);
+      } catch {
+        /* ignore */
+      }
+      return fromPath;
+    });
+  }, [pathname, hydrated]);
 
   const setActiveModuleId = useCallback((id: CrmModuleId | null) => {
     setActiveModuleIdState(id);

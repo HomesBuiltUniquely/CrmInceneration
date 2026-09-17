@@ -332,6 +332,8 @@ export function buildApiModeFunnelDisplay(
     displayCount: hubTotalCount,
     countLabel: modeFunnel.total?.countLabel || "Leads",
     conversionPercent: 100,
+    sharePercent: 100,
+    // Kept for Discovery→Closed summary cards (not the bar %).
     conversionFromDiscovery: 100,
   };
 
@@ -351,12 +353,16 @@ export function buildApiModeFunnelDisplay(
           )
         : conversionPercentFromDiscovery(key, displayCount, discoveryBase);
 
+    // Bar % = share of Total (Total=100%). Discovery is e.g. 319/425 ≈ 75%, not 100%.
+    const shareOfTotal =
+      hubTotalCount > 0 ? (displayCount / hubTotalCount) * 100 : 0;
+
     return {
       ...stage,
       count: displayCount,
       displayCount,
-      conversionPercent:
-        conversionFromDiscovery != null ? conversionFromDiscovery : 0,
+      conversionPercent: shareOfTotal,
+      sharePercent: shareOfTotal,
       conversionFromDiscovery,
     };
   });

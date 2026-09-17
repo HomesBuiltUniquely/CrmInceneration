@@ -161,23 +161,26 @@ export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCount
   return counts;
 }
 
-/** Hub `/counts` byLeadType can miss legacy add-lead IVR rows — fix ivrlead + addlead from list rows. */
+/** Hub `/counts` byLeadType can miss legacy add-lead IVR rows — raise ivrlead/addlead from list rows, never lower Hub. */
 export function overlayIvrLeadTypeCountsFromRows(
   counts: LeadSourceCounts,
   leads: ApiLead[],
 ): LeadSourceCounts {
   if (leads.length === 0) return counts;
   const rowCounts = computeLeadTypeCountsFromRows(leads);
-  if (
-    rowCounts.ivrlead === Number(counts.ivrlead ?? 0) &&
-    rowCounts.addlead === Number(counts.addlead ?? 0)
-  ) {
-    return counts;
-  }
+  const hubIvr = Number(counts.ivrlead ?? 0);
+  const hubAdd = Number(counts.addlead ?? 0);
+  const nextIvr = Math.max(hubIvr, rowCounts.ivrlead);
+  // When rows reclassify add-lead IVR into ivrlead, addlead should not stay inflated.
+  const nextAdd =
+    rowCounts.ivrlead > hubIvr
+      ? Math.min(hubAdd, rowCounts.addlead)
+      : Math.max(hubAdd, rowCounts.addlead);
+  if (nextIvr === hubIvr && nextAdd === hubAdd) return counts;
   return {
     ...counts,
-    ivrlead: rowCounts.ivrlead,
-    addlead: rowCounts.addlead,
+    ivrlead: nextIvr,
+    addlead: nextAdd,
   };
 }
 

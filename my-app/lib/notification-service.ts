@@ -683,7 +683,8 @@ async function fetchRawLeadItems(
   try {
     res = await fetch(url, { headers: { Authorization: authHeader }, cache: "no-store" });
   } catch (err) {
-    console.error(`${LOG_PREFIX}  [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
+    // Soft-fail: notify optional / overloaded — warn (not error) so Next overlay stays quiet.
+    console.warn(`${LOG_PREFIX} [LEAD] fetch failed:`, err instanceof Error ? err.message : err);
     return [];
   }
 

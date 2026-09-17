@@ -31,6 +31,7 @@ import {
 } from "@/lib/insights-funnel-stage-paths";
 import PassagesOldShareTrendPanel from "./PassagesOldShareTrendPanel";
 import InsightsSegmentedControl from "./InsightsSegmentedControl";
+import InsightsInfoTip from "./InsightsInfoTip";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
 import { resolveBookingDateRange } from "@/lib/booking-token-date-filter";
 import type { InsightsTrendGranularity } from "@/lib/crm-insights-api";
@@ -106,6 +107,67 @@ function funnelModeSubtitle(mode: InsightsFunnelMode): string {
     default:
       return "Who is in each stage right now (same as Journey heatmap)";
   }
+}
+
+/** Same pattern as Stage Velocity — plain words + math for anyone. */
+function FunnelModesInfoTip() {
+  return (
+    <InsightsInfoTip
+      label="How Sales Funnel modes are counted"
+      math={
+        <span className="space-y-2">
+          <span className="block">
+            <span className="font-semibold text-gray-600">Current</span>
+            <span className="block">
+              Snapshot of where each lead sits today (like a photo).
+            </span>
+            <span className="mt-0.5 block text-gray-400">
+              Example: 50 leads in Connection right now → Connection = 50.
+            </span>
+          </span>
+          <span className="block">
+            <span className="font-semibold text-gray-600">Movement</span>
+            <span className="block">
+              How many times leads entered each stage in your date range
+              (like a turnstile). New = created in range; Old = created before.
+            </span>
+            <span className="mt-0.5 block text-gray-400">
+              Example: Sep 1–30, a lead enters Discovery twice → Discovery counts 2.
+            </span>
+          </span>
+          <span className="block">
+            <span className="font-semibold text-gray-600">New batch</span>
+            <span className="block">
+              Leads created in your dates — which stages they have reached by
+              today (one lead counted once per stage it reached).
+            </span>
+            <span className="mt-0.5 block text-gray-400">
+              Example: 100 leads created this month; 40 already reached Closed →
+              Closed = 40.
+            </span>
+          </span>
+          <span className="mt-1 block border-t border-gray-100 pt-2">
+            <span className="font-semibold text-gray-600">
+              Bar % (Total = 100%)
+            </span>
+            <span className="block">
+              Each stage % = that stage ÷ Total × 100.
+            </span>
+            <span className="mt-0.5 block text-gray-400">
+              Example: Total 425 → Discovery 319 = 75%. Closed 16 = 3.8%.
+            </span>
+            <span className="mt-1 block">
+              The green &quot;Discovery → Closed&quot; card is different: Closed ÷
+              Discovery (conversion), not share of Total.
+            </span>
+          </span>
+        </span>
+      }
+    >
+      Three cameras on the same pipeline. Switch tabs to change the question —
+      not the same number three ways.
+    </InsightsInfoTip>
+  );
 }
 
 const WON_FUNNEL_BAR_COLORS = [
@@ -868,9 +930,16 @@ export default function InsightSect3({
       return [totalStage, ...milestoneStages];
     }
 
-    // Percents for milestone bars stay based on inventory (exclude Total from recalculation)
+    // Percents for milestone bars: share of Total (Total = 100%).
+    // Discovery = Discovery÷Total, not forced to 100%.
     const withPercents = useCurrentStageInventory
-      ? recalcFunnelSharePercents(milestoneStages)
+      ? milestoneStages.map((stage) => ({
+          ...stage,
+          conversionPercent:
+            totalCount > 0
+              ? ((Number(stage.count) || 0) / totalCount) * 100
+              : 0,
+        }))
       : recalcFunnelConversionPercents(milestoneStages);
 
     return [totalStage, ...withPercents];
@@ -913,9 +982,12 @@ export default function InsightSect3({
           <div className="mb-4 flex flex-col gap-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
-                <h2 className="text-xl font-bold tracking-tight text-slate-900">
-                  Sales Funnel
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold tracking-tight text-slate-900">
+                    Sales Funnel
+                  </h2>
+                  <FunnelModesInfoTip />
+                </div>
                 <p
                   key={funnelMode}
                   className="mt-0.5 text-xs text-slate-500 animate-in fade-in slide-in-from-bottom-1 duration-300"

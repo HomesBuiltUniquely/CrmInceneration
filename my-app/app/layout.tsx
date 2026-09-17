@@ -7,6 +7,7 @@ import { HALLWAY_HANDOFF_BOOTSTRAP } from "@/lib/auth/hallway-handoff-bootstrap"
 import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
 import { ActiveModuleProvider } from "./Components/Shared/ActiveModuleContext";
 import ModuleHubHost from "./Components/Shared/ModuleHubHost";
+import { MODULE_TILE_PRELOAD_HREFS } from "./Components/Shared/CrmSidebarIcons";
 
 const manrope = Manrope({
   variable: "--font-manrope",
@@ -44,6 +45,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={manrope.variable} suppressHydrationWarning>
+      <head>
+        {MODULE_TILE_PRELOAD_HREFS.map((href) => (
+          <link key={href} rel="preload" as="image" href={href} />
+        ))}
+      </head>
       <body
         className={`${manrope.className} ${geistMono.variable} font-sans antialiased`}
       >

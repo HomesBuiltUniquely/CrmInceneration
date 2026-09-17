@@ -14,6 +14,7 @@ import {
   appIconTileClass,
   CrmSidebarIcon,
   isModuleTileIcon,
+  MODULE_TILE_PRELOAD_HREFS,
 } from "./CrmSidebarIcons";
 import { useSmoothRouter } from "@/lib/use-smooth-router";
 
@@ -82,6 +83,24 @@ function resolveModuleIcon(moduleId: string): string {
   return map[moduleId] ?? "layout-dashboard";
 }
 
+/** Warm module tile PNGs into cache before the menu opens (empty blue squares otherwise). */
+function preloadModuleTileIcons() {
+  if (typeof document === "undefined") return;
+  for (const href of MODULE_TILE_PRELOAD_HREFS) {
+    const existing = document.querySelector(`link[rel="preload"][href="${href}"]`);
+    if (existing) continue;
+    const link = document.createElement("link");
+    link.rel = "preload";
+    link.as = "image";
+    link.href = href;
+    document.head.appendChild(link);
+    // Also kick Image() decode so first paint is warm even without waiting for link.
+    const img = new Image();
+    img.decoding = "async";
+    img.src = href;
+  }
+}
+
 /** Same 4-tile launcher mark as icon-branch AppsLauncherMenu. */
 function HowsHubLauncherIcon({ className }: { className?: string }) {
   return (
@@ -116,6 +135,7 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
 
   useEffect(() => {
     setRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
+    preloadModuleTileIcons();
   }, []);
 
   useEffect(() => {
