@@ -35,13 +35,29 @@ export function normalizeLeadTypeLabel(raw: unknown): string {
   if (!s) return "";
   if (compact === "formlead" || compact === "externallead") return "External Lead";
   if (compact === "glead" || compact === "googleads") return "Google Ads";
+  // Hub Instant Form webhook markers: `meta_leadgen:{leadgenId}`
+  if (compact.startsWith("metaleadgen") || s.startsWith("meta_leadgen:")) {
+    return "Meta Ads (Instant Form)";
+  }
   if (compact === "mlead" || compact === "metaads") return "Meta Ads";
   if (compact === "alead" || compact === "addlead") return "Add Lead";
+  if (compact === "ivrlead") return "IVR Lead";
   if (compact === "wlead" || compact === "websitelead") return "Website Lead";
   if (compact === "walkinlead" || compact === "walkin") return "Walk-in Lead";
   if (compact === "whatsapplead" || compact === "whatsapp") return "WhatsApp";
   if (compact === "ivrcall" || compact === "ivr") return "IVR Call";
   return original;
+}
+
+/** True when Hub marked a Meta Instant Form / Graph webhook ingest. */
+export function hasMetaInstantFormSource(
+  additionalLeadSources?: string | string[] | null,
+): boolean {
+  return parseAdditionalLeadSources(additionalLeadSources).some((source) => {
+    const s = source.toLowerCase();
+    const compact = s.replace(/[^a-z0-9]/g, "");
+    return compact.startsWith("metaleadgen") || s.startsWith("meta_leadgen:");
+  });
 }
 
 export function dedupeLeadSources(rawSources: unknown[]): string[] {
@@ -54,6 +70,11 @@ export function dedupeLeadSources(rawSources: unknown[]): string[] {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(normalized);
+  }
+  // Prefer Instant Form marker over plain "Meta Ads" when Hub sent both.
+  const hasInstantForm = out.some((s) => s === "Meta Ads (Instant Form)");
+  if (hasInstantForm) {
+    return out.filter((s) => s !== "Meta Ads");
   }
   return out;
 }
@@ -70,7 +91,7 @@ export function isCrmLeadReinquiry(lead: {
 }
 
 export function formatAdditionalLeadSourcesLabel(raw: unknown): string {
-  return parseAdditionalLeadSources(raw).join(", ");
+  return dedupeLeadSources(parseAdditionalLeadSources(raw)).join(", ");
 }
 
 const CROSS_MERGE_WA_REGEX =

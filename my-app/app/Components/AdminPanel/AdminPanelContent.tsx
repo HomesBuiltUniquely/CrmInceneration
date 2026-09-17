@@ -2,6 +2,8 @@
 import {
   useState,
   useEffect,
+  useMemo,
+  useRef,
   ReactNode,
   CSSProperties,
   ChangeEvent,
@@ -20,11 +22,80 @@ import {
 } from "@/lib/auth/api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import SalesTargetSection from "./SalesTargetSection";
+import RenovationLeadLimitDashboard from "./RenovationLeadLimitDashboard";
 import {
   isManagerStatusToggleRole,
   isPresalesExecutiveRole,
   isUserActive,
 } from "@/lib/user-active";
+
+/**
+ * Defer mounting heavy admin sections until near the viewport (or forced via nav click).
+ * Prevents a thundering herd of API calls when /admin-panel first opens.
+ */
+function LazySection({
+  id,
+  force,
+  children,
+  minHeight = 160,
+}: {
+  id: string;
+  force?: boolean;
+  children: ReactNode;
+  minHeight?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(Boolean(force));
+
+  useEffect(() => {
+    if (force) setReady(true);
+  }, [force]);
+
+  useEffect(() => {
+    if (ready) return;
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setReady(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setReady(true);
+          io.disconnect();
+        }
+      },
+      { root: null, rootMargin: "120px 0px", threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ready]);
+
+  return (
+    <div id={id} ref={ref}>
+      {ready ? (
+        children
+      ) : (
+        <div
+          style={{
+            minHeight,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--crm-text-muted)",
+            fontSize: 13,
+            border: "1px solid var(--crm-border)",
+            borderRadius: 16,
+            background: "var(--crm-surface)",
+          }}
+        >
+          Scroll to load…
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── colour tokens (matches your existing teal/blue palette) ─────────────────
 const C = {
@@ -2654,44 +2725,349 @@ const LIMIT_ROLE_TO_API: Record<string, string> = {
   "Presales Manager": "PRESALES_MANAGER",
 };
 
+type LeadLimitRoleFilter =
+  | "all"
+  | "SALES_EXECUTIVE"
+  | "SALES_MANAGER"
+  | "PRESALES_EXECUTIVE"
+  | "PRESALES_MANAGER";
+
+const LEAD_LIMIT_ROLE_FILTERS: { id: LeadLimitRoleFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "SALES_EXECUTIVE", label: "Sales Exec" },
+  { id: "SALES_MANAGER", label: "Sales Mgr" },
+  { id: "PRESALES_EXECUTIVE", label: "Presales Exec" },
+  { id: "PRESALES_MANAGER", label: "Presales Mgr" },
+];
+
+/** Visible rows before scroll (~7 slim rows + sticky header). */
+const LEAD_LIMIT_VIEWPORT_ROWS = 7;
+const LEAD_LIMIT_VIEWPORT_PX = 36 + LEAD_LIMIT_VIEWPORT_ROWS * 44;
+
 interface UserLimit {
   userId: number;
   name: string;
   role: string;
   branch: string;
+  /** Roster active flag from Hub. */
+  active: boolean;
+  /** Limit usage count — same as newThisMonthCount (Hub `currentCount`). */
   current: number;
+  newThisMonthCount: number;
+  oldAssignedThisMonthCount: number;
+  totalAssignedThisMonthCount: number;
   limit: number;
   remaining: number;
   pct: number;
 }
 
+type LeadCountView = "new" | "old" | "total";
+
+const LEAD_COUNT_VIEW_OPTIONS: { id: LeadCountView; label: string; hint: string }[] = [
+  { id: "new", label: "New", hint: "Created this month · drives limit" },
+  { id: "old", label: "Old", hint: "Older leads assigned this month" },
+  { id: "total", label: "Total", hint: "New + old assigned this month" },
+];
+
 function mapLimitUser(u: Record<string, unknown>, idx: number): UserLimit {
   const userId = Number(u.userId ?? u.id ?? idx);
   const limit =
     pickNumber(u, ["limit", "monthlyLimit", "monthlyLeadLimit", "leadLimit", "maxLeads"]) ?? 0;
-  const current =
+  const newThisMonthCount =
     pickNumber(u, [
-      "current",
+      "newThisMonthCount",
       "currentCount",
+      "current",
       "used",
       "leadsCount",
       "activeLeads",
       "usedLeads",
       "leadsUsed",
     ]) ?? 0;
+  const oldAssignedThisMonthCount =
+    pickNumber(u, ["oldAssignedThisMonthCount", "oldThisMonthCount"]) ?? 0;
+  const totalAssignedThisMonthCount =
+    pickNumber(u, ["totalAssignedThisMonthCount", "totalThisMonthCount"]) ??
+    newThisMonthCount + oldAssignedThisMonthCount;
   const remaining =
-    pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
-  const pct = limit > 0 ? Math.round((current / limit) * 1000) / 10 : 0;
+    pickNumber(u, ["remaining", "remainingLeads"]) ??
+    Math.max(0, limit - newThisMonthCount);
+  const pctRaw = pickNumber(u, ["percentageUsed", "percentUsed", "usagePercent"]);
+  const pct =
+    pctRaw != null
+      ? Math.round(pctRaw * 10) / 10
+      : limit > 0
+        ? Math.round((newThisMonthCount / limit) * 1000) / 10
+        : 0;
   return {
     userId,
     name: String(u.fullName ?? u.name ?? u.username ?? `User ${userId}`),
     role: normalizedUserRole(u),
     branch: String(u.branch ?? ""),
-    current,
+    active: isUserActive(u as { active?: boolean; isActive?: boolean }),
+    current: newThisMonthCount,
+    newThisMonthCount,
+    oldAssignedThisMonthCount,
+    totalAssignedThisMonthCount,
     limit,
     remaining,
     pct,
   };
+}
+
+/** Row tint: inactive → yellow; limit 0 → dark red; usage > 80% → green. */
+function leadLimitRowBackground(u: UserLimit, selected: boolean): string {
+  if (selected) return C.surface;
+  if (!u.active) return "rgba(234, 179, 8, 0.32)"; // yellow
+  if (u.limit === 0) return "rgba(185, 28, 28, 0.22)"; // dark red
+  if (u.pct > 80) return "rgba(22, 163, 74, 0.38)"; // dark green — clearly visible
+  return C.card;
+}
+
+const LEAD_LIMIT_COLOR_LEGEND: { color: string; label: string }[] = [
+  { color: "rgba(234, 179, 8, 0.55)", label: "Inactive" },
+  { color: "rgba(185, 28, 28, 0.55)", label: "Limit 0" },
+  { color: "rgba(22, 163, 74, 0.55)", label: "Usage > 80%" },
+];
+
+function LeadLimitColorLegend() {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 10,
+        fontSize: 11,
+        color: C.muted,
+      }}
+      aria-label="Row color meaning"
+    >
+      {LEAD_LIMIT_COLOR_LEGEND.map((item) => (
+        <span
+          key={item.label}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: 3,
+              background: item.color,
+              border: `1px solid ${C.border}`,
+              flexShrink: 0,
+            }}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One classic icon button → dropdown of All / Sales / Presales roles. */
+function LeadRoleFilterMenu({
+  value,
+  onChange,
+}: {
+  value: LeadLimitRoleFilter;
+  onChange: (next: LeadLimitRoleFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current =
+    LEAD_LIMIT_ROLE_FILTERS.find((o) => o.id === value) ?? LEAD_LIMIT_ROLE_FILTERS[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: Event) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: Event) => {
+      if ((e as KeyboardEvent).key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        title={`Role: ${current.label}`}
+        aria-label="Filter by role"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 32,
+          padding: "0 10px",
+          borderRadius: 8,
+          border: `1px solid ${C.border}`,
+          background: open ? C.surface : C.card,
+          color: C.text,
+          cursor: "pointer",
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 7h16M7 12h10M10 17h4"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span style={{ maxWidth: 92, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {current.label}
+        </span>
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <path d="M3 4.5L6 7.5L9 4.5" stroke={C.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          role="listbox"
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 6px)",
+            zIndex: 40,
+            minWidth: 168,
+            padding: 4,
+            borderRadius: 10,
+            border: `1px solid ${C.border}`,
+            background: C.card,
+            boxShadow: "0 8px 24px rgba(15,23,42,0.12)",
+          }}
+        >
+          {LEAD_LIMIT_ROLE_FILTERS.map((opt) => {
+            const active = value === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  onChange(opt.id);
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  border: "none",
+                  borderRadius: 7,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
+                  color: active ? C.accent : C.text,
+                  background: active ? C.surface : "transparent",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Slim iOS-style multi-select for New / Old / Total (Standard tab only). */
+function LeadCountViewToggle({
+  selected,
+  onToggle,
+}: {
+  selected: Set<LeadCountView>;
+  onToggle: (id: LeadCountView) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 1,
+        padding: 2,
+        borderRadius: 8,
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+      }}
+      role="group"
+      aria-label="Lead count columns"
+    >
+      {LEAD_COUNT_VIEW_OPTIONS.map((opt) => {
+        const active = selected.has(opt.id);
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            title={opt.hint}
+            aria-pressed={active}
+            onClick={() => onToggle(opt.id)}
+            style={{
+              minWidth: 56,
+              padding: "6px 12px",
+              border: "none",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: active ? 600 : 500,
+              color: active ? C.text : C.muted,
+              background: active ? C.card : "transparent",
+              boxShadow: active ? "0 1px 2px rgba(15,23,42,0.08)" : "none",
+              transition: "background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease",
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const leadTh: CSSProperties = {
+  padding: "8px 10px",
+  textAlign: "left",
+  fontSize: 11,
+  fontWeight: 600,
+  color: C.muted,
+  letterSpacing: "0.03em",
+  textTransform: "uppercase",
+  background: C.surface,
+  borderBottom: `1px solid ${C.border}`,
+  position: "sticky",
+  top: 0,
+  zIndex: 1,
+  whiteSpace: "nowrap",
+};
+
+const leadTd: CSSProperties = {
+  padding: "11px 10px",
+  fontSize: 13,
+  color: C.text,
+  borderBottom: `1px solid ${C.border}`,
+  verticalAlign: "middle",
+};
+
+/** Sort key: highest assignment movement this month first. */
+function leadMovementScore(u: UserLimit): number {
+  return Math.max(
+    u.totalAssignedThisMonthCount,
+    u.newThisMonthCount + u.oldAssignedThisMonthCount,
+    u.newThisMonthCount,
+  );
 }
 
 function LeadLimitSection() {
@@ -2717,34 +3093,88 @@ function LeadLimitSection() {
     useState<UserLimit | null>(null);
   const [currentEditingLimit, setCurrentEditingLimit] = useState<string>("");
   const [limitsLoading, setLimitsLoading] = useState(false);
+  const [limitsError, setLimitsError] = useState<string | null>(null);
+  const [mainTab, setMainTab] = useState<"standard" | "renovation">("standard");
+  const [countViews, setCountViews] = useState<Set<LeadCountView>>(() => new Set(["new"]));
+  const [countAnimKey, setCountAnimKey] = useState(0);
+  const [roleSegFilter, setRoleSegFilter] = useState<LeadLimitRoleFilter>("all");
+  const loadGen = useRef(0);
 
-  const loadLimits = () => {
+  const showNewCol = countViews.has("new");
+  const showOldCol = countViews.has("old");
+  const showTotalCol = countViews.has("total");
+  /** Remaining / usage / action only when viewing New alone (limit is driven by new). */
+  const showLimitUsageCols = !showOldCol && !showTotalCol;
+
+  /** Filter by role, then highest assignment movement first — ~7 visible, scroll for rest. */
+  const sortedUsers = useMemo(() => {
+    const filtered =
+      roleSegFilter === "all"
+        ? users
+        : users.filter((u) => u.role === roleSegFilter);
+    return [...filtered].sort((a, b) => {
+      const diff = leadMovementScore(b) - leadMovementScore(a);
+      if (diff !== 0) return diff;
+      const byNew = b.newThisMonthCount - a.newThisMonthCount;
+      if (byNew !== 0) return byNew;
+      return a.name.localeCompare(b.name);
+    });
+  }, [users, roleSegFilter]);
+
+  const visibleUserIds = useMemo(
+    () => sortedUsers.map((u) => u.userId),
+    [sortedUsers],
+  );
+
+  const toggleCountView = (id: LeadCountView) => {
+    setCountViews((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        if (next.size <= 1) return prev;
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setCountAnimKey((k) => k + 1);
+  };
+
+  /** Original Hub lead-limits only — keep loading until real rows arrive (no default roster). */
+  const loadLimits = (opts?: { force?: boolean }) => {
+    if (!canManageLeadLimits) return;
+    const gen = ++loadGen.current;
     setLimitsLoading(true);
+    setLimitsError(null);
+
     void Promise.all([
-      leadLimitsApi.listUsers(),
-      leadLimitsApi.getDefault(),
-      adminPanelApi.listUsersByRole("PRESALES_EXECUTIVE").catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
+      leadLimitsApi.listUsersWithMeta({ force: opts?.force }),
+      leadLimitsApi.getDefault({ force: opts?.force }).catch(() => ({} as Record<string, unknown>)),
     ])
-      .then(([rows, def, presalesExecRows, preSalesRows]) => {
-        const dedupedRows = mergeUserRowsById(
-          presalesExecRows as Array<Record<string, unknown>>,
-          preSalesRows as Array<Record<string, unknown>>,
-          rows as Array<Record<string, unknown>>,
-        );
-        setUsers(dedupedRows.map((r, i) => mapLimitUser(r, i)));
-        const d = pickNumber(def, ["defaultLimit", "limit", "value"]);
-        if (d !== undefined) setDefaultLimit(String(d));
+      .then(([bundle, def]) => {
+        if (gen !== loadGen.current) return;
+        setUsers(bundle.users.map((r, i) => mapLimitUser(r, i)));
+        const d =
+          bundle.defaultLimit ??
+          pickNumber(def, ["defaultLimit", "limit", "value"]);
+        if (d !== undefined && Number.isFinite(d)) setDefaultLimit(String(d));
+        setLimitsError(null);
       })
-      .catch(() => {
+      .catch((e: unknown) => {
+        if (gen !== loadGen.current) return;
         setUsers([]);
+        setLimitsError(e instanceof Error ? e.message : "Failed to load lead limits");
       })
-      .finally(() => setLimitsLoading(false));
+      .finally(() => {
+        if (gen !== loadGen.current) return;
+        setLimitsLoading(false);
+      });
   };
 
   useEffect(() => {
     if (!canManageLeadLimits) return;
     loadLimits();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load on role gate only
   }, [canManageLeadLimits]);
 
   const toggleRole = (r: string) =>
@@ -2759,16 +3189,21 @@ function LeadLimitSection() {
   };
 
   const toggleSelectAll = () => {
-    if (users.length > 0 && selectedUserIds.length === users.length) {
-      setSelectedUserIds([]);
+    if (
+      visibleUserIds.length > 0 &&
+      visibleUserIds.every((id) => selectedUserIds.includes(id))
+    ) {
+      setSelectedUserIds((prev) => prev.filter((id) => !visibleUserIds.includes(id)));
     } else {
-      setSelectedUserIds(users.map((u) => u.userId));
+      setSelectedUserIds((prev) => Array.from(new Set([...prev, ...visibleUserIds])));
     }
   };
 
   const getSelectedCount = () => selectedUserIds.length;
 
-  const allSelected = users.length > 0 && selectedUserIds.length === users.length;
+  const allSelected =
+    visibleUserIds.length > 0 &&
+    visibleUserIds.every((id) => selectedUserIds.includes(id));
 
   return (
     <Card>
@@ -2790,175 +3225,252 @@ function LeadLimitSection() {
         }}
       >
         <SectionTitle icon="📊">Lead Limit Management</SectionTitle>
-        <Btn color={C.accent} style={{ fontSize: 13, padding: "7px 16px" }} onClick={loadLimits}>
-          ↻ Refresh
-        </Btn>
+        
+        <div style={{ display: "flex", background: C.surface, borderRadius: 10, padding: 4 }}>
+          <button
+            onClick={() => setMainTab("standard")}
+            style={{
+              padding: "8px 24px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
+              background: mainTab === "standard" ? C.white : "transparent",
+              color: mainTab === "standard" ? C.accent : C.muted,
+              boxShadow: mainTab === "standard" ? "0 2px 4px rgba(0,0,0,0.05)" : "none",
+              transition: "all 0.2s ease"
+            }}
+          >
+            Standard
+          </button>
+          <button
+            onClick={() => setMainTab("renovation")}
+            style={{
+              padding: "8px 24px",
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
+              background: mainTab === "renovation" ? C.white : "transparent",
+              color: mainTab === "renovation" ? C.accent : C.muted,
+              boxShadow: mainTab === "renovation" ? "0 2px 4px rgba(0,0,0,0.05)" : "none",
+              transition: "all 0.2s ease"
+            }}
+          >
+            Renovation
+          </button>
+        </div>
       </div>
 
-      {/* Default limit banner */}
+      {mainTab === "renovation" ? (
+        <RenovationLeadLimitDashboard />
+      ) : (
+        <>
+      {/* Slim default monthly limit bar */}
       <div
         style={{
-          background: C.tabGrad,
-          borderRadius: 16,
-          padding: "20px 24px",
-          marginBottom: 24,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 24,
+          gap: 12,
           flexWrap: "wrap",
+          marginBottom: 16,
+          padding: "10px 14px",
+          borderRadius: 10,
+          border: `1px solid ${C.border}`,
+          background: C.surface,
         }}
       >
-        <div>
-          <p style={{ color: "rgba(255,255,255,0.78)", fontSize: 13, margin: 0 }}>
-            Default monthly limit for new users
+        <div style={{ minWidth: 0 }}>
+          <p
+            style={{
+              margin: 0,
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: C.muted,
+            }}
+          >
+            Default monthly limit
           </p>
           <p
             style={{
-              color: C.white,
+              margin: "2px 0 0",
               fontSize: 13,
-              marginTop: 6,
               fontWeight: 600,
+              color: C.text,
             }}
           >
-            📌 Current:{" "}
-            <strong style={{ fontSize: 14 }}>{defaultLimit} leads/month</strong>
+            {defaultLimit} leads / month for new users
           </p>
         </div>
-        <div
-          style={{
-            display: "flex",
-            gap: 12,
-            alignItems: "center",
-          }}
-        >
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
             type="number"
             value={defaultLimit}
             onChange={(e: ChangeEvent<HTMLInputElement>) =>
               setDefaultLimit(e.target.value)
             }
+            aria-label="Default monthly limit"
             style={{
-              width: 80,
-              padding: "8px 14px",
+              width: 72,
+              height: 32,
+              padding: "0 10px",
               borderRadius: 8,
-              border: "none",
-              fontSize: 14,
-              fontWeight: 700,
+              border: `1px solid ${C.border}`,
+              fontSize: 13,
+              fontWeight: 600,
               textAlign: "center",
               outline: "none",
               background: C.card,
               color: C.text,
+              fontVariantNumeric: "tabular-nums",
             }}
           />
-          <Btn
-            color={C.success}
-            style={{ fontSize: 13, padding: "8px 18px" }}
+          <button
+            type="button"
             onClick={() => {
               const n = Number(defaultLimit);
               if (Number.isNaN(n)) return;
               void leadLimitsApi
                 .setDefault(n)
                 .then(() => {
-                  loadLimits();
+                  loadLimits({ force: true });
                   notifySuccess("Default lead limit updated.");
                 })
                 .catch((e) => {
                   notifyError(e instanceof Error ? e.message : "Failed to update default limit.");
                 });
             }}
+            style={{
+              height: 32,
+              padding: "0 12px",
+              borderRadius: 8,
+              border: "none",
+              background: C.accent,
+              color: C.white,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
           >
-            Update Default
-          </Btn>
+            Save
+          </button>
         </div>
       </div>
 
-      {/* Sub tabs */}
+      {/* Sub tabs + filters */}
       <div
         style={{
           display: "flex",
-          gap: 6,
-          background: C.surface,
-          borderRadius: 10,
-          padding: 5,
-          width: "fit-content",
-          marginBottom: 20,
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: 14,
+          gap: 12,
+          flexWrap: "wrap",
         }}
       >
-        <Tab
-          label="Per User Limits"
-          active={limitTab === "users"}
-          onClick={() => setLimitTab("users")}
-        />
-        <Tab
-          label="Set by Role"
-          active={limitTab === "role"}
-          onClick={() => setLimitTab("role")}
-        />
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            background: C.surface,
+            borderRadius: 10,
+            padding: 5,
+            width: "fit-content",
+          }}
+        >
+          <Tab
+            label="Per User Limits"
+            active={limitTab === "users"}
+            onClick={() => setLimitTab("users")}
+          />
+          <Tab
+            label="Set by Role"
+            active={limitTab === "role"}
+            onClick={() => setLimitTab("role")}
+          />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {limitTab === "users" ? (
+            <>
+              <LeadRoleFilterMenu
+                value={roleSegFilter}
+                onChange={(next) => {
+                  setRoleSegFilter(next);
+                  setCountAnimKey((k) => k + 1);
+                }}
+              />
+              <LeadCountViewToggle selected={countViews} onToggle={toggleCountView} />
+            </>
+          ) : null}
+          <Btn
+            color={C.accent}
+            style={{ fontSize: 12, padding: "6px 12px", height: 32 }}
+            onClick={() => loadLimits({ force: true })}
+          >
+            ↻ Refresh
+          </Btn>
+        </div>
       </div>
-
       {limitTab === "users" && (
         <>
-          {/* Selection section */}
           {getSelectedCount() > 0 && (
             <div
               style={{
-                background: C.warningBg ?? "var(--crm-warning-bg)",
-                border: "1.5px solid var(--crm-warning-text)",
-                borderRadius: 12,
-                padding: "16px 18px",
-                marginBottom: 16,
+                background: C.surface,
+                border: `1px solid ${C.border}`,
+                borderRadius: 10,
+                padding: "10px 12px",
+                marginBottom: 12,
                 display: "flex",
                 alignItems: "center",
-                gap: 16,
+                gap: 12,
                 justifyContent: "space-between",
                 flexWrap: "wrap",
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 600, color: "var(--crm-warning-text)" }}>
-                📋 {getSelectedCount()} user
-                {getSelectedCount() !== 1 ? "s" : ""} selected
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>
+                {getSelectedCount()} selected
               </span>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input
                   type="number"
-                  placeholder="Enter limit"
+                  placeholder="Limit"
                   value={bulkLimit}
                   onChange={(e) => setBulkLimit(e.target.value)}
                   style={{
-                    padding: "8px 12px",
+                    padding: "6px 10px",
                     borderRadius: 8,
-                    border: `1px solid var(--crm-warning-text)`,
+                    border: `1px solid ${C.border}`,
                     fontSize: 13,
                     outline: "none",
                     background: C.card,
                     color: C.text,
-                    minWidth: 140,
+                    width: 88,
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 />
                 <Btn
-                  color="var(--crm-warning-text)"
+                  color={C.accent}
                   onClick={() => setShowModal(true)}
-                  style={{ fontSize: 12, padding: "8px 14px" }}
+                  style={{ fontSize: 12, padding: "6px 12px" }}
                 >
-                  📋 Set Limit for Selected
+                  Set limit
                 </Btn>
                 <Btn
-                  color={C.danger}
+                  color={C.muted}
                   onClick={() => {
                     setSelectedUserIds([]);
                     setBulkLimit("");
                   }}
-                  style={{ fontSize: 12, padding: "8px 14px" }}
+                  style={{ fontSize: 12, padding: "6px 12px" }}
                 >
-                  Clear Selection
+                  Clear
                 </Btn>
               </div>
             </div>
@@ -2969,311 +3481,389 @@ function LeadLimitSection() {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: 12,
+              marginBottom: 8,
+              gap: 12,
+              flexWrap: "wrap",
             }}
           >
-            <span style={{ fontSize: 13, color: C.muted }}>
-              {limitsLoading ? "Loading…" : `${users.length} users`}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>
+                {limitsLoading
+                  ? "Loading…"
+                  : `${sortedUsers.length} users · top movers first`}
+                {roleSegFilter !== "all" ? (
+                  <span style={{ marginLeft: 6 }}>
+                    ·{" "}
+                    {LEAD_LIMIT_ROLE_FILTERS.find((o) => o.id === roleSegFilter)?.label}
+                  </span>
+                ) : null}
+                {limitsError ? (
+                  <span style={{ marginLeft: 8, color: C.danger }}>{limitsError}</span>
+                ) : null}
+              </span>
+              <LeadLimitColorLegend />
+            </div>
             <label
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
+                gap: 6,
                 cursor: "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-                color: C.text,
+                fontSize: 12,
+                fontWeight: 500,
+                color: C.muted,
               }}
             >
               <input
                 type="checkbox"
                 checked={allSelected}
                 onChange={toggleSelectAll}
-                style={{
-                  width: 16,
-                  height: 16,
-                  accentColor: C.primary,
-                  cursor: "pointer",
-                }}
+                style={{ width: 14, height: 14, accentColor: C.primary, cursor: "pointer" }}
               />
-              Select All
+              Select all
             </label>
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead style={{ borderBottom: `2px solid ${C.border}` }}>
-                <tr>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      width: 40,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      style={{
-                        width: 16,
-                        height: 16,
-                        accentColor: C.primary,
-                        cursor: "pointer",
-                      }}
-                    />
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Name
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Role
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Branch
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Current
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Limit
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Remaining
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Usage
-                  </th>
-                  <th
-                    style={{
-                      padding: "12px 14px",
-                      textAlign: "left",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: C.muted,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {limitsLoading ? (
-                  <tr>
-                    <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                      Loading lead limits…
-                    </td>
-                  </tr>
-                ) : users.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                      No users returned from lead-limits API.
-                    </td>
-                  </tr>
-                ) : (
-                  users.map((u, i) => {
-                  const barColor =
-                    u.pct === 0
-                      ? C.borderStrong
-                      : u.pct < 50
-                        ? C.success
-                        : u.pct < 80
-                          ? "var(--crm-warning-text)"
-                          : C.danger;
-                  return (
-                    <tr
-                      key={u.userId}
-                      style={{
-                        background:
-                          u.limit === 0
-                            ? C.dangerBg
-                            : i % 2 === 0
-                              ? C.card
-                              : C.surface,
-                        color: C.text,
-                      }}
-                    >
-                      <td style={{ padding: "12px 14px", textAlign: "center" }}>
+
+          <div
+            key={countAnimKey}
+            style={{
+              borderRadius: 10,
+              border: `1px solid ${C.border}`,
+              background: C.card,
+              overflow: "hidden",
+              animation: "leadLimitFadeSlide 0.28s ease",
+            }}
+          >
+            <div
+              style={{
+                maxHeight: LEAD_LIMIT_VIEWPORT_PX,
+                overflowY: "auto",
+                overflowX: "auto",
+              }}
+            >
+              {limitsLoading && sortedUsers.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                  Loading lead limits…
+                </div>
+              ) : sortedUsers.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                  {limitsError
+                    ? `Could not load lead limits: ${limitsError}`
+                    : "No users returned from lead-limits API."}
+                </div>
+              ) : (
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    tableLayout: "auto",
+                    minWidth: showLimitUsageCols ? 720 : 560,
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={{ ...leadTh, width: 36, paddingLeft: 12 }}>
                         <input
                           type="checkbox"
-                          checked={selectedUserIds.includes(u.userId)}
-                          onChange={() => toggleUserSelect(u.userId)}
-                          style={{
-                            width: 16,
-                            height: 16,
-                            accentColor: C.primary,
-                            cursor: "pointer",
-                          }}
+                          checked={allSelected}
+                          onChange={toggleSelectAll}
+                          style={{ width: 14, height: 14, accentColor: C.primary }}
                         />
-                      </td>
-                      <td
-                        style={{
-                          padding: "12px 14px",
-                          fontWeight: 600,
-                          fontSize: 14,
-                        }}
-                      >
-                        {u.name}
-                      </td>
-                      <td style={{ padding: "12px 14px" }}>
-                        <Badge>{u.role}</Badge>
-                      </td>
-                      <td style={{ padding: "12px 14px", fontSize: 14 }}>
-                        {u.branch}
-                      </td>
-                      <td
-                        style={{
-                          padding: "12px 14px",
-                          fontSize: 14,
-                          color: u.current === 0 ? C.danger : C.text,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {u.current}
-                      </td>
-                      <td
-                        style={{
-                          padding: "12px 14px",
-                          fontSize: 14,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {u.limit}
-                      </td>
-                      <td
-                        style={{
-                          padding: "12px 14px",
-                          fontSize: 14,
-                          color: u.remaining === 0 ? C.danger : C.success,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {u.remaining}
-                      </td>
-                      <td style={{ padding: "12px 14px", minWidth: 140 }}>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
-                        >
-                          <div
-                            style={{
-                              flex: 1,
-                              height: 6,
-                              background: C.borderStrong,
-                              borderRadius: 3,
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${u.pct}%`,
-                                height: "100%",
-                                background: barColor,
-                                borderRadius: 3,
-                              }}
-                            />
-                          </div>
-                          <span
-                            style={{
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: barColor,
-                              minWidth: 38,
-                            }}
-                          >
-                            {u.pct}%
-                          </span>
-                        </div>
-                      </td>
-                      <td style={{ padding: "12px 14px" }}>
-                        <Btn
-                          color={C.primary}
-                          onClick={() => {
-                            setCurrentEditingUser(u);
-                            setCurrentEditingLimit(String(u.limit) || "");
-                            setShowModal(true);
-                          }}
-                          style={{ fontSize: 12, padding: "5px 12px" }}
-                        >
-                          Set Limit
-                        </Btn>
-                      </td>
+                      </th>
+                      <th style={leadTh}>Name</th>
+                      <th style={leadTh}>Role</th>
+                      <th style={leadTh}>Branch</th>
+                      {showNewCol ? (
+                        <th style={{ ...leadTh, textAlign: "right" }} title="Created this month">
+                          New
+                        </th>
+                      ) : null}
+                      {showOldCol ? (
+                        <th style={{ ...leadTh, textAlign: "right" }} title="Older leads assigned this month">
+                          Old
+                        </th>
+                      ) : null}
+                      {showTotalCol ? (
+                        <th style={{ ...leadTh, textAlign: "right" }} title="New + old">
+                          Total
+                        </th>
+                      ) : null}
+                      <th style={{ ...leadTh, textAlign: "right", paddingRight: 14 }}>Limit</th>
+                      {showLimitUsageCols ? (
+                        <>
+                          <th style={{ ...leadTh, textAlign: "right" }}>Left</th>
+                          <th style={{ ...leadTh, minWidth: 100 }}>Usage</th>
+                          <th style={{ ...leadTh, paddingRight: 14 }}> </th>
+                        </>
+                      ) : null}
                     </tr>
-                  );
-                })
-                )
-                }
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {sortedUsers.map((u, i) => {
+                      const selected = selectedUserIds.includes(u.userId);
+                      const openEdit = () => {
+                        setCurrentEditingUser(u);
+                        setCurrentEditingLimit(String(u.limit) || "");
+                        setShowModal(true);
+                      };
+                      const numColor = (n: number, warnZero?: boolean) =>
+                        warnZero && n === 0 ? C.danger : C.text;
+                      const rowBg = leadLimitRowBackground(u, selected);
+                      return (
+                        <tr
+                          key={u.userId}
+                          title={
+                            !u.active
+                              ? "Inactive"
+                              : u.limit === 0
+                                ? "Limit is 0"
+                                : u.pct > 80
+                                  ? `Usage ${u.pct}%`
+                                  : undefined
+                          }
+                          style={{
+                            background: rowBg,
+                            opacity: limitsLoading ? 0.75 : 1,
+                          }}
+                        >
+                          <td style={{ ...leadTd, paddingLeft: 12, borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom }}>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleUserSelect(u.userId)}
+                              style={{ width: 14, height: 14, accentColor: C.primary, cursor: "pointer" }}
+                            />
+                          </td>
+                          <td
+                            style={{
+                              ...leadTd,
+                              fontWeight: 600,
+                              maxWidth: 180,
+                              borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 6,
+                                maxWidth: "100%",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {u.name}
+                              </span>
+                              {!u.active ? (
+                                <span
+                                  style={{
+                                    flexShrink: 0,
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    color: C.warningText,
+                                    letterSpacing: "0.02em",
+                                  }}
+                                >
+                                  Inactive
+                                </span>
+                              ) : null}
+                            </span>
+                          </td>
+                          <td
+                            style={{
+                              ...leadTd,
+                              color: C.muted,
+                              fontSize: 12,
+                              borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                            }}
+                          >
+                            {u.role.replace(/_/g, " ")}
+                          </td>
+                          <td
+                            style={{
+                              ...leadTd,
+                              color: C.muted,
+                              fontSize: 12,
+                              borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                            }}
+                          >
+                            {u.branch ? u.branch.replace(/_/g, " ") : "—"}
+                          </td>
+                          {showNewCol ? (
+                            <td
+                              style={{
+                                ...leadTd,
+                                textAlign: "right",
+                                fontVariantNumeric: "tabular-nums",
+                                fontWeight: 600,
+                                color: numColor(u.newThisMonthCount),
+                                borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                              }}
+                            >
+                              {u.newThisMonthCount}
+                            </td>
+                          ) : null}
+                          {showOldCol ? (
+                            <td
+                              style={{
+                                ...leadTd,
+                                textAlign: "right",
+                                fontVariantNumeric: "tabular-nums",
+                                color: C.muted,
+                                borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                              }}
+                            >
+                              {u.oldAssignedThisMonthCount}
+                            </td>
+                          ) : null}
+                          {showTotalCol ? (
+                            <td
+                              style={{
+                                ...leadTd,
+                                textAlign: "right",
+                                fontVariantNumeric: "tabular-nums",
+                                fontWeight: 600,
+                                borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                              }}
+                            >
+                              {u.totalAssignedThisMonthCount}
+                            </td>
+                          ) : null}
+                          <td
+                            style={{
+                              ...leadTd,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              fontWeight: 600,
+                              paddingRight: showLimitUsageCols ? 10 : 14,
+                              color: numColor(u.limit, true),
+                              borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={openEdit}
+                              title="Edit limit"
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                padding: 0,
+                                cursor: "pointer",
+                                color: "inherit",
+                                font: "inherit",
+                                fontVariantNumeric: "tabular-nums",
+                                textDecoration: "underline",
+                                textDecorationColor: C.borderStrong,
+                                textUnderlineOffset: 3,
+                              }}
+                            >
+                              {u.limit}
+                            </button>
+                          </td>
+                          {showLimitUsageCols ? (
+                            <>
+                              <td
+                                style={{
+                                  ...leadTd,
+                                  textAlign: "right",
+                                  fontVariantNumeric: "tabular-nums",
+                                  color: u.remaining === 0 ? C.danger : C.muted,
+                                  borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                                }}
+                              >
+                                {u.remaining}
+                              </td>
+                              <td
+                                style={{
+                                  ...leadTd,
+                                  borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                                }}
+                              >
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 88 }}>
+                                  <div
+                                    style={{
+                                      flex: 1,
+                                      height: 3,
+                                      background: C.border,
+                                      borderRadius: 2,
+                                      overflow: "hidden",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        width: `${Math.min(100, Math.max(0, u.pct))}%`,
+                                        height: "100%",
+                                        background: C.text,
+                                        opacity: 0.45,
+                                        borderRadius: 2,
+                                      }}
+                                    />
+                                  </div>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      color: C.muted,
+                                      fontVariantNumeric: "tabular-nums",
+                                      minWidth: 36,
+                                      textAlign: "right",
+                                    }}
+                                  >
+                                    {u.pct}%
+                                  </span>
+                                </div>
+                              </td>
+                              <td
+                                style={{
+                                  ...leadTd,
+                                  paddingRight: 14,
+                                  borderBottom: i === sortedUsers.length - 1 ? "none" : leadTd.borderBottom,
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={openEdit}
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    padding: 0,
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: C.accent,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Edit
+                                </button>
+                              </td>
+                            </>
+                          ) : null}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            {sortedUsers.length > LEAD_LIMIT_VIEWPORT_ROWS ? (
+              <div
+                style={{
+                  padding: "7px 12px",
+                  borderTop: `1px solid ${C.border}`,
+                  fontSize: 11,
+                  color: C.muted,
+                  background: C.surface,
+                  textAlign: "center",
+                }}
+              >
+                Showing top {LEAD_LIMIT_VIEWPORT_ROWS} · scroll for{" "}
+                {sortedUsers.length - LEAD_LIMIT_VIEWPORT_ROWS} more
+              </div>
+            ) : null}
           </div>
           <div
             style={{
@@ -3363,7 +3953,7 @@ function LeadLimitSection() {
                   .bulkRoles({ roles, limit: lim })
                   .then(() => {
                     setRoleLimit("");
-                    loadLimits();
+                    loadLimits({ force: true });
                     notifySuccess("Role limits updated.");
                   })
                   .catch((e) => {
@@ -3595,7 +4185,7 @@ function LeadLimitSection() {
                       setCurrentEditingUser(null);
                       setCurrentEditingLimit("");
                       setShowModal(false);
-                      loadLimits();
+                      loadLimits({ force: true });
                       notifySuccess("User lead limit updated.");
                     })
                     .catch((e) => {
@@ -3608,7 +4198,7 @@ function LeadLimitSection() {
                       setShowModal(false);
                       setBulkLimit("");
                       setSelectedUserIds([]);
-                      loadLimits();
+                      loadLimits({ force: true });
                       notifySuccess("Bulk user limits updated.");
                     })
                     .catch((e) => {
@@ -3625,6 +4215,8 @@ function LeadLimitSection() {
           </div>
         </div>
       </Modal>
+        </>
+      )}
         </>
       )}
     </Card>
@@ -3699,11 +4291,25 @@ const SECTIONS: Section[] = [
 // ─── MAIN CONTENT COMPONENT ───────────────────────────────────────────────────
 export default function AdminPanelContent() {
   const [viewerRole, setViewerRole] = useState("");
+  const [forceSection, setForceSection] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
+  }, []);
+
+  // Prefetch original lead-limits as soon as Admin Panel opens (cache ready on scroll).
+  useEffect(() => {
+    const role = normalizeRole(
+      typeof window !== "undefined"
+        ? window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""
+        : "",
+    );
+    if (role !== "SUPER_ADMIN" && role !== "SALES_ADMIN") return;
+    void leadLimitsApi.listUsers().catch(() => undefined);
+    void leadLimitsApi.getDefault().catch(() => undefined);
+    void leadLimitsApi.getRenovationLimits().catch(() => undefined);
   }, []);
 
   const isAdmin = viewerRole === "ADMIN";
@@ -3740,17 +4346,18 @@ export default function AdminPanelContent() {
   });
 
   const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({
-      behavior: "smooth",
-      block: "start",
+    setForceSection(id);
+    // Allow LazySection to mount before scrolling into view.
+    requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     });
   };
 
   return (
-    <div
-      className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-7 md:px-8"
-      style={{ fontFamily: "'Segoe UI', system-ui, sans-serif" }}
-    >
+    <div className="min-h-screen bg-[var(--crm-app-bg)] px-4 py-7 md:px-8">
       {/* Quick nav cards - Modern compact design */}
       <div className="mb-7 flex flex-wrap gap-2.5">
         {sections.map((s) => (
@@ -3765,46 +4372,46 @@ export default function AdminPanelContent() {
         ))}
       </div>
 
-      {/* Sections */}
+      {/* Sections — lazy-mounted so lead limits aren’t queued behind every other module */}
       <div className="flex flex-col gap-6">
         {!isManagerScopedRole && !isPresalesExecutive ? (
           <>
-            <div id="adminUser">
+            <LazySection id="adminUser" force={forceSection === "adminUser"} minHeight={220}>
               <AdminUserSection />
-            </div>
-            <div id="assign">
+            </LazySection>
+            <LazySection id="assign" force={forceSection === "assign"} minHeight={180}>
               <AssignSection />
-            </div>
+            </LazySection>
             {isSuperAdmin || isAdmin || isSalesAdmin ? (
-              <div id="managers">
+              <LazySection id="managers" force={forceSection === "managers"} minHeight={200}>
                 <ManagersSection />
-              </div>
+              </LazySection>
             ) : null}
-            <div id="branch">
+            <LazySection id="branch" force={forceSection === "branch"} minHeight={200}>
               <BranchTransferSection />
-            </div>
+            </LazySection>
             {isSuperAdmin ? (
-              <div id="allUsers">
+              <LazySection id="allUsers" force={forceSection === "allUsers"} minHeight={220}>
                 <AllUsersSection />
-              </div>
+              </LazySection>
             ) : null}
-            <div id="salesExec">
+            <LazySection id="salesExec" force={forceSection === "salesExec"} minHeight={220}>
               <SalesExecSection />
-            </div>
+            </LazySection>
             {isSuperAdmin || isAdmin || isSalesAdmin ? (
-              <div id="presalesExec">
+              <LazySection id="presalesExec" force={forceSection === "presalesExec"} minHeight={220}>
                 <PresalesExecSection />
-              </div>
+              </LazySection>
             ) : null}
             {canSeeLeadLimit ? (
-              <div id="leadLimit">
+              <LazySection id="leadLimit" force={forceSection === "leadLimit"} minHeight={320}>
                 <LeadLimitSection />
-              </div>
+              </LazySection>
             ) : null}
             {canSeeLeadLimit ? (
-              <div id="salesTarget">
+              <LazySection id="salesTarget" force={forceSection === "salesTarget"} minHeight={280}>
                 <SalesTargetSection />
-              </div>
+              </LazySection>
             ) : null}
           </>
         ) : (

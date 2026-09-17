@@ -3,13 +3,13 @@ import { defaultVerificationForLeadTypeFilter } from "@/lib/crm-workspace";
 import type { AdminLeadsFilterInput, AdminLeadsHeatmapData } from "@/lib/admin-leads-api";
 import type { CrmLeadType, LeadSourceCounts } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES } from "@/lib/leads-filter";
-import { emptyLeadSourceCounts } from "@/lib/primary-source-leads";
+import { emptyLeadSourceCounts, overlayIvrLeadTypeCountsFromRows } from "@/lib/primary-source-leads";
 
 export type LeadTypeCountPool = "sales" | "presales" | "total";
 
 export type LeadTypeSourceTile = {
   label: string;
-  leadTypeKey: CrmLeadType | "all" | "ivr_call";
+  leadTypeKey: CrmLeadType | "all";
 };
 
 export const ADMIN_SOURCE_LEAD_TYPE_TILES: LeadTypeSourceTile[] = [
@@ -17,7 +17,7 @@ export const ADMIN_SOURCE_LEAD_TYPE_TILES: LeadTypeSourceTile[] = [
   { label: "Google Ads", leadTypeKey: "glead" },
   { label: "Meta Ads", leadTypeKey: "mlead" },
   { label: "Add Lead", leadTypeKey: "addlead" },
-  { label: "IVR Call", leadTypeKey: "ivr_call" },
+  { label: "IVR Lead", leadTypeKey: "ivrlead" },
   { label: "Website Lead", leadTypeKey: "websitelead" },
   { label: "Walk-in Lead", leadTypeKey: "walkinlead" },
   { label: "WhatsApp", leadTypeKey: "whatsapplead" },
@@ -99,7 +99,8 @@ export function pickLeadTypeCountsFromHeatmap(data: AdminLeadsHeatmapData): Lead
     primary[leadType] = scoped;
   }
 
-  return primary;
+  const ivrBasis = data.primaryRows.length > 0 ? data.primaryRows : data.leads;
+  return overlayIvrLeadTypeCountsFromRows(primary, ivrBasis);
 }
 
 export function mergeLeadSourceCounts(a: LeadSourceCounts, b: LeadSourceCounts): LeadSourceCounts {

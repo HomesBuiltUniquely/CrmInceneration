@@ -1,18 +1,52 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
 import {
+  DEFAULT_INCENTIVE_HALF_TARGET_INR,
   DEFAULT_MONTHLY_SALES_TARGET_INR,
   type SalesTargetUserRow,
+  type SalesTargetsListMeta,
 } from "@/lib/sales-targets";
+
+export type IncentiveSalesTargetsList = SalesTargetsListMeta & {
+  targets: SalesTargetUserRow[];
+};
 
 type AnyJson = Record<string, unknown>;
 
-function monthQuery(month?: string): string {
-  return month ? `?month=${encodeURIComponent(month)}` : "";
+export type IncentiveSalesTargetsQuery = {
+  yearMonth: string;
+  branchId?: string;
+  salesManagerId?: string | number;
+  salesExecutiveId?: string | number;
+};
+
+function pickNumber(row: AnyJson, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const v = row[key];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim()) {
+      const n = Number(v.replace(/,/g, ""));
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return undefined;
+}
+
+function buildQuery(params: IncentiveSalesTargetsQuery): string {
+  const q = new URLSearchParams();
+  q.set("yearMonth", params.yearMonth);
+  if (params.branchId?.trim()) q.set("branchId", params.branchId.trim());
+  if (params.salesManagerId != null && String(params.salesManagerId).trim()) {
+    q.set("salesManagerId", String(params.salesManagerId));
+  }
+  if (params.salesExecutiveId != null && String(params.salesExecutiveId).trim()) {
+    q.set("salesExecutiveId", String(params.salesExecutiveId));
+  }
+  return q.toString();
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/sales-targets/${path}`, {
+  const res = await fetch(path, {
     ...init,
     cache: "no-store",
     credentials: "include",
@@ -30,67 +64,221 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
-function pickNumber(row: AnyJson, keys: string[]): number | undefined {
-  for (const key of keys) {
-    const v = row[key];
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    if (typeof v === "string" && v.trim()) {
-      const n = Number(v.replace(/,/g, ""));
-      if (Number.isFinite(n)) return n;
-    }
-  }
-  return undefined;
-}
-
-function mapTargetUser(row: AnyJson, defaultTarget: number): SalesTargetUserRow {
+function mapTargetUser(row: AnyJson): SalesTargetUserRow {
   const userId = pickNumber(row, ["userId", "user_id", "id"]) ?? 0;
-  const override = pickNumber(row, [
+  const h1 =
+    pickNumber(row, ["h1TargetInr", "h1_target_inr", "h1Target", "h1"]) ??
+    DEFAULT_INCENTIVE_HALF_TARGET_INR;
+  const h2 =
+    pickNumber(row, ["h2TargetInr", "h2_target_inr", "h2Target", "h2"]) ??
+    DEFAULT_INCENTIVE_HALF_TARGET_INR;
+  const monthlyOverride = pickNumber(row, [
     "monthlyTargetInr",
     "monthly_target_inr",
     "targetInr",
     "target",
     "monthlyTarget",
   ]);
-  const isCustom = Boolean(row.isCustom ?? row.custom ?? override != null);
+  const usesDefault =
+    row.usesDefault != null
+      ? Boolean(row.usesDefault)
+      : !Boolean(row.isCustom ?? row.custom);
+  const isCustom =
+    row.isCustom != null || row.custom != null
+      ? Boolean(row.isCustom ?? row.custom)
+      : !usesDefault;
+  const monthlyTargetInr = monthlyOverride ?? h1 + h2;
+  const active =
+    row.active == null && row.isActive == null
+      ? true
+      : Boolean(row.active ?? row.isActive);
   return {
     userId,
     name: String(row.name ?? row.userName ?? row.fullName ?? `User #${userId}`),
     role: String(row.role ?? "SALES_EXECUTIVE"),
     branch: row.branch != null ? String(row.branch) : undefined,
     managerName: row.managerName != null ? String(row.managerName) : undefined,
-    monthlyTargetInr: override ?? defaultTarget,
+    h1TargetInr: h1,
+    h2TargetInr: h2,
+    monthlyTargetInr,
     isCustom,
+    usesDefault,
+    active,
   };
 }
 
-export const salesTargetsApi = {
-  getDefault: (month?: string) => call<AnyJson>(`default${monthQuery(month)}`),
-  setDefault: (defaultTargetInr: number, month?: string) =>
-    call<AnyJson>("default", {
-      method: "POST",
-      body: JSON.stringify({ defaultTargetInr, month }),
-    }),
-  listUsers: async (month?: string): Promise<SalesTargetUserRow[]> => {
-    const raw = await call<unknown>(`users${monthQuery(month)}`);
-    const rows = normalizeToArray<AnyJson>(raw);
-    let defaultTarget = DEFAULT_MONTHLY_SALES_TARGET_INR;
-    try {
-      const def = await salesTargetsApi.getDefault(month);
-      defaultTarget =
-        pickNumber(def, ["defaultTargetInr", "defaultTarget", "targetInr", "value"]) ??
-        DEFAULT_MONTHLY_SALES_TARGET_INR;
-    } catch {
-      // use constant default
-    }
-    return rows.map((row) => mapTargetUser(row, defaultTarget));
+function extractTargetRows(raw: unknown): AnyJson[] {
+  if (Array.isArray(raw)) return raw as AnyJson[];
+  if (!raw || typeof raw !== "object") return [];
+  const r = raw as AnyJson;
+  return normalizeToArray<AnyJson>(r.targets ?? r.users ?? r.items ?? r.data ?? r);
+}
+
+function normalizeSalesTargetsList(
+  raw: unknown,
+  fallbackYearMonth: string,
+): IncentiveSalesTargetsList {
+  const targets = extractTargetRows(raw).map(mapTargetUser);
+  const o = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as AnyJson) : {};
+  const defaultMonthlyTargetInr =
+    pickNumber(o, ["defaultMonthlyTargetInr", "defaultTargetInr", "defaultTarget"]) ??
+    DEFAULT_MONTHLY_SALES_TARGET_INR;
+  const activeFromRows = targets.filter((t) => t.active !== false);
+  const inactiveFromRows = targets.filter((t) => t.active === false);
+  const activeMonthlyTargetInr =
+    pickNumber(o, ["activeMonthlyTargetInr", "activeTargetInr", "insightsTargetInr"]) ??
+    activeFromRows.reduce((sum, t) => sum + Math.max(0, t.monthlyTargetInr), 0);
+  const inactiveMonthlyTargetInr =
+    pickNumber(o, ["inactiveMonthlyTargetInr", "inactiveTargetInr"]) ??
+    inactiveFromRows.reduce((sum, t) => sum + Math.max(0, t.monthlyTargetInr), 0);
+  const totalMonthlyTargetInr =
+    pickNumber(o, ["totalMonthlyTargetInr", "totalTargetInr"]) ??
+    activeMonthlyTargetInr + inactiveMonthlyTargetInr;
+  const insightsTargetInr =
+    pickNumber(o, ["insightsTargetInr"]) ?? activeMonthlyTargetInr;
+  const activeExecutiveCount =
+    pickNumber(o, ["activeExecutiveCount"]) ?? activeFromRows.length;
+  const inactiveExecutiveCount =
+    pickNumber(o, ["inactiveExecutiveCount"]) ?? inactiveFromRows.length;
+  const totalExecutiveCount =
+    pickNumber(o, ["totalExecutiveCount"]) ??
+    activeExecutiveCount + inactiveExecutiveCount;
+
+  return {
+    yearMonth: String(o.yearMonth ?? o.month ?? fallbackYearMonth),
+    defaultMonthlyTargetInr,
+    activeExecutiveCount,
+    inactiveExecutiveCount,
+    totalExecutiveCount,
+    activeMonthlyTargetInr,
+    inactiveMonthlyTargetInr,
+    totalMonthlyTargetInr,
+    insightsTargetInr,
+    targets,
+  };
+}
+
+export const incentivesSalesTargetsApi = {
+  /** Full Hub payload including roster-dynamic Insights totals. */
+  listDetailed: async (
+    query: IncentiveSalesTargetsQuery,
+  ): Promise<IncentiveSalesTargetsList> => {
+    const raw = await call<unknown>(
+      `/api/crm/incentives/sales-targets?${buildQuery(query)}`,
+    );
+    return normalizeSalesTargetsList(raw, query.yearMonth);
   },
-  setUserTarget: (userId: number | string, monthlyTargetInr: number, month?: string) =>
-    call<AnyJson>(`user/${userId}`, {
-      method: "POST",
-      body: JSON.stringify({ monthlyTargetInr, month }),
+  list: async (query: IncentiveSalesTargetsQuery): Promise<SalesTargetUserRow[]> => {
+    const detailed = await incentivesSalesTargetsApi.listDetailed(query);
+    return detailed.targets;
+  },
+  save: (payload: {
+    yearMonth: string;
+    targets: Array<{ userId: number; h1TargetInr: number; h2TargetInr: number }>;
+  }) =>
+    call<unknown>("/api/crm/incentives/sales-targets", {
+      method: "PUT",
+      body: JSON.stringify({
+        yearMonth: payload.yearMonth,
+        targets: payload.targets,
+      }),
     }),
-  bulkUsers: (payload: { userIds: number[]; monthlyTargetInr: number; month?: string }) =>
-    call<AnyJson>("bulk/users", { method: "POST", body: JSON.stringify(payload) }),
+};
+
+/** @deprecated Hub incentives API — org default is config-only; returns FE constant. */
+function monthQuery(month?: string): string {
+  return month ? `?month=${encodeURIComponent(month)}` : "";
+}
+
+export const salesTargetsApi = {
+  getDefault: async (month?: string) => {
+    try {
+      return await salesTargetsApi.getDefaultFromList(month);
+    } catch {
+      return { defaultTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR };
+    }
+  },
+  setDefault: async (defaultTargetInr: number, yearMonth?: string) => {
+    if (!yearMonth) {
+      throw new Error("Month is required to apply default targets.");
+    }
+    const half = Math.round(defaultTargetInr / 2);
+    const rows = await incentivesSalesTargetsApi.list({ yearMonth });
+    const toUpdate = rows.filter((row) => row.usesDefault !== false && !row.isCustom);
+    if (toUpdate.length === 0) {
+      throw new Error("No executives without custom targets to update.");
+    }
+    await incentivesSalesTargetsApi.save({
+      yearMonth,
+      targets: toUpdate.map((row) => ({
+        userId: row.userId,
+        h1TargetInr: half,
+        h2TargetInr: half,
+      })),
+    });
+    return { defaultTargetInr };
+  },
+  listUsers: (month?: string, scope?: Omit<IncentiveSalesTargetsQuery, "yearMonth">) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    return incentivesSalesTargetsApi.list({ yearMonth, ...scope });
+  },
+  listUsersDetailed: (
+    month?: string,
+    scope?: Omit<IncentiveSalesTargetsQuery, "yearMonth">,
+  ) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    return incentivesSalesTargetsApi.listDetailed({ yearMonth, ...scope });
+  },
+  getDefaultFromList: async (month?: string) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    const list = await incentivesSalesTargetsApi.listDetailed({ yearMonth });
+    return { defaultTargetInr: list.defaultMonthlyTargetInr };
+  },
+  setUserTarget: (
+    userId: number | string,
+    monthlyTargetInr: number,
+    month?: string,
+    halves?: { h1TargetInr: number; h2TargetInr: number },
+  ) => {
+    const yearMonth = month ?? new Date().toISOString().slice(0, 7);
+    const h1 = halves?.h1TargetInr ?? Math.round(monthlyTargetInr / 2);
+    const h2 = halves?.h2TargetInr ?? monthlyTargetInr - h1;
+    return incentivesSalesTargetsApi.save({
+      yearMonth,
+      targets: [{ userId: Number(userId), h1TargetInr: h1, h2TargetInr: h2 }],
+    });
+  },
+  setUserHalves: (
+    userId: number | string,
+    h1TargetInr: number,
+    h2TargetInr: number,
+    month?: string,
+  ) =>
+    salesTargetsApi.setUserTarget(Number(userId), h1TargetInr + h2TargetInr, month, {
+      h1TargetInr,
+      h2TargetInr,
+    }),
+  bulkUsers: (payload: {
+    userIds: number[];
+    monthlyTargetInr: number;
+    month?: string;
+    /** When set, applied to both H1 and H2 instead of splitting monthly. */
+    halfTargetInr?: number;
+  }) => {
+    const yearMonth = payload.month ?? new Date().toISOString().slice(0, 7);
+    const perHalf =
+      payload.halfTargetInr ?? Math.round(payload.monthlyTargetInr / 2);
+    return incentivesSalesTargetsApi.save({
+      yearMonth,
+      targets: payload.userIds.map((userId) => ({
+        userId,
+        h1TargetInr: perHalf,
+        h2TargetInr: perHalf,
+      })),
+    });
+  },
+  /** Legacy path helper — unused; kept so old imports do not break. */
+  _legacyPath: (path: string, month?: string) => `${path}${monthQuery(month)}`,
 };
 
 /** Map API target rows onto incentive members by user id. */
@@ -98,10 +286,21 @@ export function applyMonthlyTargets<T extends { id: number }>(
   members: T[],
   targets: SalesTargetUserRow[],
   fallback = DEFAULT_MONTHLY_SALES_TARGET_INR,
-): (T & { monthlyTargetInr: number })[] {
-  const byId = new Map(targets.map((t) => [t.userId, t.monthlyTargetInr]));
-  return members.map((member) => ({
-    ...member,
-    monthlyTargetInr: byId.get(member.id) ?? fallback,
-  }));
+): (T & {
+  monthlyTargetInr: number;
+  h1TargetInr: number;
+  h2TargetInr: number;
+})[] {
+  const byId = new Map(targets.map((t) => [t.userId, t]));
+  return members.map((member) => {
+    const row = byId.get(member.id);
+    const h1 = row?.h1TargetInr ?? DEFAULT_INCENTIVE_HALF_TARGET_INR;
+    const h2 = row?.h2TargetInr ?? DEFAULT_INCENTIVE_HALF_TARGET_INR;
+    return {
+      ...member,
+      h1TargetInr: h1,
+      h2TargetInr: h2,
+      monthlyTargetInr: row?.monthlyTargetInr ?? h1 + h2,
+    };
+  });
 }

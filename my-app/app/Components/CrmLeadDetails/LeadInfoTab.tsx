@@ -66,7 +66,7 @@ type Props = {
   viewerRole?: string;
   /** When set, fields are controlled and edits merge into parent state (API detail page). */
   onLeadChange?: (patch: Partial<Lead>) => void;
-  /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — can edit email & phone. */
+  /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — name, email & phone. */
   canEditEmailPhone?: boolean;
   /** Save callback for Additional Information section when user clicks Done. */
   onAdditionalInfoSave?: () => void | Promise<void>;
@@ -157,8 +157,11 @@ export default function LeadInfoTab({
 
   useEffect(() => {
     setLockedIdentityFields({
-      name:
-        nameFieldLocked !== undefined
+      // Privileged roles (SA / Admin / Super Admin / SM-on-team): unlock name with ✎ Update.
+      // Everyone else: WhatsApp/IVR one-time lock or lock when name already set.
+      name: canEditEmailPhone
+        ? !contactDetailsEditable
+        : nameFieldLocked !== undefined
           ? nameFieldLocked
           : Boolean((lead.name ?? "").trim()),
       email: !canEditEmailPhone || !contactDetailsEditable,
@@ -167,6 +170,7 @@ export default function LeadInfoTab({
     });
   }, [
     lead.id,
+    lead.name,
     nameFieldLocked,
     lead.email,
     lead.phone,
@@ -377,11 +381,17 @@ export default function LeadInfoTab({
           </CardTitle>
           {canEditEmailPhone ? (
             <p className="-mt-3 mb-4 text-[11px] text-[var(--crm-text-muted)]">
-              Only{" "}
+              You can update{" "}
+              <span className="font-semibold text-[var(--crm-accent)]">name</span>,{" "}
               <span className="font-semibold text-[var(--crm-accent)]">email</span> and{" "}
-              <span className="font-semibold text-[var(--crm-accent)]">phone</span> can be
-              updated here. Tap <strong className="text-[var(--crm-text-secondary)]">✎ Update</strong>{" "}
-              to edit.
+              <span className="font-semibold text-[var(--crm-accent)]">phone</span>. Tap{" "}
+              <strong className="text-[var(--crm-text-secondary)]">✎ Update</strong> to
+              edit.
+              {viewerRole.trim().toUpperCase().replace(/[\s-]+/g, "_") ===
+                "SALES_MANAGER" ||
+              viewerRole.trim().toUpperCase().replace(/[\s-]+/g, "_") === "MANAGER"
+                ? " Sales Managers can edit only their own team’s leads."
+                : ""}
             </p>
           ) : null}
 

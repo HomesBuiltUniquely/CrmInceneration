@@ -104,11 +104,10 @@ export function isQuoteSentLead(lead: ApiLead): boolean {
 }
 
 /**
- * Quote due: explicit pending substage only (e.g. "MD but Quote pending",
- * "Meeting Done but Quote Pending") — not "Meeting Successful".
+ * Meeting Successful substage.
  */
-export function isQuoteDueLead(lead: ApiLead): boolean {
-  return isQuotePendingSubStage(lead);
+export function isMeetingSuccessfulLead(lead: ApiLead): boolean {
+  return normLabel(readLeadMilestoneSubStage(lead)) === "meeting successful";
 }
 
 export type MilestoneTileCounts = {
@@ -116,7 +115,7 @@ export type MilestoneTileCounts = {
   meetingRescheduled: number;
   meetingCancelled: number;
   quoteSent: number;
-  quoteDue: number;
+  meetingSuccessful: number;
   /** Quote Sent tile = quote emailed to customer (Hub `quoteSentToCustomer`). */
   lostQuoteSent: number;
 };
@@ -130,7 +129,7 @@ export function computeMilestoneTileCounts(
     meetingRescheduled: 0,
     meetingCancelled: 0,
     quoteSent: 0,
-    quoteDue: 0,
+    meetingSuccessful: 0,
     lostQuoteSent: 0,
   };
 
@@ -139,17 +138,18 @@ export function computeMilestoneTileCounts(
     const lost = isLostPathLead(lead);
     const quoteSent = isQuoteSentLead(lead);
 
-    // Quote Sent tile = active + lost (one combined total). Lost tile keeps its own count.
+    // Quote Sent tile = currently quote-sent and not lost.
+    // Lost-after-quote-sent is lostQuoteSent only — do not add it to the main 22.
     if (quoteSent) {
-      counts.quoteSent += 1;
       if (lost) counts.lostQuoteSent += 1;
+      else counts.quoteSent += 1;
     }
 
     if (lost) continue;
     if (isMeetingScheduledSubStage(lead)) counts.meetingScheduled += 1;
     if (isMeetingRescheduledSubStage(lead)) counts.meetingRescheduled += 1;
     if (isMeetingCancelledSubStage(lead)) counts.meetingCancelled += 1;
-    if (isQuoteDueLead(lead)) counts.quoteDue += 1;
+    if (isMeetingSuccessfulLead(lead)) counts.meetingSuccessful += 1;
   }
 
   return counts;
@@ -160,7 +160,7 @@ export type MilestoneInsightMode =
   | "meetingRescheduled"
   | "meetingCancelled"
   | "quoteSent"
-  | "quoteDue"
+  | "meetingSuccessful"
   | "lostQuoteSent";
 
 export function filterLeadsForMilestoneInsightMode(
@@ -170,9 +170,11 @@ export function filterLeadsForMilestoneInsightMode(
 ): ApiLead[] {
   const matched = leads.filter((lead) => {
     if (!leadMatchesSalesInsightScope(lead, opts)) return false;
-    // Quote Sent + Lost Quote Sent → same combined list (active first, lost last).
-    if (mode === "quoteSent" || mode === "lostQuoteSent") {
-      return isQuoteSentLead(lead);
+    if (mode === "quoteSent") {
+      return isQuoteSentLead(lead) && !isLostPathLead(lead);
+    }
+    if (mode === "lostQuoteSent") {
+      return isQuoteSentLead(lead) && isLostPathLead(lead);
     }
     if (isLostPathLead(lead)) return false;
     switch (mode) {
@@ -182,19 +184,15 @@ export function filterLeadsForMilestoneInsightMode(
         return isMeetingRescheduledSubStage(lead);
       case "meetingCancelled":
         return isMeetingCancelledSubStage(lead);
-      case "quoteDue":
-        return isQuoteDueLead(lead);
+      case "meetingSuccessful":
+        return isMeetingSuccessfulLead(lead);
       default:
         return true;
     }
   });
 
-  if (mode === "quoteSent" || mode === "lostQuoteSent") {
-    return [...matched].sort((a, b) => {
-      const aLost = isLostPathLead(a) ? 1 : 0;
-      const bLost = isLostPathLead(b) ? 1 : 0;
-      return aLost - bLost;
-    });
+  if (mode === "lostQuoteSent") {
+    return matched;
   }
 
   return matched;

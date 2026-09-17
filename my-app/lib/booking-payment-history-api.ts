@@ -21,8 +21,17 @@ export type PaymentHistoryEntry = {
   extraAmount?: number;
   cumulativeReceived: number;
   remainingAfter: number;
+  /** CRM milestone kind: TOKEN | FULL_10% */
   paymentKind?: string;
   source?: string;
+  paymentChannel?: string;
+  paymentMethod?: string;
+  gatewayPaymentId?: string | null;
+  paymentAttemptId?: string | null;
+  /** Hub / Easebuzz verify — required by Design Module for AUTO_APPROVED. */
+  gatewayVerified?: boolean | null;
+  easebuzzTxnId?: string | null;
+  txnId?: string | null;
   recordedBy?: string;
   notes?: string;
   createdAt: string;
@@ -221,12 +230,24 @@ export type BookingPaymentSubmitResponse = PaymentHistoryEntry & {
 
 export async function submitBookingPayment(
   recordId: string,
-  input: { amount: number; notes?: string; files: File[] },
+  input: {
+    amount: number;
+    notes?: string;
+    files: File[];
+    paymentMethod?: string;
+    paymentChannel?: string;
+  },
 ): Promise<BookingPaymentSubmitResponse> {
   const form = new FormData();
   form.append("amount", String(input.amount));
   if (input.notes?.trim()) {
     form.append("notes", input.notes.trim());
+  }
+  if (input.paymentMethod?.trim()) {
+    form.append("paymentMethod", input.paymentMethod.trim());
+  }
+  if (input.paymentChannel?.trim()) {
+    form.append("paymentChannel", input.paymentChannel.trim());
   }
   for (const file of input.files) {
     form.append("files", file, file.name);

@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BASE_URL } from "@/lib/base-url";
 import {
+  CRM_ACTIVE_MODULE_KEY,
   CRM_DESIGNER_ID_STORAGE_KEY,
   CRM_DESIGNER_NAME_STORAGE_KEY,
   CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
+  defaultModuleByRole,
   CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   getDesignerIdFromUser,
@@ -21,6 +23,7 @@ import {
   login,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,6 +36,12 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Cross-origin Hallway handoff may land on /login#payload=...
+    const landing = tryConsumeHallwayHandoffFromUrl();
+    if (landing) {
+      router.replace(landing);
+      return;
+    }
     if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
       const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
       router.replace(landingPathByRole(role));
@@ -62,6 +71,12 @@ export default function LoginPage() {
         localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
       } else {
         localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      }
+      const defaultModule = defaultModuleByRole(role);
+      if (defaultModule) {
+        localStorage.setItem(CRM_ACTIVE_MODULE_KEY, defaultModule);
+      } else {
+        localStorage.removeItem(CRM_ACTIVE_MODULE_KEY);
       }
       if (name) {
         localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
@@ -107,10 +122,10 @@ export default function LoginPage() {
             height={56}
             className="rounded-lg"
           />
-          <h1 className="text-xl font-bold text-gray-900 text-center">
+          <h1 className="text-xl font-bold tracking-tight text-gray-900 text-center">
             Sign in to CRM
           </h1>
-          <p className="text-sm text-gray-500 text-center">
+          <p className="text-sm font-medium text-gray-500 text-center">
             Backend:{" "}
             <span className="font-mono text-gray-700">{apiBase}</span>
           </p>
@@ -120,7 +135,7 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="username"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-semibold text-gray-700 mb-1"
             >
               Username
             </label>
@@ -138,7 +153,7 @@ export default function LoginPage() {
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-semibold text-gray-700 mb-1"
             >
               Password
             </label>

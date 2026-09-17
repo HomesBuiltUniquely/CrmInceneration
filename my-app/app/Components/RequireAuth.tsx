@@ -1,6 +1,7 @@
 "use client";
 
 import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
+import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
 import { useLayoutEffect, useState } from "react";
 
 type Props = {
@@ -11,12 +12,23 @@ export default function RequireAuth({ children }: Props) {
   const [allowed, setAllowed] = useState(false);
 
   useLayoutEffect(() => {
+    // Safety net if Hallway opened /Leads#payload=... and bootstrap missed it.
+    const landing = tryConsumeHallwayHandoffFromUrl();
+    if (landing && landing !== window.location.pathname) {
+      window.location.replace(`${window.location.origin}${landing}`);
+      return;
+    }
+
     const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
     if (!token) {
       // Hard navigation — client router-only redirects can leave the gate stuck on “Loading…” in automation.
       window.location.replace(`${window.location.origin}/login`);
       return;
     }
+
+    // Do NOT force landingPathByRole here — admins/sales must be able to open
+    // /presales-leads via the module switcher without being bounced back to /Leads.
+
     setAllowed(true);
   }, []);
 

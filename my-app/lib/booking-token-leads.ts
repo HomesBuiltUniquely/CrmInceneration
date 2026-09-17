@@ -219,7 +219,6 @@ function resolveBookingBufferFieldsFromDeal(deal: BookingTokenDeal) {
     preBookingAmount: deal.preBookingAmount,
   });
 }
-
 export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
   const paymentKind = String(deal.paymentKind ?? "").toUpperCase();
   const assetParts = [

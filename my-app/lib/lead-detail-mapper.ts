@@ -1,6 +1,7 @@
 import { asCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, ActivityType, Lead } from "@/lib/data";
 import { isCrmLeadReinquiry, parseAdditionalLeadSources } from "@/lib/lead-source-utils";
+import { isIvrCallLeadSource, isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import {
   getLeadDisplayEmail,
   getLeadDisplayName,
@@ -20,9 +21,12 @@ import {
   applyPropertyNotesToDetailPayload,
   applyWalkinLeadFieldsToDetailPayload,
   configurationDbColumnForLeadType,
+  isBhkLikeConfigurationValue,
+  isLeadBookingTypeValue,
   readPropertyNotesFromRawPropertyDetails,
 } from "@/lib/lead-field-persistence";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
+import { isRenovationFeedbackLocked } from "@/lib/milestone-advance-gates";
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
@@ -109,11 +113,11 @@ function pickDesignerDisplay(detail: Record<string, unknown>): string {
     "designConsultant",
     "designConsultantName"
   );
-  if (flat) return flat;
+  if (flat && !isUiPlaceholderToken(flat)) return flat;
   const nested = detail.designer ?? detail.interiorDesigner;
   if (typeof nested === "object" && nested !== null) {
     const n = pickPersonNameFromNested(nested as Record<string, unknown>);
-    if (n) return n;
+    if (n && !isUiPlaceholderToken(n)) return n;
   }
   return "";
 }
@@ -299,7 +303,17 @@ function collectPropertyDetailsBags(detail: Record<string, unknown>): Record<str
 
 export function isUiPlaceholderToken(value: string): boolean {
   const trimmed = value.trim();
-  return trimmed === "—" || trimmed === "-" || trimmed === "–";
+  const lower = trimmed.toLowerCase();
+  return (
+    trimmed === "—" ||
+    trimmed === "-" ||
+    trimmed === "–" ||
+    lower === "not assigned" ||
+    lower === "unassigned" ||
+    lower === "n/a" ||
+    lower === "na" ||
+    lower === "none"
+  );
 }
 
 function pickMeetingTypeFromDetail(detail: Record<string, unknown>): string {
@@ -312,9 +326,8 @@ function resolveDesignerNameForSave(
 ): string {
   const fromLead = leadDesignerName.trim();
   if (fromLead && !isUiPlaceholderToken(fromLead)) return fromLead;
-  const fromBase = pickDesignerDisplay(base);
-  if (fromBase) return fromBase;
-  return fromLead;
+  // Never blank an assigned designer on incidental lead PUT (contact save, milestone, etc.).
+  return pickDesignerDisplay(base);
 }
 
 export function pickConfigurationFromDetail(
@@ -342,12 +355,28 @@ export function pickConfigurationFromDetail(
       const trimmed = value.trim();
       if (!trimmed) continue;
       if (isBudgetLikeConfiguration(trimmed)) continue;
+      if (isLeadBookingTypeValue(trimmed)) continue;
       return trimmed;
     }
     return "";
   };
 
-  /** Lead-type primary column for configuration (BHK). */
+  const firstBhkLike = (...values: string[]): string => {
+    for (const value of values) {
+      const trimmed = value.trim();
+      if (isBhkLikeConfigurationValue(trimmed) && !isBudgetLikeConfiguration(trimmed)) {
+        return trimmed;
+      }
+    }
+    return "";
+  };
+
+  /** Canonical Hub field is `configuration`. Prefer a BHK-shaped value there. */
+  const flatConfiguration = pickStr(detail, "configuration");
+  const bhkFromCanonical = firstBhkLike(flatConfiguration);
+  if (bhkFromCanonical) return bhkFromCanonical;
+
+  /** Lead-type primary column for configuration (BHK). Never treat booking Type as BHK. */
   const configCol = configurationDbColumnForLeadType(leadType);
   let fromColumn = "";
   switch (configCol) {
@@ -355,16 +384,21 @@ export function pickConfigurationFromDetail(
       fromColumn = pickStr(detail, "interiorSetup", "interior_setup");
       break;
     case "booking_type":
-      fromColumn = pickStr(detail, "bookingType", "booking_type");
+      fromColumn = pickStr(detail, "interiorSetup", "interior_setup", "propertyType", "property_type");
       break;
     case "property_type":
       fromColumn = pickStr(detail, "propertyType", "property_type");
       break;
+    case "configuration":
+      fromColumn = flatConfiguration;
+      break;
   }
+  const bhkFromColumn = firstBhkLike(fromColumn);
+  if (bhkFromColumn) return bhkFromColumn;
   const columnValue = firstValidConfiguration(fromColumn);
   if (columnValue) return columnValue;
 
-  const flatAlias = firstValidConfiguration(pickStr(detail, "configuration"));
+  const flatAlias = firstValidConfiguration(flatConfiguration);
   if (flatAlias) return flatAlias;
 
   /** Legacy JSON in property_details (one-time migration read). */
@@ -499,15 +533,38 @@ export function extractStage(detail: Record<string, unknown>) {
       ? (st.substage as { substage?: string | null }).substage
       : undefined;
   const ps = readPresalesMilestoneFromDetail(detail);
+  const milestoneStage =
+    (st?.milestoneStage as string | null | undefined) ?? null;
+  const milestoneStageCategory =
+    (st?.milestoneStageCategory as string | null | undefined) ?? null;
+  const milestoneSubStage =
+    (st?.milestoneSubStage as string | null | undefined) ?? null;
+  const rawRenovationAssigned =
+    (st?.renovationAssigned as boolean | undefined) ?? false;
+  // After Discovery → Fresh Lead rollback, Hub may still send renovationAssigned.
+  // Treat Fresh Lead as unlocked so Renovation can be assigned again.
+  const renovationAssigned = isRenovationFeedbackLocked(
+    rawRenovationAssigned,
+    milestoneStage,
+    milestoneSubStage,
+    milestoneStageCategory,
+  );
   return {
-    milestoneStage: (st?.milestoneStage as string | null | undefined) ?? null,
-    milestoneStageCategory: (st?.milestoneStageCategory as string | null | undefined) ?? null,
-    milestoneSubStage: (st?.milestoneSubStage as string | null | undefined) ?? null,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
     presalesMilestoneStage: ps.stage || null,
     presalesMilestoneCategory: ps.category || null,
     presalesMilestoneSubStage: ps.subStage || null,
     legacyStage: (st?.stage as string | null | undefined) ?? null,
     legacySubstage: substage ?? null,
+    renovationAssigned,
+    renovationSalesManager: renovationAssigned
+      ? ((st?.renovationSalesManager as string | undefined) ?? null)
+      : null,
+    renovationSalesExecutive: renovationAssigned
+      ? ((st?.renovationSalesExecutive as string | undefined) ?? null)
+      : null,
   };
 }
 
@@ -556,7 +613,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     createdAt,
     firstCallAt: firstCallAtRaw || "",
     assignee: assignee || "—",
-    designerName: pickDesignerDisplay(detail) || "—",
+    designerName: pickDesignerDisplay(detail),
     designerEmail:
       pickStr(detail, "designerEmail", "designEmail", "interiorDesignerEmail", "designPreferenceEmail") ||
       (() => {
@@ -605,7 +662,10 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
     })(),
     designQaLink:
       pickStr(detail, "designQaLink", "design_qa_quiz_url", "designQaQuizUrl") || undefined,
-    leadSource: getLeadDisplaySource({ ...detail, leadType }),
+    leadSource: (() => {
+      const source = getLeadDisplaySource({ ...detail, leadType });
+      return isIvrLeadTypeKey(leadType) || isIvrCallLeadSource(source) ? "IVR Call" : source;
+    })(),
     additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
     additionalLeadSourcesList: parseAdditionalLeadSources(detail.additionalLeadSources),
     bookingType: pickStr(detail, "bookingType", "booking_type", "BookingType") || "",
@@ -649,6 +709,9 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       presalesMilestoneSubStage: st.presalesMilestoneSubStage,
       stage: st.legacyStage ?? "Initial Stage",
       substage: { substage: st.legacySubstage ?? null },
+      renovationAssigned: st.renovationAssigned,
+      renovationSalesManager: st.renovationSalesManager,
+      renovationSalesExecutive: st.renovationSalesExecutive,
     },
     branch: pickStr(detail, "experienceCenter", "experience_center", "branch", "branchName", "branch_name", "office", "officeName", "territory", "region") || undefined,
     previousAssignee: pickStr(detail, "previousAssignee", "previous_assignee") || undefined,
@@ -860,23 +923,27 @@ export function mergeLeadIntoDetail(base: Record<string, unknown>, lead: Lead): 
   next.propertyPin = lead.pincode;
   next.zip = lead.pincode;
   next.budget = lead.budget;
-  next.designerName = resolvedDesignerName;
+  if (resolvedDesignerName) {
+    next.designerName = resolvedDesignerName;
+    const prevDesigner = base.designer;
+    if (typeof prevDesigner === "object" && prevDesigner !== null) {
+      next.designer = {
+        ...(prevDesigner as Record<string, unknown>),
+        name: resolvedDesignerName,
+        fullName: resolvedDesignerName,
+        ...(lead.designerEmail?.trim()
+          ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
+          : {}),
+      };
+    }
+  }
   if (lead.designerEmail !== undefined) {
     const de = lead.designerEmail.trim();
-    next.designerEmail = de;
-    next.designEmail = de;
-    next.designPreferenceEmail = de;
-  }
-  const prevDesigner = base.designer;
-  if (typeof prevDesigner === "object" && prevDesigner !== null) {
-    next.designer = {
-      ...(prevDesigner as Record<string, unknown>),
-      name: resolvedDesignerName,
-      fullName: resolvedDesignerName,
-      ...(lead.designerEmail?.trim()
-        ? { email: lead.designerEmail.trim(), mail: lead.designerEmail.trim() }
-        : {}),
-    };
+    if (de) {
+      next.designerEmail = de;
+      next.designEmail = de;
+      next.designPreferenceEmail = de;
+    }
   }
 
   const prevAssignee = base.assignee;
@@ -1076,7 +1143,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
-  if (boxLt === "addlead") {
+  if (boxLt === "addlead" || boxLt === "ivrlead") {
     next.property_type = resolvedConfiguration;
   }
   const floorPlanValue = lead.floorPlan.trim();
@@ -1110,6 +1177,15 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
 function mapBackendActivityType(raw: string): ActivityType {
   const u = raw.toUpperCase().replace(/\s+/g, "_");
   if (u.includes("QUOTE_SENT_TO_CUSTOMER") || u === "QUOTE_SENT") return "quote_sent_to_customer";
+  if (
+    u.startsWith("BOOKING_PAYMENT_") ||
+    u.startsWith("PAYMENT_LINK_") ||
+    u === "LINK_SENT" ||
+    u === "LINK_DELETED" ||
+    u === "LINK_CANCELLED"
+  ) {
+    return "payment";
+  }
   if (u.includes("BOOKING_TOKEN")) return "booking_token";
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
@@ -1162,6 +1238,7 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
     return {
       id,
       type: mapBackendActivityType(activityType),
+      rawActivityType: activityType,
       timestamp: formatActivityTime(pickStr(r, "createdAt", "timestamp")),
       createdAtIso: pickStr(r, "createdAt", "timestamp"),
       description,
@@ -1177,7 +1254,7 @@ export function mapActivitiesJson(rows: unknown): ActivityItem[] {
   });
 }
 
-/** Hub activities for lead detail (B&T events use activityType BOOKING_TOKEN_*). */
+/** Hub activities for lead detail (B&T events use BOOKING_TOKEN_* / BOOKING_PAYMENT_*). */
 export function mapLeadActivitiesJson(
   rows: unknown,
   _leadType?: import("@/lib/leads-filter").CrmLeadType,

@@ -3,7 +3,8 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchDesignerAppointments,
-  fetchDesignersFromDesignModule,
+  fetchDesignersForHubMeeting,
+  normalizeDesignerNameForAppointmentLookup,
   type DesignModuleDesigner,
 } from "@/lib/appointment-client";
 import {
@@ -325,7 +326,7 @@ export default function ScheduleHubMeetingModal({
     if (!open) return;
     let cancelled = false;
     setDesignersLoading(true);
-    void fetchDesignersFromDesignModule()
+    void fetchDesignersForHubMeeting()
       .then((list) => {
         if (!cancelled) setDesigners(list);
       })
@@ -404,8 +405,12 @@ export default function ScheduleHubMeetingModal({
       setLocalError("Notes are required.");
       return;
     }
-    if (!designerName.trim()) {
-      setLocalError("Select a designer.");
+    if (!normalizeDesignerNameForAppointmentLookup(designerName)) {
+      setLocalError(
+        designers.length === 0
+          ? "No designers available. Add an active designer in Admin, then try again."
+          : "Select a designer.",
+      );
       return;
     }
     if (!appointmentDate.trim()) {
@@ -447,7 +452,6 @@ export default function ScheduleHubMeetingModal({
     >
       <div
         className="flex max-h-[96vh] w-full max-w-[1180px] flex-col overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[0_28px_80px_rgba(15,23,42,0.28)]"
-        style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-[var(--crm-border)] px-6 py-4">
@@ -485,13 +489,19 @@ export default function ScheduleHubMeetingModal({
             required
             value={
               <>
-                <span className="truncate">{designerName || "Choose a designer"}</span>
-                {designerName ? <VerifiedBadge /> : null}
+                <span className="truncate">
+                  {normalizeDesignerNameForAppointmentLookup(designerName) || "Choose a designer"}
+                </span>
+                {normalizeDesignerNameForAppointmentLookup(designerName) ? <VerifiedBadge /> : null}
               </>
             }
             meta={
-              designerName ? (
+              designerName && normalizeDesignerNameForAppointmentLookup(designerName) ? (
                 <span className="font-semibold text-emerald-600">✓ Designer selected</span>
+              ) : designersLoading ? (
+                "Loading designers…"
+              ) : designers.length === 0 ? (
+                "No designers found"
               ) : (
                 "Required — click here to select"
               )
@@ -509,7 +519,13 @@ export default function ScheduleHubMeetingModal({
                 value: designer.name,
                 label: designer.name,
               }))}
-              placeholder="Select a designer"
+              placeholder={
+                designersLoading
+                  ? "Loading designers…"
+                  : designers.length === 0
+                    ? "No designers available"
+                    : "Select a designer"
+              }
               loadingLabel={designersLoading ? "Loading designers…" : undefined}
               disabled={designersLoading || busy}
             />

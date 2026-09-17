@@ -30,6 +30,10 @@ import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
 import { dealLevelLabel } from "@/lib/booking-token-listing-type";
 import { resolveCustomerPaymentBreakdown } from "@/lib/booking-payment-overpay";
+import {
+  formatPaymentKind,
+  paymentHistoryMetaLine,
+} from "@/lib/booking-payment-display";
 
 type Props = {
   open: boolean;
@@ -55,18 +59,6 @@ function getTopAlignedPanelPosition(panelWidth: number, panelHeight: number) {
     panelWidth,
     panelHeight,
   );
-}
-
-function formatPaymentKind(kind?: string): string {
-  if (!kind) return "";
-  return kind.replace(/_/g, " ");
-}
-
-function formatPaymentSource(source?: string): string {
-  if (!source) return "";
-  if (source === "booking_done") return "Booking Done";
-  if (source === "pay_action") return "Pay action";
-  return source.replace(/_/g, " ");
 }
 
 function formatHistoryDate(iso: string): string {
@@ -676,7 +668,7 @@ export default function ConvertToBookingModal({
                                 </p>
                                 <p className="mt-1 text-[11px] text-[#6b7280]">
                                   Paid {formatQuoteAmount(entry.cumulativeReceived)}
-                                  {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
+                                  {paymentHistoryMetaLine(entry) ? ` · ${paymentHistoryMetaLine(entry)}` : ""}
                                 </p>
                               </div>
                               <p className="shrink-0 text-right text-[10px] leading-snug text-[#9ca3af]">
@@ -812,8 +804,11 @@ function PaymentDetailSection({
       </p>
       <p className="mt-1 text-[12px] text-[#6b7280]">
         {formatHistoryDate(entry.createdAt)}
-        {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
+        {paymentHistoryMetaLine(entry) ? ` · ${paymentHistoryMetaLine(entry)}` : ""}
       </p>
+      {entry.gatewayPaymentId ? (
+        <p className="mt-1 text-[11px] text-[#6b7280]">Gateway id {entry.gatewayPaymentId}</p>
+      ) : null}
       {entry.notes ? (
         <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#9ca3af]">Notes</p>

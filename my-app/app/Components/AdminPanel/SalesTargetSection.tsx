@@ -7,6 +7,7 @@ import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { salesTargetsApi } from "@/lib/sales-targets-api";
 import {
   currentSalesTargetMonth,
+  DEFAULT_INCENTIVE_HALF_TARGET_INR,
   DEFAULT_MONTHLY_SALES_TARGET_INR,
   formatSalesTargetMonthLabel,
   formatTargetInr,
@@ -14,7 +15,9 @@ import {
   monthSelectOptions,
   parseTargetInrInput,
   type SalesTargetUserRow,
+  type SalesTargetsListMeta,
 } from "@/lib/sales-targets";
+import { formatInsightsInrCompact } from "@/lib/crm-insights-api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 
 function mapExecRow(row: Record<string, unknown>, index: number): SalesTargetUserRow {
@@ -34,7 +37,11 @@ function mapExecRow(row: Record<string, unknown>, index: number): SalesTargetUse
           ? String(row.salesManagerName)
           : undefined,
     monthlyTargetInr: DEFAULT_MONTHLY_SALES_TARGET_INR,
+    h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+    h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
     isCustom: false,
+    usesDefault: true,
+    active: row.active == null && row.isActive == null ? true : Boolean(row.active ?? row.isActive),
   };
 }
 
@@ -47,12 +54,23 @@ function mergeExecWithTargets(
   return execs.map((exec) => {
     const fromApi = byId.get(exec.userId);
     if (!fromApi) {
-      return { ...exec, monthlyTargetInr: defaultTarget, isCustom: false };
+      return {
+        ...exec,
+        monthlyTargetInr: defaultTarget,
+        h1TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+        h2TargetInr: DEFAULT_INCENTIVE_HALF_TARGET_INR,
+        isCustom: false,
+        usesDefault: true,
+      };
     }
     return {
       ...exec,
       monthlyTargetInr: fromApi.monthlyTargetInr,
+      h1TargetInr: fromApi.h1TargetInr,
+      h2TargetInr: fromApi.h2TargetInr,
       isCustom: fromApi.isCustom,
+      usesDefault: fromApi.usesDefault,
+      active: fromApi.active ?? exec.active,
     };
   });
 }
@@ -63,11 +81,13 @@ export default function SalesTargetSection() {
   const [month, setMonth] = useState(currentSalesTargetMonth());
   const [defaultTarget, setDefaultTarget] = useState(String(DEFAULT_MONTHLY_SALES_TARGET_INR));
   const [executives, setExecutives] = useState<SalesTargetUserRow[]>([]);
+  const [listMeta, setListMeta] = useState<SalesTargetsListMeta | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkTarget, setBulkTarget] = useState("");
   const [loading, setLoading] = useState(false);
   const [editUser, setEditUser] = useState<SalesTargetUserRow | null>(null);
-  const [editValue, setEditValue] = useState("");
+  const [editH1, setEditH1] = useState("");
+  const [editH2, setEditH2] = useState("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -81,6 +101,26 @@ export default function SalesTargetSection() {
     if (!canManage) return;
     setLoading(true);
     try {
+      const detailed = await salesTargetsApi.listUsersDetailed(month).catch(() => null);
+
+      if (detailed && detailed.targets.length > 0) {
+        setDefaultTarget(String(detailed.defaultMonthlyTargetInr));
+        setListMeta({
+          yearMonth: detailed.yearMonth,
+          defaultMonthlyTargetInr: detailed.defaultMonthlyTargetInr,
+          activeExecutiveCount: detailed.activeExecutiveCount,
+          inactiveExecutiveCount: detailed.inactiveExecutiveCount,
+          totalExecutiveCount: detailed.totalExecutiveCount,
+          activeMonthlyTargetInr: detailed.activeMonthlyTargetInr,
+          inactiveMonthlyTargetInr: detailed.inactiveMonthlyTargetInr,
+          totalMonthlyTargetInr: detailed.totalMonthlyTargetInr,
+          insightsTargetInr: detailed.insightsTargetInr,
+        });
+        setExecutives(detailed.targets);
+        setSelectedIds([]);
+        return;
+      }
+
       const [legacyExecs, roleExecs, targetRows, defaultRes] = await Promise.all([
         adminPanelApi.listSalesExecutivesLegacyAll().catch(() => [] as Record<string, unknown>[]),
         adminPanelApi.listUsersByRole("SALES_EXECUTIVE").catch(() => [] as Record<string, unknown>[]),
@@ -103,11 +143,13 @@ export default function SalesTargetSection() {
         ]) ?? DEFAULT_MONTHLY_SALES_TARGET_INR;
 
       setDefaultTarget(String(defaultInr));
+      setListMeta(null);
       setExecutives(mergeExecWithTargets(execList, targetRows, defaultInr));
       setSelectedIds([]);
     } catch (error) {
       notifyError(error instanceof Error ? error.message : "Unable to load sales targets.");
       setExecutives([]);
+      setListMeta(null);
     } finally {
       setLoading(false);
     }
@@ -148,18 +190,20 @@ export default function SalesTargetSection() {
 
   const openEdit = (user: SalesTargetUserRow) => {
     setEditUser(user);
-    setEditValue(String(user.monthlyTargetInr));
+    setEditH1(String(user.h1TargetInr));
+    setEditH2(String(user.h2TargetInr));
   };
 
   const saveEdit = async () => {
     if (!editUser) return;
-    const parsed = parseTargetInrInput(editValue);
-    if (parsed == null) {
-      notifyError("Enter a valid monthly target.");
+    const h1 = parseTargetInrInput(editH1);
+    const h2 = parseTargetInrInput(editH2);
+    if (h1 == null || h2 == null) {
+      notifyError("Enter valid H1 and H2 target amounts.");
       return;
     }
     try {
-      await salesTargetsApi.setUserTarget(editUser.userId, parsed, month);
+      await salesTargetsApi.setUserHalves(editUser.userId, h1, h2, month);
       notifySuccess(`Target set for ${editUser.name}.`);
       setEditUser(null);
       await loadTargets();
@@ -203,7 +247,8 @@ export default function SalesTargetSection() {
         <div>
           <h2 className="text-lg font-bold text-[var(--crm-text-primary)]">Revenue Targets</h2>
           <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
-            Set each sales executive&apos;s monthly revenue target (default ₹60 lakhs).
+            Set each sales executive&apos;s monthly target as H1 (1–15) + H2 (16–end).
+            Syncs with Incentives and Insights revenue forecast.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -233,7 +278,7 @@ export default function SalesTargetSection() {
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-[var(--crm-tab-grad)] px-5 py-4 text-white">
         <div>
-          <p className="text-sm text-white/80">Default monthly target for new executives</p>
+          <p className="text-sm text-white/80">Default monthly target (applied as equal H1 + H2)</p>
           <p className="mt-1 text-sm font-semibold">
             Current: <strong>{formatTargetLakhs(Number(defaultTarget) || DEFAULT_MONTHLY_SALES_TARGET_INR)}</strong>
             {" · "}
@@ -258,6 +303,46 @@ export default function SalesTargetSection() {
           </button>
         </div>
       </div>
+
+      {listMeta ? (
+        <div className="mb-6 grid gap-3 rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 sm:grid-cols-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Insights target (active)
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[var(--crm-text-primary)]">
+              {listMeta.activeExecutiveCount} active ·{" "}
+              {formatInsightsInrCompact(listMeta.insightsTargetInr)}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--crm-text-muted)]">
+              {listMeta.activeExecutiveCount} ×{" "}
+              {formatTargetLakhs(listMeta.defaultMonthlyTargetInr)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Including inactive
+            </p>
+            <p className="mt-1 text-sm font-semibold text-[var(--crm-text-primary)]">
+              {listMeta.totalExecutiveCount} total ·{" "}
+              {formatInsightsInrCompact(listMeta.totalMonthlyTargetInr)}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--crm-text-muted)]">
+              {listMeta.inactiveExecutiveCount} inactive ·{" "}
+              {formatInsightsInrCompact(listMeta.inactiveMonthlyTargetInr)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--crm-text-muted)]">
+              Roster note
+            </p>
+            <p className="mt-1 text-xs leading-snug text-[var(--crm-text-muted)]">
+              Insights chart uses active sum only. Activate / deactivate SEs and totals
+              recalculate on next load — no fixed Cr target on FE.
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       {selectedIds.length > 0 ? (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
@@ -296,7 +381,11 @@ export default function SalesTargetSection() {
 
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm text-[var(--crm-text-muted)]">
-          {loading ? "Loading…" : `${executives.length} sales executives`}
+          {loading
+            ? "Loading…"
+            : listMeta
+              ? `${listMeta.totalExecutiveCount} sales executives (${listMeta.activeExecutiveCount} active)`
+              : `${executives.length} sales executives`}
         </span>
         <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-[var(--crm-text-primary)]">
           <input
@@ -320,7 +409,7 @@ export default function SalesTargetSection() {
                 Manager
               </th>
               <th className="px-3 py-3 text-left text-xs font-bold uppercase text-[var(--crm-text-muted)]">
-                Monthly target
+                H1 / H2 target
               </th>
               <th className="px-3 py-3 text-right text-xs font-bold uppercase text-[var(--crm-text-muted)]">
                 Action
@@ -345,7 +434,14 @@ export default function SalesTargetSection() {
                     />
                   </td>
                   <td className="px-3 py-3">
-                    <div className="font-semibold text-[var(--crm-text-primary)]">{exec.name}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-semibold text-[var(--crm-text-primary)]">{exec.name}</div>
+                      {exec.active === false ? (
+                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold uppercase text-slate-600">
+                          Inactive
+                        </span>
+                      ) : null}
+                    </div>
                     {exec.branch ? (
                       <div className="text-xs text-[var(--crm-text-muted)]">{exec.branch}</div>
                     ) : null}
@@ -356,8 +452,9 @@ export default function SalesTargetSection() {
                       {formatTargetInr(exec.monthlyTargetInr)}
                     </div>
                     <div className="text-xs text-[var(--crm-text-muted)]">
-                      {formatTargetLakhs(exec.monthlyTargetInr)}
-                      {exec.isCustom ? " · Custom" : " · Default"}
+                      H1 {formatTargetLakhs(exec.h1TargetInr)} · H2{" "}
+                      {formatTargetLakhs(exec.h2TargetInr)}
+                      {exec.usesDefault === false || exec.isCustom ? " · Custom" : " · Default"}
                     </div>
                   </td>
                   <td className="px-3 py-3 text-right">
@@ -379,25 +476,40 @@ export default function SalesTargetSection() {
       {editUser ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold text-[var(--crm-text-primary)]">Edit monthly target</h3>
+            <h3 className="text-lg font-bold text-[var(--crm-text-primary)]">Edit incentive targets</h3>
             <p className="mt-1 text-sm text-[var(--crm-text-muted)]">
               {editUser.name} · {formatSalesTargetMonthLabel(month)}
             </p>
-            <label className="mt-4 block">
-              <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
-                Target amount (INR)
-              </span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
-                placeholder="6000000"
-              />
-            </label>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
+                  H1 — 1st to 15th (INR)
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={editH1}
+                  onChange={(e) => setEditH1(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
+                  placeholder="3000000"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold uppercase text-[var(--crm-text-muted)]">
+                  H2 — 16th to end (INR)
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={editH2}
+                  onChange={(e) => setEditH2(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] px-3 py-2 text-sm"
+                  placeholder="3000000"
+                />
+              </label>
+            </div>
             <p className="mt-2 text-xs text-[var(--crm-text-muted)]">
-              Default is {formatTargetLakhs(DEFAULT_MONTHLY_SALES_TARGET_INR)} (₹60,00,000).
+              Monthly total = H1 + H2. Default is {formatTargetLakhs(DEFAULT_INCENTIVE_HALF_TARGET_INR)} per half.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button

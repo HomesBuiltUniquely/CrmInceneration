@@ -53,6 +53,56 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-weight: 400;
+  letter-spacing: -0.011em;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+button,
+input,
+textarea,
+select,
+optgroup {
+  font-family: inherit;
+}
+
+button,
+label,
+th,
+legend,
+summary {
+  font-weight: 600;
+}
+
+h1,
+h2 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 .dark {
   --background: #081120;
   --foreground: #e5eef8;
@@ -99,15 +149,6 @@
   --crm-shadow-lg: 0 28px 70px rgba(2, 6, 23, 0.56);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  transition:
-    background-color 180ms ease,
-    color 180ms ease;
-}
-
 .animate-fade-up {
   animation: fade-up 0.45s ease-out both;
 }
@@ -148,6 +189,18 @@ body {
   }
 }
 
+@keyframes leadLimitFadeSlide {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes pulse-dot {
   0%,
   100% {
@@ -158,6 +211,355 @@ body {
   50% {
     opacity: 0.55;
     transform: scale(0.82);
+  }
+}
+
+@keyframes breadcrumb-page-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes breadcrumb-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.35);
+  }
+
+  50% {
+    opacity: 0.85;
+    transform: scale(1.15);
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0);
+  }
+}
+
+.app-breadcrumb-active {
+  animation: breadcrumb-page-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.app-breadcrumb-active-dot {
+  animation: breadcrumb-dot-pulse 2s ease-in-out infinite;
+}
+
+/* ——— CRM page transitions (iOS-style) ——— */
+@keyframes crm-page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.988);
+    filter: blur(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.crm-page-transition {
+  animation: crm-page-enter 0.48s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: opacity, transform, filter;
+}
+
+@keyframes crm-vt-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+    filter: blur(4px);
+  }
+}
+
+@keyframes crm-vt-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(1.012);
+    filter: blur(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+::view-transition-old(root) {
+  animation: crm-vt-fade-out 0.34s cubic-bezier(0.32, 0.72, 0, 1) both;
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  animation: crm-vt-fade-in 0.44s cubic-bezier(0.32, 0.72, 0, 1) both;
+  z-index: 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-page-transition,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+}
+
+/* ——— Fullscreen overlay modal (lead detail) ——— */
+@keyframes crm-overlay-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes crm-overlay-backdrop-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes crm-overlay-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes crm-overlay-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+}
+
+.crm-overlay-backdrop-in {
+  animation: crm-overlay-backdrop-in 0.36s ease-out both;
+}
+
+.crm-overlay-backdrop-out {
+  animation: crm-overlay-backdrop-out 0.28s ease-in both;
+}
+
+.crm-overlay-panel-in {
+  animation: crm-overlay-panel-in 0.46s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.crm-overlay-panel-out {
+  animation: crm-overlay-panel-out 0.3s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-overlay-backdrop-in,
+  .crm-overlay-backdrop-out,
+  .crm-overlay-panel-in,
+  .crm-overlay-panel-out {
+    animation: none !important;
+  }
+}
+
+/* Insights — Sales Funnel substage drill-down */
+@keyframes insights-funnel-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes insights-funnel-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes insights-funnel-bar-lift {
+  from {
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    transform: translateY(-8px) scale(1.025);
+  }
+}
+
+@keyframes insights-substage-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes insights-substage-top-lift {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.015);
+  }
+}
+
+.insights-funnel-backdrop {
+  animation: insights-funnel-backdrop-in 0.28s ease-out both;
+}
+
+.insights-funnel-modal {
+  animation: insights-funnel-modal-in 0.38s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.insights-funnel-bar-lift {
+  animation: insights-funnel-bar-lift 0.38s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  position: relative;
+  z-index: 30;
+}
+
+.insights-substage-row {
+  animation: insights-substage-row-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.insights-substage-row-top {
+  animation: insights-substage-top-lift 0.48s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.insights-drop-reason-scroll,
+.insights-table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.insights-drop-reason-scroll::-webkit-scrollbar,
+.insights-table-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.insights-drop-reason-scroll::-webkit-scrollbar-track,
+.insights-table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.insights-drop-reason-scroll::-webkit-scrollbar-thumb,
+.insights-table-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 999px;
+}
+
+.insights-drop-reason-scroll::-webkit-scrollbar-thumb:hover,
+.insights-table-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Insights main page scroller — hide native OS scrollbar completely */
+.insights-page-scroll {
+  scrollbar-width: none !important; /* Firefox */
+  -ms-overflow-style: none !important; /* legacy Edge */
+}
+
+.insights-page-scroll::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+  background: transparent !important;
+}
+
+.insights-page-scroll::-webkit-scrollbar-track,
+.insights-page-scroll::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
+
+/* Custom slim overlay thumb (shown only while scrolling / rail hover) */
+.insights-scroll-rail {
+  position: absolute;
+  top: 4px;
+  right: 1px;
+  bottom: 4px;
+  width: 10px;
+  z-index: 40;
+  pointer-events: auto;
+}
+
+.insights-scroll-thumb {
+  position: absolute;
+  left: 1px;
+  width: 8px;
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.45);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    background 0.15s ease;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.insights-scroll-rail[data-visible="1"] .insights-scroll-thumb,
+.insights-scroll-rail:hover .insights-scroll-thumb {
+  opacity: 1;
+}
+
+.insights-scroll-thumb:hover,
+.insights-scroll-thumb[data-dragging="1"] {
+  background: rgba(71, 85, 105, 0.75);
+  cursor: grabbing;
+}
+
+html.insights-lock-scroll,
+html.insights-lock-scroll body {
+  overflow: hidden !important;
+  height: 100% !important;
+  overscroll-behavior: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insights-funnel-backdrop,
+  .insights-funnel-modal,
+  .insights-funnel-bar-lift,
+  .insights-substage-row,
+  .insights-substage-row-top {
+    animation: none;
   }
 }
 

@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
+/**
+ * Hub lead-limits (`/users`, `/renovation`) scan each lead table once and
+ * aggregate in memory. Modest timeout for cold starts; no longer needs 90s.
+ */
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
 function buildUrl(req: NextRequest, path: string[]) {
   const joined = path.join("/");
   const q = req.nextUrl.searchParams.toString();
@@ -18,17 +24,37 @@ async function proxy(req: NextRequest, path: string[], method: string) {
       ? undefined
       : await req.text();
 
-  const res = await fetch(buildUrl(req, path), {
-    method,
-    headers,
-    cache: "no-store",
-    body,
-  });
-  const text = await res.text();
-  return new NextResponse(text, {
-    status: res.status,
-    headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const res = await fetch(buildUrl(req, path), {
+      method,
+      headers,
+      cache: "no-store",
+      body,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    return new NextResponse(text, {
+      status: res.status,
+      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+    });
+  } catch (e) {
+    const aborted =
+      (e instanceof DOMException && e.name === "AbortError") ||
+      (e instanceof Error && e.name === "AbortError");
+    if (aborted) {
+      return NextResponse.json(
+        {
+          message: `Lead limits upstream timed out after ${Math.round(UPSTREAM_TIMEOUT_MS / 1000)}s`,
+        },
+        { status: 504 },
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {

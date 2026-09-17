@@ -20,6 +20,11 @@ export function isSuperAdminRole(role: string): boolean {
   return normalizeRole(role) === "SUPER_ADMIN";
 }
 
+/** Easebuzz payment-link integration — SUPER_ADMIN only until rolled out org-wide. */
+export function canUsePaymentLinkIntegration(role: string): boolean {
+  return isSuperAdminRole(role);
+}
+
 /** Booking & Token dashboard — sales hierarchy + admin roles. */
 export function canAccessBookingTokenDashboard(role: string): boolean {
   const r = normalizeRole(role);
@@ -29,6 +34,27 @@ export function canAccessBookingTokenDashboard(role: string): boolean {
     r === "SALES_MANAGER" ||
     r === "SALES_EXECUTIVE"
   );
+}
+
+/**
+ * CRM Insights — org leads only (not SE / presales / design).
+ * - SUPER_ADMIN / ADMIN / SALES_ADMIN: branch + all salespeople
+ * - SALES_MANAGER: own team executives only
+ */
+export function canAccessCrmInsights(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    isAdminRole(r) ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "MANAGER"
+  );
+}
+
+/** Org-wide Insights filters (branch + manager hierarchy). SM uses team-only filters. */
+export function canUseInsightsOrgFilters(role: string): boolean {
+  const r = normalizeRole(role);
+  return isAdminRole(r) || r === "SALES_ADMIN";
 }
 
 /** Admin dashboards and dual-pipeline detail (incl. sales admin). */

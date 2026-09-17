@@ -1,39 +1,5 @@
 "use client";
 
-/**
- * notification-rbac-filter.ts
- *
- * Client-side RBAC filter for meeting notification items.
- *
- * WHO SEES WHAT
- * ─────────────
- *  SUPER_ADMIN / ADMIN / SALES_ADMIN   → all notifications (pass-through)
- *  SALES_MANAGER                        → only notifications for leads owned
- *                                         by their direct team executives
- *  PRESALES_MANAGER                     → only notifications for leads owned
- *                                         by their direct presales executives
- *  DESIGN_MANAGER / TERRITORY_DM        → only notifications for leads assigned
- *                                         to active designers in their org
- *  SALES_EXECUTIVE                      → only their own leads (fail-closed)
- *  PRESALES_EXECUTIVE                   → only their own leads (fail-closed)
- *  DESIGNER                             → only their own designs (fail-closed)
- *
- * FAIL POLICY
- * ───────────
- * ALL roles are now fail-CLOSED:
- *   - No leadIdentifier on a notification → HIDE
- *   - Lead not in Spring map → HIDE
- *   - Assignee blank on lead row → HIDE
- *   - Owner not in allowedSet → HIDE
- *
- * This is the only safe default. The previous fail-OPEN for managers was the
- * root cause of everyone seeing every notification.
- *
- * EXCEPTION: If the Spring /api/crm/leads fetch itself fails (network error,
- * non-2xx), we return all items for manager roles rather than silently hiding
- * the entire notification panel — this is clearly a fetch failure, not a
- * legitimate access denial.
- */
 
 import {
   CRM_DESIGNER_NAME_STORAGE_KEY,
@@ -329,9 +295,6 @@ export async function applyNotificationRbacFilter<T extends FilterableNotificati
   const { assigneeMap, designerMap, fetchSucceeded } =
     await buildOwnershipMaps(authHeader);
 
-  // If the Spring API itself failed (network/server error), fail open ONLY for
-  // manager roles — their notification panel would be completely blank otherwise.
-  // Individual-scope roles remain fail-closed even on fetch failure.
   if (!fetchSucceeded) {
     if (r === "SALES_MANAGER" || r === "PRESALES_MANAGER" ||
       r === "DESIGN_MANAGER" || r === "TERRITORY_DESIGN_MANAGER") {

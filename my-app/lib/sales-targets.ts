@@ -1,16 +1,41 @@
 /** Default monthly revenue target per sales executive — ₹60 lakhs. */
 export const DEFAULT_MONTHLY_SALES_TARGET_INR = 60_00_000;
 
+/** Default per 15-day half when Hub has no row — ₹30L. */
+export const DEFAULT_INCENTIVE_HALF_TARGET_INR = DEFAULT_MONTHLY_SALES_TARGET_INR / 2;
+
 export type SalesTargetUserRow = {
   userId: number;
   name: string;
   role: string;
   branch?: string;
   managerName?: string;
-  /** INR; falls back to default when unset. */
+  /** H1 (1–15) target in INR. */
+  h1TargetInr: number;
+  /** H2 (16–end) target in INR. */
+  h2TargetInr: number;
+  /** INR; H1 + H2 (falls back to default when unset). */
   monthlyTargetInr: number;
-  /** True when admin set an explicit override for this month. */
+  /** True when admin set explicit H1/H2 for this month. */
   isCustom: boolean;
+  /** Roster active flag from Hub sales-targets (Insights target uses active only). */
+  active?: boolean;
+  /** True when monthly target is the org/default (no admin override). */
+  usesDefault?: boolean;
+};
+
+/** Hub GET `/v1/crm/incentives/sales-targets` summary (roster-dynamic totals). */
+export type SalesTargetsListMeta = {
+  yearMonth: string;
+  defaultMonthlyTargetInr: number;
+  activeExecutiveCount: number;
+  inactiveExecutiveCount: number;
+  totalExecutiveCount: number;
+  activeMonthlyTargetInr: number;
+  inactiveMonthlyTargetInr: number;
+  totalMonthlyTargetInr: number;
+  /** Same as active monthly — primary Insights target. */
+  insightsTargetInr: number;
 };
 
 /** `YYYY-MM` for the selected incentives / target month. */

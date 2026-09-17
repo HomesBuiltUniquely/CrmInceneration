@@ -130,7 +130,7 @@ type LeadRowActionProps = {
   onDelete?: (row: LeadRowModel) => void;
   onAssign?: (row: LeadRowModel) => void;
   leadsWorkspace?: CrmWorkspace;
-  onOpenLead?: (row: LeadRowModel) => void;
+  onOpenLead?: (row: LeadRowModel, sourceEl?: HTMLElement | null) => void;
 };
 
 function getLeadsTableGridClass(showActions: boolean): string {
@@ -184,7 +184,10 @@ function LeadRowAction({
   const critical = row.journey.status?.tone === "critical";
   const lostPath = Boolean(row.lostPathHighlight || row.lostQuoteHighlight);
   const lostQuote = Boolean(row.lostQuoteHighlight);
-  const open = () => onOpenLead?.(row);
+  const open = (event?: { currentTarget: EventTarget }) => {
+    const el = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    onOpenLead?.(row, el);
+  };
   return (
     <div
       onClick={open}
@@ -200,7 +203,7 @@ function LeadRowAction({
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          open();
+          open(event);
         }
       }}
     >
@@ -222,9 +225,9 @@ function LeadRowAction({
       </div>
       <div className="flex min-h-[56px] min-w-0 items-start gap-2 self-start">
         <div className="leading-tight">
-          <div className="text-[12px] font-semibold text-[var(--crm-text-primary)]">{row.name}</div>
-          <div className="mt-1 text-[11px] font-medium text-[var(--crm-text-muted)]">{row.company}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-1">
+          <div className="text-[12.5px] font-semibold leading-tight text-[var(--crm-text-primary)]">{row.name}</div>
+          <div className="mt-[5px] text-[9.5px] font-medium leading-none text-[var(--crm-text-muted)]">{row.company}</div>
+          <div className="mt-[8px] flex flex-wrap items-center gap-1.5">
             {row.leadSource === "IVR Call" ? (
               <TinyTag chip={{ label: "IVR Call", tone: "violet" }} />
             ) : null}
@@ -435,6 +438,14 @@ type LeadsTableProps = {
   leadsWorkspace?: CrmWorkspace;
   /** When set, empty state explains that search is filtering the list. */
   searchQuery?: string;
+  /**
+   * Hub numeric row id (string) resolved by LeadsDataSection from the notification
+   * leadIdentifier. When present the table scrolls to that row and highlights it for 3 s.
+   * Does NOT open the lead details overlay.
+   */
+  highlightRowId?: string;
+  /** Fired once the highlight animation has been armed so the parent can clear the value. */
+  onHighlightConsumed?: () => void;
 };
 
 export default function LeadsTable({
@@ -452,13 +463,57 @@ export default function LeadsTable({
   onAssignRow,
   leadsWorkspace: _leadsWorkspace = "sales",
   searchQuery = "",
+  highlightRowId = "",
+  onHighlightConsumed,
 }: LeadsTableProps) {
   const { notifySuccess } = useGlobalNotifier();
   const [statusOverrides, setStatusOverrides] = useState<Record<string, string>>({});
   const [openLead, setOpenLead] = useState<{
     leadType: string;
     leadId: string;
+    origin: { top: number; left: number; width: number; height: number } | null;
   } | null>(null);
+
+  // ── Notification highlight ────────────────────────────────────────────────
+  // LeadsDataSection already resolved the Hub numeric id from the ApiLead pool.
+  // We just need to scroll to the row with that id and ring it for 3 s.
+  // Does NOT open the lead detail overlay — user clicks the row themselves.
+  const [highlightedRowIds, setHighlightedRowIds] = useState<Set<string>>(new Set());
+  const tableRef = useRef<HTMLDivElement>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!highlightRowId || loading) return;
+
+    // Check the row is actually rendered on the current page before arming.
+    const isRendered = rowsProp.some((r) => String(r.id) === String(highlightRowId));
+    if (!isRendered) return;
+
+    // Arm the amber ring
+    setHighlightedRowIds(new Set([highlightRowId]));
+
+    // Tell the parent the highlight has been consumed so it clears highlightLeadIdentifier
+    onHighlightConsumed?.();
+
+    // Scroll the row into view after a short paint delay
+    const scrollTimer = setTimeout(() => {
+      const el = tableRef.current?.querySelector<HTMLElement>(
+        `[data-highlight-row="${CSS.escape(highlightRowId)}"]`,
+      );
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+
+    // Remove the ring after 3 seconds
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedRowIds(new Set());
+    }, 3000);
+
+    return () => {
+      clearTimeout(scrollTimer);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightRowId, loading, rowsProp]);
 
   useEffect(() => {
     const readOverrides = () => {
@@ -514,7 +569,7 @@ export default function LeadsTable({
 
   return (
     <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-5`}>
-      <div className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
+      <div ref={tableRef} className="overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         <div className={`${gridClass} bg-[var(--crm-surface-subtle)] px-4 py-3 text-[10px] font-bold tracking-wide text-[var(--crm-text-muted)]`}>
           <div>
             {showSelection ? (
@@ -560,30 +615,43 @@ export default function LeadsTable({
           </div>
         ) : (
           rows.map((r, idx) => (
-            <LeadRowAction
+            <div
               key={`${r.id}:${r.leadType}:${idx}`}
-              row={r}
-              selected={selectedRowIds.includes(r.id)}
-              onToggleSelected={(checked) => {
-                if (!onSelectedRowIdsChange) return;
-                if (checked) {
-                  onSelectedRowIdsChange([...new Set([...selectedRowIds, r.id])]);
-                  return;
-                }
-                onSelectedRowIdsChange(selectedRowIds.filter((id) => id !== r.id));
-              }}
-              showSelection={showSelection}
-              showActions={showActions}
-              gridClass={gridClass}
-              onDelete={onDeleteRow}
-              onAssign={onAssignRow}
-              onOpenLead={(row) =>
-                setOpenLead({
-                  leadType: row.leadType,
-                  leadId: row.id,
-                })
+              data-highlight-row={r.id}
+              className={
+                highlightedRowIds.has(r.id)
+                  ? "ring-2 ring-inset ring-amber-400 rounded-none transition-shadow duration-300"
+                  : undefined
               }
-            />
+            >
+              <LeadRowAction
+                row={r}
+                selected={selectedRowIds.includes(r.id)}
+                onToggleSelected={(checked) => {
+                  if (!onSelectedRowIdsChange) return;
+                  if (checked) {
+                    onSelectedRowIdsChange([...new Set([...selectedRowIds, r.id])]);
+                    return;
+                  }
+                  onSelectedRowIdsChange(selectedRowIds.filter((id) => id !== r.id));
+                }}
+                showSelection={showSelection}
+                showActions={showActions}
+                gridClass={gridClass}
+                onDelete={onDeleteRow}
+                onAssign={onAssignRow}
+                onOpenLead={(row, sourceEl) => {
+                  const r = sourceEl?.getBoundingClientRect();
+                  setOpenLead({
+                    leadType: row.leadType,
+                    leadId: row.id,
+                    origin: r
+                      ? { top: r.top, left: r.left, width: r.width, height: r.height }
+                      : null,
+                  });
+                }}
+              />
+            </div>
           ))
         )}
         {showPagination ? (
@@ -614,6 +682,10 @@ export default function LeadsTable({
         hideHeader
         closeOnBackdrop
         closeEventName={LEAD_DETAIL_OVERLAY_CLOSE_EVENT}
+        originRect={openLead?.origin}
+        originSelector={
+          openLead ? `[data-highlight-row="${CSS.escape(openLead.leadId)}"]` : undefined
+        }
         zOverlay={80}
         zPanel={85}
       >
@@ -622,6 +694,7 @@ export default function LeadsTable({
             key={`${openLead.leadType}-${openLead.leadId}`}
             leadType={openLead.leadType}
             leadId={openLead.leadId}
+            isPopupMode={true}
           />
         ) : null}
       </CrmFullscreenOverlayModal>

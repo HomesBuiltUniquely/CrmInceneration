@@ -73,6 +73,11 @@ export function isMeetingScheduleSubstage(subStageName: string): boolean {
   );
 }
 
+/** True when feedback is Meeting Rescheduled — should PUT-update existing Hub appointment. */
+export function isMeetingRescheduledSubstage(subStageName: string): boolean {
+  return pipelineSubStageLabel(subStageName) === "Meeting Rescheduled";
+}
+
 export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {
   return pipelineSubStageLabel(subStageName) === DESIGN_REFINEMENT_REVISIT_SUBSTAGE;
 }

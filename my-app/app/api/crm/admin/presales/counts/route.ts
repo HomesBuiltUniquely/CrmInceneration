@@ -5,6 +5,7 @@ import { fetchAdminPresalesPoolViaMergeFallback } from "@/lib/admin-pool-merge-f
 import type { ApiLead, CrmLeadType } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES, isCrmLeadVerified } from "@/lib/leads-filter";
 import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import { isHubNoResourceResponse } from "@/lib/hub-no-resource";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 
@@ -19,6 +20,13 @@ function presalesCountsFromPool(
     const lead = row.lead;
     if (!lead) continue;
     if (isCrmLeadVerified(lead)) verifiedCount += 1;
+    const rec = lead as Record<string, unknown>;
+    const leadSource =
+      rec.leadSource ?? rec.LeadSource ?? rec.leadsource ?? rec.source ?? "";
+    if (isIvrInboundLead(lead.leadType, leadSource)) {
+      byLeadType.ivrlead = (byLeadType.ivrlead ?? 0) + 1;
+      continue;
+    }
     const lt = normalizeLeadTypeKey(lead.leadType);
     if (CRM_LEAD_TYPES.includes(lt)) byLeadType[lt] = (byLeadType[lt] ?? 0) + 1;
   }

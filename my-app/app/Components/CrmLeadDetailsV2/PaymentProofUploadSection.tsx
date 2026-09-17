@@ -29,6 +29,8 @@ type Props = {
   quoteAmountRefreshing?: boolean;
   /** Parent re-reads draft amount from storage (confirm button enable). */
   onPaymentDraftChange?: () => void;
+  /** Online link send hides proof upload; amount stays editable. */
+  hideProofs?: boolean;
 };
 
 export default function PaymentProofUploadSection({
@@ -37,6 +39,7 @@ export default function PaymentProofUploadSection({
   selectedQuote = null,
   quoteAmountRefreshing = false,
   onPaymentDraftChange,
+  hideProofs = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<PaymentProofFile[]>([]);
@@ -162,10 +165,13 @@ export default function PaymentProofUploadSection({
           📎
         </span>
         <div>
-          <p className="text-[15px] font-bold text-[#0f172a]">Payment Proof</p>
+          <p className="text-[15px] font-bold text-[#0f172a]">
+            {hideProofs ? "Payment amount" : "Payment Proof"}
+          </p>
           <p className="mt-1 text-[13px] text-[#64748b]">
-            Enter the payment amount received and upload screenshots (UPI, bank transfer, cheque,
-            etc.).
+            {hideProofs
+              ? "Default is 10% of the selected quote. Edit the amount, then send the Easebuzz link."
+              : "Enter the payment amount received and upload screenshots (UPI, bank transfer, cheque, etc.)."}
           </p>
         </div>
       </div>
@@ -256,6 +262,8 @@ export default function PaymentProofUploadSection({
         </div>
       ) : null}
 
+      {hideProofs ? null : (
+      <>
       <div
         className={`mt-4 rounded-xl border-2 border-dashed px-4 py-8 text-center transition ${
           dragActive
@@ -364,6 +372,8 @@ export default function PaymentProofUploadSection({
           {files.length} screenshot{files.length === 1 ? "" : "s"} saved for this lead.
         </p>
       ) : null}
+      </>
+      )}
     </section>
   );
 }

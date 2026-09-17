@@ -14,9 +14,8 @@ export function resolveInitialTheme(): CrmTheme {
   const stored = window.localStorage.getItem(CRM_THEME_STORAGE_KEY);
   if (isCrmTheme(stored)) return stored;
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
+  // Always default to light unless the user explicitly chose dark.
+  return DEFAULT_THEME;
 }
 
 export function applyTheme(theme: CrmTheme) {

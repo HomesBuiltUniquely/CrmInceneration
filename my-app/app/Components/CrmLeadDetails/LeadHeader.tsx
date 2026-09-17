@@ -4,12 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LeadSourceTag, MonoTag } from "./ui";
 import type { Lead } from "@/lib/data";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
+import { formatAdditionalLeadSourcesLabel } from "@/lib/lead-source-utils";
 import { isLeadHandedOffToSales } from "@/lib/presales-milestone";
 import {
   canViewBothMilestonePipelines,
   isPresalesRole,
   isSalesRole,
 } from "@/lib/roleUtils";
+import { isRenovationFeedbackLocked } from "@/lib/milestone-advance-gates";
 
 function WonTrophyIcon({ className }: { className?: string }) {
   return (
@@ -154,6 +156,25 @@ export default function LeadHeader({
         <div className="flex flex-wrap items-center gap-2.5">
           <MonoTag>{lead.customerId}</MonoTag>
           <LeadSourceTag primary={lead.leadSource} extras={lead.additionalLeadSourcesList} />
+          {(lead.additionalLeadSourcesList?.length ?? 0) > 0 ? (
+            <span
+              title={`Additional sources: ${formatAdditionalLeadSourcesLabel(
+                lead.additionalLeadSourcesList,
+              )}`}
+              className="inline-flex h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-3 text-[11px] font-semibold text-rose-800"
+            >
+              Re-inquiry
+            </span>
+          ) : null}
+          {lead.verified ? (
+            <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-semibold text-emerald-800">
+              Verified
+            </span>
+          ) : (
+            <span className="inline-flex h-6 items-center rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
+              Unverified
+            </span>
+          )}
           <span className="inline-flex h-6 items-center rounded-full border border-sky-200 bg-sky-50 px-3 text-[11px] font-semibold text-sky-800">
             <span>🕐</span>
             <span>Created {lead.createdAt}</span>
@@ -172,6 +193,26 @@ export default function LeadHeader({
           {lead.paymentReceived ? (
             <span className="inline-flex h-6 items-center rounded-full border border-teal-200 bg-teal-50 px-3 text-[11px] font-semibold text-teal-800">
               Payment {lead.paymentReceived}
+            </span>
+          ) : null}
+          {lead.stageBlock?.milestoneSubStage?.trim().toUpperCase() ===
+            "RENOVATION" ||
+          isRenovationFeedbackLocked(
+            lead.stageBlock?.renovationAssigned,
+            lead.stageBlock?.milestoneStage,
+            lead.stageBlock?.milestoneSubStage,
+            lead.stageBlock?.milestoneStageCategory,
+          ) ? (
+            <span className="inline-flex h-6 max-w-full items-center truncate rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
+              Renovation
+              {lead.stageBlock?.renovationSalesManager
+                ? ` · Manager: ${lead.stageBlock.renovationSalesManager}`
+                : ""}
+              {` · Exec: ${
+                lead.stageBlock?.renovationSalesExecutive?.trim() ||
+                lead.assignee ||
+                "—"
+              }`}
             </span>
           ) : null}
         </div>

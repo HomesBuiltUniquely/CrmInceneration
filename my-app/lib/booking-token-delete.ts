@@ -53,8 +53,10 @@ export async function deleteBookingTokenForLead(
   return body;
 }
 
-export async function deleteCrmLead(leadType: CrmLeadType, leadId: number): Promise<void> {
-  const res = await fetch(`/api/crm/lead/${encodeURIComponent(leadType)}/${leadId}`, {
+export async function deleteCrmLead(leadType: CrmLeadType, leadId: number | string): Promise<void> {
+  const res = await fetch(
+    `/api/crm/lead/${encodeURIComponent(leadType)}/${encodeURIComponent(String(leadId))}`,
+    {
     method: "DELETE",
     credentials: "include",
     headers: getCrmAuthHeaders(),

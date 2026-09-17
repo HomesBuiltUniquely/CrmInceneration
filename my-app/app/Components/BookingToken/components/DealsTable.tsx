@@ -235,6 +235,10 @@ function renderDealCell(
                 <span className="shrink-0 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-blue-700">
                   Booking
                 </span>
+              ) : row.fromBookingDone ? (
+                <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-emerald-700">
+                  Done
+                </span>
               ) : null}
             </div>
             <div className="truncate text-[10px] text-[var(--bt-muted)]" title={row.asset}>
@@ -244,7 +248,16 @@ function renderDealCell(
         </div>
       );
     case "assign":
-      return tableTextCell(row.assign);
+      return (
+        <>
+          {tableTextCell(row.assign)}
+          {row.cancellationApprovalStatus === "PENDING" ? (
+            <span className="mt-0.5 inline-flex rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-amber-700">
+              Cancel pending
+            </span>
+          ) : null}
+        </>
+      );
     case "dealValue":
       return <span className="font-semibold">{row.dealValue}</span>;
     case "received":
@@ -694,7 +707,7 @@ export default function DealsTable({
     setConvertSubmitting(true);
     setConvertError("");
     try {
-      await convertBookingTokenDeal(convertTarget.id);
+      const result = await convertBookingTokenDeal(convertTarget.id);
       if (isCrmLeadType(convertTarget.leadType)) {
         await persistClosedWonBookingDoneMilestone(
           convertTarget.leadType as CrmLeadType,
@@ -704,6 +717,16 @@ export default function DealsTable({
       await loadDeals();
       onDealsChanged?.();
       onConvertedToBooking?.();
+      const mode = String(result.financeHandlingMode ?? "").toUpperCase();
+      if (mode === "AUTO_APPROVED") {
+        window.alert(
+          "Converted. Finance auto-approved via Easebuzz — Design stage moved toward 10–20%.",
+        );
+      } else if (mode === "MANUAL_QUEUE") {
+        window.alert(
+          "Converted. Awaiting Design finance approval (offline / proofs or mixed payments).",
+        );
+      }
     } catch (error) {
       setConvertError(error instanceof Error ? error.message : "Unable to convert to booking.");
       throw error;

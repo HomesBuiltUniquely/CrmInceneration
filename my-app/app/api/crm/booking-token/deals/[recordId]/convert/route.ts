@@ -40,7 +40,13 @@ export async function POST(
             remainingAmount?: number | null;
             listingType?: string | null;
           };
-          let designSync: { designLeadId?: number } | null = null;
+          let designSync: {
+            designLeadId?: number;
+            financeHandlingMode?: string;
+            financeSection?: string;
+            projectStage?: string;
+            approvedBy?: string;
+          } | null = null;
           let designSyncError: string | null = null;
           try {
             designSync = await syncConvertBookingToDesignModule(recordId, authHeaders, req.nextUrl.origin);
@@ -58,6 +64,10 @@ export async function POST(
               listingType: "booking",
               bookingStatus: parsed.bookingStatus ?? "confirmed",
               designLeadId: designSync?.designLeadId ?? null,
+              financeHandlingMode: designSync?.financeHandlingMode ?? null,
+              financeSection: designSync?.financeSection ?? null,
+              projectStage: designSync?.projectStage ?? null,
+              approvedBy: designSync?.approvedBy ?? null,
               designSyncError,
             },
             { status: res.status },

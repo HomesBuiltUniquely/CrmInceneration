@@ -17,6 +17,10 @@ import type { BookingTokenCancelInput, BookingTokenCancelScope } from "@/lib/boo
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
 import { dealLevelLabel } from "@/lib/booking-token-listing-type";
+import {
+  formatPaymentKind,
+  paymentHistoryMetaLine,
+} from "@/lib/booking-payment-display";
 
 type Props = {
   open: boolean;
@@ -42,18 +46,6 @@ function getTopAlignedPanelPosition(panelWidth: number, panelHeight: number) {
     panelWidth,
     panelHeight,
   );
-}
-
-function formatPaymentKind(kind?: string): string {
-  if (!kind) return "";
-  return kind.replace(/_/g, " ");
-}
-
-function formatPaymentSource(source?: string): string {
-  if (!source) return "";
-  if (source === "booking_done") return "Booking Done";
-  if (source === "pay_action") return "Pay action";
-  return source.replace(/_/g, " ");
 }
 
 function formatHistoryDate(iso: string): string {
@@ -453,10 +445,10 @@ export default function CancelDealConfirmModal({
                               <p className="mt-1 text-[11px] text-[#6b7280]">
                                 Total paid {formatQuoteAmount(entry.cumulativeReceived)} · Remaining{" "}
                                 {formatQuoteAmount(entry.remainingAfter)}
-                                {entry.source ? (
+                                {paymentHistoryMetaLine(entry) ? (
                                   <span className="text-[#9ca3af]">
                                     {" "}
-                                    · {formatPaymentSource(entry.source)}
+                                    · {paymentHistoryMetaLine(entry)}
                                   </span>
                                 ) : null}
                               </p>

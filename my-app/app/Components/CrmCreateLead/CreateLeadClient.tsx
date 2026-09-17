@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useState, useTransition, type ReactNode } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { Lead } from "@/lib/data";
 import { BUDGET_OPTIONS } from "@/lib/data";
 import CompleteTaskModal from "../CrmLeadDetails/CompleteTaskModal";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { Button, Input, Select, Textarea } from "../CrmLeadDetails/ui";
 import {
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
+  CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   normalizeRole,
 } from "@/lib/auth/api";
@@ -95,7 +98,6 @@ type CreateLeadFormState = {
   leadSource: string;
   languagePrefered: string;
   propertyDetails: string;
-  designerName: string;
   notes: string;
   followUpDate: string;
   quoteLink: string;
@@ -127,7 +129,6 @@ const INITIAL_FORM: CreateLeadFormState = {
   leadSource: "",
   languagePrefered: "",
   propertyDetails: "",
-  designerName: "",
   notes: "",
   followUpDate: getDefaultFollowUpDateTimeLocal(),
   quoteLink: "",
@@ -236,6 +237,8 @@ export default function CreateLeadClient() {
   const router = useRouter();
   const [role, setRole] = useState("SUPER_ADMIN");
   const [currentUserName, setCurrentUserName] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   useEffect(() => {
     const stored =
       window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "SUPER_ADMIN";
@@ -243,6 +246,11 @@ export default function CreateLeadClient() {
     setCurrentUserName(
       (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "").trim(),
     );
+    setLoginUsername(
+      (window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY) ?? "").trim(),
+    );
+    const rawId = Number(window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY) ?? "");
+    setCurrentUserId(Number.isFinite(rawId) && rawId > 0 ? rawId : null);
   }, []);
   const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
   const [error, setError] = useState<string | null>(null);
@@ -254,6 +262,8 @@ export default function CreateLeadClient() {
   } | null>(null);
   const [isPending, startTransition] = useTransition();
   const minFollowUpDate = getTodayStartDateTimeLocal();
+  /** Create Lead: pincode required only for Sales Executive — other roles unchanged. */
+  const isSalesExecutive = role === "SALES_EXECUTIVE";
 
   const selectedFeedback = FEEDBACK_OPTIONS.find(
     (option) => option.substage === form.feedbackSubstage,
@@ -266,7 +276,7 @@ export default function CreateLeadClient() {
     status: form.feedbackSubstage || "Fresh Lead",
     createdAt: "Today",
     assignee: "Unassigned",
-    designerName: form.designerName || "Not assigned",
+    designerName: "Not assigned",
     email: form.email,
     phone: form.phoneNumber,
     altPhone: form.altPhoneNumber,
@@ -320,6 +330,18 @@ export default function CreateLeadClient() {
       return;
     }
 
+    if (isSalesExecutive) {
+      const pin = form.propertyPincode.trim();
+      if (!pin) {
+        setError("Property pincode is required when creating a lead as Sales Executive.");
+        return;
+      }
+      if (!/^\d{6}$/.test(pin)) {
+        setError("Property pincode must be exactly 6 digits.");
+        return;
+      }
+    }
+
     if (
       form.altPhoneNumber.trim() &&
       !/^\d{10}$/.test(form.altPhoneNumber.trim())
@@ -345,7 +367,6 @@ export default function CreateLeadClient() {
       propertyPincode: form.propertyPincode.trim() || undefined,
       propertyPin: form.propertyPincode.trim() || undefined,
       pinCode: form.propertyPincode.trim() || undefined,
-      designerName: form.designerName.trim() || undefined,
       propertyDetails: form.propertyDetails.trim() || undefined,
       quoteLink: form.quoteLink.trim() || undefined,
       followUpDate: form.followUpDate.trim() || getDefaultFollowUpDateTimeLocal(),
@@ -452,13 +473,7 @@ export default function CreateLeadClient() {
   }
 
   return (
-    <div
-      className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden"
-      style={{
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -472,28 +487,8 @@ export default function CreateLeadClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <div className="flex items-center gap-3">
-                <Image
-                  src="/HowsCrmLogo.png"
-                  alt="Hows CRM"
-                  width={46}
-                  height={46}
-                />
-                <div>
-                  <div className="text-[1.6rem] font-extrabold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                    Create Lead
-                  </div>
-                  <div className="text-sm text-[var(--crm-text-muted)]">
-                    New frontend form integrated with the original CRM create
-                    API
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <SlimScrollArea className="bg-[var(--crm-app-bg)] xl:h-screen crm-main-scroll">
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6 lg:px-8">
             <div className="mx-auto max-w-[1460px] space-y-6">
@@ -514,6 +509,19 @@ export default function CreateLeadClient() {
                   {error}
                 </div>
               ) : null}
+
+              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
+                <p className="font-semibold text-[var(--crm-text-primary)]">
+                  Meta Ads / Instant Forms
+                </p>
+                <p className="mt-1 leading-relaxed">
+                  Meta Instant Form leads sync automatically from Facebook. New
+                  leads start as Unverified and go to Presales. After
+                  verification they move to Sales, same as Google leads. Manual /
+                  Sheet create for Meta Ads is turned off — use this form for
+                  Add Lead only.
+                </p>
+              </div>
 
               {success ? (
                 <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-success-text)]">
@@ -563,13 +571,24 @@ export default function CreateLeadClient() {
                           />
                         </div>
                         <div>
-                          <CreateLeadFieldLabel>
+                          <CreateLeadFieldLabel required={isSalesExecutive}>
                             Property Pincode
                           </CreateLeadFieldLabel>
                           <Input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder={
+                              isSalesExecutive
+                                ? "6-digit pincode (required)"
+                                : "6-digit pincode"
+                            }
                             value={form.propertyPincode}
                             onChange={(e) =>
-                              updateField("propertyPincode", e.target.value)
+                              updateField(
+                                "propertyPincode",
+                                e.target.value.replace(/\D/g, "").slice(0, 6),
+                              )
                             }
                             className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
                           />
@@ -700,19 +719,7 @@ export default function CreateLeadClient() {
                     </FormGroup>
 
                     <FormGroup>
-                      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-end">
-                        <div>
-                          <CreateLeadFieldLabel>
-                            Designer Name
-                          </CreateLeadFieldLabel>
-                          <Input
-                            value={form.designerName}
-                            onChange={(e) =>
-                              updateField("designerName", e.target.value)
-                            }
-                            className="h-10 rounded-md border-[var(--crm-border)] bg-[var(--crm-surface)]"
-                          />
-                        </div>
+                      <div className="flex justify-end">
                         <Button
                           type="button"
                           variant="outline"
@@ -796,7 +803,7 @@ export default function CreateLeadClient() {
               </form>
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
       <CompleteTaskModal
         lead={modalLead}

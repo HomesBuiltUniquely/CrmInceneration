@@ -5,7 +5,7 @@
 
 import type { ApiLead, CrmLeadType, LeadSourceCounts } from "@/lib/leads-filter";
 import { CRM_LEAD_TYPES, leadHasRawSalesMilestone } from "@/lib/leads-filter";
-import { countIvrCallLeads } from "@/lib/ivr-lead-source";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 
 export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   const compact = String(raw ?? "")
@@ -15,6 +15,7 @@ export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   if (compact === "glead" || compact === "googleads") return "glead";
   if (compact === "mlead" || compact === "metaads") return "mlead";
   if (compact === "addlead" || compact === "alead") return "addlead";
+  if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
   if (compact === "websitelead" || compact === "wlead") return "websitelead";
   if (compact === "walkinlead" || compact === "walkin") return "walkinlead";
   if (compact === "whatsapplead" || compact === "whatsapp") return "whatsapplead";
@@ -127,26 +128,60 @@ export function pickMilestoneRepresentativeRows(leads: ApiLead[]): ApiLead[] {
   return primary;
 }
 
-export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts & {
-  ivr_call: number;
-} {
-  const counts: LeadSourceCounts & { ivr_call: number } = {
-    all: leads.length,
-    formlead: 0,
-    glead: 0,
-    mlead: 0,
-    addlead: 0,
-    websitelead: 0,
-    walkinlead: 0,
-    whatsapplead: 0,
-    ivr_call: 0,
-  };
+function leadSourceForIvrCheck(lead: ApiLead): unknown {
+  const rec = lead as Record<string, unknown>;
+  const dynamic =
+    rec.dynamicFields && typeof rec.dynamicFields === "object" && !Array.isArray(rec.dynamicFields)
+      ? (rec.dynamicFields as Record<string, unknown>)
+      : {};
+  return (
+    rec.leadSource ??
+    rec.LeadSource ??
+    rec.leadsource ??
+    rec.source ??
+    dynamic.leadSource ??
+    dynamic.LeadSource ??
+    dynamic.leadsource ??
+    dynamic.source ??
+    ""
+  );
+}
+
+export function computeLeadTypeCountsFromRows(leads: ApiLead[]): LeadSourceCounts {
+  const counts = emptyLeadSourceCounts();
+  counts.all = leads.length;
   for (const lead of leads) {
+    if (isIvrInboundLead(lead.leadType, leadSourceForIvrCheck(lead))) {
+      counts.ivrlead += 1;
+      continue;
+    }
     const type = normalizeLeadTypeKey(lead.leadType);
     counts[type] += 1;
   }
-  counts.ivr_call = countIvrCallLeads(leads);
   return counts;
+}
+
+/** Hub `/counts` byLeadType can miss legacy add-lead IVR rows — raise ivrlead/addlead from list rows, never lower Hub. */
+export function overlayIvrLeadTypeCountsFromRows(
+  counts: LeadSourceCounts,
+  leads: ApiLead[],
+): LeadSourceCounts {
+  if (leads.length === 0) return counts;
+  const rowCounts = computeLeadTypeCountsFromRows(leads);
+  const hubIvr = Number(counts.ivrlead ?? 0);
+  const hubAdd = Number(counts.addlead ?? 0);
+  const nextIvr = Math.max(hubIvr, rowCounts.ivrlead);
+  // When rows reclassify add-lead IVR into ivrlead, addlead should not stay inflated.
+  const nextAdd =
+    rowCounts.ivrlead > hubIvr
+      ? Math.min(hubAdd, rowCounts.addlead)
+      : Math.max(hubAdd, rowCounts.addlead);
+  if (nextIvr === hubIvr && nextAdd === hubAdd) return counts;
+  return {
+    ...counts,
+    ivrlead: nextIvr,
+    addlead: nextAdd,
+  };
 }
 
 /** Primary-source unique customers by first-touch `leadType`. */

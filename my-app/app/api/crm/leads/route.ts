@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import type { ApiLead, LeadSourceCounts, LeadSummaryTotals, SpringPage } from "@/lib/leads-filter";
-import { CRM_LEAD_TYPES, crmLeadTopLevelStage, parseLeadSortTimestamp } from "@/lib/leads-filter";
-import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
+import {
+  CRM_LEAD_TYPES,
+  crmLeadTopLevelStage,
+  isCrmLeadVerified,
+  parseLeadSortTimestamp,
+} from "@/lib/leads-filter";
+import { upstreamAuthHeaders, withActAsUserHeaders } from "@/lib/crm-proxy-auth";
 import { getAllowedLeadTypesForRole } from "@/lib/crm-role-access";
 import { getRoleFromUser, normalizeRole, unwrapAuthUserPayload } from "@/lib/auth/api";
 import { getLocalMonthRangeIsoDates } from "@/lib/presales-heatmap-helpers";
@@ -21,16 +26,20 @@ import {
   whatsappHubUnavailableMessage,
 } from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
-import { normalizeLeadTypeKey } from "@/lib/primary-source-leads";
+import { computeLeadTypeCountsFromRows, normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
-import { parseAssigneeAliasSetQuery } from "@/lib/admin-assignee-match";
+import {
+  filterLeadsByAssigneeScope,
+  parseAssigneeAliasSetQuery,
+  parseAssigneeUserIdsQuery,
+} from "@/lib/admin-assignee-match";
 import {
   hubHandlesDateFilter,
   rawInInclusiveDateRange,
   resolveEffectiveDateField,
 } from "@/lib/crm-date-field-filter";
-import { hubLeadTypeForFilterKey, isIvrCallFilterKey } from "@/lib/ivr-lead-source";
+import { hubLeadTypeForFilterKey } from "@/lib/ivr-lead-source";
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -86,6 +95,7 @@ function emptySourceCounts(): LeadSourceCounts {
     glead: 0,
     mlead: 0,
     addlead: 0,
+    ivrlead: 0,
     websitelead: 0,
     walkinlead: 0,
     whatsapplead: 0,
@@ -93,13 +103,7 @@ function emptySourceCounts(): LeadSourceCounts {
 }
 
 function computeSourceCounts(leads: ApiLead[]): LeadSourceCounts {
-  const counts = emptySourceCounts();
-  for (const lead of leads) {
-    const leadType = normalizeLeadTypeKey(lead.leadType);
-    counts[leadType] += 1;
-    counts.all += 1;
-  }
-  return counts;
+  return computeLeadTypeCountsFromRows(leads);
 }
 
 /** Hub admin pool / mergeAll may omit walk-in + WhatsApp — fold filter counts into `all`. */
@@ -187,7 +191,19 @@ const LEADS_EXTRA_PARAMS = [
   "verificationStatus",
   "reinquiry",
   "leadSource",
+  // SA → SM: Hub manager team scope (same roster as SM my-leads ∪ team-leads when supported).
+  "salesManagerId",
+  "managerUserId",
+  "actAsUserId",
 ] as const;
+
+function readActAsUserId(url: URL): number {
+  for (const key of ["actAsUserId", "salesManagerId", "managerUserId"] as const) {
+    const n = Number((url.searchParams.get(key) ?? "").trim());
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
+}
 
 function buildLeadsExtraParams(
   url: URL,
@@ -200,8 +216,11 @@ function buildLeadsExtraParams(
 }
 
 /**
- * Walk-in / WhatsApp in merged `leadType=all` use per-source verification defaults
- * (e.g. admins see unverified WhatsApp) — not the global sales `verified` inbox filter.
+ * Walk-in / WhatsApp in merged `leadType=all` normally use per-source verification defaults.
+ * WhatsApp dual path: sales → verified (includes pin auto-verified); presales → unverified;
+ * admins may get an empty filter to see both buckets.
+ * When the caller pins `verificationStatus` (sales inbox / heatmap = verified), keep it —
+ * clearing it for dedicated sources inflated Fresh (card 70 vs real verified ~30 / table).
  */
 function buildDedicatedMergeExtraParams(
   url: URL,
@@ -213,6 +232,11 @@ function buildDedicatedMergeExtraParams(
 ): Array<{ key: string; value: string }> {
   const params = buildLeadsExtraParams(url, effDates);
   if (leadTypeParam !== "all") return params;
+  const pinnedVs = (url.searchParams.get("verificationStatus") ?? "").trim();
+  if (pinnedVs) {
+    // Sales heatmap + My Leads use verificationStatus=verified for every source.
+    return params;
+  }
   const workspace: CrmWorkspace = usePresalesSearchPool ? "presales" : "sales";
   const typeVs = defaultVerificationForLeadTypeFilter(
     dedicatedLeadType,
@@ -415,13 +439,20 @@ function filterAndSortMergedLeads(
   const assigneeAliasSet = parseAssigneeAliasSetQuery(
     url.searchParams.get("assigneeAliasSet"),
   );
-  const skipAssigneeSubstringFilter = assigneeAliasSet.length > 0;
+  const assigneeUserIds = parseAssigneeUserIdsQuery(
+    url.searchParams.get("assigneeUserIds"),
+  );
+  const skipAssigneeSubstringFilter =
+    assigneeAliasSet.length > 0 || assigneeUserIds.length > 0;
   const mStage = (url.searchParams.get("milestoneStage") ?? "").trim();
   const mCat = (url.searchParams.get("milestoneStageCategory") ?? "").trim();
   const mSub = (url.searchParams.get("milestoneSubStage") ?? "").trim();
   const psStage = (url.searchParams.get("presalesMilestoneStage") ?? "").trim();
   const psCat = (url.searchParams.get("presalesMilestoneCategory") ?? "").trim();
   const psSub = (url.searchParams.get("presalesMilestoneSubStage") ?? "").trim();
+  const verificationStatus = (url.searchParams.get("verificationStatus") ?? "")
+    .trim()
+    .toLowerCase();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
   const skipHubDateFilter = hubHandlesDateFilter({
@@ -431,8 +462,11 @@ function filterAndSortMergedLeads(
     crmMonthWindow: url.searchParams.get("crmMonthWindow"),
   });
 
-  return leads
+  const sorted = leads
     .filter((lead) => {
+      if (verificationStatus === "verified" && !isCrmLeadVerified(lead)) return false;
+      if (verificationStatus === "unverified" && isCrmLeadVerified(lead)) return false;
+
       if (search && !trustUpstreamSearch) {
         const needle = search.toLowerCase();
         const needleDigits = search.replace(/\D/g, "");
@@ -533,7 +567,6 @@ function filterAndSortMergedLeads(
           return false;
         }
       } else if (
-        !isExternalListRow &&
         (mStage || mCat || mSub) &&
         !leadMatchesWorkspaceMilestoneFilter(lead, "sales", mStage, mCat, mSub)
       ) {
@@ -542,6 +575,20 @@ function filterAndSortMergedLeads(
       return true;
     })
     .sort((a, b) => parseUpdatedAt(b) - parseUpdatedAt(a));
+
+  // aliasSet used to only skip substring filter — without applying itself, so
+  // Hub unscoped merges never narrowed to the SM team. Apply exact/loose scope here.
+  // userIds matter for Fresh Lead rows that have assigneeId but blank/odd assignee name.
+  //
+  // Do NOT skip re-filter when salesManagerId/actAs is set: Hub currently ignores
+  // those for Sales Admin (returns org-wide or JWT user pool). Trusting act-as
+  // alone inflated discovery; name-only without unassigned Fresh undercount Fresh.
+  if (assigneeAliasSet.length > 0 || assigneeUserIds.length > 0) {
+    return filterLeadsByAssigneeScope(sorted, assigneeAliasSet, {
+      userIds: assigneeUserIds,
+    });
+  }
+  return sorted;
 }
 
 export async function GET(req: NextRequest) {
@@ -584,15 +631,23 @@ export async function GET(req: NextRequest) {
 
   const managerEndpoint =
     roleView === "my" ? "/v1/leads/sales-manager/my-leads" : roleView === "team" ? "/v1/leads/sales-manager/team-leads" : "";
+  const actAsUserId = readActAsUserId(url);
+  // Admins may call SM my/team with act-as to mirror that manager's inventory.
+  const adminActingAsManager =
+    actAsUserId > 0 &&
+    (viewerRoleKey === "SALES_ADMIN" ||
+      viewerRoleKey === "SUPER_ADMIN" ||
+      viewerRoleKey === "ADMIN");
 
   if (!mergeAll && managerEndpoint) {
     const leadType =
       leadTypeParam === "all"
         ? "formlead"
-        : isIvrCallFilterKey(leadTypeParam)
-          ? "addlead"
-          : leadTypeParam;
-    if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
+        : hubLeadTypeParam || leadTypeParam;
+    if (
+      !adminActingAsManager &&
+      !allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])
+    ) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in this view.` },
         { status: 403 }
@@ -612,8 +667,19 @@ export async function GET(req: NextRequest) {
       const v = extraParamValue(url, key, effDates);
       if (v) upstream.searchParams.set(key, v);
     }
+    if (actAsUserId > 0) {
+      if (!upstream.searchParams.get("salesManagerId")) {
+        upstream.searchParams.set("salesManagerId", String(actAsUserId));
+      }
+      if (!upstream.searchParams.get("managerUserId")) {
+        upstream.searchParams.set("managerUserId", String(actAsUserId));
+      }
+    }
 
-    const res = await fetch(upstream.toString(), { headers: upstreamAuthHeaders(req), cache: "no-store" });
+    const res = await fetch(upstream.toString(), {
+      headers: withActAsUserHeaders(upstreamAuthHeaders(req), actAsUserId),
+      cache: "no-store",
+    });
     const text = await res.text();
     return new NextResponse(text, {
       status: res.status,
@@ -625,9 +691,7 @@ export async function GET(req: NextRequest) {
     const leadType =
       leadTypeParam === "all"
         ? "formlead"
-        : isIvrCallFilterKey(leadTypeParam)
-          ? "addlead"
-          : leadTypeParam;
+        : hubLeadTypeParam || leadTypeParam;
     if (!allowedLeadTypes.includes(leadType as (typeof CRM_LEAD_TYPES)[number])) {
       return NextResponse.json(
         { error: `${viewerRoleKey || "Current role"} cannot access ${leadType} in filter flow.` },
@@ -658,7 +722,7 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam) && !isIvrCallFilterKey(leadTypeParam)) {
+  if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
     const presalesPerType = 1000;
     const presalesMaxPages = 200;
     const presalesRows = await fetchPresalesSearchLeads(
@@ -820,18 +884,28 @@ export async function GET(req: NextRequest) {
       upstream.searchParams.set("sort", sort);
       if (search) upstream.searchParams.set("search", search);
       appendLeadsExtraParams(upstream, url, effDates, isPresalesPool);
-      // When hierarchy aliasSet is present, assignee param is empty on the request.
-      // Extract the first alias as a display name hint and send to Hub so Hub
-      // pre-filters server-side. UI filterLeadsByAssigneeScope still does
-      // exact match after merge — this just reduces Hub returning unfiltered pool.
+      if (actAsUserId > 0) {
+        if (!upstream.searchParams.get("salesManagerId")) {
+          upstream.searchParams.set("salesManagerId", String(actAsUserId));
+        }
+        if (!upstream.searchParams.get("managerUserId")) {
+          upstream.searchParams.set("managerUserId", String(actAsUserId));
+        }
+      }
+      // Only hint Hub assignee from aliasSet when a single alias is present.
+      // Multi-person team aliasSets must not pin Hub to aliases[0] (manager) —
+      // that drops exec Fresh / assigned leads Sales Admin needs for SM parity.
+      // When salesManagerId/actAs is set, Hub owns team membership — do not pin assignee.
       const aliasSetRaw = (url.searchParams.get("assigneeAliasSet") ?? "").trim();
       const assigneeAlreadySet = (url.searchParams.get("assignee") ?? "").trim();
-      if (aliasSetRaw && !assigneeAlreadySet) {
-        const firstAlias = aliasSetRaw
+      if (actAsUserId <= 0 && aliasSetRaw && !assigneeAlreadySet) {
+        const aliases = aliasSetRaw
           .split("\0")
           .map((s) => s.trim())
-          .filter(Boolean)[0] ?? "";
-        if (firstAlias) upstream.searchParams.set("assignee", firstAlias);
+          .filter(Boolean);
+        if (aliases.length === 1 && aliases[0]) {
+          upstream.searchParams.set("assignee", aliases[0]);
+        }
       }
       return upstream;
     };
@@ -840,9 +914,10 @@ export async function GET(req: NextRequest) {
       const allLeads: ApiLead[] = [];
       let accessDenied = false;
       let upstreamTotalPages = 1;
+      const hubAuthHeaders = withActAsUserHeaders(upstreamAuthHeaders(req), actAsUserId);
       for (let pageNum = 0; pageNum < maxPagesPerType; pageNum += 1) {
         const res = await fetch(buildUpstream(pageNum).toString(), {
-          headers: upstreamAuthHeaders(req),
+          headers: hubAuthHeaders,
           cache: "no-store",
         });
         if (!res.ok) {

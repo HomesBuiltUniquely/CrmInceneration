@@ -20,10 +20,25 @@ export type ResumeMeetingScheduleDetail = {
   meetingFeedback?: string;
 };
 
+/** Lead fields written from Configuration Scope finalize (BHK lives on lead, not scope). */
+export type ConfigurationScopeUpdatedDetail = {
+  leadType?: string;
+  leadId?: string;
+  configuration?: string;
+  propertyName?: string;
+  bookingType?: string;
+};
+
 /** Notify lead detail UI (e.g. data completeness meter) after scope requirements change. */
-export function notifyConfigurationScopeUpdated(): void {
+export function notifyConfigurationScopeUpdated(
+  detail?: ConfigurationScopeUpdatedDetail,
+): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(CONFIGURATION_SCOPE_UPDATED_EVENT));
+  window.dispatchEvent(
+    new CustomEvent<ConfigurationScopeUpdatedDetail>(CONFIGURATION_SCOPE_UPDATED_EVENT, {
+      detail: detail ?? {},
+    }),
+  );
 }
 
 /** Open Configuration Scope from Complete Task (or elsewhere) and optionally highlight gaps. */

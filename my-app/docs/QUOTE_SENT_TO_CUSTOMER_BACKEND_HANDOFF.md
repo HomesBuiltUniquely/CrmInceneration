@@ -237,3 +237,51 @@ Won / Lost: Lost = sent + lost path; Won = Total − Lost. Counting runs only on
 | Quote Due tile | Unchanged: quote pending substages (not sent) |
 
 **Frontend contact point:** `CrmInceneration/my-app` — `lib/lead-milestone-insight-tiles.ts`, `app/Components/CrmLeadData/LeadsToolbar.tsx`, Send Quote in `LeadDetailsApiClient.tsx`.
+
+---
+
+## 10. Insights KPI — quotes sent this month (filter by send date)
+
+CRM Insights card **Quotes Sent** must count leads whose **quote was sent in the selected month**, even if the lead was created earlier.
+
+**Do not** filter this KPI on `created_at` / enquiry date.
+
+### Lead fields Hub must persist (list + detail)
+
+| JSON field | Type | Rule |
+|---|---|---|
+| `quoteSentToCustomer` | boolean | True after a successful customer send |
+| `quoteSentAt` | string (ISO) \| null | **First** successful send |
+| `lastQuoteSentAt` | string (ISO) \| null | **Latest** send (use this for the month window when present) |
+| `quoteSentCount` | number | Optional |
+| Quotation value | number | Current quote Total Investment (same source as quote-sent value elsewhere) |
+
+### New Hub API
+
+`GET /v1/crm/insights/quotes-sent-month`
+
+Same scope query params as performance-cards (`dateFrom`, `dateTo`, `dateRange=current_month`, `branchId`, `salesManagerId`, `salesExecutiveId`).
+
+**Window:** `lastQuoteSentAt` if set, else `quoteSentAt`, must fall in `[dateFrom, dateTo]` (calendar month when `dateRange=current_month`).
+
+**Example response:**
+
+```json
+{
+  "success": true,
+  "hubImplemented": true,
+  "filterField": "quoteSentAt",
+  "periodStart": "2026-08-01T00:00:00.000Z",
+  "periodEnd": "2026-08-31T23:59:59.999Z",
+  "quotesSentCount": 15,
+  "quotationValueInr": 5200000
+}
+```
+
+| Property | Meaning |
+|---|---|
+| `quotesSentCount` | Distinct sales leads with a quote **sent in this window** |
+| `quotationValueInr` | Sum of those leads’ current quotation value (INR) |
+
+CRM BFF: `GET /api/crm/insights/quotes-sent-month` (proxies Hub). Until Hub ships this, CRM computes the same KPI from the sales pool using `quoteSentAt`.
+

@@ -12,12 +12,16 @@ export type ActivityType =
   | "design_qa_invite"
   /** Backend `DESIGN_QA_SUBMITTED` — customer submitted external Design QA form. */
   | "design_qa_submitted"
-  /** Booking & Token handoff, cancel, restore, refund audit events. */
-  | "booking_token";
+  /** Booking & Token handoff, cancel, restore, refund audit events (non-payment). */
+  | "booking_token"
+  /** Easebuzz / payment link + settlement events (`BOOKING_PAYMENT_*`). */
+  | "payment";
 
 export interface ActivityItem {
   id: string;
   type: ActivityType;
+  /** Hub `activityType` before UI mapping (e.g. BOOKING_PAYMENT_LINK_SENT). */
+  rawActivityType?: string;
   timestamp: string;
   createdAtIso?: string;
   description: string;
@@ -38,6 +42,9 @@ export type LeadStageBlock = {
   presalesMilestoneSubStage?: string | null;
   stage?: string | null;
   substage?: { substage?: string | null } | null;
+  renovationAssigned?: boolean;
+  renovationSalesManager?: string | null;
+  renovationSalesExecutive?: string | null;
 };
 
 export interface Lead {

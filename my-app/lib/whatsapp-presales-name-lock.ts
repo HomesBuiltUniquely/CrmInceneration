@@ -1,5 +1,5 @@
 import { isWhatsappLeadTypeKey } from "@/lib/crm-whatsapp-leads";
-import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import { canViewBothMilestonePipelines, isPresalesRole } from "@/lib/roleUtils";
 export const WHATSAPP_PRESALES_NAME_USED_STORAGE_KEY =
   "crm-whatsapp-presales-name-used";
@@ -13,8 +13,8 @@ function storageKeyForLead(
 ): string {
   const id = leadId.trim();
   if (isWhatsappLeadTypeKey(leadType)) return `whatsapplead:${id}`;
-  if (leadType.trim().toLowerCase() === "addlead" && isIvrCallLeadSource(leadSource)) {
-    return `addlead:ivrcall:${id}`;
+  if (isIvrInboundLead(leadType, leadSource)) {
+    return `ivrlead:${id}`;
   }
   return `${leadType.trim().toLowerCase()}:${id}`;
 }
@@ -24,7 +24,7 @@ export function isPresalesOneTimeNameEditLead(
   leadSource?: string,
 ): boolean {
   if (isWhatsappLeadTypeKey(leadType)) return true;
-  return leadType.trim().toLowerCase() === "addlead" && isIvrCallLeadSource(leadSource);
+  return isIvrInboundLead(leadType, leadSource);
 }
 
 function readStoredNameUsedMap(): StoredNameUsedMap {
@@ -104,7 +104,7 @@ export function isDefaultInboundPlaceholderName(
   if (isWhatsappLeadTypeKey(leadType)) {
     return isDefaultWhatsappPlaceholderName(name, phone);
   }
-  if (leadType.trim().toLowerCase() === "addlead" && isIvrCallLeadSource(leadSource)) {
+  if (isIvrInboundLead(leadType, leadSource)) {
     return isDefaultIvrCallPlaceholderName(name, phone);
   }
   return !name.trim();
@@ -220,10 +220,7 @@ export function validateWhatsappCustomerNameForSave(
     return { ok: false, message: "Enter a customer name before saving." };
   }
   if (isDefaultInboundPlaceholderName(leadType ?? "whatsapplead", leadSource, trimmed, phone)) {
-    const channel =
-      leadType?.trim().toLowerCase() === "addlead" && isIvrCallLeadSource(leadSource)
-        ? "IVR call"
-        : "WhatsApp";
+    const channel = isIvrInboundLead(leadType, leadSource) ? "IVR call" : "WhatsApp";
     return {
       ok: false,
       message: `Replace the default ${channel} name with the customer's real name.`,

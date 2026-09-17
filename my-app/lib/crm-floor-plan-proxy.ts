@@ -12,6 +12,7 @@ const SEGMENT_TO_CRM: Record<string, CrmLeadType> = {
   website: "websitelead",
   form: "formlead",
   add: "addlead",
+  ivrlead: "ivrlead",
   walkin: "walkinlead",
   whatsapp: "whatsapplead",
 };

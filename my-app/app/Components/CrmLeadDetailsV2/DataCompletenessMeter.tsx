@@ -96,7 +96,7 @@ export default function DataCompletenessMeter() {
   const barColor = percent >= 100 ? "bg-[#1ed760]" : percent >= 50 ? "bg-[#1ed760]" : "bg-[#f59e0b]";
 
   return (
-    <div className="mt-3 max-w-[560px]">
+    <div className="mt-2 max-w-[560px]">
       <div className="flex items-end justify-between">
         <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#8a96a8]">
           Data Completeness

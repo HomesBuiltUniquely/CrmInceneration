@@ -5,13 +5,15 @@ import {
   isClosedWonCustomerSubstage,
   isClosedWonPathCategory,
 } from "@/lib/milestone-substage-map";
-import { getLeadDisplayName } from "@/lib/lead-display";
+import {
+  getLeadDisplayName,
+  getLeadDisplaySource,
+} from "@/lib/lead-display";
 import {
   formatAdditionalLeadSourcesLabel,
   isCrmLeadReinquiry,
 } from "@/lib/lead-source-utils";
-import { getLeadDisplaySource } from "@/lib/lead-display";
-import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
+import { isIvrCallLeadSource, isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import {
   formatPresalesListStatusLabel,
   getListDisplayMilestone,
@@ -31,6 +33,7 @@ export const CRM_LEAD_TYPES = [
   "glead",
   "mlead",
   "addlead",
+  "ivrlead",
   "websitelead",
   "walkinlead",
   "whatsapplead",
@@ -57,6 +60,8 @@ export type SpringPage<T> = {
   totalRowCount?: number;
   sourceCounts?: LeadSourceCounts;
   summaryTotals?: LeadSummaryTotals;
+  /** Journey phase histogram (same inventory as summaryTotals / Total Leads). */
+  milestoneCounts?: Record<string, number>;
   /** SUPER_ADMIN cross-pool search: per-pool match counts (not deduped across pools). */
   salesSearchTotal?: number;
   presalesSearchTotal?: number;
@@ -94,6 +99,11 @@ export type ApiLead = {
   createdOn?: string;
   firstCallAt?: string | null;
   verified?: boolean | null;
+  /** Property pincode — WhatsApp may set this on inbound and auto-verify. */
+  propertyPin?: string | null;
+  propertyPincode?: string | null;
+  pincode?: string | null;
+  pinCode?: string | null;
   /**
    * Backend truth for New CRM list/detail and `verificationStatus=verified` filters.
    * Optional: `presalesTrackingReadOnly` (when API sends it) — detail UX only; does not redefine “verified”.
@@ -433,7 +443,9 @@ function leadDisplayName(lead: ApiLead): string {
 }
 
 function companyFallback(lead: ApiLead): string {
-  return lead.companyName ?? "—";
+  const row = lead as Record<string, unknown>;
+  const humanId = String(row.leadId ?? row.lead_identifier ?? row.leadIdentifier ?? "").trim();
+  return lead.companyName?.trim() || humanId || "—";
 }
 
 /** Legacy filter bucket — only rows with no milestone fields at all. */
@@ -531,12 +543,44 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
 
   const looksFreshLead = [stage, stageCategory, subStage].some((value) => {
     const normalized = normalizeStageKey(value);
-    return normalized === "fresh lead" || normalized === "fresh leads" || /^fresh\s+leads?$/.test(normalized);
+    return (
+      normalized === "fresh lead" ||
+      normalized === "fresh leads" ||
+      /^fresh\s+leads?$/.test(normalized)
+    );
   });
 
   if (looksFreshLead) return "Fresh Lead";
-  if (stage) return stage;
-  return "Fresh Lead";
+  // Blank / Initial Stage sales milestone → Fresh Lead (heatmap + Insights).
+  if (!stageKey || stageKey === "initial stage" || stageKey === "initial") {
+    return "Fresh Lead";
+  }
+
+  // Hub Insights checkpoint map — substages can sit under the wrong milestoneStage.
+  // Meeting Successful / Quote Sent → Exp & Design (never Decision).
+  // Meeting Scheduled → Connection.
+  const subKey = normalizeStageKey(subStage);
+  if (
+    subKey.includes("meeting successful") ||
+    subKey === "quote sent" ||
+    subKey.includes("quote sent")
+  ) {
+    return "Experience & Design";
+  }
+  if (subKey.includes("meeting scheduled")) {
+    return "Connection";
+  }
+  if (
+    stageKey.includes("meeting successful") ||
+    stageKey.includes("quote sent")
+  ) {
+    return "Experience & Design";
+  }
+  if (stageKey.includes("meeting scheduled")) {
+    return "Connection";
+  }
+
+  return stage;
 }
 
 function leadCreatedAtRaw(lead: ApiLead): string {
@@ -577,9 +621,20 @@ function formatRelativeTime(iso?: string): string {
 
 export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): CrmLeadType {
   const t = (raw ?? "").trim().toLowerCase();
-  if (t === "formlead" || t === "glead" || t === "mlead" || t === "addlead" || t === "websitelead" || t === "walkinlead" || t === "whatsapplead") {
+  if (
+    t === "formlead" ||
+    t === "glead" ||
+    t === "mlead" ||
+    t === "addlead" ||
+    t === "ivrlead" ||
+    t === "websitelead" ||
+    t === "walkinlead" ||
+    t === "whatsapplead"
+  ) {
     return t;
   }
+  const compact = t.replace(/[^a-z0-9]/g, "");
+  if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
   return fallback;
 }
 
@@ -626,7 +681,9 @@ export function mapApiLeadToRow(
     statusLabel,
     leadSource: (() => {
       const source = getLeadDisplaySource({ ...lead, leadType: lead.leadType ?? sourceLeadType });
-      return isIvrCallLeadSource(source) ? "IVR Call" : undefined;
+      return isIvrCallLeadSource(source) || isIvrLeadTypeKey(lead.leadType ?? sourceLeadType)
+        ? "IVR Call"
+        : undefined;
     })(),
     verificationTag: normalizeVerificationTag(lead),
     reinquiry: hasReinquiry(lead),

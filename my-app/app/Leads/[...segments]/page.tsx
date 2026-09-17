@@ -26,7 +26,7 @@ export default async function LeadDetailsPage({
       return <LeadDetailsClient lead={mock} />;
     }
     if (/^\d+$/.test(slug)) {
-      return <NewLeadDetailApiClient leadType="formlead" leadId={slug} />;
+      return <NewLeadDetailApiClient leadType="formlead" leadId={slug} isPopupMode={false} />;
     }
     notFound();
   }
@@ -34,7 +34,7 @@ export default async function LeadDetailsPage({
   if (segments.length === 2) {
     const [a, b] = segments;
     if (isCrmLeadType(a) && /^\d+$/.test(b)) {
-      return <NewLeadDetailApiClient leadType={a} leadId={b} />;
+      return <NewLeadDetailApiClient leadType={a} leadId={b} isPopupMode={false} />;
     }
     notFound();
   }

@@ -83,6 +83,48 @@ export function joinProjectUnderstanding(
   return `${property}${PROJECT_UNDERSTANDING_SEP}${family}`;
 }
 
+/** Prefer dedicated `propertyName`, fall back to legacy projectUnderstanding head. */
+export function resolvePropertyNameSite(
+  propertyName: string | null | undefined,
+  projectUnderstanding: string | null | undefined,
+): string {
+  const fromField = (propertyName ?? "").trim();
+  if (fromField) return fromField;
+  return splitProjectUnderstanding(projectUnderstanding).propertyNameSite;
+}
+
+export function resolveFamilySizeDetails(
+  projectUnderstanding: string | null | undefined,
+): string {
+  return splitProjectUnderstanding(projectUnderstanding).familySizeDetails;
+}
+
+/**
+ * Keep `propertyName` and legacy `projectUnderstanding` in sync so Meeting Scheduled
+ * validation and reloads do not see empty property after save.
+ */
+export function withCoherentPropertyNameFields(
+  req: ConfigurationScopeRequirements,
+): ConfigurationScopeRequirements {
+  const property = resolvePropertyNameSite(req.propertyName, req.projectUnderstanding);
+  const family = resolveFamilySizeDetails(req.projectUnderstanding);
+  return {
+    ...req,
+    propertyName: property || null,
+    projectUnderstanding: joinProjectUnderstanding(property, family),
+  };
+}
+
+function preferSentNullable(
+  sent: string | null | undefined,
+  fromHub: string | null | undefined,
+): string | null {
+  const s = (sent ?? "").trim();
+  if (s) return s;
+  const h = (fromHub ?? "").trim();
+  return h || null;
+}
+
 export type ConfigurationScopeReference = {
   id: string;
   fileName?: string;
@@ -427,30 +469,34 @@ export function mergeRequirementDefaults(
 
 export function toPutRequirementsBody(
   req: ConfigurationScopeRequirements,
+  extra?: { configuration?: string | null },
 ): PutConfigurationScopeRequirementsBody {
+  const coherent = withCoherentPropertyNameFields(req);
+  const configuration = (extra?.configuration ?? "").trim();
   return {
-    version: req.version,
-    availableRoomCatalog: Array.isArray(req.availableRoomCatalog)
-      ? req.availableRoomCatalog.map((x) => String(x).trim()).filter(Boolean)
+    version: coherent.version,
+    availableRoomCatalog: Array.isArray(coherent.availableRoomCatalog)
+      ? coherent.availableRoomCatalog.map((x) => String(x).trim()).filter(Boolean)
       : [],
-    selectedRooms: (Array.isArray(req.selectedRooms) ? req.selectedRooms : []).map(
+    selectedRooms: (Array.isArray(coherent.selectedRooms) ? coherent.selectedRooms : []).map(
       normalizeRoomForPut,
     ),
     // Always send a clean string[] so Hub stores add-ons with the same requirements API.
-    miscAddOns: normalizeMiscAddOns(req.miscAddOns),
-    kitchenLayout: req.kitchenLayout,
-    materialFinish: req.materialFinish,
-    familyContactName: req.familyContactName,
-    familyContactRelationship: req.familyContactRelationship,
-    familyContactPhone: req.familyContactPhone,
-    propertyName: req.propertyName,
-    bookingType: req.bookingType,
-    projectUnderstanding: req.projectUnderstanding,
-    designStylePreference: req.designStylePreference,
-    expectedTimeline: req.expectedTimeline,
-    internalExecutiveNotes: req.internalExecutiveNotes,
-    salesRiskNotes: req.salesRiskNotes,
-    designHandoffNotes: req.designHandoffNotes,
+    miscAddOns: normalizeMiscAddOns(coherent.miscAddOns),
+    kitchenLayout: coherent.kitchenLayout,
+    materialFinish: coherent.materialFinish,
+    familyContactName: coherent.familyContactName,
+    familyContactRelationship: coherent.familyContactRelationship,
+    familyContactPhone: coherent.familyContactPhone,
+    propertyName: coherent.propertyName,
+    bookingType: coherent.bookingType,
+    ...(configuration ? { configuration } : {}),
+    projectUnderstanding: coherent.projectUnderstanding,
+    designStylePreference: coherent.designStylePreference,
+    expectedTimeline: coherent.expectedTimeline,
+    internalExecutiveNotes: coherent.internalExecutiveNotes,
+    salesRiskNotes: coherent.salesRiskNotes,
+    designHandoffNotes: coherent.designHandoffNotes,
   };
 }
 
@@ -466,6 +512,8 @@ export type PutConfigurationScopeRequirementsBody = {
   familyContactPhone: string | null;
   propertyName: string | null;
   bookingType: string | null;
+  /** BHK on the lead row. Sent only when set so Hub can copy it like bookingType. */
+  configuration?: string | null;
   projectUnderstanding: string | null;
   designStylePreference: string | null;
   expectedTimeline: string | null;
@@ -711,7 +759,9 @@ export async function getConfigurationScopeRequirements(
     return mergeRequirementDefaults(createDefaultRequirements()).requirements;
   }
 
-  return hydrateFamilyContactRelationship(normalizeRequirements(data), leadType, id);
+  return withCoherentPropertyNameFields(
+    hydrateFamilyContactRelationship(normalizeRequirements(data), leadType, id),
+  );
 }
 
 export async function putConfigurationScopeRequirements(
@@ -753,11 +803,22 @@ export async function putConfigurationScopeRequirements(
     leadType,
     id,
   );
-  // Prefer values we just sent — Hub sometimes omits miscAddOns / falseCeilingRequired.
-  return {
+  // Prefer values we just sent — Hub sometimes omits miscAddOns / falseCeilingRequired /
+  // propertyName (and related §1 fields).
+  return withCoherentPropertyNameFields({
     ...mergeSentRoomFlags(normalized, body.selectedRooms),
     miscAddOns: normalizeMiscAddOns(body.miscAddOns),
-  };
+    propertyName: preferSentNullable(body.propertyName, normalized.propertyName),
+    bookingType: preferSentNullable(body.bookingType, normalized.bookingType),
+    projectUnderstanding: preferSentNullable(
+      body.projectUnderstanding,
+      normalized.projectUnderstanding,
+    ),
+    expectedTimeline: preferSentNullable(
+      body.expectedTimeline,
+      normalized.expectedTimeline,
+    ),
+  });
 }
 
 export async function getConfigurationScopeReferences(

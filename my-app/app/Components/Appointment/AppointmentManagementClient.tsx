@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
@@ -233,7 +235,7 @@ export default function AppointmentManagementClient() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -247,14 +249,8 @@ export default function AppointmentManagementClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 items-center justify-between px-4 md:px-6">
-              <h1 className="text-[1.35rem] font-bold tracking-[-0.03em] text-[var(--crm-text-primary)] md:text-[2rem]">
-                {roleLabel} Panel
-              </h1>
-            </div>
-          </div>
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen crm-main-scroll">
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6">
             <section className="mx-auto max-w-[1200px] rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[var(--crm-border)] dark:bg-[var(--crm-surface)]">
@@ -392,7 +388,7 @@ export default function AppointmentManagementClient() {
               </div>
             </section>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
 
       {createOpen ? (

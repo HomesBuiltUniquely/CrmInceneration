@@ -9,10 +9,12 @@ import { canUseNewLeadDetailUi } from "@/lib/roleUtils";
 type Props = {
   leadType: string;
   leadId: string;
+  /** True when rendered inside CrmFullscreenOverlayModal (popup mode). False when rendered via URL routing. */
+  isPopupMode?: boolean;
 };
 
 /** API-backed lead detail — V2 on sales workspace; legacy on presales workspace/roles. */
-export default function NewLeadDetailApiClient({ leadType, leadId }: Props) {
+export default function NewLeadDetailApiClient({ leadType, leadId, isPopupMode = false }: Props) {
   const [uiVariant, setUiVariant] = useState<"legacy" | "v2" | null>(null);
 
   useEffect(() => {
@@ -29,5 +31,5 @@ export default function NewLeadDetailApiClient({ leadType, leadId }: Props) {
     );
   }
 
-  return <LeadDetailsApiClient leadType={leadType} leadId={leadId} uiVariant={uiVariant} />;
+  return <LeadDetailsApiClient leadType={leadType} leadId={leadId} uiVariant={uiVariant} isPopupMode={isPopupMode} />;
 }

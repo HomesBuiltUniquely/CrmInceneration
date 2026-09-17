@@ -32,7 +32,6 @@ export async function POST(req: NextRequest) {
       "x-external-api-key": EXTERNAL_LEAD_INGEST_API_KEY,
     },
     body: bodyText.length ? bodyText : "{}",
-    cache: "no-store",
   });
 
   const payload = await readUpstreamPayload(res);

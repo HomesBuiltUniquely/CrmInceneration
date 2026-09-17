@@ -24,8 +24,37 @@ import {
   type PaymentHistoryEntry,
   type PaymentHistoryResponse,
 } from "@/lib/booking-payment-history-api";
+import {
+  formatPaymentKind,
+  isEasebuzzPayment,
+  paymentHistoryMetaLine,
+  type OfflinePaymentMethodId,
+  type PaymentChannelChoice,
+} from "@/lib/booking-payment-display";
+import {
+  PAYMENT_LINK_POLL_MS,
+  cancelPaymentLink,
+  copyPaymentLinkToClipboard,
+  createDealPaymentLink,
+  editPaymentLinkAmount,
+  fetchDealPaymentLinkActive,
+  hasLeadContact,
+  isBannerPaymentLink,
+  isStalePaymentLinkAction,
+  notifyPaymentLinkUpdated,
+  markPaymentLinkOnlineSuccess,
+  PaymentLinkApiError,
+  isPaymentLinkActiveConflict,
+  resolveSwitchOfflineAmount,
+  resendPaymentLink,
+  switchPaymentLinkOffline,
+  type PaymentLinkAttempt,
+} from "@/lib/booking-payment-link-api";
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import PaymentProofViewModal from "./PaymentProofViewModal";
+import PaymentChannelSelector from "./PaymentChannelSelector";
+import PaymentLinkPendingBanner from "./PaymentLinkPendingBanner";
+import LeadPaymentLinkStatusChip from "@/app/Components/CrmLeadDetailsV2/LeadPaymentLinkStatusChip";
 import BookingLeadDetailsGrid from "./BookingLeadDetailsGrid";
 import {
   EMPTY_BOOKING_LEAD_DETAILS,
@@ -42,7 +71,7 @@ import {
 } from "@/lib/booking-payment-overpay";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
-import { isSuperAdminRole } from "@/lib/roleUtils";
+import { isSuperAdminRole, canUsePaymentLinkIntegration } from "@/lib/roleUtils";
 import {
   formatBookingDateDisplay,
   formatFormSubmittedAt,
@@ -86,18 +115,6 @@ function getTopAlignedPanelPosition(panelWidth: number, panelHeight: number) {
   );
 }
 
-function formatPaymentKind(kind?: string): string {
-  if (!kind) return "";
-  return kind.replace(/_/g, " ");
-}
-
-function formatPaymentSource(source?: string): string {
-  if (!source) return "";
-  if (source === "booking_done") return "Booking Done";
-  if (source === "pay_action") return "Pay action";
-  return source.replace(/_/g, " ");
-}
-
 function formatHistoryDate(iso: string): string {
   return formatFormSubmittedAt(iso);
 }
@@ -125,6 +142,14 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [leadDetails, setLeadDetails] = useState<BookingLeadDetails>(EMPTY_BOOKING_LEAD_DETAILS);
   const [loadingLead, setLoadingLead] = useState(false);
   const [viewerRole, setViewerRole] = useState("");
+  const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRole);
+  const [channel, setChannel] = useState<PaymentChannelChoice>("online");
+  const [offlineMethod, setOfflineMethod] = useState<OfflinePaymentMethodId | "">("");
+  const [activeAttempt, setActiveAttempt] = useState<PaymentLinkAttempt | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "online" | "offline">("all");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [copiedNotice, setCopiedNotice] = useState("");
+  const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -147,8 +172,17 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   const summary = historyData ?? (deal ? buildSummaryFromDeal(deal) : null);
   const history = summary?.history ?? [];
+  const visibleHistory = history.filter((entry) => {
+    if (historyFilter === "online") return isEasebuzzPayment(entry);
+    if (historyFilter === "offline") return !isEasebuzzPayment(entry);
+    return true;
+  });
   const selectedEntry =
-    history.find((entry) => entry.id === selectedEntryId) ?? history[history.length - 1] ?? null;
+    visibleHistory.find((entry) => entry.id === selectedEntryId) ??
+    history.find((entry) => entry.id === selectedEntryId) ??
+    visibleHistory[visibleHistory.length - 1] ??
+    history[history.length - 1] ??
+    null;
   const lastHistoryEntry = history[history.length - 1] ?? null;
   const canRemoveSelectedPayment =
     isSuperAdminRole(viewerRole) &&
@@ -171,18 +205,49 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     }
   }, [deal]);
 
+  const loadActiveAttempt = useCallback(async () => {
+    if (!canUsePaymentLinks) {
+      setActiveAttempt(null);
+      return null;
+    }
+    if (!deal) return null;
+    try {
+      const attempt = await fetchDealPaymentLinkActive(deal.id);
+      const next = isBannerPaymentLink(attempt) ? attempt : null;
+      setActiveAttempt(next);
+      return attempt;
+    } catch {
+      setActiveAttempt(null);
+      return null;
+    }
+  }, [canUsePaymentLinks, deal, viewerRole]);
+
   useEffect(() => {
     if (!open || !deal) return;
-    setAmountInput("");
+    const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRole);
+    setAmountInput(
+      mode === "pay" && deal.remainingAmount > 0
+        ? formatPaymentAmountInput(deal.remainingAmount)
+        : "",
+    );
     setNotes("");
     setDraftProofs([]);
     setHistoryData(null);
     setLeadDetails(EMPTY_BOOKING_LEAD_DETAILS);
+    setChannel(canUsePaymentLinks ? "online" : "offline");
+    setOfflineMethod("");
+    setActiveAttempt(null);
+    setHistoryFilter("all");
+    setCopiedNotice("");
+    setHistoryDetailOpen(false);
     void loadHistory();
-  }, [open, deal, loadHistory]);
+    if (canUsePaymentLinks) {
+      void loadActiveAttempt();
+    }
+  }, [open, deal, loadHistory, loadActiveAttempt, mode, viewerRole]);
 
   useEffect(() => {
-    if (!open || !deal || !isRichDetailView) return;
+    if (!open || !deal || (!isRichDetailView && mode !== "pay")) return;
     let cancelled = false;
     setLoadingLead(true);
     void (async () => {
@@ -199,7 +264,25 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     return () => {
       cancelled = true;
     };
-  }, [deal, isRichDetailView, open]);
+  }, [deal, isRichDetailView, mode, open]);
+
+  useEffect(() => {
+    if (!open || !deal || !canUsePaymentLinks || !activeAttempt?.id) return;
+    const tick = window.setInterval(() => {
+      void (async () => {
+        const previousId = activeAttempt?.id ?? null;
+        const previousStatus = activeAttempt?.status ?? null;
+        const attempt = await loadActiveAttempt();
+        const bannerGone = isBannerPaymentLink(attempt) === false;
+        const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
+        if ((previousId && bannerGone) || paid || (previousStatus && previousStatus !== attempt?.status)) {
+          await loadHistory();
+          if (paid || bannerGone) onUpdated?.();
+        }
+      })();
+    }, PAYMENT_LINK_POLL_MS);
+    return () => window.clearInterval(tick);
+  }, [activeAttempt?.id, activeAttempt?.status, canUsePaymentLinks, deal, loadActiveAttempt, loadHistory, onUpdated, open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -328,6 +411,10 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       setError("Upload at least one payment proof screenshot.");
       return;
     }
+    if (canUsePaymentLinks && !offlineMethod) {
+      setError("Select Cash, Cheque, Bank Transfer, or DD.");
+      return;
+    }
 
     setSubmitting(true);
     setError("");
@@ -336,6 +423,9 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         amount,
         notes,
         files: draftProofs.map((proof) => proof.file),
+        ...(canUsePaymentLinks
+          ? { paymentMethod: offlineMethod, paymentChannel: "OFFLINE" }
+          : {}),
       });
       for (const proof of draftProofs) {
         URL.revokeObjectURL(proof.previewUrl);
@@ -353,7 +443,170 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setSubmitting(false);
     }
-  }, [amountInput, deal, draftProofs, handleClose, loadHistory, mode, notes, onUpdated, summary]);
+  }, [amountInput, canUsePaymentLinks, deal, draftProofs, handleClose, loadHistory, mode, notes, offlineMethod, onUpdated, summary]);
+
+  const applyAttempt = useCallback(
+    (attempt: PaymentLinkAttempt | null | undefined) => {
+      if (!deal) {
+        setActiveAttempt(isBannerPaymentLink(attempt) ? attempt ?? null : null);
+        return;
+      }
+      const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
+      const banner = isBannerPaymentLink(attempt) ? attempt ?? null : null;
+      setActiveAttempt(banner);
+      notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), banner);
+      if (paid) markPaymentLinkOnlineSuccess(deal.leadType, String(deal.leadId));
+    },
+    [deal],
+  );
+
+  const handleSendPaymentLink = useCallback(async () => {
+    if (!deal || !summary) return;
+    if (isBannerPaymentLink(activeAttempt)) {
+      setError(
+        "A payment link is already pending. Wait for payment, delete the link, or switch to offline.",
+      );
+      return;
+    }
+    if (!hasLeadContact(leadDetails.phone, leadDetails.email)) {
+      setError("Phone and email are both missing. Add a contact before sending a payment link.");
+      return;
+    }
+    const amount = parsePaymentAmountInput(amountInput);
+    if (amountInput.trim() && (amount == null || amount <= 0)) {
+      setError("Enter a valid payment amount, or leave it blank to use the remaining amount.");
+      return;
+    }
+    setLinkBusy(true);
+    setError("");
+    try {
+      const result = await createDealPaymentLink(
+        deal.id,
+        amount != null && amount > 0 ? { amount } : {},
+      );
+      applyAttempt(result.attempt);
+      if (result.warnings?.length) {
+        setError(result.warnings.join(" · "));
+      }
+    } catch (err) {
+      if (isPaymentLinkActiveConflict(err)) {
+        if (err.attempt) applyAttempt(err.attempt);
+        setError(
+          err.message ||
+            "A payment link is already active. Delete it, wait for payment, or switch to offline.",
+        );
+      } else if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
+        setChannel("offline");
+        setError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+      } else {
+        setError(err instanceof Error ? err.message : "Unable to send payment link.");
+      }
+    } finally {
+      setLinkBusy(false);
+    }
+  }, [activeAttempt, amountInput, applyAttempt, deal, leadDetails.email, leadDetails.phone, summary]);
+
+  const handleCopyPaymentLink = useCallback(async () => {
+    if (!activeAttempt) return;
+    setLinkBusy(true);
+    setError("");
+    try {
+      const result = await copyPaymentLinkToClipboard(activeAttempt.id, activeAttempt);
+      if (result.attempt) applyAttempt(result.attempt);
+      setCopiedNotice("Payment link copied");
+      window.setTimeout(() => setCopiedNotice(""), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to copy payment link.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }, [activeAttempt, applyAttempt]);
+
+  const handleResendPaymentLink = useCallback(async () => {
+    if (!activeAttempt) return;
+    setLinkBusy(true);
+    setError("");
+    try {
+      const result = await resendPaymentLink(activeAttempt.id);
+      applyAttempt(result.attempt);
+    } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
+      if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
+        setChannel("offline");
+        setError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+      } else {
+        setError(err instanceof Error ? err.message : "Unable to resend payment link.");
+      }
+    } finally {
+      setLinkBusy(false);
+    }
+  }, [activeAttempt, applyAttempt, loadActiveAttempt]);
+
+  const handleEditPaymentLink = useCallback(
+    async (amount: number) => {
+      if (!activeAttempt) return;
+      setLinkBusy(true);
+      setError("");
+      try {
+        const result = await editPaymentLinkAmount(activeAttempt.id, amount);
+        applyAttempt(result.attempt);
+      } catch (err) {
+        if (isStalePaymentLinkAction(err)) {
+          await loadActiveAttempt();
+        }
+        setError(err instanceof Error ? err.message : "Unable to edit payment link.");
+      } finally {
+        setLinkBusy(false);
+      }
+    },
+    [activeAttempt, applyAttempt, loadActiveAttempt],
+  );
+
+  const handleSwitchOffline = useCallback(async () => {
+    if (!activeAttempt) return;
+    const confirmed = window.confirm(
+      "Switch this payment to Offline? The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment.",
+    );
+    if (!confirmed) return;
+    setLinkBusy(true);
+    setError("");
+    try {
+      const result = await switchPaymentLinkOffline(activeAttempt.id);
+      const switchedAmount = resolveSwitchOfflineAmount(result, activeAttempt);
+      setActiveAttempt(null);
+      setChannel("offline");
+      setHistoryDetailOpen(false);
+      if (switchedAmount != null) {
+        setAmountInput(formatPaymentAmountInput(switchedAmount));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to switch to offline payment.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }, [activeAttempt]);
+
+  const handleDeletePaymentLink = useCallback(async () => {
+    if (!activeAttempt) return;
+    setLinkBusy(true);
+    setError("");
+    try {
+      await cancelPaymentLink(activeAttempt.id);
+      setActiveAttempt(null);
+      setCopiedNotice("Payment link deleted — you can send a new one.");
+      window.setTimeout(() => setCopiedNotice(""), 2500);
+      onUpdated?.();
+    } catch (err) {
+      if (isStalePaymentLinkAction(err)) {
+        await loadActiveAttempt();
+      }
+      setError(err instanceof Error ? err.message : "Unable to delete payment link.");
+    } finally {
+      setLinkBusy(false);
+    }
+  }, [activeAttempt, loadActiveAttempt, onUpdated]);
 
   const handleRemovePayment = useCallback(async () => {
     if (!deal || !selectedEntry) return;
@@ -380,7 +633,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   const title =
     mode === "pay"
-      ? "Record Payment"
+      ? "Send Payment"
       : isCancelView
         ? "Cancellation details"
         : isBookingView
@@ -389,12 +642,38 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             ? "Token details"
             : "Deal details";
   const canPay = summary.remainingAmount > 0;
+  const showBanner = canUsePaymentLinks && isBannerPaymentLink(activeAttempt);
+  const showPayComposer = mode === "pay" && (canPay || showBanner);
+  const missingContacts =
+    !loadingLead && !hasLeadContact(leadDetails.phone, leadDetails.email);
 
   const parsedPayAmount = parsePaymentAmountInput(amountInput);
   const paySplit =
     parsedPayAmount != null && parsedPayAmount > 0
       ? splitPaymentTowardTenAndExtra(parsedPayAmount, summary.remainingAmount)
       : null;
+
+  const pendingLinkBanner =
+    showBanner && activeAttempt ? (
+      <PaymentLinkPendingBanner
+        attempt={activeAttempt}
+        busy={linkBusy}
+        onCopy={() => void handleCopyPaymentLink()}
+        onResend={() => void handleResendPaymentLink()}
+        onEdit={(amount) => void handleEditPaymentLink(amount)}
+        onSwitchOffline={() => void handleSwitchOffline()}
+        onDelete={() => void handleDeletePaymentLink()}
+      />
+    ) : null;
+  const onlineSuccessChip =
+    canUsePaymentLinks && deal && !showBanner ? (
+      <LeadPaymentLinkStatusChip
+        leadType={deal.leadType}
+        leadId={String(deal.leadId)}
+        hasEasebuzzHistory={history.some((entry) => isEasebuzzPayment(entry))}
+        successOnly
+      />
+    ) : null;
 
   const paymentHistoryBlock = (
     <div className="overflow-hidden rounded-xl border border-[#e5e7eb] bg-[#fafbfc]">
@@ -433,7 +712,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                         </p>
                         <p className="mt-1 text-[11px] text-[#6b7280]">
                           Paid {formatQuoteAmount(entry.cumulativeReceived)}
-                          {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
+                          {paymentHistoryMetaLine(entry) ? ` · ${paymentHistoryMetaLine(entry)}` : ""}
                         </p>
                         {entry.remainingAfter <= 0 &&
                         shouldShowFinanceReview(
@@ -570,19 +849,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                   <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-          {summary.remainingAmount > 0 ? (
-            <SummaryCard
-              label="Remaining (10%)"
-              value={formatQuoteAmount(summary.remainingAmount)}
-            />
-          ) : null}
-          {(summary.extraAmountReceived ?? 0) > 0 ? (
-            <SummaryCard
-              label="Extra (Finance)"
-              value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
-              highlight
-            />
-          ) : null}
+                  {summary.remainingAmount > 0 ? (
+                    <SummaryCard
+                      label="Remaining (10%)"
+                      value={formatQuoteAmount(summary.remainingAmount)}
+                    />
+                  ) : null}
+                  {(summary.extraAmountReceived ?? 0) > 0 ? (
+                    <SummaryCard
+                      label="Extra (Finance)"
+                      value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
+                      highlight
+                    />
+                  ) : null}
                   {deal && shouldShowFinanceReview(deal.financeReviewStatus ?? "NOT_READY", deal.remainingAmount) ? (
                     <SummaryCard
                       label="Finance review"
@@ -597,6 +876,8 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                       "Booking via 9.9% buffer. Remaining toward 10% is expected until Finance collects the shortfall."}
                   </div>
                 ) : null}
+              {pendingLinkBanner ? <div className="mt-3">{pendingLinkBanner}</div> : null}
+              {onlineSuccessChip ? <div className="mt-3">{onlineSuccessChip}</div> : null}
               </section>
 
               {paymentHistoryBlock}
@@ -629,6 +910,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             />
           ) : null}
         </div>
+        {pendingLinkBanner ? (
+          <div className="border-b border-[#eef1f5] px-5 py-3">{pendingLinkBanner}</div>
+        ) : onlineSuccessChip ? (
+          <div className="border-b border-[#eef1f5] px-5 py-3">{onlineSuccessChip}</div>
+        ) : null}
         {deal && (deal.bufferApplied || deal.bookingApprovalMode === "BUFFER_9_9") ? (
           <div className="border-b border-[#eef1f5] px-5 py-3">
             <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] leading-relaxed text-sky-950">
@@ -652,19 +938,44 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                 </span>
               ) : null}
             </p>
+            {history.length > 0 && canUsePaymentLinks ? (
+              <div className="flex gap-1 px-4 pb-2">
+                {(["all", "online", "offline"] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setHistoryFilter(filter)}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+                      historyFilter === filter
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                        : "border-[#e5e7eb] bg-white text-[#6b7280]"
+                    }`}
+                  >
+                    {filter === "all" ? "All" : filter === "online" ? "Easebuzz" : "Proof"}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {loading ? (
               <p className="px-4 py-6 text-sm text-[#6b7280]">Loading history…</p>
-            ) : history.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-[#6b7280]">No payments recorded yet.</p>
+            ) : visibleHistory.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-[#6b7280]">
+                {history.length === 0 ? "No payments recorded yet." : "No payments in this filter."}
+              </p>
             ) : (
               <ul className="max-h-[min(280px,calc(100vh-22rem))] overflow-y-auto">
-                {history.map((entry) => (
+                {visibleHistory.map((entry) => (
                   <li key={entry.id}>
                     <button
                       type="button"
-                      onClick={() => setSelectedEntryId(entry.id)}
+                      onClick={() => {
+                        setSelectedEntryId(entry.id);
+                        setHistoryDetailOpen(true);
+                      }}
                       className={`bt-btn bt-btn-list-row ${
-                        selectedEntry?.id === entry.id ? "bt-btn-list-row-active" : ""
+                        historyDetailOpen && selectedEntry?.id === entry.id
+                          ? "bt-btn-list-row-active"
+                          : ""
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -685,8 +996,8 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                           <p className="mt-1 text-[11px] text-[#6b7280]">
                             Total paid {formatQuoteAmount(entry.cumulativeReceived)} · Remaining{" "}
                             {formatQuoteAmount(entry.remainingAfter)}
-                            {entry.source ? (
-                              <span className="text-[#9ca3af]"> · {formatPaymentSource(entry.source)}</span>
+                            {entry.source || entry.paymentChannel || entry.paymentMethod ? (
+                              <span className="text-[#9ca3af]"> · {paymentHistoryMetaLine(entry)}</span>
                             ) : null}
                           </p>
                           {entry.recordedBy ? (
@@ -706,55 +1017,106 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {mode === "pay" && canPay ? (
-                <PayFormSection
-                  amountInput={amountInput}
-                  notes={notes}
-                  draftProofs={draftProofs}
-                  dragActive={dragActive}
-                  remainingAmount={summary.remainingAmount}
-                  paySplit={paySplit}
-                  fileInputRef={fileInputRef}
-                  onAmountChange={setAmountInput}
-                  onNotesChange={setNotes}
-                  onUseRemaining={handleUseRemaining}
-                  onPickFiles={() => fileInputRef.current?.click()}
-                  onFileInputChange={(event) => {
-                    if (event.target.files) void addProofFiles(event.target.files);
-                    event.target.value = "";
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    setDragActive(false);
-                    if (event.dataTransfer.files.length > 0) {
-                      void addProofFiles(event.dataTransfer.files);
-                    }
-                  }}
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                    setDragActive(true);
-                  }}
-                  onDragLeave={() => setDragActive(false)}
-                  onRemoveProof={removeDraftProof}
-                  onPreviewProof={setDraftProofViewer}
-                />
+              {showPayComposer && !historyDetailOpen ? (
+                <div className="space-y-4">
+                  {canUsePaymentLinks ? (
+                    <PaymentChannelSelector
+                      channel={channel}
+                      offlineMethod={offlineMethod}
+                      disabled={submitting || linkBusy}
+                      onChannelChange={(next) => {
+                        if (next === "offline" && showBanner) {
+                          void handleSwitchOffline();
+                          return;
+                        }
+                        setChannel(next);
+                      }}
+                      onOfflineMethodChange={setOfflineMethod}
+                    />
+                  ) : null}
+                  {canUsePaymentLinks && channel === "online" ? (
+                    <div
+                      className={
+                        showBanner ? "pointer-events-none space-y-1 opacity-55" : undefined
+                      }
+                    >
+                      <OnlineLinkFormSection
+                        amountInput={amountInput}
+                        remainingAmount={summary.remainingAmount}
+                        missingContacts={missingContacts}
+                        disabled={showBanner}
+                        onAmountChange={setAmountInput}
+                        onUseRemaining={handleUseRemaining}
+                      />
+                      {showBanner ? (
+                        <p className="text-[11px] font-medium text-amber-800">
+                          A payment link is already open above. Wait for payment, delete it, or
+                          switch to offline before sending another.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <PayFormSection
+                      amountInput={amountInput}
+                      notes={notes}
+                      draftProofs={draftProofs}
+                      dragActive={dragActive}
+                      remainingAmount={summary.remainingAmount}
+                      paySplit={paySplit}
+                      fileInputRef={fileInputRef}
+                      onAmountChange={setAmountInput}
+                      onNotesChange={setNotes}
+                      onUseRemaining={handleUseRemaining}
+                      onPickFiles={() => fileInputRef.current?.click()}
+                      onFileInputChange={(event) => {
+                        if (event.target.files) void addProofFiles(event.target.files);
+                        event.target.value = "";
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDragActive(false);
+                        if (event.dataTransfer.files.length > 0) {
+                          void addProofFiles(event.dataTransfer.files);
+                        }
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragActive(true);
+                      }}
+                      onDragLeave={() => setDragActive(false)}
+                      onRemoveProof={removeDraftProof}
+                      onPreviewProof={setDraftProofViewer}
+                    />
+                  )}
+                </div>
               ) : (
-                <HistoryDetailSection
-                  deal={deal}
-                  entry={selectedEntry}
-                  canRemove={canRemoveSelectedPayment}
-                  removing={removing}
-                  onRemove={() => void handleRemovePayment()}
-                />
+                <div className="space-y-3">
+                  {mode === "pay" && historyDetailOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryDetailOpen(false)}
+                      className="bt-btn bt-btn-link text-[12px]"
+                    >
+                      ← Back to send payment
+                    </button>
+                  ) : null}
+                  <HistoryDetailSection
+                    deal={deal}
+                    entry={selectedEntry}
+                    canRemove={canRemoveSelectedPayment}
+                    removing={removing}
+                    onRemove={() => void handleRemovePayment()}
+                  />
+                </div>
               )}
 
-              {mode === "pay" && !canPay ? (
+              {mode === "pay" && !canPay && !showBanner ? (
                 <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                   Full 10% is already received. Use Convert to Booking on the deal row.
                 </p>
               ) : null}
 
-              {mode !== "pay" || !canPay ? (
+              {mode !== "pay" || !showPayComposer ? (
                 error ? (
                   <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                     {error}
@@ -763,21 +1125,55 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
               ) : null}
             </div>
 
-            {mode === "pay" && canPay ? (
+            {showPayComposer && !historyDetailOpen ? (
               <div className="shrink-0 border-t border-[#eef1f5] bg-white px-4 py-3">
+                {copiedNotice ? (
+                  <p className="mb-2 text-[12px] font-semibold text-emerald-700">{copiedNotice}</p>
+                ) : null}
                 {error ? (
                   <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                     {error}
                   </p>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={() => void handleSubmitPayment()}
-                  disabled={submitting}
-                  className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
-                >
-                  {submitting ? "Saving payment…" : "Save payment"}
-                </button>
+                {canUsePaymentLinks && channel === "online" ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleSendPaymentLink()}
+                    disabled={showBanner || linkBusy || loadingLead || missingContacts}
+                    className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
+                    title={
+                      showBanner
+                        ? "Delete or wait for the open payment link before sending another."
+                        : undefined
+                    }
+                  >
+                    {linkBusy
+                      ? "Sending link…"
+                      : showBanner
+                        ? "Link open — delete to send another"
+                        : "Send payment link"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleSubmitPayment()}
+                    disabled={submitting}
+                    className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
+                  >
+                    {submitting ? "Saving payment…" : "Save payment"}
+                  </button>
+                )}
+              </div>
+            ) : showPayComposer && historyDetailOpen && (error || copiedNotice) ? (
+              <div className="shrink-0 border-t border-[#eef1f5] bg-white px-4 py-3">
+                {copiedNotice ? (
+                  <p className="mb-2 text-[12px] font-semibold text-emerald-700">{copiedNotice}</p>
+                ) : null}
+                {error ? (
+                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {error}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -982,8 +1378,11 @@ function HistoryDetailSection({
       </p>
       <p className="mt-1 text-[12px] text-[#6b7280]">
         {formatHistoryDate(entry.createdAt)}
-        {entry.source ? ` · ${formatPaymentSource(entry.source)}` : ""}
+        {paymentHistoryMetaLine(entry) ? ` · ${paymentHistoryMetaLine(entry)}` : ""}
       </p>
+      {entry.gatewayPaymentId ? (
+        <p className="mt-1 text-[11px] text-[#6b7280]">Gateway id {entry.gatewayPaymentId}</p>
+      ) : null}
       {entry.notes ? (
         <p className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3 text-[12px] text-[#374151]">
           {entry.notes}
@@ -1009,7 +1408,11 @@ function HistoryDetailSection({
           Payment proofs
         </p>
         {entry.proofs.length === 0 ? (
-          <p className="mt-2 text-[12px] text-[#9ca3af]">No screenshots attached for this payment.</p>
+          <p className="mt-2 text-[12px] text-[#9ca3af]">
+            {isEasebuzzPayment(entry)
+              ? "Online Easebuzz payment — no screenshot required."
+              : "No screenshots attached for this payment."}
+          </p>
         ) : (
           <div className="mt-2 grid grid-cols-2 gap-2">
             {entry.proofs.map((proof) => (
@@ -1024,6 +1427,62 @@ function HistoryDetailSection({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function OnlineLinkFormSection({
+  amountInput,
+  remainingAmount,
+  missingContacts,
+  disabled = false,
+  onAmountChange,
+  onUseRemaining,
+}: {
+  amountInput: string;
+  remainingAmount: number;
+  missingContacts: boolean;
+  disabled?: boolean;
+  onAmountChange: (value: string) => void;
+  onUseRemaining: () => void;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+        Send Easebuzz link
+      </p>
+      <p className="mt-1 text-[11px] leading-relaxed text-[#6b7280]">
+        Default is the remaining 10% amount. WhatsApp and email are sent together; SMS is used if
+        WhatsApp fails.
+      </p>
+      {missingContacts ? (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          Phone and email are both missing. Add a contact before sending a payment link.
+        </p>
+      ) : null}
+      <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-[#6b7280]">
+        Link amount
+      </label>
+      <div className="mt-1.5 flex items-center gap-2">
+        <span className="text-sm font-semibold text-[#374151]">₹</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={amountInput}
+          disabled={disabled}
+          onChange={(event) => onAmountChange(event.target.value.replace(/[^\d,]/g, ""))}
+          placeholder="0"
+          className="h-10 flex-1 rounded-lg border border-[#d1d5db] px-3 text-sm outline-none focus:border-[#059669] focus:ring-2 focus:ring-[#bbf7d0] disabled:cursor-not-allowed disabled:bg-[#f8fafc] disabled:opacity-70"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onUseRemaining}
+        disabled={disabled}
+        className="bt-btn bt-btn-link mt-2 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        Use remaining ({formatQuoteAmount(remainingAmount)})
+      </button>
     </div>
   );
 }

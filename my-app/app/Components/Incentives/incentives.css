@@ -12,7 +12,7 @@
   --inc-orange: #f97316;
   --inc-yellow: #eab308;
   --inc-blue: #38bdf8;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   background: var(--inc-bg);
   color: var(--inc-text);
   min-height: 100vh;

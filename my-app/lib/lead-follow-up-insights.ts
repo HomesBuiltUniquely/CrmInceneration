@@ -402,7 +402,7 @@ export type InsightTableMode =
   | "meetingRescheduled"
   | "meetingCancelled"
   | "quoteSent"
-  | "quoteDue"
+  | "meetingSuccessful"
   | "lostQuoteSent"
   | LostSegmentMode;
 
@@ -421,7 +421,7 @@ export function filterLeadsForInsightMode(
     mode === "meetingRescheduled" ||
     mode === "meetingCancelled" ||
     mode === "quoteSent" ||
-    mode === "quoteDue" ||
+    mode === "meetingSuccessful" ||
     mode === "lostQuoteSent"
   ) {
     return filterLeadsForMilestoneInsightMode(leads, mode, opts);

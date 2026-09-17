@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import {
   CRM_TOKEN_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
@@ -79,12 +80,37 @@ function readHeaderPersistedState(): HeaderPersistedState {
 export default function Header() {
   const pathname = usePathname() ?? "";
   const router = useRouter();
+  const searchParams = useSearchParams();
   const leadsWorkspace = workspaceFromPathname(pathname);
   const isPresalesLeadsPage = leadsWorkspace === "presales";
+
+  // ── Notification click-to-highlight ──────────────────────────────────────
+  // When TopNav pushes ?highlight=<leadIdentifier>, we read it once, seed the
+  // search box so the API returns that lead, then remove the param from the URL
+  // so refreshing / back-navigation does not re-trigger the highlight.
+  const [highlightLeadIdentifier, setHighlightLeadIdentifier] = useState<string>("");
 
   useEffect(() => {
     persistLeadDetailWorkspace(leadsWorkspace);
   }, [leadsWorkspace]);
+
+  // Consume the ?highlight= query param produced by notification click-to-navigate.
+  useEffect(() => {
+    const leadId = searchParams?.get("highlight")?.trim() ?? "";
+    if (!leadId) return;
+
+    // Seed the search box — the existing search pipeline will fetch the matching lead.
+    setSearch(leadId);
+    // Arm the highlight so LeadsTable can ring the row once the result arrives.
+    setHighlightLeadIdentifier(leadId);
+
+    // Strip the param from the URL so it doesn't re-fire on refresh / back-nav.
+    const next = new URLSearchParams(searchParams?.toString() ?? "");
+    next.delete("highlight");
+    const clean = next.toString();
+    router.replace(clean ? `${pathname}?${clean}` : pathname, { scroll: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams?.get("highlight")]);
 
   const persistedHeaderState = readHeaderPersistedState();
   const [currentRole, setCurrentRole] = useState(() => {
@@ -186,8 +212,8 @@ export default function Header() {
 
   const adminMilestoneCountsKeyRef = useRef("");
   const handleAdminMilestoneCountsSync = useCallback(
-    (_counts: Record<string, number> | undefined) => {
-      const next = _counts ?? null;
+    (counts: Record<string, number> | undefined, _workspace?: string) => {
+      const next = counts ?? null;
       const key = next ? JSON.stringify(next) : "";
       if (adminMilestoneCountsKeyRef.current === key) return;
       adminMilestoneCountsKeyRef.current = key;
@@ -367,8 +393,12 @@ export default function Header() {
         ]);
         if (cancelled) return;
         const names = new Set<string>();
+        // Filter dropdown + roster labels: one primary display name per SE.
+        // Assignee aliases stay expanded only when matching leads (see LeadsDataSection scope).
         for (const u of users) {
-          const n = hierarchyUserDisplayName(u as { fullName?: string; name?: string; username?: string });
+          const n = hierarchyUserDisplayName(
+            u as { fullName?: string; name?: string; username?: string; email?: string },
+          );
           if (n) names.add(n);
         }
         if (legacyRes.ok) {
@@ -497,9 +527,10 @@ export default function Header() {
     appendWorkspaceMilestoneFilterQuery(
       q,
       leadsWorkspace,
-      milestoneStage,
-      milestoneStageCategory,
-      milestoneSubStage,
+      // Heatmap always shows full journey — stage filter is table-only.
+      "",
+      "",
+      "",
     );
     if (reinquiry.trim()) q.set("reinquiry", reinquiry.trim());
     // Global search shows all leads (verified + unverified) in CRM and Presales.
@@ -512,9 +543,6 @@ export default function Header() {
     dateFrom,
     dateTo,
     dateField,
-    milestoneStage,
-    milestoneStageCategory,
-    milestoneSubStage,
     forcedAssignee,
     forcedLeadType,
     heatmapToolbarAssignee,
@@ -654,14 +682,14 @@ export default function Header() {
             profileInitials="AD"
           />
         </div>
-        <div id="crm-leads-scroll-root" className="xl:h-screen xl:overflow-y-auto">
+        <SlimScrollArea contentId="crm-leads-scroll-root" className="xl:h-screen">
           <TopNav search={search} onSearchChange={setSearch} />
           {!authResolved ? (
-            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
+            <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               Loading your role access...
             </div>
           ) : isDesignRole ? (
-            <div className="mx-auto mt-6 max-w-[1200px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
+            <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               You don&apos;t have access to CRM lead management in this role.
             </div>
           ) : (
@@ -672,7 +700,7 @@ export default function Header() {
                 adminMilestoneCounts={adminMilestoneCounts}
                 adminPresalesSummary={adminPresalesSummary}
                 currentRole={currentRole}
-                leadView="default"
+                leadView={isSalesManager ? "combined" : "default"}
                 currentUserName={currentUserName}
                 currentUserAliases={currentUserAliases}
                 currentUserId={currentUserId}
@@ -710,6 +738,8 @@ export default function Header() {
                 verificationStatus={listVerificationStatus}
                 leadsWorkspace={leadsWorkspace}
                 crmMonthWindow=""
+                highlightLeadIdentifier={highlightLeadIdentifier}
+                onHighlightConsumed={() => setHighlightLeadIdentifier("")}
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
                 presalesTeamExecutivesOnly={
                   isPresalesManager && presalesSummaryTab === "teamVerified"
@@ -763,7 +793,7 @@ export default function Header() {
             </>
           )}
           <div className="h-10" />
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );

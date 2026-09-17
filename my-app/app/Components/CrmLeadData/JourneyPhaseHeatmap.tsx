@@ -29,9 +29,11 @@ import {
   milestoneCountsFromLeads,
   presalesSummaryMetricsFromLeads,
   salesJourneySummaryFromMilestoneCounts,
+  toCanonicalSalesMilestone,
   usesAdminLeadsApi,
 } from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
+import { leadMatchesAssigneeScope } from "@/lib/admin-assignee-match";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
 type Phase = {
@@ -47,7 +49,7 @@ export type JourneyPhaseHeatmapProps = {
   /** Query string for `/Leads/crm-milestone-counts-filtered` (no leading `?`), e.g. `leadType=all&search=foo` */
   milestoneFilterQuery?: string;
   currentRole?: string;
-  leadView?: "default" | "my" | "team";
+  leadView?: "default" | "my" | "team" | "combined";
   currentUserName?: string;
   currentUserAliases?: string[];
   currentUserId?: number;
@@ -107,10 +109,14 @@ function mapLeadsToPhases(
   leads: ApiLead[],
   defaults: Phase[],
   getTopLevelStage: (lead: ApiLead) => string,
+  /** Sales: map raw stage into 6 canonical phases (unknown/blank → Fresh Lead). */
+  canonicalizeSales = false,
 ): Phase[] {
   const counts = new Map<string, number>();
   for (const lead of leads) {
-    const stage = getTopLevelStage(lead).trim();
+    const raw = getTopLevelStage(lead).trim();
+    if (!raw && !canonicalizeSales) continue;
+    const stage = canonicalizeSales ? toCanonicalSalesMilestone(raw || "Fresh Lead") : raw;
     if (!stage) continue;
     const key = normalizeStageKey(stage);
     counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -354,7 +360,15 @@ function PhaseCard({
   );
 }
 
-function SummaryCard({ label, total }: { label: string; total: number }) {
+function SummaryCard({
+  label,
+  total,
+  loading = false,
+}: {
+  label: string;
+  total: number;
+  loading?: boolean;
+}) {
   return (
     <div className="relative flex min-h-[152px] w-full flex-col justify-between rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-5 md:min-h-[160px] md:px-6">
       <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
@@ -366,7 +380,7 @@ function SummaryCard({ label, total }: { label: string; total: number }) {
         </div>
         <div className="shrink-0 text-right">
           <div className="text-[28px] font-semibold leading-none text-[var(--crm-text-primary)] md:text-[30px]">
-            {total.toLocaleString()}
+            {loading && total <= 0 ? "…" : total.toLocaleString()}
           </div>
           <div className="mt-1 whitespace-nowrap text-[11px] font-semibold text-[var(--crm-warning-text)]">
             total leads
@@ -678,7 +692,19 @@ export default function JourneyPhaseHeatmap({
 
   const assigneeScopedAdminCounts =
     assigneeScope.length > 0 || summaryTotalsOverride != null;
+  /**
+   * Table/leads effect synced journey map (id-merge blank→Fresh).
+   * SM previously; SE/presales exec must use the same path or phase cards diverge
+   * from Lead/Opp/Total (mapLeadsToPhases dropped non-canonical stage labels).
+   */
+  const clientSyncedJourneyCounts =
+    !isAdminHeatmapViewer &&
+    adminMilestoneCounts != null &&
+    Object.keys(adminMilestoneCounts).length > 0;
   const adminCountsEffective = useMemo(() => {
+    if (clientSyncedJourneyCounts) {
+      return adminMilestoneCounts;
+    }
     if (!isAdminHeatmapViewer) return null;
     if (assigneeScopedAdminCounts) {
       if (adminMilestoneCounts && Object.keys(adminMilestoneCounts).length > 0) {
@@ -696,6 +722,7 @@ export default function JourneyPhaseHeatmap({
     assigneeScopedAdminCounts,
     adminCountsLocal,
     adminMilestoneCounts,
+    clientSyncedJourneyCounts,
   ]);
 
   const adminSummaryFromCounts = useMemo(
@@ -752,7 +779,12 @@ export default function JourneyPhaseHeatmap({
     }
     const getStage = usePresalesSummaryUi ? presalesTopLevelStage : crmLeadTopLevelStage;
     const sourceLeads = usePresalesSummaryUi ? presalesPhaseLeads : filteredInsightLeads;
-    const mapped = mapLeadsToPhases(sourceLeads, defaults, getStage);
+    const mapped = mapLeadsToPhases(
+      sourceLeads,
+      defaults,
+      getStage,
+      !usePresalesSummaryUi,
+    );
     if (!usePresalesSummaryUi) return mapped;
     const shareDenominator =
       presalesSummaryTab === "verified"
@@ -807,21 +839,30 @@ export default function JourneyPhaseHeatmap({
   );
   const adminLeadSummaryTotal = adminSummaryFromCountsLocal.lead;
   const adminOppSummaryTotal = adminSummaryFromCountsLocal.opportunity;
+  /** Prefer table-synced summary when present; else phase sums (same inventory after SM/SE sync). */
   const summaryLeadTotal = isAdminHeatmapViewer
     ? usePresalesSummaryUi
       ? leadTotal
       : summaryTotalsOverride?.lead ?? adminLeadSummaryTotal
-    : (summaryTotalsOverride?.lead ?? leadTotal);
+    : clientSyncedJourneyCounts
+      ? summaryTotalsOverride?.lead ?? adminLeadSummaryTotal ?? leadTotal
+      : summaryTotalsOverride?.lead ?? leadTotal;
   const summaryOpportunityTotal = isAdminHeatmapViewer
     ? usePresalesSummaryUi
       ? opportunityTotal
       : summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal
-    : (summaryTotalsOverride?.opportunity ?? opportunityTotal);
+    : clientSyncedJourneyCounts
+      ? summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal ?? opportunityTotal
+      : summaryTotalsOverride?.opportunity ?? opportunityTotal;
   const adminGrandTotal =
     isAdminHeatmapViewer && !usePresalesSummaryUi
-      ? summaryTotalsOverride != null
-        ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
-        : (adminPoolTotalLocal ?? adminLeadSummaryTotal + adminOppSummaryTotal)
+      ? Math.max(
+          // Prefer Hub `/counts.totalElements` (full CRM scope) — not Lead+Opportunity card sum.
+          Number(adminPoolTotalLocal ?? 0),
+          summaryTotalsOverride != null
+            ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
+            : adminLeadSummaryTotal + adminOppSummaryTotal,
+        )
       : 0;
   const shareGrandTotal =
     adminGrandTotal > 0 ? adminGrandTotal : summaryLeadTotal + summaryOpportunityTotal;
@@ -872,7 +913,11 @@ export default function JourneyPhaseHeatmap({
         adminCountsFetchKeyRef.current = fetchKey;
         setAdminCountsLocal(data.milestoneCounts);
         setAdminPoolTotalLocal(
-          data.uniquePrimaryTotal ?? data.pipelineTotal ?? data.totalElements,
+          Math.max(
+            Number(data.totalElements ?? 0),
+            Number(data.uniquePrimaryTotal ?? 0),
+            Number(data.pipelineTotal ?? 0),
+          ) || null,
         );
         setPoolLeads(data.leads);
         if (leadsWorkspace === "presales") {
@@ -911,6 +956,12 @@ export default function JourneyPhaseHeatmap({
 
   useEffect(() => {
     if (isAdminHeatmapViewer) return;
+    // Table already synced journey milestone map — do not re-fetch and under-count.
+    if (clientSyncedJourneyCounts) {
+      setLoading(false);
+      setError("");
+      return;
+    }
 
     let cancelled = false;
 
@@ -935,24 +986,30 @@ export default function JourneyPhaseHeatmap({
         query.set("milestoneScope", "crm");
         appendLeadPoolQuery(query, leadsWorkspace);
         query.set("page", "0");
-        query.set("size", "500");
+        // One large page: BFF rebuilds full mergeAll per request — avoid N×500 round-trips.
+        query.set("size", "50000");
         query.set("sort", "updatedAt,desc");
-        const firstRes = await fetch(`/api/crm/leads?${query.toString()}`, {
-          cache: "no-store",
-          credentials: "include",
-          headers: getCrmAuthHeaders(),
-        });
-        if (!firstRes.ok) {
-          const text = await firstRes.text();
-          throw new Error(text || `HTTP ${firstRes.status}`);
-        }
-        const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
-        const allLeads: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
-        const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
-        if (totalPages > 1) {
+
+        const fetchAllPages = async (base: URLSearchParams): Promise<ApiLead[]> => {
+          const firstRes = await fetch(`/api/crm/leads?${base.toString()}`, {
+            cache: "no-store",
+            credentials: "include",
+            headers: getCrmAuthHeaders(),
+          });
+          if (!firstRes.ok) {
+            const text = await firstRes.text();
+            throw new Error(text || `HTTP ${firstRes.status}`);
+          }
+          const firstPage = (await firstRes.json()) as SpringPage<ApiLead>;
+          const all: ApiLead[] = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
+          const totalElements = Number(firstPage.totalElements ?? all.length);
+          const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
+          if (all.length >= totalElements || totalPages <= 1) {
+            return all;
+          }
           const followUps = [];
           for (let p = 1; p < totalPages; p++) {
-            const nextQuery = new URLSearchParams(query);
+            const nextQuery = new URLSearchParams(base);
             nextQuery.set("page", String(p));
             followUps.push(
               fetch(`/api/crm/leads?${nextQuery.toString()}`, {
@@ -963,14 +1020,38 @@ export default function JourneyPhaseHeatmap({
                 if (!r.ok) return [] as ApiLead[];
                 const json = (await r.json().catch(() => ({}))) as SpringPage<ApiLead>;
                 return Array.isArray(json.content) ? json.content : [];
-              })
+              }),
             );
           }
           const rest = await Promise.all(followUps);
-          for (const chunk of rest) allLeads.push(...chunk);
+          for (const chunk of rest) all.push(...chunk);
+          return all;
+        };
+
+        const roleKey = roleKeyUi;
+        const useSmCombinedEndpoints =
+          (roleKey === "SALES_MANAGER" || roleKey === "MANAGER") &&
+          (leadView === "combined" || leadView === "default");
+
+        let allLeads: ApiLead[];
+        if (useSmCombinedEndpoints) {
+          // Same Hub membership as My Leads table (my-leads ∪ team-leads).
+          const qMy = new URLSearchParams(query);
+          qMy.set("roleView", "my");
+          const qTeam = new URLSearchParams(query);
+          qTeam.set("roleView", "team");
+          const [myRows, teamRows] = await Promise.all([
+            fetchAllPages(qMy),
+            fetchAllPages(qTeam),
+          ]);
+          allLeads = [...myRows, ...teamRows];
+        } else {
+          if (leadView === "my" || leadView === "team") {
+            query.set("roleView", leadView);
+          }
+          allLeads = await fetchAllPages(query);
         }
         const visibleLeads = mergeLeadsById(allLeads);
-        const roleKey = roleKeyUi;
 
         const myAliases = new Set(
           [currentUserName, ...currentUserAliases].map((v) => v.trim().toLowerCase()).filter(Boolean)
@@ -1017,7 +1098,14 @@ export default function JourneyPhaseHeatmap({
           for (const alias of aliases) if (presalesTeamSet.has(alias)) return true;
           return false;
         };
-        const roleScopedLeads = visibleLeads.filter((lead) => {
+        /**
+         * REAL BUG FIX: Hub my-leads ∪ team-leads is already the SM membership.
+         * Re-filtering with Header display-name teamSet dropped hundreds of Hub team rows
+         * (usernames / alternate names), so Discovery/phases undercounted vs the table.
+         */
+        const roleScopedLeads = useSmCombinedEndpoints
+          ? visibleLeads
+          : visibleLeads.filter((lead) => {
           if (trustPresalesUpstreamLeadScope(roleKey)) return true;
           if (
             leadsWorkspace === "presales" &&
@@ -1051,15 +1139,14 @@ export default function JourneyPhaseHeatmap({
           return false;
         });
         const scopedLeads =
-          assigneeScopeSet.size === 0
+          assigneeScope.length === 0
             ? roleScopedLeads
-            : roleScopedLeads.filter((lead) => {
-                const aliases = assigneeAliasNorms(lead);
-                for (const alias of aliases) if (assigneeScopeSet.has(alias)) return true;
-                return false;
-              });
+            : roleScopedLeads.filter((lead) =>
+                leadMatchesAssigneeScope(lead, assigneeScope),
+              );
+        const journeyLeads = scopedLeads;
         if (!cancelled) {
-          setPoolLeads(scopedLeads);
+          setPoolLeads(journeyLeads);
         }
       } catch (err) {
         if (!cancelled) {
@@ -1079,6 +1166,7 @@ export default function JourneyPhaseHeatmap({
     };
   }, [
     isAdminHeatmapViewer,
+    clientSyncedJourneyCounts,
     milestoneFilterQuery,
     currentRole,
     leadView,
@@ -1094,7 +1182,7 @@ export default function JourneyPhaseHeatmap({
   ]);
 
   return (
-    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-6`}>
+    <section className={`${LEADS_PAGE_CONTAINER_CLASS} mt-2`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
@@ -1194,7 +1282,11 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={leadOpen}
               >
                 <div className="relative w-full">
-                  <SummaryCard label="Lead" total={summaryLeadTotal} />
+                  <SummaryCard
+                    label="Lead"
+                    total={summaryLeadTotal}
+                    loading={loading && summaryLeadTotal <= 0}
+                  />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {leadOpen ? "Hide" : "Open"}
                   </span>
@@ -1231,7 +1323,11 @@ export default function JourneyPhaseHeatmap({
                 aria-expanded={opportunityOpen}
               >
                 <div className="relative w-full">
-                  <SummaryCard label="Opportunity" total={summaryOpportunityTotal} />
+                  <SummaryCard
+                    label="Opportunity"
+                    total={summaryOpportunityTotal}
+                    loading={loading && summaryOpportunityTotal <= 0}
+                  />
                   <span className="pointer-events-none absolute right-4 top-4 text-[12px] font-semibold text-[var(--crm-warning-text)]">
                     {opportunityOpen ? "Hide" : "Open"}
                   </span>

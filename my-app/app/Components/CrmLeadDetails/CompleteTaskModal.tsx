@@ -13,6 +13,8 @@ import {
 } from "@/lib/milestone-substage-map";
 import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-substages";
 import {
+  isRenovationCompleteTaskOptionAllowed,
+  isRenovationFeedbackLocked,
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
   requiresLeadPropertyGateForCompleteTask,
@@ -23,6 +25,16 @@ import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
 import ScheduleHubMeetingModal, {
   type ScheduleHubMeetingConfirmPayload,
 } from "./ScheduleHubMeetingModal";
+import MeetingConflictDialog, {
+  type MeetingConflictChoice,
+} from "./MeetingConflictDialog";
+import {
+  findAllAppointmentsForLead,
+  formatAppointmentCancelLabel,
+  fetchUpcomingAppointmentsForLead,
+  deleteAppointment,
+  type AppointmentRow,
+} from "@/lib/appointment-client";
 import { fetchCrmPipeline } from "@/lib/crm-pipeline";
 import type { CrmNestedStage } from "@/types/crm-pipeline";
 import {
@@ -39,12 +51,18 @@ import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
 } from "./PresalesVerifyPanel";
 import { isCrmLeadVerified } from "@/lib/leads-filter";
-import { isIvrCallLeadSource } from "@/lib/ivr-lead-source";
+import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { getConfigurationScopeRequirements, createDefaultRequirements } from "@/lib/configuration-scope-client";
-import { notifyOpenConfigurationScope, RESUME_MEETING_SCHEDULE_EVENT, type ResumeMeetingScheduleDetail } from "@/lib/configuration-scope-events";
+import { getConfigurationScopeRequirements, createDefaultRequirements, withCoherentPropertyNameFields } from "@/lib/configuration-scope-client";
+import {
+  CONFIGURATION_SCOPE_UPDATED_EVENT,
+  notifyOpenConfigurationScope,
+  RESUME_MEETING_SCHEDULE_EVENT,
+  type ConfigurationScopeUpdatedDetail,
+  type ResumeMeetingScheduleDetail,
+} from "@/lib/configuration-scope-events";
 import {
   configurationScopeValidationSummary,
   hasLeadFloorPlan,
@@ -52,6 +70,8 @@ import {
 } from "@/lib/configuration-scope-validation";
 import { REQUIRED_FIELD_HINTS } from "@/lib/required-field-hints";
 import type { CrmLeadType } from "@/lib/leads-filter";
+import { getLeadDetail } from "@/lib/lead-details-client";
+import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -144,7 +164,7 @@ export type PresalesVerifyFromCompleteTaskPayload = {
 
 function verifyHandoffButtonTitle(lead: Lead): string {
   if (lead.leadType === "whatsapplead") return "Verify WhatsApp Lead";
-  if (lead.leadType === "addlead" && isIvrCallLeadSource(lead.leadSource)) {
+  if (isIvrInboundLead(lead.leadType, lead.leadSource)) {
     return "Verify IVR Lead";
   }
   return "Verify & hand off to sales";
@@ -191,6 +211,8 @@ export type CompleteTaskApiPayload = {
     endTime?: string;
     meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   };
+  /** Hub appointment ids to cancel (DELETE) before lead save — used when multiple meetings exist. */
+  cancelAppointmentIds?: number[];
 };
 
 export default function CompleteTaskModal({
@@ -272,6 +294,18 @@ export default function CompleteTaskModal({
   const [hubMeetingError, setHubMeetingError] = useState("");
   const [configScopeGateBusy, setConfigScopeGateBusy] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
+  const [cancelAppointmentsLoading, setCancelAppointmentsLoading] = useState(false);
+  const [leadAppointments, setLeadAppointments] = useState<AppointmentRow[]>([]);
+  const [selectedCancelIds, setSelectedCancelIds] = useState<number[]>([]);
+  // --- Conflict detection state ---
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+  const [conflictMeetings, setConflictMeetings] = useState<AppointmentRow[]>([]);
+  const [conflictBusy, setConflictBusy] = useState(false);
+  /** The feedback value that triggered the conflict check — needed when user resolves conflict. */
+  const pendingScheduleFeedbackRef = useRef<string>("");
+  /** Pending Renovation feedback label while confirm popup is open (not committed yet). */
+  const pendingRenovationLabelRef = useRef<string>("");
+  const [renovationConfirmOpen, setRenovationConfirmOpen] = useState(false);
   const [lostReason, setLostReason] = useState("");
   const [verifyPincode, setVerifyPincode] = useState("");
   const [verifySalesExecutiveId, setVerifySalesExecutiveId] = useState("");
@@ -351,8 +385,13 @@ export default function CompleteTaskModal({
     setHubMeetingError("");
     setConfigScopeGateBusy(false);
     setCancelConfirmed(false);
+    setCancelAppointmentsLoading(false);
+    setLeadAppointments([]);
+    setSelectedCancelIds([]);
     setApiError("");
     setGatePopupMessage("");
+    setRenovationConfirmOpen(false);
+    pendingRenovationLabelRef.current = "";
     setLostReason(lead.lostReason?.trim() ?? "");
     setVerifyPincode(lead.pincode?.trim() ?? "");
     setVerifySalesExecutiveId("");
@@ -375,6 +414,42 @@ export default function CompleteTaskModal({
     open,
     presalesMode,
   ]);
+
+  // Load all Hub meetings for this lead when cancel feedback is selected.
+  useEffect(() => {
+    if (!open || !cancelMode || !leadId?.trim()) {
+      setCancelAppointmentsLoading(false);
+      setLeadAppointments([]);
+      setSelectedCancelIds([]);
+      return;
+    }
+
+    let cancelled = false;
+    setCancelAppointmentsLoading(true);
+    void findAllAppointmentsForLead(leadId, { designerName: lead.designerName })
+      .then((rows) => {
+        if (cancelled) return;
+        setLeadAppointments(rows);
+        if (rows.length === 1 && rows[0].id != null) {
+          setSelectedCancelIds([rows[0].id]);
+        } else {
+          setSelectedCancelIds([]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLeadAppointments([]);
+          setSelectedCancelIds([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCancelAppointmentsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cancelMode, lead.designerName, leadId, open]);
 
   // After Configuration Scope save from a meeting gate: reopen Schedule Hub Meeting only.
   useEffect(() => {
@@ -417,6 +492,25 @@ export default function CompleteTaskModal({
     presalesMode,
     resumeMeetingSchedule,
   ]);
+
+  // After Configuration Scope finalize, apply BHK / booking so Meeting gate does not use stale modal state.
+  useEffect(() => {
+    if (!open) return;
+    const onScopeUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeUpdatedDetail>).detail;
+      if (!detail) return;
+      const expectedLeadId = (leadId ?? lead.id ?? "").trim();
+      if (detail.leadId && expectedLeadId && detail.leadId !== expectedLeadId) return;
+      if (detail.configuration?.trim()) {
+        setModalConfiguration(detail.configuration.trim());
+      }
+      if (detail.bookingType?.trim()) {
+        setModalBookingType(detail.bookingType.trim());
+      }
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+    return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+  }, [lead.id, leadId, open]);
 
   useEffect(() => {
     if (!open) {
@@ -582,6 +676,19 @@ export default function CompleteTaskModal({
         }
 
         if (!cancelled) {
+          if (!presalesMode && !mappings.some((m) => m.subStageName.trim().toUpperCase() === "RENOVATION")) {
+            let insertIdx = mappings.length;
+            for (let i = 0; i < mappings.length; i++) {
+              if (mappings[i].stage.trim().toLowerCase() === "discovery") {
+                insertIdx = i + 1;
+              }
+            }
+            mappings.splice(insertIdx, 0, {
+              stage: "Discovery",
+              stageCategory: "Discovery Won",
+              subStageName: "Renovation",
+            });
+          }
           setFeedbackMappings(mappings);
           if (presalesMode) {
             const presetSub =
@@ -674,6 +781,17 @@ export default function CompleteTaskModal({
       if (!presalesMode && subStageName && !isManualCompleteTaskSubstage(subStageName)) {
         continue;
       }
+      if (
+        !presalesMode &&
+        subStageName.trim().toUpperCase() === "RENOVATION" &&
+        !isRenovationCompleteTaskOptionAllowed(
+          lead.stageBlock?.milestoneStage,
+          lead.stageBlock?.milestoneSubStage,
+          lead.stageBlock?.milestoneStageCategory,
+        )
+      ) {
+        continue;
+      }
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
       const stageKey = stage.toLowerCase();
       const subKey = subStageName.toLowerCase();
@@ -691,6 +809,9 @@ export default function CompleteTaskModal({
   }, [
     feedbackMappings,
     presalesMode,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.milestoneStageCategory,
   ]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
@@ -838,10 +959,38 @@ export default function CompleteTaskModal({
         requirements = null;
       }
 
+      // BHK lives on the lead row (not configuration-scope). Re-fetch so a just-saved
+      // Configuration Scope finalize is visible even if parent lead props are still stale.
+      let configuration =
+        (modalConfiguration || lead.configuration || "").trim();
+      let bookingType =
+        (modalBookingType || lead.bookingType || requirements?.bookingType || "").trim();
+      try {
+        const detailJson = await getLeadDetail(
+          resolvedConfigLeadType,
+          resolvedConfigLeadId,
+        );
+        const mapped = detailJsonToLead(detailJson, resolvedConfigLeadType);
+        if (mapped.configuration?.trim()) {
+          configuration = mapped.configuration.trim();
+          setModalConfiguration(configuration);
+        }
+        if (mapped.bookingType?.trim()) {
+          bookingType = mapped.bookingType.trim();
+          setModalBookingType(bookingType);
+        }
+      } catch {
+        /* keep modal / lead values */
+      }
+
+      const coherent = withCoherentPropertyNameFields(
+        requirements ?? createDefaultRequirements(),
+      );
+
       const issues = validateConfigurationScopeForMeeting({
-        requirements: requirements ?? createDefaultRequirements(),
-        configuration: modalConfiguration || lead.configuration,
-        bookingType: modalBookingType || lead.bookingType || requirements?.bookingType,
+        requirements: coherent,
+        configuration,
+        bookingType: bookingType || coherent.bookingType,
         hasFloorPlan: hasLeadFloorPlan(lead),
       });
 
@@ -871,23 +1020,122 @@ export default function CompleteTaskModal({
     }
   };
 
-  const handleFeedbackSelect = async (value: string) => {
-    setFeedback(value);
-    if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
-      const ready = await ensureConfigScopeReadyForMeeting({
-        setError: (message) => setApiError(message),
-        meetingFeedback: value,
-      });
-      if (!ready) {
-        setHubMeetingOpen(false);
-        return;
+  const openScheduleMeetingAfterConflictCheck = async (feedbackValue: string) => {
+    // Step 1: Validate Configuration Scope first
+    const ready = await ensureConfigScopeReadyForMeeting({
+      setError: (message) => setApiError(message),
+      meetingFeedback: feedbackValue,
+    });
+    if (!ready) {
+      setHubMeetingOpen(false);
+      return;
+    }
+
+    // Step 2: Check for existing upcoming meetings for this lead
+    const effectiveLeadId = (leadId ?? lead.id ?? "").trim();
+    if (effectiveLeadId) {
+      try {
+        const upcoming = await fetchUpcomingAppointmentsForLead(effectiveLeadId);
+        if (upcoming.length > 0) {
+          // Show conflict dialog — let user decide
+          pendingScheduleFeedbackRef.current = feedbackValue;
+          setConflictMeetings(upcoming);
+          setConflictDialogOpen(true);
+          return;
+        }
+      } catch {
+        // Network error — silently proceed to schedule
+      }
+    }
+
+    // No conflict: open the schedule hub meeting modal directly
+    setHubMeetingOpen(true);
+    setHubMeetingError("");
+    setApiError("");
+  };
+
+  const handleConflictChoice = async (choice: MeetingConflictChoice) => {
+    setConflictDialogOpen(false);
+    const fb = pendingScheduleFeedbackRef.current || feedback;
+
+    if (choice.action === "reschedule") {
+      // Update feedback to a "Reschedule" substage if available; keep current otherwise
+      // The ScheduleHubMeetingModal's PUT path (updateAppointment) will be used via the
+      // appointment ID stored in cancelAppointmentIds for now.
+      // We set the existing appointment id so the backend can handle it as a reschedule.
+      setSelectedCancelIds([]); // Not cancelling, just rescheduling
+      setHubMeetingOpen(true);
+      setHubMeetingError("");
+      setApiError("");
+    } else if (choice.action === "cancel_and_new") {
+      // Cancel the existing meeting first, then open the schedule modal
+      setConflictBusy(true);
+      try {
+        await deleteAppointment(choice.appointmentId);
+      } catch {
+        // Even on error, still open the schedule modal (cancel may have failed partially)
+      } finally {
+        setConflictBusy(false);
       }
       setHubMeetingOpen(true);
       setHubMeetingError("");
       setApiError("");
     } else {
+      // create_anyway: open directly
+      setHubMeetingOpen(true);
+      setHubMeetingError("");
+      setApiError("");
+    }
+
+    // Ensure feedback is set correctly
+    if (fb) setFeedback(fb);
+  };
+
+  const isRenovationFeedbackOption = (option: FeedbackOption | undefined): boolean =>
+    Boolean(option && option.subStageName.trim().toUpperCase() === "RENOVATION");
+
+  const applyFeedbackSelection = async (value: string) => {
+    setFeedback(value);
+    if (onApiComplete && !presalesMode && isMeetingScheduleSubstage(value)) {
+      await openScheduleMeetingAfterConflictCheck(value);
+    } else {
       setHubMeetingOpen(false);
     }
+  };
+
+  const renovationFeedbackLocked = isRenovationFeedbackLocked(
+    lead.stageBlock?.renovationAssigned,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.milestoneStageCategory,
+  );
+
+  const handleFeedbackSelect = async (value: string) => {
+    const option = feedbackOptions.find((o) => o.label === value);
+    // Renovation: confirm popup before committing selection (no PUT until Save).
+    if (
+      !presalesMode &&
+      isRenovationFeedbackOption(option) &&
+      !renovationFeedbackLocked
+    ) {
+      pendingRenovationLabelRef.current = value;
+      setRenovationConfirmOpen(true);
+      return;
+    }
+    await applyFeedbackSelection(value);
+  };
+
+  const handleRenovationConfirmCancel = () => {
+    pendingRenovationLabelRef.current = "";
+    setRenovationConfirmOpen(false);
+  };
+
+  const handleRenovationConfirmAccept = () => {
+    const label = pendingRenovationLabelRef.current.trim();
+    pendingRenovationLabelRef.current = "";
+    setRenovationConfirmOpen(false);
+    if (!label) return;
+    void applyFeedbackSelection(label);
   };
 
   const handleHubMeetingConfirm = async (payload: ScheduleHubMeetingConfirmPayload) => {
@@ -1001,6 +1249,16 @@ export default function CompleteTaskModal({
       return;
     }
 
+    if (
+      cancelMode &&
+      !cancelAppointmentsLoading &&
+      leadAppointments.length > 0 &&
+      selectedCancelIds.length === 0
+    ) {
+      setApiError("Select at least one meeting to cancel.");
+      return;
+    }
+
     if (scheduleMode && emailMissingForMeeting) {
       setApiError(
         "Add a valid customer email on the lead (Lead tab) before scheduling.",
@@ -1016,13 +1274,10 @@ export default function CompleteTaskModal({
     // show a non-blocking warning below (see UI render).
 
     if (scheduleMode) {
-      const ready = await ensureConfigScopeReadyForMeeting({
-        setError: (message) => setApiError(message),
-        meetingFeedback: feedback,
-      });
-      if (!ready) return;
-      setHubMeetingOpen(true);
-      setApiError("Use Schedule Hub Meeting to book the appointment.");
+      await openScheduleMeetingAfterConflictCheck(feedback);
+      if (!hubMeetingOpen && !conflictDialogOpen) {
+        // Config scope was not ready — error already set; don't open anything
+      }
       return;
     }
 
@@ -1150,13 +1405,18 @@ export default function CompleteTaskModal({
     }
 
     if (onApiComplete) {
+      const selected = feedbackOptions.find((o) => o.label === feedback);
+      // Hub renovation assign requires exact milestone strings.
+      const substageToSave = selected?.subStageName.trim() || feedback.trim();
+      const stageToSave = (selected?.stage ?? status).trim();
+      const catToSave = (selected?.stageCategory ?? path).trim();
       setApiBusy(true);
       setApiError("");
       try {
         await onApiComplete({
-          feedback,
-          milestoneStage: status,
-          milestoneStageCategory: path,
+          feedback: substageToSave,
+          milestoneStage: stageToSave,
+          milestoneStageCategory: catToSave,
           note,
           nextCallDateLocal: scheduleMode || noFollowUpRequired ? "" : nextCallDate,
           lostReason: reasonRequired ? lostReason.trim() : undefined,
@@ -1172,6 +1432,8 @@ export default function CompleteTaskModal({
           ),
           possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
           meetingAppointment: undefined,
+          cancelAppointmentIds:
+            cancelMode && selectedCancelIds.length > 0 ? selectedCancelIds : undefined,
         });
         onClose();
       } catch (e) {
@@ -1390,15 +1652,33 @@ export default function CompleteTaskModal({
                   ].join(" ")}
                 >
                   <option value="">{feedbackPlaceholder}</option>
-                  {feedbackOptions.map((option) => (
-                    <option
-                      key={`${option.stage}-${option.stageCategory}-${option.label}`}
-                      value={option.label}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
+                  {feedbackOptions.map((option) => {
+                    const isRenovation = option.subStageName.trim().toUpperCase() === "RENOVATION";
+                    const isAlreadyAssigned = isRenovation && renovationFeedbackLocked;
+                    return (
+                      <option
+                        key={`${option.stage}-${option.stageCategory}-${option.label}`}
+                        value={option.label}
+                        disabled={isAlreadyAssigned}
+                      >
+                        {option.label}{isAlreadyAssigned ? " (locked)" : ""}
+                      </option>
+                    );
+                  })}
                 </Select>
+
+                {renovationFeedbackLocked ? (
+                  <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
+                    Renovation already assigned
+                    {lead.stageBlock?.renovationSalesManager
+                      ? ` · Manager: ${lead.stageBlock.renovationSalesManager}`
+                      : ""}
+                    {lead.stageBlock?.renovationSalesExecutive || lead.assignee
+                      ? ` · Exec: ${lead.stageBlock?.renovationSalesExecutive || lead.assignee}`
+                      : ""}
+                    . Re-selecting Renovation is disabled.
+                  </p>
+                ) : null}
 
                 {feedbackLoading && (
                   <p className="mt-1 text-[12px] text-[var(--crm-text-muted)]">
@@ -1671,11 +1951,85 @@ export default function CompleteTaskModal({
                   <p className="text-[12px] font-semibold text-amber-900 dark:text-amber-100">
                     Cancel meeting
                   </p>
-                  <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
-                    This updates the lead to the cancellation milestone. The backend may email the
-                    customer and remove the Hub appointment when the substage is saved as{" "}
-                    &quot;Meeting Cancelled&quot; or &quot;Meeting Cancelled/Paused&quot;.
-                  </p>
+                  {cancelAppointmentsLoading ? (
+                    <p className="mt-2 text-[11px] text-amber-800 dark:text-amber-200/90">
+                      Loading scheduled meetings for this lead…
+                    </p>
+                  ) : leadAppointments.length > 1 ? (
+                    <>
+                      <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
+                        This lead has {leadAppointments.length} Hub meetings. Choose which
+                        meeting(s) to cancel, or select all.
+                      </p>
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          className="text-[11px] font-medium text-[var(--crm-accent)] underline-offset-2 hover:underline"
+                          onClick={() =>
+                            setSelectedCancelIds(
+                              leadAppointments
+                                .map((row) => row.id)
+                                .filter((id): id is number => id != null),
+                            )
+                          }
+                        >
+                          Select all
+                        </button>
+                        <button
+                          type="button"
+                          className="text-[11px] font-medium text-[var(--crm-text-muted)] underline-offset-2 hover:underline"
+                          onClick={() => setSelectedCancelIds([])}
+                        >
+                          Clear selection
+                        </button>
+                      </div>
+                      <ul className="mt-2 space-y-2">
+                        {leadAppointments.map((row) => {
+                          if (row.id == null) return null;
+                          const checked = selectedCancelIds.includes(row.id);
+                          return (
+                            <li key={row.id}>
+                              <label className="flex cursor-pointer items-start gap-2 rounded-[10px] border border-amber-200/70 bg-white/70 px-2.5 py-2 text-[12px] text-[var(--crm-text-primary)] dark:border-amber-900/40 dark:bg-black/20">
+                                <input
+                                  type="checkbox"
+                                  className="mt-0.5 h-4 w-4 accent-[var(--crm-accent)]"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setSelectedCancelIds((prev) =>
+                                      e.target.checked
+                                        ? [...prev, row.id!]
+                                        : prev.filter((id) => id !== row.id),
+                                    );
+                                  }}
+                                />
+                                <span>{formatAppointmentCancelLabel(row)}</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {showErrors && selectedCancelIds.length === 0 ? (
+                        <p className="mt-2 text-[12px] text-red-500">
+                          Select at least one meeting to cancel.
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-[11px] text-amber-800/90 dark:text-amber-200/80">
+                        If you cancel only some meetings, the lead stays{" "}
+                        <strong>Meeting Scheduled</strong> with the remaining slot. Cancel all
+                        to set <strong>Meeting Cancelled</strong> and notify the customer.
+                      </p>
+                    </>
+                  ) : leadAppointments.length === 1 ? (
+                    <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
+                      Meeting to cancel:{" "}
+                      <strong>{formatAppointmentCancelLabel(leadAppointments[0])}</strong>
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
+                      No Hub meeting was found for this lead. Saving will still set{" "}
+                      <strong>Meeting Cancelled</strong> on the lead.
+                    </p>
+                  )}
                   <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12px] text-[var(--crm-text-primary)]">
                     <input
                       type="checkbox"
@@ -1684,7 +2038,7 @@ export default function CompleteTaskModal({
                       onChange={(e) => setCancelConfirmed(e.target.checked)}
                     />
                     <span>
-                      I confirm cancelling this meeting for this lead.
+                      I confirm cancelling the selected meeting(s) for this lead.
                     </span>
                   </label>
                 </div>
@@ -1822,6 +2176,63 @@ export default function CompleteTaskModal({
           </>
         }
       />
+
+      {/* Meeting conflict detection dialog — shown before opening Schedule Hub Meeting */}
+      <MeetingConflictDialog
+        open={conflictDialogOpen}
+        existingMeetings={conflictMeetings}
+        onChoice={(choice) => void handleConflictChoice(choice)}
+        onClose={() => setConflictDialogOpen(false)}
+        busy={conflictBusy}
+      />
+
+      {renovationConfirmOpen ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="renovation-confirm-title"
+          onClick={handleRenovationConfirmCancel}
+        >
+          <div
+            className="w-full max-w-md rounded-[18px] border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 shadow-[0_24px_64px_rgba(15,23,42,0.28)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="renovation-confirm-title"
+              className="text-[15px] font-semibold text-[var(--crm-text-primary)]"
+            >
+              Confirm Renovation lead?
+            </h3>
+            <p className="mt-2 text-[13px] leading-relaxed text-[var(--crm-text-secondary)]">
+              This lead will be marked as Renovation and reassigned to the renovation sales team
+              using round-robin. Continue?
+            </p>
+            <p className="mt-2 text-[12px] text-[var(--crm-text-muted)]">
+              This cannot be undone from Complete Task. Saving the note will apply the assignment.
+            </p>
+            <div className="mt-5 flex flex-col-reverse justify-end gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={handleRenovationConfirmCancel}
+                className="h-[40px] rounded-[12px] border-[var(--crm-border)] bg-[var(--crm-surface)] px-5 text-[13px] font-medium text-[var(--crm-text-primary)]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleRenovationConfirmAccept}
+                className="h-[40px] rounded-[12px] px-5 text-[13px] font-medium"
+              >
+                Confirm & assign
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
+

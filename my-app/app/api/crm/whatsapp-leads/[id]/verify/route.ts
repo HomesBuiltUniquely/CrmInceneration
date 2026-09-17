@@ -19,7 +19,6 @@ export async function POST(
       "Content-Type": req.headers.get("Content-Type") ?? "application/json",
     },
     body: bodyText.length ? bodyText : "{}",
-    cache: "no-store",
   });
   const payload = await readUpstreamPayload(res);
   if (!res.ok) {

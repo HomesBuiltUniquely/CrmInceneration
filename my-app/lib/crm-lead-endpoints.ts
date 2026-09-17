@@ -1,15 +1,27 @@
 import type { CrmLeadType } from "@/lib/leads-filter";
 
-/** Lead source → REST base path (v1). */
+/**
+ * Lead source → REST base path (v1).
+ *
+ * Meta (`mlead` → `/v1/MetaLead`): use GET list/detail, PUT update, POST verify,
+ * DELETE (Admin/Super Admin), activities, and shared assign API.
+ * Hub disabled `POST /v1/MetaLead` create (HTTP 410) —
+ * Instant Form leads arrive via Meta webhook `/meta/webhook` only.
+ */
 export const LEAD_TYPE_TO_BASE: Record<CrmLeadType, string> = {
   formlead: "/v1/FormLead",
   glead: "/v1/Home1",
   mlead: "/v1/MetaLead",
   addlead: "/v1/AddLead",
+  ivrlead: "/v1/IvrLead",
   websitelead: "/v1/WebsiteLead",
   walkinlead: "/v1/WalkinLead",
   whatsapplead: "/v1/WhatsappLead",
 };
+
+/** User-facing copy when Hub returns 410 for Meta create / sheet ingest. */
+export const META_LEAD_CREATE_DISABLED_MESSAGE =
+  "Meta Instant Form leads sync automatically from Facebook. Manual / Sheet create for Meta Ads is turned off.";
 
 export function detailsUrl(leadType: CrmLeadType, id: string | number): string {
   if (leadType === "walkinlead") {

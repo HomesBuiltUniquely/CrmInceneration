@@ -67,19 +67,30 @@ import CompleteTaskModal, {
   type PresalesVerifyFromCompleteTaskPayload,
 } from "./CompleteTaskModal";
 import {
+  CONFIGURATION_SCOPE_UPDATED_EVENT,
   RESUME_MEETING_SCHEDULE_EVENT,
+  type ConfigurationScopeUpdatedDetail,
   type ResumeMeetingScheduleDetail,
 } from "@/lib/configuration-scope-events";
 import {
   createAppointment,
+  deleteAppointment,
+  findAllAppointmentsForLead,
+  findLatestAppointmentForLead,
+  updateAppointment,
   type CreateAppointmentResponse,
   resolveAppointmentContextForLead,
 } from "@/lib/appointment-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
-import { resolveLeadPropertyGateField } from "@/lib/milestone-advance-gates";
 import {
+  isFreshLeadMilestonePosition,
+  resolveLeadPropertyGateField,
+} from "@/lib/milestone-advance-gates";
+import {
+  isMeetingCancelledSubstage,
+  isMeetingRescheduledSubstage,
   isMeetingScheduleSubstage,
   normalizeMilestoneSubStageForApi,
 } from "@/lib/milestone-substage-map";
@@ -141,7 +152,7 @@ import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist"
 import { openWhatsAppChat } from "@/lib/whatsapp-chat";
 import {
   canEditLeadEmailAndPhone,
-  stripUnauthorizedLeadEmailPhoneFromPutBody,
+  stripUnauthorizedLeadIdentityFromPutBody,
 } from "@/lib/lead-identity-edit-access";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
@@ -160,6 +171,7 @@ import {
 import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
 import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
+import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
 import QuoteSentCelebrationOverlay from "@/app/Components/CrmLeadDetailsV2/QuoteSentCelebrationOverlay";
 import { pickRandomQuoteSentMotivateLine } from "@/lib/quote-sent-motivate";
 import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
@@ -555,7 +567,6 @@ async function postExternalIntakeLead(args: {
     externalLeadId,
     pid: externalLeadId,
     sourceProject: "crm-inceneration",
-    designerName: "",
     salesExecutive: "",
     salesExecutiveEmail: "",
   };
@@ -575,7 +586,7 @@ async function postExternalIntakeLead(args: {
       pickUserLikeName(args.baseDetail.designer) ||
       pickUserLikeName(args.baseDetail.interiorDesigner),
   );
-  payload.designerName = resolvedDesignerName;
+  if (resolvedDesignerName) payload.designerName = resolvedDesignerName;
   const salesExecutive = normalizeOptionalPersonField(
     pickText(args.lead.assignee) ||
     pickText(args.baseDetail.assignedTo) ||
@@ -796,6 +807,7 @@ const SOURCE_LABELS: Record<CrmLeadType, string> = {
   glead: "Google Ads",
   mlead: "Meta Ads",
   addlead: "Add Lead",
+  ivrlead: "IVR Lead",
   websitelead: "Website Lead",
   walkinlead: "Walk-in Lead",
   whatsapplead: "WhatsApp",
@@ -930,10 +942,13 @@ export default function LeadDetailsApiClient({
   leadType: leadTypeParam,
   leadId,
   uiVariant = "legacy",
+  isPopupMode = false,
 }: {
   leadType: string;
   leadId: string;
   uiVariant?: "legacy" | "v2";
+  /** True when rendered inside CrmFullscreenOverlayModal (popup mode). False when rendered via URL routing. */
+  isPopupMode?: boolean;
 }) {
   const validLeadType = isCrmLeadType(leadTypeParam);
   const leadType = leadTypeParam as CrmLeadType;
@@ -1026,6 +1041,7 @@ export default function LeadDetailsApiClient({
     }
     setLoading(true);
     setError(null);
+    setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
     try {
       const lt = leadTypeParam as CrmLeadType;
       let detailJson = await getLeadDetail(lt, leadId);
@@ -1085,25 +1101,19 @@ export default function LeadDetailsApiClient({
           activities: prev.activities,
         }),
       );
-      void resolveAppointmentContextForLead(leadId, { designerName: mapped.designerName }).then(
-        (apptCtx) => {
-          if (!apptCtx.meetingType?.trim() && !apptCtx.designerName?.trim()) return;
+      void resolveAppointmentContextForLead(leadId, {
+        designerName: mapped.designerName,
+        leadType: lt,
+      }).then((apptCtx) => {
+          // Meeting type may come from Hub appointments. Never copy designer onto
+          // the lead — IDs collide across lead types and would fake an assignment.
+          if (!apptCtx.meetingType?.trim()) return;
           setLead((prev) => {
-            const next = { ...prev };
-            let changed = false;
-            if (!prev.meetingType?.trim() && apptCtx.meetingType?.trim()) {
-              next.meetingType = apptCtx.meetingType;
-              changed = true;
-            }
-            const prevDesigner = String(prev.designerName ?? "").trim();
-            const designerMissing =
-              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
-            if (designerMissing && apptCtx.designerName?.trim()) {
-              next.designerName = apptCtx.designerName;
-              changed = true;
-            }
-            if (!changed) return prev;
-            return preserveLeadStickyFields(prev, next);
+            if (prev.meetingType?.trim()) return prev;
+            return preserveLeadStickyFields(prev, {
+              ...prev,
+              meetingType: apptCtx.meetingType ?? prev.meetingType,
+            });
           });
         },
       );
@@ -1158,6 +1168,12 @@ export default function LeadDetailsApiClient({
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
     window.history.replaceState({}, "", nextUrl);
   }, [leadId, leadType, uiVariant]);
+
+  useEffect(() => {
+    const openBookingDone = () => setBookingDoneOpen(true);
+    window.addEventListener("crm-open-booking-done", openBookingDone);
+    return () => window.removeEventListener("crm-open-booking-done", openBookingDone);
+  }, []);
 
   const [salesClosureAuthUser, setSalesClosureAuthUser] = useState<
     Record<string, unknown> | null
@@ -1434,8 +1450,13 @@ export default function LeadDetailsApiClient({
     return selected?.subStages ?? [];
   }, [rollbackCategories, rollbackCategory]);
 
+  const rollbackIsFreshLead = useMemo(
+    () => isFreshLeadMilestonePosition(rollbackStage, "", ""),
+    [rollbackStage],
+  );
+
   useEffect(() => {
-    if (!rollbackStage.trim()) {
+    if (!rollbackStage.trim() || rollbackIsFreshLead) {
       setRollbackCategory("");
       setRollbackSubStage("");
       return;
@@ -1449,10 +1470,15 @@ export default function LeadDetailsApiClient({
       setRollbackCategory("");
       setRollbackSubStage("");
     }
-  }, [rollbackCategories, rollbackCategory, rollbackStage]);
+  }, [
+    rollbackCategories,
+    rollbackCategory,
+    rollbackIsFreshLead,
+    rollbackStage,
+  ]);
 
   useEffect(() => {
-    if (!rollbackCategory.trim()) {
+    if (rollbackIsFreshLead || !rollbackCategory.trim()) {
       setRollbackSubStage("");
       return;
     }
@@ -1462,7 +1488,12 @@ export default function LeadDetailsApiClient({
     ) {
       setRollbackSubStage("");
     }
-  }, [rollbackCategory, rollbackSubStage, rollbackSubStages]);
+  }, [
+    rollbackCategory,
+    rollbackIsFreshLead,
+    rollbackSubStage,
+    rollbackSubStages,
+  ]);
 
   const viewerRoleKey = useMemo(() => {
     if (salesClosureAuthUser) {
@@ -1573,6 +1604,7 @@ export default function LeadDetailsApiClient({
 
   const canVerifyCurrentLead = useMemo(() => {
     if (!canVerifyRole) return false;
+    // WhatsApp (and all sources): never show Verify once Hub marks verified (pin auto-verify included).
     if (isCrmLeadVerified(verifyLeadRecord)) return false;
     if (viewerRoleKey === "SUPER_ADMIN") return true;
 
@@ -2013,9 +2045,12 @@ export default function LeadDetailsApiClient({
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
       if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
       }
+      // WhatsApp one-time name flow: don't commit name on general save unless
+      // this viewer has privileged identity edit (SA / Admin / Super Admin / SM team).
       if (
+        !canEditLeadEmailPhone &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2090,9 +2125,10 @@ export default function LeadDetailsApiClient({
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
       if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadEmailPhoneFromPutBody(body, baseDetail);
+        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
       }
       if (
+        !canEditLeadEmailPhone &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2190,7 +2226,7 @@ export default function LeadDetailsApiClient({
             bookingType: mapped.bookingType || leadToSave.bookingType || prev.bookingType,
             salesManagerName:
               mapped.salesManagerName || leadToSave.salesManagerName || prev.salesManagerName,
-            designerName: mapped.designerName || leadToSave.designerName || prev.designerName,
+            designerName: mapped.designerName || leadToSave.designerName,
             meetingType: mapped.meetingType || leadToSave.meetingType || prev.meetingType,
             quoteLink: mapped.quoteLink?.trim() || prev.quoteLink || "",
           });
@@ -2245,13 +2281,20 @@ export default function LeadDetailsApiClient({
   const handleLeadContactSave = useCallback(
     async (patch: Partial<Lead>, options?: { silent?: boolean }) => {
       if (!validLeadType) return;
+      if (!canEditLeadEmailPhone) {
+        throw new Error("You cannot edit name or contact on this lead.");
+      }
       const lt = leadTypeParam as CrmLeadType;
       const mergedLead = { ...lead, ...patch };
       setLead((prev) => ({ ...prev, ...patch }));
       setSavingSecondBox(true);
       setSecondBoxError(null);
       try {
-        const body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        let body = mergeLeadIntoDetail(baseDetail, mergedLead);
+        // Still strip if somehow unauthorized mid-request
+        if (!canEditLeadEmailPhone) {
+          body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
+        }
         const updated = await putLeadDetail(lt, leadId, body);
         const stickyQuote = pickPersistedQuoteLink(updated, mergedLead);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -2278,7 +2321,15 @@ export default function LeadDetailsApiClient({
         setSavingSecondBox(false);
       }
     },
-    [baseDetail, lead, leadId, leadTypeParam, notifySuccess, validLeadType],
+    [
+      baseDetail,
+      canEditLeadEmailPhone,
+      lead,
+      leadId,
+      leadTypeParam,
+      notifySuccess,
+      validLeadType,
+    ],
   );
 
   const handleConnectionPhaseSave = useCallback(
@@ -2579,18 +2630,31 @@ export default function LeadDetailsApiClient({
   const handleStageRollback = useCallback(async () => {
     if (!validLeadType || !isSuperAdmin) return;
     const toMilestoneStage = rollbackStage.trim();
-    const toMilestoneStageCategory = rollbackCategory.trim();
-    const toMilestoneSubStage = rollbackSubStage.trim();
+    const isFreshLeadTarget = isFreshLeadMilestonePosition(
+      toMilestoneStage,
+      "",
+      "",
+    );
+    // Fresh Lead has no category/sub-stage in the pipeline — persist empty like Complete Task.
+    const toMilestoneStageCategory = isFreshLeadTarget
+      ? ""
+      : rollbackCategory.trim();
+    const toMilestoneSubStage = isFreshLeadTarget
+      ? ""
+      : rollbackSubStage.trim();
     const reason = rollbackReason.trim();
     const currentStage = lead.stageBlock?.milestoneStage?.trim() ?? "";
     const currentCategory =
       lead.stageBlock?.milestoneStageCategory?.trim() ?? "";
     const currentSubStage = lead.stageBlock?.milestoneSubStage?.trim() ?? "";
 
+    if (!toMilestoneStage) {
+      setRollbackError("Select a stage.");
+      return;
+    }
     if (
-      !toMilestoneStage ||
-      !toMilestoneStageCategory ||
-      !toMilestoneSubStage
+      !isFreshLeadTarget &&
+      (!toMilestoneStageCategory || !toMilestoneSubStage)
     ) {
       setRollbackError("Select stage, category, and sub-stage.");
       return;
@@ -2708,10 +2772,11 @@ export default function LeadDetailsApiClient({
       whatsappNameLockedFromServer,
     ],
   );
-  const nameFieldLocked = useMemo(
-    () => resolveWhatsappPresalesNameLocked(whatsappNameLockInput),
-    [whatsappNameLockInput],
-  );
+  const nameFieldLocked = useMemo(() => {
+    // Privileged identity editors unlock name (gated in LeadInfoTab via ✎ Update).
+    if (canEditLeadEmailPhone) return false;
+    return resolveWhatsappPresalesNameLocked(whatsappNameLockInput);
+  }, [canEditLeadEmailPhone, whatsappNameLockInput]);
   const showWhatsappPresalesNameHint = useMemo(
     () => shouldShowWhatsappPresalesNameHint(whatsappNameLockInput),
     [whatsappNameLockInput],
@@ -2784,6 +2849,31 @@ export default function LeadDetailsApiClient({
     return () => window.removeEventListener(RESUME_MEETING_SCHEDULE_EVENT, onResumeMeeting);
   }, [leadId, leadType]);
 
+  /** Apply BHK / property name / booking saved from Configuration Scope into lead UI state. */
+  useEffect(() => {
+    const onScopeUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<ConfigurationScopeUpdatedDetail>).detail;
+      if (!detail) return;
+      if (detail.leadId && detail.leadId !== leadId) return;
+      if (detail.leadType && detail.leadType !== leadType) return;
+      setLead((prev) => {
+        const next = { ...prev };
+        if (detail.configuration?.trim()) {
+          next.configuration = detail.configuration.trim();
+        }
+        if (detail.propertyName?.trim()) {
+          next.propertyLocation = detail.propertyName.trim();
+        }
+        if (detail.bookingType?.trim()) {
+          next.bookingType = detail.bookingType.trim();
+        }
+        return next;
+      });
+    };
+    window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+    return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
+  }, [leadId, leadType]);
+
   /** Presales pipeline Complete Task (full catalog) for presales roles and admin viewers on unverified presales leads. */
   const usePresalesCompleteTask = useMemo(
     () =>
@@ -2838,6 +2928,9 @@ export default function LeadDetailsApiClient({
   const handlePresalesVerifyFromCompleteTask = useCallback(
     async (args: PresalesVerifyFromCompleteTaskPayload) => {
       if (!validLeadType) return;
+      if (isCrmLeadVerified(verifyLeadRecord)) {
+        throw new Error("This lead is already verified.");
+      }
       const pincode = args.pincode.trim();
       if (!pincode) {
         throw new Error("Pincode is required to verify this lead.");
@@ -2916,6 +3009,7 @@ export default function LeadDetailsApiClient({
       salesClosureAuthUser,
       salesExecutiveOptions,
       validLeadType,
+      verifyLeadRecord,
     ],
   );
 
@@ -3093,6 +3187,11 @@ export default function LeadDetailsApiClient({
           ? ""
           : args.milestoneStageCategory;
 
+        const leadIdNum = Number(leadId);
+        const isCancelFlow = isMeetingCancelledSubstage(persistedSubstage);
+        let substageForSave = persistedSubstage;
+        let partialMeetingCancel = false;
+
         // For LOST-path leads and Closed-Won customer milestones (Booking Done / Token Done),
         // clear the follow-up date so these leads never appear as overdue.
         const noFollowUpNeeded = isNoFollowUpRequired({
@@ -3107,8 +3206,34 @@ export default function LeadDetailsApiClient({
         let designerName = lead.designerName;
         let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
 
+        if (isCancelFlow && args.cancelAppointmentIds?.length) {
+          for (const appointmentId of args.cancelAppointmentIds) {
+            await deleteAppointment(appointmentId);
+          }
+          if (Number.isFinite(leadIdNum)) {
+            const remaining = await findAllAppointmentsForLead(leadIdNum, {
+              designerName: lead.designerName,
+            });
+            if (remaining.length > 0) {
+              partialMeetingCancel = true;
+              const keepSubstage = normalizeMilestoneSubStageForApi(
+                lead.stageBlock?.milestoneSubStage?.trim() ||
+                  lead.status?.trim() ||
+                  "Meeting Scheduled",
+              );
+              substageForSave = keepSubstage;
+              const latestRemaining = remaining[0];
+              designerName = latestRemaining.designerName?.trim() || lead.designerName;
+              meetingType = latestRemaining.meetingType?.trim() || lead.meetingType;
+              if (latestRemaining.startTime?.trim()) {
+                followUpDate = latestRemaining.startTime;
+                meetingDate = latestRemaining.startTime;
+              }
+            }
+          }
+        }
+
         if (args.meetingAppointment) {
-          const leadIdNum = Number(leadId);
           const apptBody: import("@/lib/appointment-client").CreateAppointmentBody = {
             designerName: args.meetingAppointment.designerName,
             meetingType: args.meetingAppointment.meetingType,
@@ -3124,7 +3249,25 @@ export default function LeadDetailsApiClient({
             apptBody.date = args.meetingAppointment.date;
             apptBody.slotId = args.meetingAppointment.slotId;
           }
-          const appt = await createAppointment(apptBody);
+
+          // Meeting Rescheduled → update same Hub appointment (PUT). Others → create (POST).
+          let appt: CreateAppointmentResponse;
+          if (isMeetingRescheduledSubstage(persistedSubstage)) {
+            const existing = await findLatestAppointmentForLead(leadIdNum, {
+              designerName:
+                lead.designerName || args.meetingAppointment.designerName,
+            });
+            if (existing?.id != null) {
+              appt = await updateAppointment(existing.id, apptBody, {
+                rescheduleReason: args.note?.trim() || undefined,
+              });
+            } else {
+              // No prior meeting found — fall back to create so the flow still completes.
+              appt = await createAppointment(apptBody);
+            }
+          } else {
+            appt = await createAppointment(apptBody);
+          }
           if (typeof appt.meetingType === "string" && appt.meetingType.trim()) {
             meetingType = appt.meetingType.trim();
           }
@@ -3140,7 +3283,7 @@ export default function LeadDetailsApiClient({
             followUpDate = slotDate;
           }
           const meetingDesignerName = args.meetingAppointment.designerName;
-          designerName = meetingDesignerName;
+          designerName = meetingDesignerName?.trim() || lead.designerName;
           const schedule = buildExternalIntakeScheduleFromAppointment({
             meetingDate: args.meetingAppointment.date,
             appt,
@@ -3227,7 +3370,7 @@ export default function LeadDetailsApiClient({
         }
 
         if (
-          isMeetingScheduleSubstage(persistedSubstage) &&
+          isMeetingScheduleSubstage(substageForSave) &&
           followUpDate.trim()
         ) {
           meetingDate = followUpDate;
@@ -3236,9 +3379,9 @@ export default function LeadDetailsApiClient({
         const nextStage = {
           milestoneStage: args.milestoneStage,
           milestoneStageCategory: persistedCategory,
-          milestoneSubStage: persistedSubstage,
+          milestoneSubStage: substageForSave,
           stage: lead.stageBlock?.stage ?? "Initial Stage",
-          substage: { substage: persistedSubstage || null },
+          substage: { substage: substageForSave || null },
         };
         if (isClosedWonBookingDone(nextStage)) {
           if (!canClosedLeadHeader) {
@@ -3262,7 +3405,7 @@ export default function LeadDetailsApiClient({
           followUpDate,
           designerName,
           meetingType: meetingType ?? lead.meetingType,
-          status: persistedSubstage,
+          status: substageForSave,
           stageBlock: nextStage,
           budget: resolveLeadPropertyGateField(args.budget, lead.budget),
           propertyNotes: resolveLeadPropertyGateField(args.propertyNotes, lead.propertyNotes),
@@ -3278,9 +3421,14 @@ export default function LeadDetailsApiClient({
           body.followUpDate = null;
         }
         let updated = await putLeadDetail(lt, leadId, body);
+        if (partialMeetingCancel) {
+          notifyInfo(
+            "Selected meeting(s) cancelled. Lead remains Meeting Scheduled because other meetings are still booked.",
+          );
+        }
         if (followUpDate.trim() || meetingDate.trim() || noFollowUpNeeded) {
           const mirrorMeetingFromFollowUp =
-            isMeetingScheduleSubstage(persistedSubstage) ||
+            isMeetingScheduleSubstage(substageForSave) ||
             Boolean(args.meetingAppointment);
           try {
             updated = await putHubScheduleDates(lt, leadId, {
@@ -3316,26 +3464,11 @@ export default function LeadDetailsApiClient({
             bookingType: leadForSave.bookingType || mapped.bookingType || prev.bookingType,
             salesManagerName: leadForSave.salesManagerName || prev.salesManagerName,
             meetingType: leadForSave.meetingType || mapped.meetingType || prev.meetingType,
-            designerName: leadForSave.designerName || mapped.designerName || prev.designerName,
+            designerName: leadForSave.designerName || mapped.designerName,
             stageBlock: nextStage,
             quoteLink: stickyQuote || prev.quoteLink || "",
           });
           return mergedLead;
-        });
-        void resolveAppointmentContextForLead(leadId, {
-          designerName: leadForSave.designerName,
-        }).then((apptCtx) => {
-          if (!apptCtx.designerName?.trim()) return;
-          setLead((prev) => {
-            const prevDesigner = String(prev.designerName ?? "").trim();
-            const designerMissing =
-              !prevDesigner || prevDesigner === "—" || prevDesigner === "-" || prevDesigner === "–";
-            if (!designerMissing) return prev;
-            return preserveLeadStickyFields(prev, {
-              ...prev,
-              designerName: apptCtx.designerName ?? prev.designerName,
-            });
-          });
         });
         const propertyLocation = leadForSave.propertyLocation?.trim();
         if (propertyLocation) {
@@ -3343,7 +3476,30 @@ export default function LeadDetailsApiClient({
             console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
-        notifySuccess("Saved");
+        if (
+          String(args.feedback ?? "").trim().toUpperCase() === "RENOVATION" ||
+          mapped.stageBlock?.renovationAssigned
+        ) {
+          const mgr = mapped.stageBlock?.renovationSalesManager?.trim() || "";
+          const exec =
+            mapped.stageBlock?.renovationSalesExecutive?.trim() ||
+            mapped.assignee?.trim() ||
+            "";
+          const execMissing = !exec || /^[-–—]+$/.test(exec);
+          if (execMissing && !mgr) {
+            notifyError(
+              "Renovation team monthly limit reached; contact admin.",
+            );
+          } else {
+            notifySuccess(
+              execMissing
+                ? `Assigned to renovation team${mgr ? ` (Manager: ${mgr})` : ""}`
+                : `Assigned to ${exec}`,
+            );
+          }
+        } else {
+          notifySuccess("Saved");
+        }
         maybeOpenSalesClosureAfterWon([
           args.feedback,
           args.milestoneStage,
@@ -3434,7 +3590,7 @@ export default function LeadDetailsApiClient({
       <main className="min-h-screen bg-[var(--crm-app-bg)] p-8">
         <p className="text-rose-600">
           Unknown lead source. Use /Leads/formlead/123 (or glead, mlead,
-          addlead, websitelead, walkinlead, whatsapplead).
+          addlead, ivrlead, websitelead, walkinlead, whatsapplead).
         </p>
       </main>
     );
@@ -3529,7 +3685,7 @@ export default function LeadDetailsApiClient({
       onLeadPatch: patchLead,
       onConnectionPhaseSave: handleConnectionPhaseSave,
       connectionPhaseSaving: savingSecondBox,
-      canEditLeadPhoneEmail: canEditLeadPhoneAndEmail(viewerRoleKey),
+      canEditLeadPhoneEmail: canEditLeadEmailPhone,
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
@@ -3538,7 +3694,7 @@ export default function LeadDetailsApiClient({
     return (
       <>
         <LeadDetailV2Provider value={v2Context}>
-          <NewLeadDetailPage leadType={leadType} leadId={leadId} />
+          <NewLeadDetailPage leadType={leadType} leadId={leadId} isPopupMode={isPopupMode} />
         </LeadDetailV2Provider>
         <QuoteSentCelebrationOverlay
           open={quoteCelebrateOpen}
@@ -3614,42 +3770,53 @@ export default function LeadDetailsApiClient({
                     ))}
                   </select>
                 </label>
-                <label className="block">
-                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                    Stage category *
-                  </span>
-                  <select
-                    value={rollbackCategory}
-                    onChange={(e) => setRollbackCategory(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                    disabled={rollbackBusy || !rollbackStage}
-                  >
-                    <option value="">Select category</option>
-                    {rollbackCategories.map((cat) => (
-                      <option key={cat.stageCategory} value={cat.stageCategory}>
-                        {cat.stageCategory}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                    Sub-stage *
-                  </span>
-                  <select
-                    value={rollbackSubStage}
-                    onChange={(e) => setRollbackSubStage(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                    disabled={rollbackBusy || !rollbackCategory}
-                  >
-                    <option value="">Select sub-stage</option>
-                    {rollbackSubStages.map((sub) => (
-                      <option key={sub} value={sub}>
-                        {sub}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {!rollbackIsFreshLead ? (
+                  <>
+                    <label className="block">
+                      <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                        Stage category *
+                      </span>
+                      <select
+                        value={rollbackCategory}
+                        onChange={(e) => setRollbackCategory(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                        disabled={rollbackBusy || !rollbackStage}
+                      >
+                        <option value="">Select category</option>
+                        {rollbackCategories.map((cat) => (
+                          <option
+                            key={cat.stageCategory}
+                            value={cat.stageCategory}
+                          >
+                            {cat.stageCategory}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                        Sub-stage *
+                      </span>
+                      <select
+                        value={rollbackSubStage}
+                        onChange={(e) => setRollbackSubStage(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                        disabled={rollbackBusy || !rollbackCategory}
+                      >
+                        <option value="">Select sub-stage</option>
+                        {rollbackSubStages.map((sub) => (
+                          <option key={sub} value={sub}>
+                            {sub}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : (
+                  <p className="text-[12px] text-[var(--crm-text-secondary)]">
+                    Fresh Lead has no category or sub-stage.
+                  </p>
+                )}
                 <label className="block">
                   <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
                     Reason *
@@ -3742,13 +3909,19 @@ export default function LeadDetailsApiClient({
           }}
         />
         {validLeadType ? (
-          <BookingTokenCancellationBar
-            leadType={leadTypeParam as CrmLeadType}
-            leadId={leadId}
-            lead={lead}
-            onLeadReload={() => void load()}
-            onActivitiesRefresh={refreshActivities}
-          />
+          <>
+            <TokenBookingRecognitionSection
+              leadType={leadTypeParam as CrmLeadType}
+              leadId={leadId}
+            />
+            <BookingTokenCancellationBar
+              leadType={leadTypeParam as CrmLeadType}
+              leadId={leadId}
+              lead={lead}
+              onLeadReload={() => void load()}
+              onActivitiesRefresh={refreshActivities}
+            />
+          </>
         ) : null}
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} viewerRole={viewerRoleKey} />
@@ -3874,45 +4047,53 @@ export default function LeadDetailsApiClient({
                   ))}
                 </select>
               </label>
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Stage category *
-                </span>
-                <select
-                  value={rollbackCategory}
-                  onChange={(e) => setRollbackCategory(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  disabled={rollbackBusy || !rollbackStage.trim()}
-                >
-                  <option value="">Select category</option>
-                  {rollbackCategories.map((category) => (
-                    <option
-                      key={category.stageCategory}
-                      value={category.stageCategory}
+              {!rollbackIsFreshLead ? (
+                <>
+                  <label className="block">
+                    <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                      Stage category *
+                    </span>
+                    <select
+                      value={rollbackCategory}
+                      onChange={(e) => setRollbackCategory(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                      disabled={rollbackBusy || !rollbackStage.trim()}
                     >
-                      {category.stageCategory}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
-                  Sub-stage *
-                </span>
-                <select
-                  value={rollbackSubStage}
-                  onChange={(e) => setRollbackSubStage(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
-                  disabled={rollbackBusy || !rollbackCategory.trim()}
-                >
-                  <option value="">Select sub-stage</option>
-                  {rollbackSubStages.map((subStage) => (
-                    <option key={subStage} value={subStage}>
-                      {subStage}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                      <option value="">Select category</option>
+                      {rollbackCategories.map((category) => (
+                        <option
+                          key={category.stageCategory}
+                          value={category.stageCategory}
+                        >
+                          {category.stageCategory}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
+                      Sub-stage *
+                    </span>
+                    <select
+                      value={rollbackSubStage}
+                      onChange={(e) => setRollbackSubStage(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-[var(--crm-border)] bg-[var(--crm-surface)] px-3 py-2 text-[13px] outline-none focus:border-[var(--crm-accent)]"
+                      disabled={rollbackBusy || !rollbackCategory.trim()}
+                    >
+                      <option value="">Select sub-stage</option>
+                      {rollbackSubStages.map((subStage) => (
+                        <option key={subStage} value={subStage}>
+                          {subStage}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <p className="text-[12px] text-[var(--crm-text-secondary)]">
+                  Fresh Lead has no category or sub-stage.
+                </p>
+              )}
               <label className="block">
                 <span className="text-[12px] font-medium text-[var(--crm-text-secondary)]">
                   Reason * (min 5 chars)

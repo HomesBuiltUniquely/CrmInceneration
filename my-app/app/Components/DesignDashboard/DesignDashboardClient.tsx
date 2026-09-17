@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
+import AppTopBar from "../Shared/AppTopBar";
+import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import {
@@ -125,7 +127,7 @@ export default function DesignDashboardClient() {
     !needsSuperAdminPick;
 
   return (
-    <div className="min-h-screen bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden">
+    <div className="min-h-screen min-h-dvh bg-[var(--crm-app-bg)] xl:h-screen xl:overflow-hidden crm-page-shell">
       <div className="grid min-h-screen xl:h-screen xl:grid-cols-[auto_minmax(0,1fr)]">
         <div>
           <QuickAccessSidebar
@@ -139,20 +141,8 @@ export default function DesignDashboardClient() {
           />
         </div>
 
-        <div className="bg-[var(--crm-surface)] xl:h-screen xl:overflow-y-auto">
-          <div className="border-b border-[var(--crm-border)] bg-[var(--crm-surface-elevated)] shadow-[var(--crm-shadow-sm)]">
-            <div className="flex min-h-16 flex-wrap items-center justify-between gap-3 px-4 md:px-6">
-              <h1 className="text-[1.75rem] font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">
-                Designer Dashboard
-              </h1>
-              {effectiveDesignerName ? (
-                <p className="text-[12px] font-medium text-[var(--crm-text-muted)]">
-                  Designer name for APIs:{" "}
-                  <span className="text-[var(--crm-text-secondary)]">{effectiveDesignerName}</span>
-                </p>
-              ) : null}
-            </div>
-          </div>
+        <SlimScrollArea className="bg-[var(--crm-surface)] xl:h-screen crm-main-scroll">
+          <AppTopBar />
 
           <main className="px-4 py-6 md:px-6">
             <div className="rounded-xl border border-[var(--crm-border)] bg-[var(--crm-surface)] p-5 md:p-6">
@@ -353,7 +343,7 @@ export default function DesignDashboardClient() {
               </div>
             </div>
           </main>
-        </div>
+        </SlimScrollArea>
       </div>
     </div>
   );
