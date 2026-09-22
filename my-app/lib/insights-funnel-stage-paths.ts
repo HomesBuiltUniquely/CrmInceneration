@@ -183,11 +183,13 @@ function emptyPathBreakdown(): FunnelStagePathBreakdown {
 }
 
 /** Map funnel stage key / label to canonical bucket used in Insights funnel bars.
- * Hub checkpoint map (Passages / Cohort / Current align):
- * Fresh Lead → fresh_lead · Discovery → discovery ·
- * Connection | Meeting Scheduled → connection ·
- * Meeting Successful | Quote Sent → exp_design ·
- * Literal Decision only → decision · Closed Won → closed
+ * Hub checkpoint map (Passages / Cohort / Current) — align with
+ * `CrmStageTransitionService.checkpointOf` priority:
+ * Closed Won → Decision → Quote Sent → Meeting Successful → …
+ *
+ * Bugfix (Sep 2026): Hub collapsed Decision → Meeting Successful so passages
+ * never wrote `stageKey: "decision"`. Hub now persists checkpoint `Decision`.
+ * Closed Won does not imply Decision. Pre-fix Decision rows may still be missing.
  */
 export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
   const key = norm(stageKeyOrLabel);
@@ -196,7 +198,16 @@ export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
     return "fresh_lead";
   }
   if (key.includes("discovery") || key.includes("discover")) return "discovery";
-  // Before generic "meeting" / decision — Hub fixed map.
+
+  // Decision before Quote Sent / Meeting Successful / design catch-alls.
+  if (
+    key === "decision" ||
+    key === "cp_decision" ||
+    (key.includes("decision") && !key.includes("lost") && !key.includes("hold"))
+  ) {
+    return "decision";
+  }
+
   if (key.includes("meeting scheduled")) return "connection";
   if (
     key.includes("meeting successful") ||
@@ -210,8 +221,9 @@ export function resolveFunnelCanonicalKey(stageKeyOrLabel: string): string {
     return "exp_design";
   }
   if (key.includes("design") && !key.includes("fresh")) return "exp_design";
-  if (key.includes("decision")) return "decision";
-  if (key.includes("closed") || key.includes("booking") || key.includes("won")) return "closed";
+  if (key.includes("closed") || key.includes("booking") || key.includes("won")) {
+    return "closed";
+  }
   return key.replace(/\s+/g, "_");
 }
 

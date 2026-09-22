@@ -85,8 +85,18 @@ export type InsightsTeamMember = {
   meetings: number;
   proposals: number;
   closed: number;
+  /**
+   * Selected quotation sum for TOKEN+BOOKING closes in window (full quote, not paid / 10%).
+   * Matrix UI may hide this column when Achieved/Payoff are shown.
+   */
   closedValue: number;
   conversionPercent: number;
+  /** TOKEN+BOOKING closes whose lead was created in Insights window. */
+  closedNew?: number;
+  /** TOKEN+BOOKING closes whose lead was created before Insights window. */
+  closedOld?: number;
+  /** closedNew / leads × 100 */
+  conversionPercentNew?: number;
   /** Hub optional row active flag (P0 matrix). */
   active?: boolean;
   /** FE Incentives only (prefer); Hub usually omits. */
@@ -98,11 +108,25 @@ export type InsightsTeamMember = {
 export type InsightsChartPoint = {
   label: string;
   count?: number;
+  /**
+   * Primary chart % — Hub: convertedNewCount / leadCount
+   * (new-pipeline closes in bucket ÷ leads created in bucket).
+   */
   conversionPercent?: number;
+  /** All closes in bucket ÷ leadCount (can exceed 100% with old pipeline). */
+  conversionPercentAll?: number;
+  /** Of leadCount, how many already have any deal in the Insights window. */
+  conversionPercentCohort?: number;
   /** Hub conversion trend — leads created in bucket. */
   leadCount?: number;
-  /** Hub conversion trend — closed won / token / booking in bucket. */
+  /** Deals submitted in bucket (new + old). */
   convertedCount?: number;
+  /** Of convertedCount — lead created in Insights window. */
+  convertedNewCount?: number;
+  /** Of convertedCount — lead created before Insights window. */
+  convertedOldCount?: number;
+  /** Of leadCount — leads with any deal in the Insights window. */
+  cohortConvertedCount?: number;
 };
 
 /** Hub conversion trend line — prefer over FE when points present. */
@@ -117,13 +141,31 @@ export type InsightsConversionTrend = {
   denominatorRule?: string | null;
 };
 
+/** Month / window Closed new vs old (dashboard.closedBreakdown or /closed-new-old). */
+export type InsightsClosedBreakdown = {
+  leadsCreated: number;
+  closedTotal: number;
+  closedNew: number;
+  closedOld: number;
+  conversionPercentNew: number;
+  conversionPercentAll: number;
+  newLeadRule?: string | null;
+  oldLeadRule?: string | null;
+  closedRule?: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  hubImplemented?: boolean;
+};
+
 export function hasHubConversionTrend(
   trend: InsightsConversionTrend | null | undefined,
 ): boolean {
   return (trend?.points?.length ?? 0) > 0;
 }
 
-/** Hub revenue forecast bars — Actual aligns with kpis.grossBooking when actualScope is set. */
+/** Hub revenue forecast bars — Actual aligns with kpis.grossBooking when actualScope is set.
+ * Money KPIs are **selected quotation** (full quote), not amount paid / 10%.
+ */
 export type InsightsRevenueForecast = {
   /** Primary Insights target = sum of active SE monthly targets. */
   target: number;
@@ -131,6 +173,12 @@ export type InsightsRevenueForecast = {
   projected: number;
   /** e.g. "grossBooking" — same as Token + Booking KPI strip. */
   actualScope?: string | null;
+  /**
+   * Hub formula echo. Quotation era:
+   * `token_plus_booking_selected_quoteAmount_in_period`
+   * (was `token_amountReceived_plus_booking_tenPercentAmount_in_period`).
+   */
+  actualRule?: string | null;
   /** e.g. "sales_targets" | "incentives" | "config_default" */
   targetSource?: string | null;
   /** Same as `target` when Hub sends explicit active sum. */
@@ -160,6 +208,10 @@ function normalizeRevenueForecast(raw: unknown): InsightsRevenueForecast {
     actual: asNum(o.actual),
     projected: asNum(o.projected),
     actualScope: o.actualScope == null ? null : asStr(o.actualScope),
+    actualRule:
+      o.actualRule == null && o.actual_rule == null
+        ? null
+        : asStr(o.actualRule ?? o.actual_rule),
     targetSource: o.targetSource == null ? null : asStr(o.targetSource),
     activeTargetInr: normalizeOptionalNum(o.activeTargetInr ?? o.activeMonthlyTargetInr),
     inactiveTargetInr: normalizeOptionalNum(o.inactiveTargetInr ?? o.inactiveMonthlyTargetInr),
@@ -194,6 +246,7 @@ export type InsightsDashboard = {
     conversionPercent: InsightsKpiMetric;
     /**
      * Hub money KPIs — same Scope as totalLeads (branch + people + date).
+     * Values = **selected quotation** (full quote at token/booking), not amount paid / 10%.
      * Prefer over FE booking-token deal recompute.
      */
     tokenValue?: InsightsKpiMetric | null;
@@ -227,6 +280,8 @@ export type InsightsDashboard = {
     points: InsightsChartPoint[];
   };
   conversionTrend: InsightsConversionTrend;
+  /** Closed new vs old month totals (same Scope as dashboard). */
+  closedBreakdown?: InsightsClosedBreakdown | null;
   revenueForecast: InsightsRevenueForecast;
   /** Four sales-strip KPI tiles. Prefer dedicated `/performance-cards` fetch. */
   performanceCards?: PerformanceCards;
@@ -1336,13 +1391,28 @@ function normalizeTeamPerformanceMember(
     ),
     Number.NaN,
   );
-  // Prefer derive from displayed closed÷leads so Conv matches Closed column.
-  const conversionPercent =
-    leads > 0
+  // Prefer Hub conversionPercent when present; else closed÷leads.
+  const conversionPercent = Number.isFinite(hubConversion)
+    ? Math.round(hubConversion * 10) / 10
+    : leads > 0
       ? Math.round((closed / leads) * 1000) / 10
-      : Number.isFinite(hubConversion)
-        ? hubConversion
-        : 0;
+      : 0;
+
+  const closedNewRaw = firstPresent(pick("closedNew", "closed_new"));
+  const closedOldRaw = firstPresent(pick("closedOld", "closed_old"));
+  const convNewRaw = firstPresent(
+    pick("conversionPercentNew", "conversion_percent_new"),
+  );
+  const closedNew =
+    closedNewRaw == null ? undefined : asMetricCount(closedNewRaw);
+  const closedOld =
+    closedOldRaw == null ? undefined : asMetricCount(closedOldRaw);
+  const conversionPercentNew =
+    convNewRaw == null
+      ? closedNew != null && leads > 0
+        ? Math.round((closedNew / leads) * 1000) / 10
+        : undefined
+      : Math.round(asMetricCount(convNewRaw, Number.NaN) * 10) / 10;
 
   return {
     userId: (m.userId as number | string) ?? (m.user_id as number | string) ?? "",
@@ -1354,6 +1424,11 @@ function normalizeTeamPerformanceMember(
     closed,
     closedValue,
     conversionPercent,
+    closedNew,
+    closedOld,
+    conversionPercentNew: Number.isFinite(conversionPercentNew as number)
+      ? conversionPercentNew
+      : undefined,
     active:
       typeof m.active === "boolean"
         ? m.active
@@ -1653,11 +1728,35 @@ function normalizeConversionTrend(raw: unknown): InsightsConversionTrend {
         p.closedCount ??
         p.closed_count ??
         p.numerator;
+      const convertedNewRaw =
+        p.convertedNewCount ?? p.converted_new_count ?? p.closedNew ?? p.closed_new;
+      const convertedOldRaw =
+        p.convertedOldCount ?? p.converted_old_count ?? p.closedOld ?? p.closed_old;
+      const cohortRaw =
+        p.cohortConvertedCount ?? p.cohort_converted_count ?? p.cohortConverted;
+      const pctAllRaw =
+        p.conversionPercentAll ?? p.conversion_percent_all;
+      const pctCohortRaw =
+        p.conversionPercentCohort ?? p.conversion_percent_cohort;
       return {
         label,
         conversionPercent: pct,
+        conversionPercentAll:
+          pctAllRaw == null
+            ? undefined
+            : normalizeConversionPercentValue(pctAllRaw),
+        conversionPercentCohort:
+          pctCohortRaw == null
+            ? undefined
+            : normalizeConversionPercentValue(pctCohortRaw),
         leadCount: leadCountRaw == null ? undefined : asNum(leadCountRaw),
         convertedCount: convertedRaw == null ? undefined : asNum(convertedRaw),
+        convertedNewCount:
+          convertedNewRaw == null ? undefined : asNum(convertedNewRaw),
+        convertedOldCount:
+          convertedOldRaw == null ? undefined : asNum(convertedOldRaw),
+        cohortConvertedCount:
+          cohortRaw == null ? undefined : asNum(cohortRaw),
         count: leadCountRaw == null ? undefined : asNum(leadCountRaw),
       };
     }),
@@ -1673,6 +1772,95 @@ function normalizeConversionTrend(raw: unknown): InsightsConversionTrend {
       o.denominatorRule == null && o.denominator_rule == null
         ? null
         : asStr(o.denominatorRule ?? o.denominator_rule),
+  };
+}
+
+export function normalizeClosedBreakdown(
+  raw: unknown,
+): InsightsClosedBreakdown | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const leadsCreated = asNum(o.leadsCreated ?? o.leads_created ?? o.leads);
+  const closedTotal = asNum(o.closedTotal ?? o.closed_total ?? o.closed);
+  const closedNew = asNum(o.closedNew ?? o.closed_new);
+  const closedOld = asNum(o.closedOld ?? o.closed_old);
+  const conversionPercentNew = normalizeConversionPercentValue(
+    o.conversionPercentNew ?? o.conversion_percent_new,
+  );
+  const conversionPercentAll = normalizeConversionPercentValue(
+    o.conversionPercentAll ?? o.conversion_percent_all,
+  );
+  return {
+    leadsCreated,
+    closedTotal,
+    closedNew,
+    closedOld,
+    conversionPercentNew,
+    conversionPercentAll,
+    newLeadRule:
+      o.newLeadRule == null && o.new_lead_rule == null
+        ? null
+        : asStr(o.newLeadRule ?? o.new_lead_rule),
+    oldLeadRule:
+      o.oldLeadRule == null && o.old_lead_rule == null
+        ? null
+        : asStr(o.oldLeadRule ?? o.old_lead_rule),
+    closedRule:
+      o.closedRule == null && o.closed_rule == null
+        ? null
+        : asStr(o.closedRule ?? o.closed_rule),
+    periodStart:
+      o.periodStart == null && o.period_start == null
+        ? null
+        : asStr(o.periodStart ?? o.period_start),
+    periodEnd:
+      o.periodEnd == null && o.period_end == null
+        ? null
+        : asStr(o.periodEnd ?? o.period_end),
+    hubImplemented:
+      typeof o.hubImplemented === "boolean"
+        ? o.hubImplemented
+        : o.hub_implemented == null
+          ? undefined
+          : Boolean(o.hub_implemented),
+  };
+}
+
+/** Derive month strip from enriched week points when closedBreakdown is absent. */
+export function closedBreakdownFromConversionTrend(
+  trend: InsightsConversionTrend | null | undefined,
+): InsightsClosedBreakdown | null {
+  const points = trend?.points ?? [];
+  if (points.length === 0) return null;
+  let leadsCreated = 0;
+  let closedTotal = 0;
+  let closedNew = 0;
+  let closedOld = 0;
+  let hasSplit = false;
+  for (const p of points) {
+    leadsCreated += Number(p.leadCount ?? p.count ?? 0) || 0;
+    closedTotal += Number(p.convertedCount ?? 0) || 0;
+    if (p.convertedNewCount != null || p.convertedOldCount != null) {
+      hasSplit = true;
+      closedNew += Number(p.convertedNewCount ?? 0) || 0;
+      closedOld += Number(p.convertedOldCount ?? 0) || 0;
+    }
+  }
+  if (!hasSplit) return null;
+  return {
+    leadsCreated,
+    closedTotal: closedTotal || closedNew + closedOld,
+    closedNew,
+    closedOld,
+    conversionPercentNew:
+      leadsCreated > 0
+        ? Math.round((closedNew / leadsCreated) * 1000) / 10
+        : 0,
+    conversionPercentAll:
+      leadsCreated > 0
+        ? Math.round(((closedTotal || closedNew + closedOld) / leadsCreated) * 1000) /
+          10
+        : 0,
   };
 }
 
@@ -1779,6 +1967,9 @@ export function normalizeInsightsDashboard(raw: unknown): InsightsDashboard {
       })),
     },
     conversionTrend: normalizeConversionTrend(convTrend),
+    closedBreakdown: normalizeClosedBreakdown(
+      r.closedBreakdown ?? r.closed_breakdown,
+    ),
     revenueForecast: normalizeRevenueForecast(forecast),
     performanceCards: r.performanceCards
       ? normalizePerformanceCards(r.performanceCards)
@@ -1839,6 +2030,27 @@ export async function fetchInsightsDashboard(
   });
   const json = await readJson<unknown>(res, "Unable to load CRM insights.");
   return normalizeInsightsDashboard(json);
+}
+
+/** Closed new vs old — same filters as dashboard; prefer dashboard.closedBreakdown. */
+export async function fetchInsightsClosedNewOld(
+  query: InsightsDashboardQuery,
+): Promise<InsightsClosedBreakdown | null> {
+  const qs = buildInsightsDashboardSearchParams(query).toString();
+  const res = await fetch(
+    `/api/crm/insights/closed-new-old${qs ? `?${qs}` : ""}`,
+    {
+      headers: getCrmAuthHeaders(),
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) return null;
+  const json = await readJson<unknown>(res, "Unable to load closed new/old.");
+  const unwrapped = unwrapInsightsPayload(json);
+  const root =
+    json && typeof json === "object" ? (json as Record<string, unknown>) : {};
+  const merged = { ...root, ...unwrapped };
+  return normalizeClosedBreakdown(merged);
 }
 
 export async function fetchInsightsPerformanceCards(
@@ -1991,11 +2203,13 @@ export const EMPTY_INSIGHTS_DASHBOARD: InsightsDashboard = {
   teamPerformance: [],
   leadsOverTime: { changePercent: 0, points: [] },
   conversionTrend: { changePercent: 0, points: [] },
+  closedBreakdown: null,
   revenueForecast: {
     target: 0,
     actual: 0,
     projected: 0,
     actualScope: null,
+    actualRule: null,
     targetSource: null,
     activeTargetInr: null,
     inactiveTargetInr: null,

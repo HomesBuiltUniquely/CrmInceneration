@@ -17,6 +17,7 @@ import {
 import {
   fetchIncentiveBookingLeads,
   fetchIncentiveBookingLeadsForExecutive,
+  filterIncentiveLeadsForExecutive,
   resolveIncentiveLeadsForPeriod,
   type IncentiveBookingLead,
 } from "@/lib/incentives-booking-data";
@@ -39,8 +40,8 @@ export type TeamMemberIncentiveMetrics = {
 
 type PeriodWindow = { monthKey: string; half: IncentivePeriodHalf };
 
-/** Max parallel executive-leads fetches (same API as Incentives page). */
-const EXEC_LEADS_CONCURRENCY = 4;
+/** Max parallel executive-leads fetches (fallback when bulk ledger is empty). */
+const EXEC_LEADS_CONCURRENCY = 8;
 
 /**
  * Leads submitted inside Insights date window.
@@ -112,6 +113,31 @@ export function formatTeamMatrixIncentiveScope(
     return `${months[0]} · Insights date · Incentives engine`;
   }
   return `${months[0]} → ${months[months.length - 1]} · Insights date · Incentives`;
+}
+
+/**
+ * Distinct booking+token deals in the Insights date window (excludes cancel).
+ * Kept for diagnostics / Achieved path helpers — Team Matrix Closed uses Hub only.
+ */
+export function countBookingTokenClosedInInsightsWindow(
+  leads: IncentiveBookingLead[],
+  dateFilter: BookingDateFilterState,
+): number {
+  const scoped = filterLeadsByInsightsDateFilter(leads, dateFilter);
+  const keys = new Set<string>();
+  for (const lead of scoped) {
+    const listing = String(lead.listingType ?? "").toLowerCase();
+    if (listing === "cancel") continue;
+    // Count booking + token (and unknown listing with money) as closed deals.
+    if (listing === "booking" || listing === "token" || !listing) {
+      const key =
+        lead.id ||
+        `${lead.leadType}:${lead.leadId}` ||
+        `${lead.customerName}:${lead.submittedAt}`;
+      if (key) keys.add(key);
+    }
+  }
+  return keys.size;
 }
 
 function resolveTargetRow(
@@ -274,8 +300,9 @@ export type LoadTeamIncentiveProgress = {
 };
 
 /**
- * Load deals the same way as Incentives Team overview.
- * Streams each exec as it finishes so Achieved/Payoff fill in progressively.
+ * Load deals for Team Matrix Achieved + Closed enrichment.
+ * Fast path: one booking-token ledger (date-scoped) + client partition by exec.
+ * Fallback: per-executive API only for members still empty.
  */
 export async function loadTeamMatrixIncentiveBase(options: {
   team: InsightsTeamMember[];
@@ -304,70 +331,119 @@ export async function loadTeamMatrixIncentiveBase(options: {
       ? [currentSalesTargetMonth()]
       : monthKeysForInsightsDateFilter(options.dateFilter);
 
-  let targetsByMonth = await loadTargetsForMonths(
+  // Targets + deals in parallel (was sequential — felt slow).
+  const targetsPromise = loadTargetsForMonths(
     seedMonths.length > 0 ? seedMonths : [currentSalesTargetMonth()],
   );
 
   if (!options.canPickTeam) {
-    const selfLeads = await fetchIncentiveBookingLeads().catch(
-      () => [] as IncentiveBookingLead[],
-    );
+    const [selfLeads, targetsByMonth] = await Promise.all([
+      fetchIncentiveBookingLeads(options.dateFilter).catch(
+        () => [] as IncentiveBookingLead[],
+      ),
+      targetsPromise,
+    ]);
     if (options.viewerUserId != null && options.viewerUserId > 0) {
       leadsByUserId.set(options.viewerUserId, selfLeads);
     } else if (members[0]) {
-      // Single-row SE matrix: attach deals to the only hub row when local userId lagging
       leadsByUserId.set(members[0].id, selfLeads);
     }
+    let targets = targetsByMonth;
     if (options.dateFilter.preset === "all" && selfLeads.length > 0) {
       const extra = await loadTargetsForMonths(monthKeysFromLeads(selfLeads));
-      for (const [k, v] of extra) targetsByMonth.set(k, v);
+      targets = new Map(targets);
+      for (const [k, v] of extra) targets.set(k, v);
     }
     options.onProgress?.({
       leadsByUserId: new Map(leadsByUserId),
-      targetsByMonth,
+      targetsByMonth: targets,
       done: true,
     });
-    return { leadsByUserId, targetsByMonth };
+    return { leadsByUserId, targetsByMonth: targets };
   }
 
-  // Exact Incentives path: per-executive executive-leads API
-  await mapPool(members, EXEC_LEADS_CONCURRENCY, async (member) => {
-    try {
-      const leads = await fetchIncentiveBookingLeadsForExecutive(member);
-      leadsByUserId.set(member.id, Array.isArray(leads) ? leads : []);
-    } catch {
-      leadsByUserId.set(member.id, []);
+  const [bulkLeads, targetsByMonth] = await Promise.all([
+    fetchIncentiveBookingLeads(
+      options.dateFilter.preset === "all" ? undefined : options.dateFilter,
+    ).catch(() => [] as IncentiveBookingLead[]),
+    targetsPromise,
+  ]);
+
+  if (bulkLeads.length > 0) {
+    for (const member of members) {
+      leadsByUserId.set(
+        member.id,
+        filterIncentiveLeadsForExecutive(bulkLeads, member),
+      );
     }
+    // Paint Closed/Achieved ASAP from bulk ledger
     options.onProgress?.({
       leadsByUserId: new Map(leadsByUserId),
       targetsByMonth,
       done: false,
     });
-  });
 
+    // Only hit per-exec API for rows that got nothing from bulk (missing assignee ids).
+    const missing = members.filter(
+      (m) => (leadsByUserId.get(m.id)?.length ?? 0) === 0,
+    );
+    if (missing.length > 0) {
+      await mapPool(missing, EXEC_LEADS_CONCURRENCY, async (member) => {
+        try {
+          const leads = await fetchIncentiveBookingLeadsForExecutive(member);
+          leadsByUserId.set(member.id, Array.isArray(leads) ? leads : []);
+        } catch {
+          leadsByUserId.set(member.id, []);
+        }
+        options.onProgress?.({
+          leadsByUserId: new Map(leadsByUserId),
+          targetsByMonth,
+          done: false,
+        });
+      });
+    }
+  } else {
+    // Bulk empty — classic per-exec path (higher concurrency).
+    await mapPool(members, EXEC_LEADS_CONCURRENCY, async (member) => {
+      try {
+        const leads = await fetchIncentiveBookingLeadsForExecutive(member);
+        leadsByUserId.set(member.id, Array.isArray(leads) ? leads : []);
+      } catch {
+        leadsByUserId.set(member.id, []);
+      }
+      options.onProgress?.({
+        leadsByUserId: new Map(leadsByUserId),
+        targetsByMonth,
+        done: false,
+      });
+    });
+  }
+
+  let targets = targetsByMonth;
   if (options.dateFilter.preset === "all") {
     const all: IncentiveBookingLead[] = [];
     for (const l of leadsByUserId.values()) all.push(...l);
     const months = monthKeysFromLeads(all);
     if (months.length > 0) {
       const extra = await loadTargetsForMonths(months);
-      for (const [k, v] of extra) targetsByMonth.set(k, v);
+      targets = new Map(targets);
+      for (const [k, v] of extra) targets.set(k, v);
     }
   } else {
-    // ensure every month in range has targets
     const needed = monthKeysForInsightsDateFilter(options.dateFilter);
-    const missing = needed.filter((m) => !targetsByMonth.has(m));
-    if (missing.length > 0) {
-      const extra = await loadTargetsForMonths(missing);
-      for (const [k, v] of extra) targetsByMonth.set(k, v);
+    const missingMonths = needed.filter((m) => !targets.has(m));
+    if (missingMonths.length > 0) {
+      const extra = await loadTargetsForMonths(missingMonths);
+      targets = new Map(targets);
+      for (const [k, v] of extra) targets.set(k, v);
     }
   }
 
   options.onProgress?.({
     leadsByUserId: new Map(leadsByUserId),
-    targetsByMonth,
+    targetsByMonth: targets,
     done: true,
   });
 
-  return { leadsByUserId, targetsByMonth };
+  return { leadsByUserId, targetsByMonth: targets };
 }

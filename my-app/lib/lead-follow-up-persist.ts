@@ -35,7 +35,14 @@ export function computeAutoFollowUpDateToPersist(lead: ApiLead): string | null {
   const storedNorm = normalizeHubScheduleDateString(storedRaw);
   if (storedNorm === FOLLOW_UP_DATE_CLEAR_SENTINEL) return null;
 
-  const isReinquiry = isCrmLeadReinquiry(lead);
+  const r = lead as Record<string, unknown>;
+  const isReinquiry = isCrmLeadReinquiry({
+    additionalLeadSources: lead.additionalLeadSources,
+    leadType: lead.leadType,
+    leadSource: r.leadSource,
+    LeadSource: r.LeadSource,
+    source: r.source,
+  });
   const effective = resolveEffectiveFollowUpDateRaw(storedRaw, readLeadCreatedAtRaw(lead), {
     isReinquiry,
     updatedRaw: readLeadUpdatedAtRaw(lead),

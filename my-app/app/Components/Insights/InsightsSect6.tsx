@@ -7,16 +7,23 @@ import {
   hasHubConversionTrend,
   type InsightsDashboard,
   type InsightsRevenueForecast,
+  type InsightsChartPoint,
 } from "@/lib/crm-insights-api";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
+import { resolveBookingDateRange } from "@/lib/booking-token-date-filter";
 import { formatTargetLakhs } from "@/lib/sales-targets";
 import type {
   InsightsMonthBarPoint,
+  InsightsPeriodPhase,
   InsightsWeekBarPoint,
   InsightsVolumeChartBundle,
   InsightsWeekCharts,
 } from "@/lib/insights-week-charts";
-import { intensityFromCounts } from "@/lib/insights-week-charts";
+import {
+  CONVERSION_PERIOD_DOT,
+  conversionTrendPointPhases,
+  intensityFromCounts,
+} from "@/lib/insights-week-charts";
 import InsightsChartGranularityToggle, {
   type ChartGranularity,
 } from "./InsightsChartGranularityToggle";
@@ -175,19 +182,29 @@ function TargetRosterPopover({
 }
 
 function revenueForecastTargetMath(rf: InsightsRevenueForecast | null | undefined): string {
+  const rule = String(rf?.actualRule ?? "");
+  const actualIsQuote =
+    rule === "token_plus_booking_selected_quoteAmount_in_period" ||
+    rule.includes("selected_quote") ||
+    rule.includes("quoteAmount") ||
+    rf?.actualScope === "grossBooking";
+  const actualLine = actualIsQuote
+    ? "Actual = selected quotation on Token + Booking deals in period (full quote, not paid / 10%)."
+    : "Actual = booked so far in period.";
+
   if (rf?.actualScope === "grossBooking") {
     if (rf.targetSource === "sales_targets" || rf.targetSource === "incentives") {
       return (
         rf.targetFormula ??
-        "Actual = Token + Booking (grossBooking). Projected = pace to period end. Target = sum of active SE monthly targets. Including inactive = active + inactive."
+        `${actualLine} Projected = pace to period end. Target = sum of active SE monthly targets. Including inactive = active + inactive.`
       );
     }
     if (rf.targetSource === "config_default") {
-      return "Actual = Token + Booking. Target = config fallback until sales-targets roster totals are available from Hub.";
+      return `${actualLine} Target = config fallback until sales-targets roster totals are available from Hub.`;
     }
-    return "Actual = Token + Booking (grossBooking). Projected = (actual ÷ days elapsed) × days in period. Target = Hub booking target.";
+    return `${actualLine} Projected = (actual ÷ days elapsed) × days in period. Target = Hub booking target.`;
   }
-  return "Actual = booked so far. Projected = Hub pace to period end. Target = Hub sales goal (active SE sum). Bars scale to the largest of the three.";
+  return `${actualLine} Projected = Hub pace to period end. Target = Hub sales goal (active SE sum). Bars scale to the largest of the three.`;
 }
 
 type Props = {
@@ -263,6 +280,16 @@ function isCalendarMonthPreset(dateFilter?: BookingDateFilterState): boolean {
     dateFilter?.preset === "currentMonth" ||
     dateFilter?.preset === "previousMonth"
   );
+}
+
+function formatConvPct(value: number | null | undefined): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return "0.0%";
+  return `${n.toFixed(1)}%`;
+}
+
+function conversionPointHasNewOldSplit(pt: InsightsChartPoint): boolean {
+  return pt.convertedNewCount != null || pt.convertedOldCount != null;
 }
 
 type VolumeIntensity = "high" | "medium" | "low" | "none";
@@ -813,9 +840,12 @@ export default function InsightsSect6({
   const effectiveLeadsOverTime = activeVolume?.leadsOverTime ?? leadsOverTime;
 
   const resolvedConversionTrend = useMemo(() => {
-    // Week (This / Previous month): Hub W1…Wn only — never FE Mon–Sun rebuild.
+    // Hub is source of truth when points exist (deal submittedAt Closed in W1…Wn).
     if (chartGranularity === "week") {
       if (hasHubConversionTrend(conversionTrend)) return conversionTrend;
+      const feWeek =
+        volumeChartBundle?.week.conversionTrend ?? activeVolume?.conversionTrend;
+      if (feWeek?.points?.length) return feWeek;
       return conversionTrend ?? { changePercent: 0, points: [] };
     }
     // Month: Hub month series if present; else FE trailing-month aggregate.
@@ -918,6 +948,27 @@ export default function InsightsSect6({
     const start = monthPageClamped * MONTH_PAGE_SIZE;
     return conversionPoints.slice(start, start + MONTH_PAGE_SIZE);
   }, [conversionPoints, chartGranularity, rootLevel, monthPageClamped]);
+
+  const conversionPointPhases = useMemo((): InsightsPeriodPhase[] => {
+    const range = dateFilter
+      ? resolveBookingDateRange(dateFilter)
+      : {};
+    const all = conversionTrendPointPhases({
+      pointCount: conversionPoints.length,
+      granularity: chartGranularity === "month" ? "month" : "week",
+      range,
+    });
+    if (chartGranularity !== "month" || rootLevel !== "month") return all;
+    if (all.length <= MONTH_PAGE_SIZE) return all;
+    const start = monthPageClamped * MONTH_PAGE_SIZE;
+    return all.slice(start, start + MONTH_PAGE_SIZE);
+  }, [
+    conversionPoints.length,
+    chartGranularity,
+    rootLevel,
+    monthPageClamped,
+    dateFilter,
+  ]);
 
   const conversionCoords = useMemo(() => {
     if (visibleConversionPoints.length === 0) return [];
@@ -1173,22 +1224,40 @@ export default function InsightsSect6({
                     side="top"
                     label="How conversion trend is counted"
                     math={
-                      "Point = Closed (Closed Won / Booking Done / Token Done) ÷ Leads created in that week or month × 100. Badge = last period % − first period %."
+                      "Point % = Closed new ÷ Leads created that week × 100. Closed new = TOKEN+BOOKING deals submitted that week whose lead was also created in the Insights window. Old-pipeline closes are excluded from the line %. Badge = last week-with-leads % − previous."
                     }
                   >
                     <>
-                      Same weeks/months as <strong>Leads over time</strong>: for leads{" "}
-                      <strong>created</strong> in that bucket, what share is now Closed
-                      (Lost and Hold excluded). Flat 0% with lead volume means none of
-                      those creates have closed yet — not a missing chart.
+                      Each week shows conversion for <strong>new leads only</strong>: of
+                      leads <strong>created</strong> that week, what share closed
+                      (TOKEN + BOOKING) in the Insights window. Closes from older
+                      pipeline leads do not move this line. Tap a point for new vs old
+                      close counts.
                     </>
                   </InsightsInfoTip>
                 </div>
                 <p className="mt-0.5 text-[11px] font-medium leading-snug text-gray-400">
                   {chartGranularity === "week"
-                    ? "Closed rate by week (Hub W1…Wn) · tap for counts"
-                    : "Closed rate by month · tap for details"}
+                    ? "New lead closed rate by week · tap for detail"
+                    : "New lead closed rate by month · tap for detail"}
                 </p>
+                <div
+                  className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] font-medium text-slate-500"
+                  aria-label="Week status colors"
+                >
+                  {(
+                    Object.keys(CONVERSION_PERIOD_DOT) as InsightsPeriodPhase[]
+                  ).map((phase) => (
+                    <span key={phase} className="inline-flex items-center gap-1">
+                      <span
+                        className="inline-block h-2 w-2 rounded-full ring-1 ring-white"
+                        style={{ backgroundColor: CONVERSION_PERIOD_DOT[phase].fill }}
+                        aria-hidden
+                      />
+                      {CONVERSION_PERIOD_DOT[phase].label}
+                    </span>
+                  ))}
+                </div>
               </div>
               <span
                 className={`shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-sm font-semibold tabular-nums ${changeTone(resolvedConversionTrend.changePercent)}`}
@@ -1231,12 +1300,12 @@ export default function InsightsSect6({
                       </svg>
                     </button>
                   ) : null}
-                  <div className="relative min-w-0 flex-1 flex h-44 items-center justify-center pt-10">
+                  <div className="relative min-w-0 flex-1 flex h-48 items-center justify-center pt-2">
                   <svg
                     viewBox="0 0 320 140"
                     className="h-auto w-full max-w-[320px]"
                     role="img"
-                    aria-label="Conversion trend line"
+                    aria-label="Conversion trend line — new closed rate"
                     onMouseLeave={() => setConversionHoverIdx(null)}
                   >
                     {activeConversionIdx != null && conversionCoords[activeConversionIdx] ? (
@@ -1248,6 +1317,7 @@ export default function InsightsSect6({
                         stroke="#e2e8f0"
                         strokeWidth={1}
                         strokeDasharray="3 3"
+                        className="transition-opacity duration-200"
                       />
                     ) : null}
                     <path
@@ -1259,16 +1329,20 @@ export default function InsightsSect6({
                       strokeLinecap="round"
                       className="transition-all duration-300"
                     />
-                    {conversionCoords.map((c, i) => (
+                    {conversionCoords.map((c, i) => {
+                      const phase = conversionPointPhases[i] ?? "done";
+                      const fill = CONVERSION_PERIOD_DOT[phase].fill;
+                      const active = activeConversionIdx === i;
+                      return (
                       <g key={i}>
                         <circle
                           cx={c.x}
                           cy={c.y}
-                          r={activeConversionIdx === i ? 6 : 4}
-                          fill={activeConversionIdx === i ? "#22c55e" : "#111827"}
-                          stroke="#fff"
-                          strokeWidth={2}
-                          className="cursor-pointer transition-all duration-200"
+                          r={active ? 7 : phase === "in_progress" ? 5 : 4}
+                          fill={fill}
+                          stroke={active ? "#059669" : "#fff"}
+                          strokeWidth={active ? 2.5 : 2}
+                          className="cursor-pointer transition-all duration-200 ease-out"
                           onMouseEnter={() => setConversionHoverIdx(i)}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1289,34 +1363,111 @@ export default function InsightsSect6({
                           }}
                         />
                       </g>
-                    ))}
-                  </svg>
+                      );
+                    })}                  </svg>
                   {activeConversionIdx != null &&
-                  visibleConversionPoints[activeConversionIdx] ? (
-                    <div className="pointer-events-none absolute left-1/2 top-0 z-10 w-[min(100%,12rem)] -translate-x-1/2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-center shadow-md">
-                      <p className="text-[10px] font-semibold text-slate-600">
-                        {String(
-                          visibleConversionPoints[activeConversionIdx]!.label ??
-                            "",
-                        )}
-                      </p>
-                      <p className="text-sm font-bold tabular-nums text-emerald-700">
-                        {Number(
-                          visibleConversionPoints[activeConversionIdx]!
-                            .conversionPercent ?? 0,
-                        ).toFixed(1)}
-                        %
-                      </p>
+                  visibleConversionPoints[activeConversionIdx] &&
+                  conversionCoords[activeConversionIdx] ? (
+                    <div
+                      className="pointer-events-none absolute z-20 w-[min(100%,13.5rem)] -translate-x-1/2 animate-in fade-in zoom-in-95 duration-200"
+                      style={{
+                        left: `${(conversionCoords[activeConversionIdx]!.x / 320) * 100}%`,
+                        top: 0,
+                      }}
+                    >
                       {(() => {
                         const pt = visibleConversionPoints[activeConversionIdx]!;
-                        const leads = pt.leadCount ?? pt.count;
-                        const converted = pt.convertedCount;
-                        if (leads == null && converted == null) return null;
+                        const leads = Number(pt.leadCount ?? pt.count ?? 0) || 0;
+                        const totalClosed = Number(pt.convertedCount ?? 0) || 0;
+                        const newClosed =
+                          pt.convertedNewCount != null
+                            ? Number(pt.convertedNewCount) || 0
+                            : null;
+                        const oldClosed =
+                          pt.convertedOldCount != null
+                            ? Number(pt.convertedOldCount) || 0
+                            : null;
+                        const hasSplit = conversionPointHasNewOldSplit(pt);
+                        const cohort =
+                          pt.cohortConvertedCount != null
+                            ? Number(pt.cohortConvertedCount) || 0
+                            : null;
                         return (
-                          <p className="text-[10px] tabular-nums text-slate-500">
-                            {Number(converted ?? 0)}/{Number(leads ?? 0)} ={" "}
-                            {Number(pt.conversionPercent ?? 0).toFixed(1)}%
-                          </p>
+                          <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white/95 text-left shadow-lg shadow-slate-200/60 ring-1 ring-black/5 backdrop-blur-sm">
+                            <div className="border-b border-slate-100 bg-slate-50/90 px-3 py-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                {String(pt.label ?? "")}
+                              </p>
+                              <p className="mt-0.5 text-lg font-bold tabular-nums text-emerald-700">
+                                {formatConvPct(pt.conversionPercent)}
+                                <span className="ml-1.5 text-[10px] font-medium text-emerald-600/80">
+                                  new
+                                </span>
+                              </p>
+                            </div>
+                            <div className="space-y-1.5 px-3 py-2.5 text-[11px]">
+                              <div className="flex items-center justify-between gap-2 tabular-nums">
+                                <span className="text-slate-500">Leads created</span>
+                                <span className="font-semibold text-slate-800">{leads}</span>
+                              </div>
+                              {hasSplit ? (
+                                <>
+                                  <div className="flex items-center justify-between gap-2 tabular-nums">
+                                    <span className="flex items-center gap-1.5 text-slate-500">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                      Closed new
+                                    </span>
+                                    <span className="font-semibold text-emerald-700">
+                                      {newClosed}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 tabular-nums">
+                                    <span className="flex items-center gap-1.5 text-slate-500">
+                                      <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                                      Closed old
+                                    </span>
+                                    <span className="font-semibold text-slate-700">
+                                      {oldClosed}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-1.5 tabular-nums">
+                                    <span className="text-slate-500">Total closed</span>
+                                    <span className="font-semibold text-slate-900">
+                                      {totalClosed ||
+                                        (newClosed ?? 0) + (oldClosed ?? 0)}
+                                    </span>
+                                  </div>
+                                  {pt.conversionPercentAll != null ? (
+                                    <p className="text-[10px] tabular-nums text-slate-400">
+                                      All activity{" "}
+                                      {formatConvPct(pt.conversionPercentAll)}
+                                      {" · "}
+                                      total ÷ created
+                                    </p>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <div className="flex items-center justify-between gap-2 tabular-nums">
+                                  <span className="text-slate-500">Closed</span>
+                                  <span className="font-semibold text-slate-800">
+                                    {totalClosed}
+                                  </span>
+                                </div>
+                              )}
+                              {cohort != null ? (
+                                <div className="mt-1 rounded-lg bg-slate-50 px-2 py-1.5 text-[10px] leading-snug text-slate-600">
+                                  Of {leads} created,{" "}
+                                  <span className="font-semibold tabular-nums text-slate-800">
+                                    {cohort}
+                                  </span>{" "}
+                                  converted in window
+                                  {pt.conversionPercentCohort != null
+                                    ? ` (${formatConvPct(pt.conversionPercentCohort)})`
+                                    : ""}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
                         );
                       })()}
                     </div>
@@ -1362,10 +1513,13 @@ export default function InsightsSect6({
                     const short = conversionAxisLabel(String(p.label ?? ""), i);
                     const range = chartRangeSecondary(String(p.label ?? ""));
                     const leads = p.leadCount ?? p.count;
+                    const convertedNew = p.convertedNewCount;
                     const converted = p.convertedCount;
                     const tip =
-                      leads != null || converted != null
-                        ? `${p.label}: ${Number(converted ?? 0)}/${Number(leads ?? 0)} = ${Number(p.conversionPercent ?? 0).toFixed(1)}%`
+                      leads != null || converted != null || convertedNew != null
+                        ? convertedNew != null
+                          ? `${p.label}: new ${Number(convertedNew)}/${Number(leads ?? 0)} = ${Number(p.conversionPercent ?? 0).toFixed(1)}%`
+                          : `${p.label}: ${Number(converted ?? 0)}/${Number(leads ?? 0)} = ${Number(p.conversionPercent ?? 0).toFixed(1)}%`
                         : `${p.label}: ${Number(p.conversionPercent ?? 0).toFixed(1)}%`;
                     return (
                       <button
@@ -1374,10 +1528,10 @@ export default function InsightsSect6({
                         onClick={() =>
                           setConversionPinnedIdx((prev) => (prev === i ? null : i))
                         }
-                        className={`min-w-[2rem] flex-1 text-center transition-colors duration-200 ${
+                        className={`min-w-[2rem] flex-1 rounded-md px-0.5 py-1 text-center transition-colors duration-200 ${
                           activeConversionIdx === i
-                            ? "text-emerald-600"
-                            : "text-gray-600 hover:text-slate-800"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "text-gray-600 hover:bg-slate-50 hover:text-slate-800"
                         }`}
                         title={tip}
                       >
@@ -1407,9 +1561,10 @@ export default function InsightsSect6({
                   label="How forecast is counted"
                   math={revenueForecastTargetMath(revenueForecast)}
                 >
-                  Green is money already booked (Token + Booking deals in your
-                  filter window). Dark is where we are heading if we keep this
-                  pace till the period ends. Grey is the monthly booking goal
+                  Green is <strong>quotation value</strong> already on Token + Booking
+                  deals in your filter window (full selected quote — not amount paid or
+                  10%). Dark is where we are heading if we keep this pace till the period
+                  ends. Grey is the monthly booking goal
                   {revenueForecast?.targetSource === "sales_targets" ||
                   revenueForecast?.targetSource === "incentives"
                     ? " from active sales-executive targets."
@@ -1423,7 +1578,7 @@ export default function InsightsSect6({
                 />
               </div>
               <p className="mt-0.5 text-[11px] font-medium text-gray-400">
-                Booked so far, heading to, and the goal
+                Quotation booked so far, pace ahead, and the goal
               </p>
             </div>
 

@@ -679,7 +679,13 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
         pickStr(detail, "followUpDate", "nextFollowUp"),
         createdRaw,
         {
-          isReinquiry: isCrmLeadReinquiry(detail),
+          isReinquiry: isCrmLeadReinquiry({
+            additionalLeadSources: pickAdditionalLeadSourcesRaw(detail),
+            leadType,
+            leadSource: detail.leadSource ?? detail.LeadSource ?? detail.source,
+            LeadSource: detail.LeadSource,
+            source: detail.source,
+          }),
           updatedRaw: pickStr(detail, "updatedAt", "updated_at", "updatedOn", "modifiedAt"),
         },
       ) || "",

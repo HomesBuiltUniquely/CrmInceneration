@@ -126,7 +126,10 @@ function BookingValueTile({ card }: { card: BookingValueCard }) {
   return (
     <Shell tone={card.tone}>
       <p className="text-[11px] font-semibold leading-none text-gray-500">
-        {card.title}
+        {card.title || "Booking Value"}
+      </p>
+      <p className="mt-1.5 text-[10px] font-medium leading-snug text-gray-400">
+        Quotation value · full selected quote (not 10% paid)
       </p>
       <p className="mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight text-gray-900 sm:text-[1.85rem]">
         {card.valueLabel}
@@ -336,7 +339,7 @@ export default function InsightsPerformanceCards({
   const grossMeta =
     kpis.grossBooking?.changeAbsolute != null
       ? formatInsightsChangeAbsolute(kpis.grossBooking.changeAbsolute)
-      : "Token + Booking";
+      : "Token + Booking quotes";
 
   const tokenTone = toneFromSigned(kpis.tokenValue?.changeAbsolute);
   const grossTone = toneFromSigned(kpis.grossBooking?.changeAbsolute);
@@ -360,7 +363,7 @@ export default function InsightsPerformanceCards({
             {cards ? <BookingValueTile card={cards.bookingValue} /> : <SkeletonCard />}
             <GrowthMoneyTile
               title="Gross Booking Value"
-              hint="Token Value + Booking Value combined"
+              hint="Quotation value · Token quote + Booking quote (not paid / 10%)"
               valueLabel={isMoneyLoading ? "..." : formatInsightsInrCompact(grossBooking)}
               metaLabel="Change"
               metaValue={isMoneyLoading ? "…" : grossMeta}
@@ -382,6 +385,7 @@ export default function InsightsPerformanceCards({
             )}
             <GrowthMoneyTile
               title="Token Value"
+              hint="Quotation value · full quote selected at token (not amount paid)"
               valueLabel={isMoneyLoading ? "..." : formatInsightsInrCompact(tokenValue)}
               metaLabel=""
               metaValue={isMoneyLoading ? "…" : tokenMeta}

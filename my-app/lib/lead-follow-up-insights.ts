@@ -25,8 +25,15 @@ export function readFollowUpDateRaw(lead: ApiLead): string {
 
 /** Explicit follow-up, or enquiry/created date when intake has none yet. */
 export function readEffectiveFollowUpDateRaw(lead: ApiLead): string {
+  const r = lead as Record<string, unknown>;
   return resolveEffectiveFollowUpDateRaw(readFollowUpDateRaw(lead), readLeadCreatedAtRaw(lead), {
-    isReinquiry: isCrmLeadReinquiry(lead),
+    isReinquiry: isCrmLeadReinquiry({
+      additionalLeadSources: lead.additionalLeadSources,
+      leadType: lead.leadType,
+      leadSource: r.leadSource,
+      LeadSource: r.LeadSource,
+      source: r.source,
+    }),
     updatedRaw: readLeadUpdatedAtRaw(lead),
   });
 }
