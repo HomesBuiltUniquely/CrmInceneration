@@ -14,6 +14,10 @@ import {
   type IncentivePeriodHalf,
 } from "@/lib/incentive-period";
 import type { IncentiveMemberRef } from "@/lib/incentives-profile";
+import {
+  bookingDateFilterApiParams,
+  type BookingDateFilterState,
+} from "@/lib/booking-token-date-filter";
 
 export type IncentiveBookingLead = {
   id: string;
@@ -167,16 +171,33 @@ function mapDealToLead(deal: BookingTokenDeal): IncentiveBookingLead {
   };
 }
 
-async function fetchAllBookingTokenDeals(): Promise<BookingTokenDeal[]> {
+async function fetchAllBookingTokenDeals(
+  dateFilter?: BookingDateFilterState,
+): Promise<BookingTokenDeal[]> {
   const size = 500;
   let page = 0;
   let totalPages = 1;
   const deals: BookingTokenDeal[] = [];
 
+  const dateParams = dateFilter ? bookingDateFilterApiParams(dateFilter) : {};
+  const dateOpts: {
+    dateRange?: string;
+    submittedFrom?: string;
+    submittedTo?: string;
+  } = {};
+  if (dateFilter?.preset === "currentMonth") {
+    dateOpts.dateRange = "current_month";
+  } else if (dateParams.dateRange) {
+    dateOpts.dateRange = dateParams.dateRange;
+  }
+  if (dateParams.submittedFrom) dateOpts.submittedFrom = dateParams.submittedFrom;
+  if (dateParams.submittedTo) dateOpts.submittedTo = dateParams.submittedTo;
+
   while (page < totalPages) {
     const response: BookingTokenDealsResponse = await fetchBookingTokenDeals({
       page,
       size,
+      ...dateOpts,
     });
     deals.push(...response.deals);
     totalPages = Math.max(1, response.totalPages ?? 1);
@@ -187,8 +208,14 @@ async function fetchAllBookingTokenDeals(): Promise<BookingTokenDeal[]> {
   return deals;
 }
 
-export async function fetchIncentiveBookingLeads(): Promise<IncentiveBookingLead[]> {
-  const deals = await fetchAllBookingTokenDeals();
+/**
+ * All booking/token deals visible to the viewer.
+ * Pass Insights dateFilter to scope pages to “This month” (much faster for matrix).
+ */
+export async function fetchIncentiveBookingLeads(
+  dateFilter?: BookingDateFilterState,
+): Promise<IncentiveBookingLead[]> {
+  const deals = await fetchAllBookingTokenDeals(dateFilter);
   return mapBookingDealsToIncentiveLeads(deals);
 }
 

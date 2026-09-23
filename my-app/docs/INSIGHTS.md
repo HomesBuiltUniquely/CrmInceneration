@@ -170,6 +170,8 @@ GET /api/crm/insights/dashboard
 | `revenueDistribution` | Phases (legacy; UI removed Sep 2026) | — |
 | `dropReasons` | Lost reasons list | Sect4 |
 | `stageVelocity` | Avg days between stage hops | Sect4 |
+
+**Money KPIs (`tokenValue` / `bookingValue` / `grossBooking`):** **selected quotation** (full quote chosen at token/booking), **not** amount paid or 10%. Same meaning for `performanceCards.cards.bookingValue`, `revenueForecast.actual`, and `teamPerformance[].closedValue`. Hub echo: `revenueForecast.actualRule = token_plus_booking_selected_quoteAmount_in_period`.
 | `teamPerformance` | Per-user leads/meetings/proposals/closed | Sect5 |
 | `leadsOverTime` | Volume time series | Sect6 |
 | `conversionTrend` | Conversion % over time | Sect6 |
@@ -419,18 +421,22 @@ Negative `trendDays` = faster than prior period (good).
 
 ### 8.3 Team matrix (Sect5)
 
-| Column | Source |
-|--------|--------|
-| Leads, Meetings, Proposals, Closed, Conv % | Hub `teamPerformance` |
-| Target, Achieved, Payoff | FE Incentives engine (`insights-team-incentive-matrix.ts`) |
+| Column | Window | Source |
+|--------|--------|--------|
+| Leads, Meetings, **Proposals**, **Closed**, **Conv %** | **1 calendar month** (Insights “This month”; `dateRange=current_month` + `teamPeriod=monthly`) | Hub `teamPerformance` — FE displays Hub numbers (no 15/15 filter) |
+| **Achieved ₹** (Payoff computed, column may be hidden) | Same calendar month, **H1+H2 = 15+15** | FE Incentives (`insights-team-incentive-matrix.ts`) |
+
+**Closed (display):** Hub `teamPerformance.closed` = distinct TOKEN+BOOKING deals with `submittedAt` in the Insights window (same as Booking & Token). FE displays Hub numbers — no `max(hub, booking)` overlay.
+
+**Conv % (FE):** Hub `conversionPercent`, else `(closed / leads) * 100`.
 
 `teamPeriod` is always **`monthly`** from FE. Payoff column hidden by flag but data still loads.
 
 ### 8.4 Charts + forecast (Sect6)
 
 - **Leads over time** — FE `buildInsightsVolumeChartBundle`: weeks from date-scoped pool; **months from full inventory** (so trailing months aren’t empty when filter is “this month”).  
-- **Conversion trend** — same FE week/month series (Closed ÷ created-in-bucket). Hub `conversionTrend` only if FE series missing.  
-- **Revenue forecast** — Hub `revenueForecast`; Actual should align with `kpis.grossBooking` when `actualScope = grossBooking`.
+- **Conversion trend** — Hub `conversionTrend` when points present (`convertedCount` = TOKEN+BOOKING by `submittedAt` in W1…Wn). FE series only if Hub empty.  
+- **Revenue forecast** — Hub `revenueForecast`; Actual aligns with `kpis.grossBooking` when `actualScope = grossBooking`. Actual = selected quotation on Token + Booking deals (`actualRule`: `token_plus_booking_selected_quoteAmount_in_period`), not paid / 10%.
 
 Volume chart drill-down: month → week → day depending on date range length.
 

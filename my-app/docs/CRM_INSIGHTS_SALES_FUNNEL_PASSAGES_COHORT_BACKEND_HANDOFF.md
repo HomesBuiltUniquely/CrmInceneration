@@ -523,6 +523,25 @@ FE currently calls the **dedicated** endpoint when Passages tab is active.
 | 1 | `dateRange=all` | All Passages entries = **old** (`newCount=0`) |
 | 2 | Closed definition | **Closed Won** checkpoint only |
 | 3 | Cohort in-progress | Lost + Hold + Closed Won = final; all else in-progress |
+| 4 | Decision checkpoint | Hub `CP_DECISION = "Decision"` — **not** collapsed into Meeting Successful. Passages `stageKey: "decision"`. Priority: Closed Won → Decision → Quote Sent → Meeting Successful → … Quote Sent / Meeting Successful stay `exp_design`. Closed Won does **not** imply Decision. |
+
+### Decision historical caveat (Sep 2026)
+
+Leads that entered Decision **before** the Hub fix may have **no** Decision row in `lead_stage_transition` (same checkpoint as Exp & Design → no write). Movement Decision can stay **0** while Cohort Decision is **>0** and Movement Closed is **>0** — expected until backfill or new Decision moves. Cohort mode was already OK via live/reach milestone. FE displays Hub numbers as-is (no FE zeroing of Decision).
+
+**One-time backfill (SUPER_ADMIN):**
+
+```http
+GET  /v1/admin/crm-insights/decision-checkpoint/backfill/dry-run
+POST /v1/admin/crm-insights/decision-checkpoint/backfill/run?confirm=true
+```
+
+| Action | Rule |
+|--------|------|
+| Rename | Open Exp&Design / Meeting Successful / Quote Sent checkpoint → `Decision` when live milestone is Decision |
+| Insert | Decision occupancy before Closed Won when Closed Won exists with no Decision row |
+
+After dry-run → run → recheck `GET …/sales-funnel?funnelMode=passages` → `stages[decision]` for the same Insights filters. New Decision moves after `CP_DECISION` deploy count without backfill.
 
 ---
 

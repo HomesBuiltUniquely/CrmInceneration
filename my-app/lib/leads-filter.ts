@@ -10,9 +10,10 @@ import {
   getLeadDisplaySource,
 } from "@/lib/lead-display";
 import {
-  formatAdditionalLeadSourcesLabel,
+  formatReinquirySourcesLabel,
   isCrmLeadReinquiry,
 } from "@/lib/lead-source-utils";
+
 import { isIvrCallLeadSource, isIvrLeadTypeKey } from "@/lib/ivr-lead-source";
 import {
   formatPresalesListStatusLabel,
@@ -299,7 +300,14 @@ export function isCrmLeadVerified(lead: ApiLead): boolean {
 }
 
 function hasReinquiry(lead: ApiLead): boolean {
-  return isCrmLeadReinquiry(lead);
+  const r = lead as Record<string, unknown>;
+  return isCrmLeadReinquiry({
+    additionalLeadSources: lead.additionalLeadSources,
+    leadType: lead.leadType,
+    leadSource: r.leadSource,
+    LeadSource: r.LeadSource,
+    source: r.source,
+  });
 }
 
 function leadDynamicFields(lead: ApiLead): Record<string, unknown> {
@@ -558,6 +566,7 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
 
   // Hub Insights checkpoint map — substages can sit under the wrong milestoneStage.
   // Meeting Successful / Quote Sent → Exp & Design (never Decision).
+  // Literal milestoneStage Decision stays Decision (Hub CP_DECISION — not collapsed).
   // Meeting Scheduled → Connection.
   const subKey = normalizeStageKey(subStage);
   if (
@@ -569,6 +578,13 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
   }
   if (subKey.includes("meeting scheduled")) {
     return "Connection";
+  }
+  // Do not remap literal Decision stage via Meeting Successful / Quote Sent on stage label.
+  if (
+    stageKey === "decision" ||
+    stageKey.startsWith("decision ")
+  ) {
+    return "Decision";
   }
   if (
     stageKey.includes("meeting successful") ||
@@ -688,7 +704,13 @@ export function mapApiLeadToRow(
     verificationTag: normalizeVerificationTag(lead),
     reinquiry: hasReinquiry(lead),
     reinquirySources: hasReinquiry(lead)
-      ? formatAdditionalLeadSourcesLabel(lead.additionalLeadSources)
+      ? formatReinquirySourcesLabel({
+          additionalLeadSources: lead.additionalLeadSources,
+          leadType: lead.leadType ?? sourceLeadType,
+          leadSource: (lead as Record<string, unknown>).leadSource,
+          LeadSource: (lead as Record<string, unknown>).LeadSource,
+          source: (lead as Record<string, unknown>).source,
+        }) || undefined
       : undefined,
     journey: {
       stage: journeyStage,

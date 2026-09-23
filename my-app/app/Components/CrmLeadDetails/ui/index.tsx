@@ -2,7 +2,7 @@
 
 import { type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { dedupeLeadSources, formatLeadSourceLabel } from "@/lib/lead-source-utils";
+import { dedupeLeadSources, formatLeadSourceLabel, listReinquiryAdditionalSources } from "@/lib/lead-source-utils";
 
 /* ─────────────────────────────────────────────
    BUTTON
@@ -231,11 +231,18 @@ export function StatusPill({ status }: { status: string }) {
   );
 }
 
-/** Primary tag = `leadSource` from GET details; optional chips = parsed `additionalLeadSources`. */
+/** Primary tag = `leadSource` from GET details; optional chips = true cross-source extras only. */
 export function LeadSourceTag({ primary, extras }: { primary: string; extras?: string[] }) {
+  // Include ingest markers (e.g. meta_leadgen) so Instant Form wins over plain Meta Ads.
   const deduped = dedupeLeadSources([primary, ...(extras ?? [])]);
   const main = deduped[0] ?? "External Lead";
-  const additional = deduped.slice(1);
+  const additional = dedupeLeadSources(
+    listReinquiryAdditionalSources({
+      additionalLeadSources: extras,
+      leadSource: primary,
+      source: primary,
+    }),
+  );
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5">
       <span className="inline-flex rounded-full border border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--crm-accent)]">

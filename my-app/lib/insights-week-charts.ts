@@ -11,8 +11,9 @@
  */
 
 import type { InsightsDashboard } from "@/lib/crm-insights-api";
+import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { crmLeadTopLevelStage, type ApiLead } from "@/lib/leads-filter";
+import type { ApiLead } from "@/lib/leads-filter";
 
 export type InsightsDateRange = {
   submittedFrom?: string;
@@ -102,49 +103,45 @@ function toMonthKey(d: Date): string {
   return `${y}-${m}`;
 }
 
-/** Closed Won path for conversion % (matches Sales Funnel Closed bar). */
-function isClosedPhaseLead(lead: ApiLead): boolean {
-  const s = crmLeadTopLevelStage(lead).trim().toLowerCase();
-  if (s === "closed" || s.startsWith("closed")) return true;
-  if (s.includes("booking done") || s.includes("token done")) return true;
-  // Defensive: some rows keep category/substage without canonical stage label.
-  const r = lead as Record<string, unknown>;
-  const st =
-    r.stageBlock && typeof r.stageBlock === "object" && !Array.isArray(r.stageBlock)
-      ? (r.stageBlock as Record<string, unknown>)
-      : lead.stage && typeof lead.stage === "object" && !Array.isArray(lead.stage)
-        ? (lead.stage as Record<string, unknown>)
-        : null;
-  const category = String(
-    st?.milestoneStageCategory ??
-      r.milestoneStageCategory ??
-      r.stageCategory ??
-      "",
-  )
-    .trim()
-    .toLowerCase();
-  const sub = String(
-    st?.milestoneSubStage ?? r.milestoneSubStage ?? r.subStage ?? "",
-  )
-    .trim()
-    .toLowerCase();
-  const stage = String(
-    st?.milestoneStage ?? r.milestoneStage ?? "",
-  )
-    .trim()
-    .toLowerCase();
-  if (category.includes("closed won") || category.includes("closed (won)")) {
-    return true;
+/** Same Closed universe as Team Matrix / Booking & Token (TOKEN + BOOKING, not cancel). */
+function isActiveBookingTokenDeal(deal: IncentiveBookingLead): boolean {
+  const listing = String(deal.listingType ?? "").toLowerCase();
+  if (listing === "cancel") return false;
+  return listing === "booking" || listing === "token" || !listing;
+}
+
+function bookingDealClosedKey(deal: IncentiveBookingLead): string {
+  return (
+    deal.id ||
+    `${deal.leadType}:${deal.leadId}` ||
+    `${deal.customerName}:${deal.submittedAt}`
+  );
+}
+
+/**
+ * Count distinct Booking & Token closes whose submittedAt falls in each time bucket.
+ * Sum across This-month weeks = Team Matrix Closed for that month.
+ */
+function countBookingClosesInTimeBuckets(
+  deals: IncentiveBookingLead[] | undefined,
+  buckets: { start: Date; end: Date }[],
+): number[] {
+  const counts = buckets.map(() => 0);
+  if (!deals?.length || buckets.length === 0) return counts;
+  const seen = new Set<string>();
+  for (const deal of deals) {
+    if (!isActiveBookingTokenDeal(deal)) continue;
+    const key = bookingDealClosedKey(deal);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const ms = Date.parse(deal.submittedAt);
+    if (!Number.isFinite(ms)) continue;
+    const idx = buckets.findIndex(
+      (b) => ms >= b.start.getTime() && ms <= b.end.getTime(),
+    );
+    if (idx >= 0) counts[idx]! += 1;
   }
-  if (
-    sub.includes("booking done") ||
-    sub.includes("token done") ||
-    sub.includes("closed won")
-  ) {
-    return true;
-  }
-  if (stage.includes("closed") && !stage.includes("lost")) return true;
-  return false;
+  return counts;
 }
 
 /**
@@ -182,6 +179,74 @@ type MonthBucket = {
   yearLabel: string;
   rangeLabel: string;
 };
+
+/** Calendar phase for conversion-trend dots (done / now / upcoming). */
+export type InsightsPeriodPhase = "done" | "in_progress" | "upcoming";
+
+/** Dot fills: slate = done, blue = this week/month, light = not started yet. */
+export const CONVERSION_PERIOD_DOT: Record<
+  InsightsPeriodPhase,
+  { fill: string; label: string }
+> = {
+  done: { fill: "#0f172a", label: "Done" },
+  in_progress: { fill: "#2563eb", label: "In progress" },
+  upcoming: { fill: "#cbd5e1", label: "Upcoming" },
+};
+
+/** Compare local calendar days: past / current / future bucket. */
+export function classifyPeriodPhase(
+  start: Date,
+  end: Date,
+  now = new Date(),
+): InsightsPeriodPhase {
+  const today = startOfLocalDay(now).getTime();
+  const startMs = startOfLocalDay(start).getTime();
+  const endMs = startOfLocalDay(end).getTime();
+  if (today > endMs) return "done";
+  if (today < startMs) return "upcoming";
+  return "in_progress";
+}
+
+/**
+ * One phase per conversion point, aligned to Hub W1…Wn / month slots
+ * from the Insights date window. Extra trailing points → upcoming.
+ */
+export function conversionTrendPointPhases(args: {
+  pointCount: number;
+  granularity: "week" | "month";
+  range: InsightsDateRange;
+  now?: Date;
+}): InsightsPeriodPhase[] {
+  const n = Math.max(0, Math.floor(args.pointCount));
+  if (n === 0) return [];
+  const now = args.now ?? new Date();
+
+  if (args.granularity === "week") {
+    const buckets = buildRangeWeekBuckets(args.range, Math.max(n, 6));
+    return Array.from({ length: n }, (_, i) => {
+      const b = buckets[i];
+      if (!b) return "upcoming" as const;
+      return classifyPeriodPhase(b.start, b.end, now);
+    });
+  }
+
+  const fromMs = args.range.submittedFrom
+    ? Date.parse(args.range.submittedFrom)
+    : NaN;
+  const toMs = args.range.submittedTo ? Date.parse(args.range.submittedTo) : NaN;
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+    // All-time / unknown bounds: treat last slot as in progress, earlier as done.
+    return Array.from({ length: n }, (_, i) =>
+      i === n - 1 ? ("in_progress" as const) : ("done" as const),
+    );
+  }
+  const months = buildMonthBuckets(new Date(fromMs), new Date(toMs), Math.max(n, 24));
+  return Array.from({ length: n }, (_, i) => {
+    const m = months[i];
+    if (!m) return "upcoming" as const;
+    return classifyPeriodPhase(m.start, m.end, now);
+  });
+}
 
 /**
  * Split [from, to] into successive week slots (≤7 days each).
@@ -407,6 +472,7 @@ function buildWeekRoot(
   leads: ApiLead[],
   from: Date,
   to: Date,
+  bookingClosedDeals?: IncentiveBookingLead[],
 ): InsightsWeekCharts | null {
   const buckets = buildRangeWeekBuckets(
     {
@@ -418,7 +484,6 @@ function buildWeekRoot(
   if (buckets.length === 0) return null;
 
   const leadCounts = buckets.map(() => 0);
-  const closedCounts = buckets.map(() => 0);
   const dayMaps = buckets.map(() => new Map<string, number>());
 
   for (const lead of leads) {
@@ -428,11 +493,13 @@ function buildWeekRoot(
     const idx = buckets.findIndex((b) => t >= b.start.getTime() && t <= b.end.getTime());
     if (idx < 0) continue;
     leadCounts[idx]! += 1;
-    if (isClosedPhaseLead(lead)) closedCounts[idx]! += 1;
     const dayKey = toDateKey(new Date(t));
     const map = dayMaps[idx]!;
     map.set(dayKey, (map.get(dayKey) ?? 0) + 1);
   }
+
+  // Closed by deal submittedAt week — sum(W1…Wn) = This month Team Matrix Closed.
+  const closedCounts = countBookingClosesInTimeBuckets(bookingClosedDeals, buckets);
 
   const weekLevels = intensityFromCounts(leadCounts);
   const weekBars: InsightsWeekBarPoint[] = buckets.map((b, i) => ({
@@ -457,6 +524,9 @@ function buildWeekRoot(
     return {
       label: `W${i + 1} · ${b.label}`,
       conversionPercent,
+      leadCount: leadsN,
+      convertedCount: closedN,
+      count: leadsN,
     };
   });
 
@@ -474,8 +544,9 @@ function buildWeekRoot(
         conversionPoints.map((p) => p.conversionPercent),
       ),
       points: conversionPoints,
-      numeratorRule: "closed_won_or_booking_token_done",
+      numeratorRule: "booking_token_closed_in_bucket",
       denominatorRule: "leads_created_in_bucket",
+      bucketField: "deal_submitted_at",
     },
   };
 }
@@ -484,6 +555,7 @@ function buildMonthRoot(
   leads: ApiLead[],
   from: Date,
   to: Date,
+  bookingClosedDeals?: IncentiveBookingLead[],
 ): InsightsWeekCharts | null {
   const months = buildMonthBuckets(from, to, 24);
   if (months.length === 0) return null;
@@ -494,7 +566,6 @@ function buildMonthRoot(
   });
 
   const leadCounts = months.map(() => 0);
-  const closedCounts = months.map(() => 0);
   const monthWeeks: InsightsWeekBarPoint[][] = months.map((m) =>
     buildWeekBarsInRange(m.start, m.end, scopedLeads),
   );
@@ -504,8 +575,12 @@ function buildMonthRoot(
     const idx = months.findIndex((m) => t >= m.start.getTime() && t <= m.end.getTime());
     if (idx < 0) continue;
     leadCounts[idx]! += 1;
-    if (isClosedPhaseLead(lead)) closedCounts[idx]! += 1;
   }
+
+  const closedCounts = countBookingClosesInTimeBuckets(
+    bookingClosedDeals,
+    months.map((m) => ({ start: m.start, end: m.end })),
+  );
 
   const levels = intensityFromCounts(leadCounts);
   const monthBars: InsightsMonthBarPoint[] = months.map((m, i) => ({
@@ -531,6 +606,9 @@ function buildMonthRoot(
     return {
       label: m.rangeLabel,
       conversionPercent,
+      leadCount: leadsN,
+      convertedCount: closedN,
+      count: leadsN,
     };
   });
 
@@ -548,8 +626,9 @@ function buildMonthRoot(
         conversionPoints.map((p) => p.conversionPercent),
       ),
       points: conversionPoints,
-      numeratorRule: "closed_won_or_booking_token_done",
+      numeratorRule: "booking_token_closed_in_bucket",
       denominatorRule: "leads_created_in_bucket",
+      bucketField: "deal_submitted_at",
     },
   };
 }
@@ -571,12 +650,13 @@ function buildTrailingMonthRoot(
   leads: ApiLead[],
   end: Date,
   monthCount = 6,
+  bookingClosedDeals?: IncentiveBookingLead[],
 ): InsightsWeekCharts | null {
   const to = endOfLocalDay(end);
   const from = startOfLocalMonth(
     new Date(end.getFullYear(), end.getMonth() - (monthCount - 1), 1),
   );
-  return buildMonthRoot(leads, from, to);
+  return buildMonthRoot(leads, from, to, bookingClosedDeals);
 }
 
 /**
@@ -585,11 +665,15 @@ function buildTrailingMonthRoot(
  *
  * @param leads Date-scoped inventory (drives week bars for “this month”).
  * @param opts.monthLeads Wider inventory (no date cut) for trailing-month volume + conversion.
+ * @param opts.bookingClosedDeals Booking & Token deals — Closed counted by deal submittedAt in each bucket.
  */
 export function buildInsightsVolumeChartBundle(
   leads: ApiLead[],
   range: InsightsDateRange,
-  opts?: { monthLeads?: ApiLead[] },
+  opts?: {
+    monthLeads?: ApiLead[];
+    bookingClosedDeals?: IncentiveBookingLead[];
+  },
 ): InsightsVolumeChartBundle | null {
   const window = resolveChartWindow(leads, range);
   if (!window) return null;
@@ -599,15 +683,16 @@ export function buildInsightsVolumeChartBundle(
   const isShortRange = spanDays <= 40;
   const monthLeads =
     opts?.monthLeads && opts.monthLeads.length > 0 ? opts.monthLeads : leads;
+  const bookingClosedDeals = opts?.bookingClosedDeals;
 
   if (isShortRange) {
-    const week = buildWeekRoot(leads, from, to);
+    const week = buildWeekRoot(leads, from, to, bookingClosedDeals);
     if (!week) return null;
     // Month toggle must use unscoped (or wider) leads — otherwise Aug/Jul stay 0
     // forever when Insights date filter is “this month”, and conversion looks broken.
     const month =
-      buildTrailingMonthRoot(monthLeads, to, 12) ??
-      buildMonthRoot(monthLeads, from, to) ??
+      buildTrailingMonthRoot(monthLeads, to, 12, bookingClosedDeals) ??
+      buildMonthRoot(monthLeads, from, to, bookingClosedDeals) ??
       week;
     return {
       defaultGranularity: "week",
@@ -617,7 +702,7 @@ export function buildInsightsVolumeChartBundle(
     };
   }
 
-  const month = buildMonthRoot(monthLeads, from, to);
+  const month = buildMonthRoot(monthLeads, from, to, bookingClosedDeals);
   if (!month) return null;
   return {
     defaultGranularity: "month",

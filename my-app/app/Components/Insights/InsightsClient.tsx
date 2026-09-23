@@ -1008,10 +1008,14 @@ export default function InsightsClient1() {
         const closed = Number(m.closed) || 0;
         const proposals = Number(m.proposals) || 0;
         const meetings = Number(m.meetings) || 0;
-        // Conv % = Closed ÷ Leads (product rule). Always derive from displayed
-        // leads/closed so Hub's conversionPercent cannot drift from those columns.
+        // Hub Closed = TOKEN+BOOKING in window (same as Booking & Token). No FE max overlay.
+        const hubConv = Number(m.conversionPercent);
         const conversionPercent =
-          leads > 0 ? Math.round((closed / leads) * 1000) / 10 : 0;
+          Number.isFinite(hubConv) && hubConv >= 0
+            ? Math.round(hubConv * 10) / 10
+            : leads > 0
+              ? Math.round((closed / leads) * 1000) / 10
+              : 0;
         const inc =
           Number.isFinite(uid) && uid > 0
             ? teamIncentiveByUser.get(uid)
@@ -1168,13 +1172,19 @@ export default function InsightsClient1() {
     useState<InsightsVolumeChartBundle | null>(null);
 
   /**
-   * Hub dashboard.conversionTrend is authoritative for Week (W1…Wn).
-   * Sect6 may FE-aggregate Month trailing series only when Hub week is not in play.
+   * Hub conversionTrend is source of truth (TOKEN+BOOKING by submittedAt in W1…Wn).
+   * FE volume bundle only fills gaps when Hub points are empty.
    */
-  const conversionTrendForChart = useMemo(
-    () => dashboard.conversionTrend,
-    [dashboard.conversionTrend],
-  );
+  const conversionTrendForChart = useMemo(() => {
+    if (hasHubConversionTrend(dashboard.conversionTrend)) {
+      return dashboard.conversionTrend;
+    }
+    const feWeek = alignedVolumeChartBundle?.week?.conversionTrend;
+    if (feWeek?.points?.length) return feWeek;
+    const feMonth = alignedVolumeChartBundle?.month?.conversionTrend;
+    if (feMonth?.points?.length) return feMonth;
+    return dashboard.conversionTrend;
+  }, [alignedVolumeChartBundle, dashboard.conversionTrend]);
 
   // Quick sketch path (may differ slightly) — overwritten by authoritative pool below.
   useEffect(() => {
@@ -1433,7 +1443,8 @@ export default function InsightsClient1() {
           setStagePathData(buildInsightsFunnelStagePathData(funnelPool, subMappings));
           setStagePathLoading(false);
           setAlignedSalesFunnel(salesFunnelShell);
-          // Weeks = date-scoped funnelPool; months = full inventory for real trailing conversion.
+          // Weeks = date-scoped funnelPool; months = full inventory for volume.
+          // Conversion trend Closed comes from Hub dashboard.conversionTrend (not FE deals).
           setAlignedVolumeChartBundle(
             buildInsightsVolumeChartBundle(funnelPool, range, {
               monthLeads: monthChartPool,
