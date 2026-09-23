@@ -127,6 +127,7 @@ function isPrimaryOrIngestOnlySource(
   },
 ): boolean {
   if (isMetaIngestSourceMarker(source)) return true;
+  if (source.toLowerCase().includes("consultation")) return true;
 
   const srcKey = sourceCompactKey(source);
   if (!srcKey) return true;
