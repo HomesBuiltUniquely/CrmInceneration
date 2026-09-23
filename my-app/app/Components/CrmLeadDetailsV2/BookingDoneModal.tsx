@@ -821,7 +821,6 @@ export default function BookingDoneModal({
               ) : null}
             </div>
           ) : null}
-
           {canUsePaymentLinks && showBanner && activeAttempt ? (
             <div className="mt-4">
               <PaymentLinkPendingBanner

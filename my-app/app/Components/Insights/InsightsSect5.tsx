@@ -182,9 +182,13 @@ export default function InsightSect5({
               <div
                 className={`insights-table-scroll ${
                   needsScroll
-                    ? "overflow-y-auto overscroll-contain"
+                    ? "overflow-y-scroll overscroll-contain"
                     : "overflow-visible"
                 }`}
+                onWheel={(e) => {
+                  if (!needsScroll) return;
+                  e.stopPropagation();
+                }}
                 style={
                   needsScroll
                     ? { maxHeight: `${TEAM_SCROLL_MAX_PX}px` }
@@ -285,12 +289,24 @@ export default function InsightSect5({
                         <div className="text-right text-sm font-medium tabular-nums text-gray-700">
                           {formatInsightsCount(member.proposals)}
                         </div>
-                        <div className="text-right text-sm font-semibold tabular-nums text-gray-900">
+                        <div
+                          className="text-right text-sm font-semibold tabular-nums text-gray-900"
+                          title={
+                            member.closedNew != null || member.closedOld != null
+                              ? `New ${member.closedNew ?? 0} · Old ${member.closedOld ?? 0} · Total ${closed}`
+                              : undefined
+                          }
+                        >
                           {formatInsightsCount(closed)}
                         </div>
                         <div className="flex justify-end">
                           <span
                             className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${convTone(conversionPercent)}`}
+                            title={
+                              member.conversionPercentNew != null
+                                ? `New conv ${member.conversionPercentNew}% · All ${conversionPercent}%`
+                                : undefined
+                            }
                           >
                             {formatInsightsPercent(conversionPercent)}
                           </span>

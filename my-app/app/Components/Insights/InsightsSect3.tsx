@@ -133,6 +133,9 @@ function FunnelModesInfoTip() {
             </span>
             <span className="mt-0.5 block text-gray-400">
               Example: Sep 1–30, a lead enters Discovery twice → Discovery counts 2.
+              Decision is its own checkpoint (not Meeting Successful / Quote Sent).
+              Closed Won does not count as Decision. Older Decision moves before the
+              Hub fix may be missing until new Decision entries are recorded.
             </span>
           </span>
           <span className="block">

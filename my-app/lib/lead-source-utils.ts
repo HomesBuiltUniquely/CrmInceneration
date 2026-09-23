@@ -83,15 +83,116 @@ export function formatLeadSourceLabel(raw: string): string {
   return normalizeLeadTypeLabel(raw);
 }
 
-/** True when Hub appended repeat / cross-source entries in `additionalLeadSources`. */
+function sourceCompactKey(raw: unknown): string {
+  return normalizeLeadTypeLabel(raw).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Hub Meta Instant Form / Graph ingest markers — not a repeat inquiry. */
+export function isMetaIngestSourceMarker(raw: unknown): boolean {
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return false;
+  const compact = s.replace(/[^a-z0-9]/g, "");
+  return (
+    compact.startsWith("metaleadgen") ||
+    s.startsWith("meta_leadgen:") ||
+    compact === "metaadsinstantform"
+  );
+}
+
+function isMetaSourceFamily(compactKey: string): boolean {
+  return (
+    compactKey === "mlead" ||
+    compactKey === "metaads" ||
+    compactKey === "metaadsinstantform" ||
+    compactKey.startsWith("metaleadgen")
+  );
+}
+
+function isGoogleSourceFamily(compactKey: string): boolean {
+  return compactKey === "glead" || compactKey === "googleads";
+}
+
+/**
+ * Sources that only describe the lead's own primary channel / ingest
+ * (e.g. Meta Instant Form `meta_leadgen:…` on a first-time mlead).
+ * These must NOT trigger the Re-inquiry tag.
+ */
+function isPrimaryOrIngestOnlySource(
+  source: string,
+  lead: {
+    leadType?: unknown;
+    leadSource?: unknown;
+    LeadSource?: unknown;
+    source?: unknown;
+  },
+): boolean {
+  if (isMetaIngestSourceMarker(source)) return true;
+
+  const srcKey = sourceCompactKey(source);
+  if (!srcKey) return true;
+
+  const identityKeys = [lead.leadSource, lead.LeadSource, lead.source, lead.leadType]
+    .map((v) => sourceCompactKey(v))
+    .filter(Boolean);
+
+  if (identityKeys.length === 0) {
+    // No identity — still ignore bare Meta ingest labels alone.
+    return isMetaSourceFamily(srcKey);
+  }
+
+  return identityKeys.some((id) => {
+    if (id === srcKey) return true;
+    if (isMetaSourceFamily(id) && isMetaSourceFamily(srcKey)) return true;
+    if (isGoogleSourceFamily(id) && isGoogleSourceFamily(srcKey)) return true;
+    return false;
+  });
+}
+
+/**
+ * True additional / cross-source entries that mean a real re-inquiry
+ * (e.g. Form Lead later also came via WhatsApp). Excludes Meta Instant Form
+ * ingest markers and duplicates of the lead's own primary type.
+ */
+export function listReinquiryAdditionalSources(lead: {
+  additionalLeadSources?: string | string[] | null;
+  leadType?: unknown;
+  leadSource?: unknown;
+  LeadSource?: unknown;
+  source?: unknown;
+}): string[] {
+  return parseAdditionalLeadSources(lead.additionalLeadSources).filter(
+    (source) => !isPrimaryOrIngestOnlySource(source, lead),
+  );
+}
+
+/**
+ * True when Hub appended real repeat / cross-source entries in `additionalLeadSources`.
+ * Meta Instant Form first-time leads often have `meta_leadgen:{id}` in that field —
+ * that is ingest metadata, not re-inquiry.
+ */
 export function isCrmLeadReinquiry(lead: {
   additionalLeadSources?: string | string[] | null;
+  leadType?: unknown;
+  leadSource?: unknown;
+  LeadSource?: unknown;
+  source?: unknown;
 }): boolean {
-  return parseAdditionalLeadSources(lead.additionalLeadSources).length > 0;
+  return listReinquiryAdditionalSources(lead).length > 0;
 }
 
 export function formatAdditionalLeadSourcesLabel(raw: unknown): string {
   return dedupeLeadSources(parseAdditionalLeadSources(raw)).join(", ");
+}
+
+/** Tooltip label for Re-inquiry chip — only true cross-source extras. */
+export function formatReinquirySourcesLabel(lead: {
+  additionalLeadSources?: string | string[] | null;
+  leadType?: unknown;
+  leadSource?: unknown;
+  LeadSource?: unknown;
+  source?: unknown;
+}): string {
+  return dedupeLeadSources(listReinquiryAdditionalSources(lead)).join(", ");
 }
 
 const CROSS_MERGE_WA_REGEX =
