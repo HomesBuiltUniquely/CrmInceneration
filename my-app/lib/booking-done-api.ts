@@ -44,10 +44,39 @@ export type BookingTokenRecord = {
   paymentProofCount?: number;
   /** Calendar booking date (`YYYY-MM-DD`). */
   bookingDate?: string;
+  /** Old-lead recognition backfill (YYYY-MM-DD). Hub resolves listing dates — do not recompute on FE. */
+  tokenTakenDate?: string | null;
+  tokenPaidDate?: string | null;
+  tokenAmountPaid?: number | null;
+  bookingDoneDate?: string | null;
+  tenPercentPaidDate?: string | null;
+  tokenRecognitionDate?: string | null;
+  bookingRecognitionDate?: string | null;
+  listingDate?: string | null;
+  dateSource?: string | null;
   financeReviewStatus?: string;
   financeReviewAt?: string | null;
   financeReviewBy?: string | null;
   financeRejectReason?: string | null;
+};
+
+/** Optional old-lead token / 10% recognition backfill (Hub applies; FE does not recompute). */
+export type BookingTokenRecognitionInput = {
+  tokenTakenDate?: string;
+  tokenPaidDate?: string;
+  tokenAmountPaid?: number;
+  quoteAmount?: number;
+  tenPercentAmount?: number;
+  amountReceived?: number;
+  bookingDoneDate?: string;
+  tenPercentPaidDate?: string;
+  listingType?: "token" | "booking";
+  bookingDate?: string;
+};
+
+export type BookingTokenRecognitionResponse = BookingTokenRecord & {
+  success?: boolean;
+  created?: boolean;
 };
 
 export type BookingTokenDeal = {
@@ -189,6 +218,64 @@ export async function fetchBookingDoneRecords(
     throw new Error(parseApiError(text, "Unable to load booking records."));
   }
   return JSON.parse(text) as { records: BookingTokenRecord[] };
+}
+
+function recognitionBffPath(leadType: CrmLeadType, leadId: string): string {
+  return `${bookingDoneBffPath(leadType, leadId)}/recognition`;
+}
+
+/** Strip empty strings / NaN so Hub only receives sent keys (partial apply). */
+export function buildBookingTokenRecognitionPayload(
+  input: BookingTokenRecognitionInput,
+): Record<string, string | number> {
+  const body: Record<string, string | number> = {};
+  const putDate = (key: keyof BookingTokenRecognitionInput, value: string | undefined) => {
+    const v = value?.trim() ?? "";
+    if (v) body[key] = v;
+  };
+  const putNum = (key: keyof BookingTokenRecognitionInput, value: number | undefined) => {
+    if (value == null || Number.isNaN(value)) return;
+    body[key] = value;
+  };
+  putDate("tokenTakenDate", input.tokenTakenDate);
+  putDate("tokenPaidDate", input.tokenPaidDate);
+  putNum("tokenAmountPaid", input.tokenAmountPaid);
+  putNum("quoteAmount", input.quoteAmount);
+  putNum("tenPercentAmount", input.tenPercentAmount);
+  putNum("amountReceived", input.amountReceived);
+  putDate("bookingDoneDate", input.bookingDoneDate);
+  putDate("tenPercentPaidDate", input.tenPercentPaidDate);
+  putDate("bookingDate", input.bookingDate);
+  if (input.listingType === "token" || input.listingType === "booking") {
+    body.listingType = input.listingType;
+  }
+  return body;
+}
+
+/**
+ * PATCH recognition dates/amounts for an old lead.
+ * Hub creates a Booking & Token deal if none exists. Do not recompute dates/money on FE.
+ */
+export async function saveBookingTokenRecognition(
+  leadType: CrmLeadType,
+  leadId: string,
+  input: BookingTokenRecognitionInput,
+): Promise<BookingTokenRecognitionResponse> {
+  const body = buildBookingTokenRecognitionPayload(input);
+  const res = await fetch(recognitionBffPath(leadType, leadId), {
+    method: "PATCH",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(
+      parseApiError(text, "Unable to save token/booking recognition dates."),
+    );
+  }
+  return JSON.parse(text) as BookingTokenRecognitionResponse;
 }
 
 const MAX_PAYMENT_PROOFS = 10;

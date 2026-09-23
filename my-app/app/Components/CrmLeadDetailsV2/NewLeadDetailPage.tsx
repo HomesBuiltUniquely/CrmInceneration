@@ -16,6 +16,7 @@ import ActivityHistoryWithConnector, {
 } from "./ActivityHistoryWithConnector";
 import LeadPaymentLinkBanner from "./LeadPaymentLinkBanner";
 import LeadPaymentLinkStatusChip from "./LeadPaymentLinkStatusChip";
+import TokenBookingRecognitionSection from "./TokenBookingRecognitionSection";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
 import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
@@ -212,6 +213,14 @@ export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = fals
                   }
                   return null;
                 })}
+                {isCrmLeadType(leadType) ? (
+                  <div id="deal-token-booking-dates" className="scroll-mt-24">
+                    <TokenBookingRecognitionSection
+                      leadType={leadType}
+                      leadId={leadId}
+                    />
+                  </div>
+                ) : null}
               </section>
             </div>
           </section>

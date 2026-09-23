@@ -22,6 +22,7 @@ import {
 import { publishLeadQuoteSelection, readLeadQuoteSelection } from "@/lib/lead-quote-selection";
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
 import BookingDateSection from "@/app/Components/CrmLeadDetailsV2/BookingDateSection";
+import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
 import PaymentChannelSelector from "@/app/Components/BookingToken/components/PaymentChannelSelector";
 import PaymentLinkPendingBanner from "@/app/Components/BookingToken/components/PaymentLinkPendingBanner";
 import {
@@ -800,6 +801,12 @@ export default function BookingDoneModal({
             onBookingDateChange={bumpPaymentDraft}
           />
 
+          <TokenBookingRecognitionSection
+            leadType={leadType}
+            leadId={leadId}
+            compact
+          />
+
           {canUsePaymentLinks && linkPaid ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900">
               Online payment received. Token is recorded automatically. Convert is still manual.
@@ -814,7 +821,6 @@ export default function BookingDoneModal({
               ) : null}
             </div>
           ) : null}
-
           {canUsePaymentLinks && showBanner && activeAttempt ? (
             <div className="mt-4">
               <PaymentLinkPendingBanner

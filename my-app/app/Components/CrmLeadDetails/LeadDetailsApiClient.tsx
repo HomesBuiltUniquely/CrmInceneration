@@ -171,6 +171,7 @@ import {
 import { canViewBothMilestonePipelines, isAdminRole, isPresalesRole } from "@/lib/roleUtils";
 import NewLeadDetailPage from "@/app/Components/CrmLeadDetailsV2/NewLeadDetailPage";
 import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal";
+import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
 import QuoteSentCelebrationOverlay from "@/app/Components/CrmLeadDetailsV2/QuoteSentCelebrationOverlay";
 import { pickRandomQuoteSentMotivateLine } from "@/lib/quote-sent-motivate";
 import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
@@ -3908,13 +3909,19 @@ export default function LeadDetailsApiClient({
           }}
         />
         {validLeadType ? (
-          <BookingTokenCancellationBar
-            leadType={leadTypeParam as CrmLeadType}
-            leadId={leadId}
-            lead={lead}
-            onLeadReload={() => void load()}
-            onActivitiesRefresh={refreshActivities}
-          />
+          <>
+            <TokenBookingRecognitionSection
+              leadType={leadTypeParam as CrmLeadType}
+              leadId={leadId}
+            />
+            <BookingTokenCancellationBar
+              leadType={leadTypeParam as CrmLeadType}
+              leadId={leadId}
+              lead={lead}
+              onLeadReload={() => void load()}
+              onActivitiesRefresh={refreshActivities}
+            />
+          </>
         ) : null}
         <DesignQaPanel leadId={lead.leadId?.trim() || ""} open={designQaOpen} />
         <StatsRow lead={lead} viewerRole={viewerRoleKey} />

@@ -430,7 +430,7 @@ Negative `trendDays` = faster than prior period (good).
 
 **Conv % (FE):** Hub `conversionPercent`, else `(closed / leads) * 100`.
 
-`teamPeriod` is always **`monthly`** from FE.
+`teamPeriod` is always **`monthly`** from FE. Payoff column hidden by flag but data still loads.
 
 ### 8.4 Charts + forecast (Sect6)
 

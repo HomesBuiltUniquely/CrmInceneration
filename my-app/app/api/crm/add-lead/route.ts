@@ -15,7 +15,6 @@ export async function POST(req: NextRequest) {
       "Content-Type": req.headers.get("Content-Type") ?? "application/json",
     },
     body: bodyText.length ? bodyText : "{}",
-    cache: "no-store",
   });
   const payload = await readUpstreamPayload(res);
   return new NextResponse(payload.text, {
