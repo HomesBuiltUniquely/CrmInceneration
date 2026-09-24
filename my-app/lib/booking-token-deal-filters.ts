@@ -55,6 +55,8 @@ export function bookingDealFilterSummary(filter: BookingDealFilterState): string
 
 export type BookingDealFilterQueryParams = {
   assignee?: string;
+  /** Hub expands manager + all SEs (active and inactive). Prefer over FE roster expand. */
+  salesManagerId?: number;
   cancellationStatus?: string;
 };
 
@@ -63,16 +65,16 @@ export function bookingDealFilterQueryParams(
 ): BookingDealFilterQueryParams {
   const params: BookingDealFilterQueryParams = {};
   if (filter.salesExecutiveName.trim()) {
+    // Single SE — Hub assignee filter (do not also send salesManagerId).
     params.assignee = filter.salesExecutiveName.trim();
+  } else if (filter.salesManagerId != null && filter.salesManagerId > 0) {
+    // Manager team — Hub includes inactive SEs; do not FE-expand via active roster.
+    params.salesManagerId = filter.salesManagerId;
   }
   if (filter.pendingCancellationsOnly) {
     params.cancellationStatus = "PENDING";
   }
   return params;
-}
-
-function uniqueScopes(scopes: string[]): string[] {
-  return [...new Set(scopes.map((s) => s.trim()).filter(Boolean))];
 }
 
 function teamExecutivesForManager(
@@ -81,10 +83,6 @@ function teamExecutivesForManager(
 ): IncentiveMemberRef[] {
   if (!managerId) return [];
   return roster.executives.filter((exec) => exec.managerId === managerId);
-}
-
-function scopesForExecutives(executives: IncentiveMemberRef[]): string[] {
-  return uniqueScopes(executives.flatMap((exec) => assigneeScopeForExecutive(exec)));
 }
 
 export function executivesForManager(
@@ -139,11 +137,12 @@ export function buildAppliedBookingDealFilters(
   let salesExecutiveName = "";
 
   if (executive) {
+    // Narrow to one SE via assignee name (client safety net still applies).
     teamAssigneeScopes = assigneeScopeForExecutive(executive);
     salesExecutiveName = executive.name;
-  } else if (managerId) {
-    teamAssigneeScopes = scopesForExecutives(teamExecutivesForManager(roster, managerId));
   }
+  // Manager-only: leave teamAssigneeScopes empty — Hub `salesManagerId` expands
+  // active + inactive SEs. Do not use active-sales-executives roster for scoping.
 
   return {
     salesManagerId: managerId,

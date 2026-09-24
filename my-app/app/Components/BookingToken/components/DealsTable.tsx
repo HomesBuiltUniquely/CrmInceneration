@@ -41,6 +41,16 @@ import {
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
 import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
 
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50] as const;
+type DealsPageSize = (typeof PAGE_SIZE_OPTIONS)[number];
+
+function normalizeDealsPageSize(value: number): DealsPageSize {
+  if ((PAGE_SIZE_OPTIONS as readonly number[]).includes(value)) {
+    return value as DealsPageSize;
+  }
+  return BOOKING_TOKEN_DEALS_PAGE_SIZE as DealsPageSize;
+}
+
 const MONEY_CELL =
   "px-2 py-3 text-right text-xs tabular-nums text-[var(--bt-text)] whitespace-nowrap";
 const HEAD_CELL =
@@ -570,6 +580,16 @@ export default function DealsTable({
   const [allTabCounts, setAllTabCounts] = useState<{ token: number; booking: number } | null>(
     null,
   );
+  const [tabSearchInput, setTabSearchInput] = useState("");
+  const [tabSearch, setTabSearch] = useState("");
+  const [pageSize, setPageSize] = useState<DealsPageSize>(
+    normalizeDealsPageSize(BOOKING_TOKEN_DEALS_PAGE_SIZE),
+  );
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setTabSearch(tabSearchInput.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [tabSearchInput]);
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -614,8 +634,9 @@ export default function DealsTable({
         tab,
         dateFilter,
         dealFilters,
+        search: tabSearch || undefined,
         page,
-        size: BOOKING_TOKEN_DEALS_PAGE_SIZE,
+        size: pageSize,
       });
 
       setRows(result.rows);
@@ -632,11 +653,11 @@ export default function DealsTable({
     } finally {
       setLoading(false);
     }
-  }, [tab, dateFilter, dealFilters, page]);
+  }, [tab, dateFilter, dealFilters, tabSearch, page, pageSize]);
 
   useEffect(() => {
     setPage(0);
-  }, [tab, dateFilter, dealFilters]);
+  }, [tab, dateFilter, dealFilters, tabSearch, pageSize]);
 
   useEffect(() => {
     void loadDeals();
@@ -842,27 +863,31 @@ export default function DealsTable({
           ? "token"
           : "cancelled";
 
-  const showingFrom = totalElements === 0 ? 0 : page * BOOKING_TOKEN_DEALS_PAGE_SIZE + 1;
-  const showingTo = Math.min((page + 1) * BOOKING_TOKEN_DEALS_PAGE_SIZE, totalElements);
+  const showingFrom = totalElements === 0 ? 0 : page * pageSize + 1;
+  const showingTo = Math.min((page + 1) * pageSize, totalElements);
   const canGoPrevious = page > 0 && !loading;
   const canGoNext = page + 1 < totalPages && !loading;
 
   const emptyMessage =
-    tab === "cancel"
-      ? "No cancelled bookings yet"
-      : tab === "booking"
-        ? "No booking deals yet"
-        : tab === "token"
-          ? "No token deals yet"
-          : "No deals yet";
+    tabSearch
+      ? `No ${tabLabel} deals match “${tabSearch}”`
+      : tab === "cancel"
+        ? "No cancelled bookings yet"
+        : tab === "booking"
+          ? "No booking deals yet"
+          : tab === "token"
+            ? "No token deals yet"
+            : "No deals yet";
   const emptyHint =
-    tab === "cancel"
-      ? "Deals cancelled within 24 hours of Booking Done appear here with payment history."
-      : tab === "booking"
-        ? "Only leads with full 10% booking advance appear here."
-        : tab === "token"
-          ? "Leads still paying toward 10% (token / partial) appear here."
-          : "All active token and booking deals appear here.";
+    tabSearch
+      ? "Try another name or phone."
+      : tab === "cancel"
+        ? "Deals cancelled within 24 hours of Booking Done appear here with payment history."
+        : tab === "booking"
+          ? "Only leads with full 10% booking advance appear here."
+          : tab === "token"
+            ? "Leads still paying toward 10% (token / partial) appear here."
+            : "All active token and booking deals appear here.";
 
   return (
     <>
@@ -925,6 +950,29 @@ export default function DealsTable({
         onConfirm={(reason) => void handleRejectCancellation(reason)}
       />
       <div className="overflow-hidden rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
+        <div className="border-b border-[var(--bt-border)] px-3 py-2">
+          <div className="relative w-full max-w-sm">
+            <svg
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--bt-muted)]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              aria-hidden
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+            <input
+              type="search"
+              value={tabSearchInput}
+              onChange={(event) => setTabSearchInput(event.target.value)}
+              placeholder="Search name or phone…"
+              className="h-8 w-full rounded-md border border-slate-500/70 bg-white py-0 pl-8 pr-3 text-[12px] text-[var(--bt-text)] outline-none transition placeholder:text-slate-400 hover:border-slate-600 focus:border-sky-400 focus:ring-2 focus:ring-sky-200/80"
+              aria-label={`Search ${tabLabel} deals`}
+            />
+          </div>
+        </div>
         {loadError || approvalError ? (
           <div className="border-b border-[var(--bt-border)] bg-amber-50 px-4 py-3 text-sm text-amber-800">
             {loadError || approvalError}
@@ -995,7 +1043,7 @@ export default function DealsTable({
                   nowMs,
                   isSuperAdmin,
                   approveSubmitting,
-                  rowIndex: page * BOOKING_TOKEN_DEALS_PAGE_SIZE + index + 1,
+                  rowIndex: page * pageSize + index + 1,
                   onView: (dealRow: DealRow) => openPanel(dealRow, "view"),
                   onPay: (dealRow: DealRow) => openPanel(dealRow, "pay"),
                   onCancel: setCancelTarget,
@@ -1030,14 +1078,50 @@ export default function DealsTable({
             </tbody>
           </table>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--bt-border)] bg-slate-50/60 px-4 py-3 text-xs text-[var(--bt-muted)]">
-          <span className="font-semibold uppercase tracking-wide">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--bt-border)] bg-slate-50/60 px-4 py-2.5 text-xs text-[var(--bt-muted)]">
+          <span className="font-medium tabular-nums tracking-wide text-[var(--bt-muted)]">
             {totalElements === 0
-              ? `Showing 0 ${tabLabel} deals`
-              : `Showing ${showingFrom}–${showingTo} of ${totalElements} ${tabLabel} deals`}
+              ? "Showing 0 deals"
+              : `Showing ${showingFrom}–${showingTo} of ${totalElements}`}
           </span>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-medium tabular-nums">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="bt-deals-page-size"
+                className="text-[10px] font-semibold uppercase tracking-wide text-slate-400"
+              >
+                Rows
+              </label>
+              <div className="relative">
+                <select
+                  id="bt-deals-page-size"
+                  value={pageSize}
+                  disabled={loading}
+                  onChange={(event) => {
+                    setPageSize(normalizeDealsPageSize(Number(event.target.value)));
+                  }}
+                  className="h-8 appearance-none rounded-lg border border-slate-300 bg-white py-0 pl-2.5 pr-7 text-[12px] font-semibold tabular-nums text-slate-800 outline-none transition hover:border-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-200/70 disabled:opacity-60"
+                  aria-label="Rows per page"
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-500"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  aria-hidden
+                >
+                  <path d="M2.5 4.5 L6 8 L9.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+            </div>
+            <span className="text-[10px] font-medium tabular-nums text-slate-500">
               Page {totalPages === 0 ? 0 : page + 1} of {totalPages}
             </span>
             <button

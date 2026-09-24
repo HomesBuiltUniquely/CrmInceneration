@@ -36,6 +36,11 @@ export function canAccessBookingTokenDashboard(role: string): boolean {
   );
 }
 
+/** Global search on Booking & Token (`GET /deals/search`) — same roles as dashboard. */
+export function canUseBookingTokenGlobalSearch(role: string): boolean {
+  return canAccessBookingTokenDashboard(role);
+}
+
 /**
  * CRM Insights — org leads only (not SE / presales / design).
  * - SUPER_ADMIN / ADMIN / SALES_ADMIN: branch + all salespeople
