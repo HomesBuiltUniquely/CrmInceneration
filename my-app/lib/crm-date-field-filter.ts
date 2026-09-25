@@ -123,14 +123,15 @@ export function isToolbarDateFilterActive(input: CrmDateFilterInput): boolean {
 }
 
 /**
- * True when Hub already applied date filtering for standard CRM lead types —
- * BFF must not re-filter those in memory.
+ * Whether BFF may skip in-memory date filtering because Hub already applied it.
  *
- * WhatsApp / walk-in lists are unreliable on Hub (direct-list fallback omits
- * date params; filter often ignores bounds) — always re-filter those locally.
+ * Always `false`: Hub `/filter`, `/counts`, and SM my/team endpoints routinely
+ * ignore `dateFrom`/`dateTo`/`dateField` (or apply the wrong field). Lead/Opp
+ * cards were date-scoped via local merge while Total Leads stayed on Hub’s
+ * unfiltered `/counts` (e.g. cards 41 vs Total 450). Always re-filter locally.
  */
-export function hubHandlesDateFilter(input: CrmDateFilterInput): boolean {
-  return isToolbarDateFilterActive(input);
+export function hubHandlesDateFilter(_input: CrmDateFilterInput): boolean {
+  return false;
 }
 
 /** Inclusive local calendar-day range (`YYYY-MM-DD` from/to). Empty bounds = no filter. */
@@ -197,7 +198,8 @@ export function appendCrmDateFilters(
   if (to) qs.set("dateTo", to);
   else qs.delete("dateTo");
 
-  if (eff !== "created") qs.set("dateField", eff);
+  // Always send dateField (incl. created) so BFF / counts / table share one field.
+  if (eff) qs.set("dateField", eff);
   else qs.delete("dateField");
 
   return eff;
