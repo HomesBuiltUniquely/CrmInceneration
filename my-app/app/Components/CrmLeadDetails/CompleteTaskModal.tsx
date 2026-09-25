@@ -25,6 +25,8 @@ import { Button, FieldLabel, Input, Select, Textarea } from "./ui";
 import ScheduleHubMeetingModal, {
   type ScheduleHubMeetingConfirmPayload,
 } from "./ScheduleHubMeetingModal";
+import DesignerEmailMissingDialog from "@/app/Components/Appointment/DesignerEmailMissingDialog";
+import { isDesignerEmailMissingError } from "@/lib/designer-meeting-email";
 import MeetingConflictDialog, {
   type MeetingConflictChoice,
 } from "./MeetingConflictDialog";
@@ -205,6 +207,7 @@ export type CompleteTaskApiPayload = {
   possessionDate?: string;
   meetingAppointment?: {
     designerName: string;
+    designerEmail?: string;
     date: string;
     slotId?: string;
     startTime?: string;
@@ -292,6 +295,8 @@ export default function CompleteTaskModal({
   const [hubMeetingOpen, setHubMeetingOpen] = useState(false);
   const [hubMeetingBusy, setHubMeetingBusy] = useState(false);
   const [hubMeetingError, setHubMeetingError] = useState("");
+  const [designerEmailMissingOpen, setDesignerEmailMissingOpen] = useState(false);
+  const [designerEmailMissingName, setDesignerEmailMissingName] = useState("");
   const [configScopeGateBusy, setConfigScopeGateBusy] = useState(false);
   const [cancelConfirmed, setCancelConfirmed] = useState(false);
   const [cancelAppointmentsLoading, setCancelAppointmentsLoading] = useState(false);
@@ -1200,6 +1205,7 @@ export default function CompleteTaskModal({
             : undefined,
         meetingAppointment: {
           designerName: payload.designerName,
+          designerEmail: payload.designerEmail,
           date: payload.date,
           startTime: payload.startTime,
           endTime: payload.endTime,
@@ -1209,7 +1215,13 @@ export default function CompleteTaskModal({
       setHubMeetingOpen(false);
       onClose();
     } catch (e) {
-      setHubMeetingError(e instanceof Error ? e.message : "Could not schedule meeting");
+      if (isDesignerEmailMissingError(e)) {
+        setDesignerEmailMissingName(e.designerName);
+        setDesignerEmailMissingOpen(true);
+        setHubMeetingError("");
+      } else {
+        setHubMeetingError(e instanceof Error ? e.message : "Could not schedule meeting");
+      }
     } finally {
       setHubMeetingBusy(false);
     }
@@ -2184,6 +2196,12 @@ export default function CompleteTaskModal({
         onChoice={(choice) => void handleConflictChoice(choice)}
         onClose={() => setConflictDialogOpen(false)}
         busy={conflictBusy}
+      />
+
+      <DesignerEmailMissingDialog
+        open={designerEmailMissingOpen}
+        designerName={designerEmailMissingName}
+        onClose={() => setDesignerEmailMissingOpen(false)}
       />
 
       {renovationConfirmOpen ? (

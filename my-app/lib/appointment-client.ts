@@ -1,5 +1,6 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { formatCrmDateTime } from "@/lib/date-time-format";
+import { DesignerEmailMissingError } from "@/lib/designer-meeting-email";
 
 function authJson(): HeadersInit {
   return getCrmAuthHeaders({ "Content-Type": "application/json", Accept: "application/json" });
@@ -28,6 +29,8 @@ export type AvailableSlotsResponse = {
 
 export type CreateAppointmentBody = {
   designerName: string;
+  /** From Design Module /api/designers — used to invite the designer on the Google event */
+  designerEmail?: string;
   date?: string;
   slotId?: string;
   startTime?: string;
@@ -155,6 +158,32 @@ export async function fetchDesignersForHubMeeting(): Promise<DesignModuleDesigne
   }));
 }
 
+/** Match designer email from Design Module list (never CRM/ERP designer master). */
+export function lookupDesignerEmailInList(
+  designerName: string,
+  designers: DesignModuleDesigner[],
+): string | undefined {
+  const normalized = designerName.trim();
+  if (!normalized) return undefined;
+  const exact = designers.find((d) => d.name.trim() === normalized);
+  if (exact?.email?.trim()) return exact.email.trim();
+  const lower = normalized.toLowerCase();
+  const ci = designers.find((d) => d.name.trim().toLowerCase() === lower);
+  return ci?.email?.trim() || undefined;
+}
+
+/** Email only from Design Module `/api/designers` — never CRM/ERP designer master. */
+export async function resolveDesignModuleDesignerEmail(designerName: string): Promise<string> {
+  const list = (await fetchDesignersFromDesignModule().catch(() => [])).filter(
+    (row) => row.name.trim() && !isPlaceholderDesignerName(row.name),
+  );
+  const email = lookupDesignerEmailInList(designerName, list);
+  if (!email) {
+    throw new DesignerEmailMissingError(designerName);
+  }
+  return email;
+}
+
 export async function fetchActiveDesigners(): Promise<string[]> {
   const res = await fetch("/api/crm/appointment/designer-list/active", {
     cache: "no-store",
@@ -237,8 +266,13 @@ export async function fetchDesignerAppointments(designerName: string): Promise<u
 }
 
 function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, unknown> {
+  const designerEmail = body.designerEmail?.trim();
+  if (!designerEmail) {
+    throw new Error("designerEmail is required (from Design Module /api/designers).");
+  }
   const payload: Record<string, unknown> = {
     designerName: body.designerName,
+    designerEmail,
     description: body.description,
     leadType: body.leadType,
     leadId: body.leadId,
@@ -257,6 +291,7 @@ function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, un
 async function parseAppointmentWriteResponse(
   res: Response,
   text: string,
+  designerNameForErrors?: string,
 ): Promise<CreateAppointmentResponse> {
   let parsed: CreateAppointmentResponse = {};
   try {
@@ -265,7 +300,11 @@ async function parseAppointmentWriteResponse(
     throw new Error(text || `HTTP ${res.status}`);
   }
   if (!res.ok) {
-    throw new Error(parsed.error ?? text ?? `HTTP ${res.status}`);
+    const message = parsed.error ?? text ?? `HTTP ${res.status}`;
+    if (designerNameForErrors && /designerEmail/i.test(String(message))) {
+      throw new DesignerEmailMissingError(designerNameForErrors);
+    }
+    throw new Error(message);
   }
   if (parsed.error) {
     throw new Error(parsed.error);
@@ -274,15 +313,16 @@ async function parseAppointmentWriteResponse(
 }
 
 export async function createAppointment(body: CreateAppointmentBody): Promise<CreateAppointmentResponse> {
+  const designerEmail = await resolveDesignModuleDesignerEmail(body.designerName);
   const res = await fetch("/api/crm/appointment", {
     method: "POST",
     credentials: "include",
     headers: authJson(),
-    body: JSON.stringify(buildAppointmentPayload(body)),
+    body: JSON.stringify(buildAppointmentPayload({ ...body, designerEmail })),
     cache: "no-store",
   });
   const text = await res.text();
-  return parseAppointmentWriteResponse(res, text);
+  return parseAppointmentWriteResponse(res, text, body.designerName);
 }
 
 /** Update existing appointment — PUT /v1/Appointment/{id} (true reschedule). */
@@ -291,7 +331,8 @@ export async function updateAppointment(
   body: CreateAppointmentBody,
   options: { rescheduleReason?: string } = {},
 ): Promise<CreateAppointmentResponse> {
-  const payload = buildAppointmentPayload(body);
+  const designerEmail = await resolveDesignModuleDesignerEmail(body.designerName);
+  const payload = buildAppointmentPayload({ ...body, designerEmail });
   if (options.rescheduleReason?.trim()) {
     payload.rescheduleReason = options.rescheduleReason.trim();
   }
@@ -303,7 +344,7 @@ export async function updateAppointment(
     cache: "no-store",
   });
   const text = await res.text();
-  return parseAppointmentWriteResponse(res, text);
+  return parseAppointmentWriteResponse(res, text, body.designerName);
 }
 
 export type AppointmentRow = {
