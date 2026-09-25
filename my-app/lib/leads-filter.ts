@@ -299,6 +299,16 @@ export function isCrmLeadVerified(lead: ApiLead): boolean {
   return normalizeVerificationTag(lead) === "verified";
 }
 
+/** Explicit unverified — not the same as missing verification fields on older Hub list rows. */
+export function isCrmLeadUnverified(lead: ApiLead): boolean {
+  return normalizeVerificationTag(lead) === "unverified";
+}
+
+/** Hub list DTOs sometimes omit verificationStatus on older CRM-open rows. */
+export function isCrmLeadVerificationUnknown(lead: ApiLead): boolean {
+  return normalizeVerificationTag(lead) === undefined;
+}
+
 function hasReinquiry(lead: ApiLead): boolean {
   const r = lead as Record<string, unknown>;
   return isCrmLeadReinquiry({

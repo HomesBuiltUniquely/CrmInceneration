@@ -992,14 +992,14 @@ async function fetchMergedPage(
     const merged = [...byId.values()].sort(
       (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
     );
-    const workspaceScoped =
-      usesClientWorkspaceInboxFilter(leadsWorkspace, normalizedViewerRole)
-        ? filterLeadsForClientWorkspaceInbox(
-            merged,
-            leadsWorkspace,
-            resolvedVerification,
-          )
-        : merged;
+    /**
+     * Hub my-leads ∪ team-leads is already SM CRM membership (incl. Connection).
+     * Do NOT re-apply `filterLeadsForClientWorkspaceInbox`: missing verificationStatus /
+     * assigneeRole on older reassigned rows was classified as PRESALES and dropped
+     * (~21 Connection → Lead 131 / Total 133 vs Hub 154).
+     * Same trust rule as JourneyPhaseHeatmap `useSmCombinedEndpoints`.
+     */
+    const workspaceScoped = merged;
     /**
      * Journey inventory = Hub rows after id-merge (same as SQL / Insights blank→Fresh).
      * Do NOT phone-collapse (`pickMilestoneRepresentativeRows`): that prefers non-blank
@@ -2842,9 +2842,14 @@ export default function LeadsDataSection({
           isGlobalSearchActive;
         // Global search may return unverified / presales IVR rows — do not strip them
         // with the sales verified-inbox filter (same reason Presales search finds them).
+        // SM combined: Hub my∪team is authoritative — same trust as fetchMergedPage combined.
+        const trustHubSmCombinedInventory =
+          leadViewKey === "combined" &&
+          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER");
         const inboxScoped =
           usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) &&
-          !isGlobalSearchActive
+          !isGlobalSearchActive &&
+          !trustHubSmCombinedInventory
             ? filterLeadsForClientWorkspaceInbox(
                 allLeads,
                 leadsWorkspace,
@@ -3385,13 +3390,20 @@ export default function LeadsDataSection({
             hubByLeadType && Object.keys(hubByLeadType).length > 0,
           );
           const hubTotal = Number(hubCounts?.totalElements ?? 0);
-          const baseCounts = hubHasByLeadType
-            ? adminByLeadTypeToSourceCounts(
-                hubByLeadType,
-                Math.max(hubTotal, fromRows.all, journeyRows.length),
-              )
-            : fromRows;
-          if (hubHasByLeadType) {
+          const dateFilterActive = isToolbarDateFilterActive({
+            dateField,
+            dateFrom,
+            dateTo,
+            crmMonthWindow: crmMonthWindowProp,
+          });
+          const baseCounts =
+            !dateFilterActive && hubHasByLeadType
+              ? adminByLeadTypeToSourceCounts(
+                  hubByLeadType,
+                  Math.max(hubTotal, fromRows.all, journeyRows.length),
+                )
+              : fromRows;
+          if (!dateFilterActive && hubHasByLeadType) {
             baseCounts.all = Math.max(hubTotal, Number(baseCounts.all ?? 0), fromRows.all);
             for (const t of CRM_LEAD_TYPES) {
               baseCounts[t] = Math.max(
@@ -3441,7 +3453,9 @@ export default function LeadsDataSection({
             lastAdminMilestoneCountsKeyRef.current = milestoneKey;
             onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
           }
-          const displayTotal = Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
+          const displayTotal = dateFilterActive
+            ? Math.max(journeyRows.length, ivrRaised.all || 0, summaryTotals.lead + summaryTotals.opportunity)
+            : Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
           setVisibleFilteredTotal(displayTotal);
           setAdminPoolDisplayTotals({
             uniquePrimary: displayTotal,
@@ -3519,6 +3533,12 @@ export default function LeadsDataSection({
           heatmapData = await fetchAdminLeadsHeatmapData(filterInput, authHeaders);
         }
         if (cancelled) return;
+        const dateFilterActive = isToolbarDateFilterActive({
+          dateField,
+          dateFrom,
+          dateTo,
+          crmMonthWindow: crmMonthWindowProp,
+        });
         const poolTotal = Number(heatmapData.totalElements ?? heatmapData.leads.length ?? 0);
         const uniquePrimaryPool = Number(
           heatmapData.uniquePrimaryTotal ?? heatmapData.pipelineTotal ?? poolTotal,
@@ -3544,12 +3564,12 @@ export default function LeadsDataSection({
               : uniquePrimaryPool > 0
                 ? uniquePrimaryPool
                 : poolTotal;
-          // Sales: Total Leads = Hub `/counts.totalElements` (not Lead+Opportunity sum).
+          // Sales: Total Leads = Hub `/counts` when unfiltered; date filter → journey pool.
           const rows =
             leadsWorkspace === "sales"
               ? Math.max(poolTotal, customers)
               : Math.max(poolTotal, customers);
-          if (customers > 0 || rows > 0) {
+          if (customers > 0 || rows > 0 || dateFilterActive) {
             setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
             setVisibleFilteredTotal(customers);
           }
@@ -3838,7 +3858,11 @@ export default function LeadsDataSection({
               : managerTeamNames;
         const inboxScoped =
           usesClientWorkspaceInboxFilter(leadsWorkspace, roleKey) &&
-          !isGlobalSearchActive
+          !isGlobalSearchActive &&
+          !(
+            leadViewKey === "combined" &&
+            (roleKey === "SALES_MANAGER" || roleKey === "MANAGER")
+          )
             ? filterLeadsForClientWorkspaceInbox(
               raw,
               leadsWorkspace,
@@ -4015,8 +4039,16 @@ export default function LeadsDataSection({
         /**
          * Hub/BFF sometimes echoes the current page size as totalElements (e.g. 20 of 20).
          * Do not treat a real short page (e.g. 4 IVR rows of 4 total) as that bug.
+         * Date-filtered pools often fit on one page — always trust total when date filter is on.
          */
+        const dateFilterActive = isToolbarDateFilterActive({
+          dateField,
+          dateFrom,
+          dateTo,
+          crmMonthWindow: crmMonthWindowProp,
+        });
         const looksLikePageSizedTotal =
+          !dateFilterActive &&
           pageSizeHint > 0 &&
           pageContentLen === pageSizeHint &&
           totalRows === pageSizeHint &&
@@ -4063,6 +4095,12 @@ export default function LeadsDataSection({
 
       const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>, usePageMetaForUi: boolean) => {
         setData(pageJson);
+        const dateFilterActive = isToolbarDateFilterActive({
+          dateField,
+          dateFrom,
+          dateTo,
+          crmMonthWindow: crmMonthWindowProp,
+        });
         const superAdminCrossPoolSearch =
           roleKeyForLoad === "SUPER_ADMIN" && debouncedSearch.trim().length > 0;
         if (superAdminCrossPoolSearch) {
@@ -4100,43 +4138,71 @@ export default function LeadsDataSection({
                 milestoneStageCategory.trim() ||
                 milestoneSubStage.trim(),
             );
-            if (!milestoneToolbarActive) {
+            if (!milestoneToolbarActive || dateFilterActive) {
               applyAdminTotalsFromTablePage(pageJson);
             }
           } else {
             setVisibleFilteredTotal(pageJson.totalElements ?? 0);
           }
         } else if (
+          dateFilterActive ||
           Boolean(
             milestoneStage.trim() ||
               milestoneStageCategory.trim() ||
               milestoneSubStage.trim(),
           )
         ) {
-          // Client-scoped roles: page meta is skipped, but stage filter totals must still update.
-          setVisibleFilteredTotal(Number(pageJson.totalElements ?? 0));
+          // Client-scoped / admin: page or stage/date filter totals must update Total Leads.
+          const filteredTotal = Number(pageJson.totalElements ?? 0);
+          setVisibleFilteredTotal(filteredTotal);
+          if (
+            dateFilterActive &&
+            (roleKeyForLoad === "SUPER_ADMIN" ||
+              roleKeyForLoad === "SALES_ADMIN" ||
+              roleKeyForLoad === "SALES_MANAGER" ||
+              roleKeyForLoad === "MANAGER")
+          ) {
+            setAdminPoolDisplayTotals({
+              uniquePrimary: filteredTotal,
+              totalRows: Number(pageJson.totalRowCount ?? filteredTotal),
+            });
+          }
         } else {
           // Stage filter cleared — drop stale filtered total; badge uses Hub/full-pool meta.
           setVisibleFilteredTotal(null);
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
-          // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
-          setLeadTypeCounts((prev) => {
-            const nextAll = Math.max(
-              Number(prev.all ?? 0),
-              Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
-            );
-            const nextIvr = Math.max(
-              Number(prev.ivrlead ?? 0),
-              Number(sourceCounts.ivrlead ?? 0),
-            );
-            return {
-              ...prev,
+          if (dateFilterActive) {
+            // Date-scoped page meta replaces full-pool tiles (do not Math.max with 450).
+            setLeadTypeCounts({
               ...sourceCounts,
-              all: nextAll,
-              ivrlead: nextIvr,
-            };
+              all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
+            });
+          } else {
+            // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
+            setLeadTypeCounts((prev) => {
+              const nextAll = Math.max(
+                Number(prev.all ?? 0),
+                Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
+              );
+              const nextIvr = Math.max(
+                Number(prev.ivrlead ?? 0),
+                Number(sourceCounts.ivrlead ?? 0),
+              );
+              return {
+                ...prev,
+                ...sourceCounts,
+                all: nextAll,
+                ivrlead: nextIvr,
+              };
+            });
+          }
+        } else if (dateFilterActive && pageJson.sourceCounts) {
+          const sourceCounts = pageJson.sourceCounts;
+          setLeadTypeCounts({
+            ...sourceCounts,
+            all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
           });
         }
         if (pageJson.accessDeniedLeadTypes?.length) {
@@ -4442,10 +4508,14 @@ export default function LeadsDataSection({
 
   const isClientScopedRole = requiresClientScopedDataset;
   const trustPresalesScope = trustPresalesUpstreamLeadScope(scopeRoleKey);
+  const trustHubSmCombinedInventory =
+    leadView === "combined" &&
+    (scopeRoleKey === "SALES_MANAGER" || scopeRoleKey === "MANAGER");
   const workspaceInboxFiltered = useMemo(() => {
     if (
       !usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey) ||
-      isGlobalSearchActive
+      isGlobalSearchActive ||
+      trustHubSmCombinedInventory
     ) {
       return contentFromApi;
     }
@@ -4459,6 +4529,7 @@ export default function LeadsDataSection({
     isGlobalSearchActive,
     leadsWorkspace,
     scopeRoleKey,
+    trustHubSmCombinedInventory,
     verificationStatusFromHeader,
   ]);
   const roleScopedContent =

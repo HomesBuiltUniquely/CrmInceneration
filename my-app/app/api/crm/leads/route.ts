@@ -35,7 +35,6 @@ import {
   parseAssigneeUserIdsQuery,
 } from "@/lib/admin-assignee-match";
 import {
-  hubHandlesDateFilter,
   rawInInclusiveDateRange,
   resolveEffectiveDateField,
 } from "@/lib/crm-date-field-filter";
@@ -455,12 +454,6 @@ function filterAndSortMergedLeads(
     .toLowerCase();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
-  const skipHubDateFilter = hubHandlesDateFilter({
-    dateFrom,
-    dateTo,
-    dateField: url.searchParams.get("dateField"),
-    crmMonthWindow: url.searchParams.get("crmMonthWindow"),
-  });
 
   const sorted = leads
     .filter((lead) => {
@@ -526,36 +519,24 @@ function filterAndSortMergedLeads(
         if (!a.toLowerCase().includes(assignee)) return false;
       }
 
-      const ltKey = normalizeLeadTypeKey(lead.leadType);
-      const isExternalListRow = ltKey === "walkinlead" || ltKey === "whatsapplead";
-      // Hub date bounds are unreliable for WhatsApp/walk-in — always filter those locally.
-      const mustLocalDateFilter =
-        Boolean(dateFrom || dateTo) && (isExternalListRow || !skipHubDateFilter);
+      // Hub date bounds are unreliable — always filter locally when dates are present.
+      const mustLocalDateFilter = Boolean(dateFrom || dateTo);
       if (mustLocalDateFilter) {
-        const dateFieldRaw = isExternalListRow
-          ? (() => {
-              const effField = resolveEffectiveDateField({
-                dateFrom,
-                dateTo,
-                dateField: url.searchParams.get("dateField"),
-                crmMonthWindow: url.searchParams.get("crmMonthWindow"),
-              });
-              if (effField === "assigned" || usePresalesMilestoneFilters) {
-                const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
-                return assignedTs > 0
-                  ? new Date(assignedTs).toISOString()
-                  : readLeadCreatedAtRaw(lead);
-              }
-              return readLeadDateRawForCrmDateField(lead, effField || "created");
-            })()
-          : usePresalesMilestoneFilters
+        const effField = resolveEffectiveDateField({
+          dateFrom,
+          dateTo,
+          dateField: url.searchParams.get("dateField"),
+          crmMonthWindow: url.searchParams.get("crmMonthWindow"),
+        });
+        const dateFieldRaw =
+          effField === "assigned" || usePresalesMilestoneFilters
             ? (() => {
                 const assignedTs = leadAssignedTimestampForPresalesMonthWindow(lead);
                 return assignedTs > 0
                   ? new Date(assignedTs).toISOString()
                   : readLeadCreatedAtRaw(lead);
               })()
-            : readLeadCreatedAtRaw(lead) || String(lead.updatedAt ?? "").trim();
+            : readLeadDateRawForCrmDateField(lead, effField || "created");
         if (!inDateRange(dateFieldRaw, dateFrom, dateTo)) return false;
       }
 

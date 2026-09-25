@@ -33,6 +33,7 @@ import {
   usesAdminLeadsApi,
 } from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
+import { isToolbarDateFilterActive } from "@/lib/crm-date-field-filter";
 import { leadMatchesAssigneeScope } from "@/lib/admin-assignee-match";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
@@ -854,15 +855,32 @@ export default function JourneyPhaseHeatmap({
     : clientSyncedJourneyCounts
       ? summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal ?? opportunityTotal
       : summaryTotalsOverride?.opportunity ?? opportunityTotal;
+  const dateFilterActive = useMemo(() => {
+    const q = milestoneFilterQuery?.trim() ?? "";
+    if (!q) return false;
+    const p = new URLSearchParams(q);
+    return isToolbarDateFilterActive({
+      dateFrom: p.get("dateFrom"),
+      dateTo: p.get("dateTo"),
+      dateField: p.get("dateField"),
+      crmMonthWindow: p.get("crmMonthWindow"),
+    });
+  }, [milestoneFilterQuery]);
+  const journeyCardSum =
+    (summaryTotalsOverride?.lead ?? summaryLeadTotal) +
+    (summaryTotalsOverride?.opportunity ?? summaryOpportunityTotal);
   const adminGrandTotal =
     isAdminHeatmapViewer && !usePresalesSummaryUi
-      ? Math.max(
-          // Prefer Hub `/counts.totalElements` (full CRM scope) — not Lead+Opportunity card sum.
-          Number(adminPoolTotalLocal ?? 0),
-          summaryTotalsOverride != null
-            ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
-            : adminLeadSummaryTotal + adminOppSummaryTotal,
-        )
+      ? dateFilterActive
+        ? // Date filter: Hub `/counts` stays unscoped — share % must use journey inventory.
+          Math.max(journeyCardSum, summaryLeadTotal + summaryOpportunityTotal)
+        : Math.max(
+            // Prefer Hub `/counts.totalElements` (full CRM scope) — not Lead+Opportunity card sum.
+            Number(adminPoolTotalLocal ?? 0),
+            summaryTotalsOverride != null
+              ? summaryTotalsOverride.lead + summaryTotalsOverride.opportunity
+              : adminLeadSummaryTotal + adminOppSummaryTotal,
+          )
       : 0;
   const shareGrandTotal =
     adminGrandTotal > 0 ? adminGrandTotal : summaryLeadTotal + summaryOpportunityTotal;
@@ -887,6 +905,24 @@ export default function JourneyPhaseHeatmap({
       return;
     }
     if (assigneeScope.length > 0 || summaryTotalsOverride != null) {
+      // Keep pool total aligned with date-scoped Lead/Opp when parent owns the sync.
+      if (summaryTotalsOverride != null) {
+        const q = milestoneFilterQuery?.trim() ?? "";
+        const p = q ? new URLSearchParams(q) : null;
+        const dateOn = p
+          ? isToolbarDateFilterActive({
+              dateFrom: p.get("dateFrom"),
+              dateTo: p.get("dateTo"),
+              dateField: p.get("dateField"),
+              crmMonthWindow: p.get("crmMonthWindow"),
+            })
+          : false;
+        if (dateOn) {
+          setAdminPoolTotalLocal(
+            summaryTotalsOverride.lead + summaryTotalsOverride.opportunity,
+          );
+        }
+      }
       setLoading(false);
       return;
     }

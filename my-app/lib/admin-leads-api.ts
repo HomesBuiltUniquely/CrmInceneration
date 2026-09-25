@@ -17,7 +17,7 @@ import {
   isLeadVerifiedForPresales,
 } from "@/lib/presales-heatmap-helpers";
 import { normalizeStageKey } from "@/lib/milestone-progress";
-import { appendCrmDateFilters } from "@/lib/crm-date-field-filter";
+import { isToolbarDateFilterActive, appendCrmDateFilters } from "@/lib/crm-date-field-filter";
 import type { CrmDateField } from "@/lib/crm-date-field-filter";
 import { isAdminRole } from "@/lib/roleUtils";
 import {
@@ -725,11 +725,19 @@ export async function fetchAdminLeadsHeatmapData(
     }
 
     const pool = buildAdminPoolDualCounts(leads);
-    const authoritativeTotal = Math.max(
-      Number(countsJson?.totalElements ?? 0),
-      totalElements,
-      pool.totalRows,
-    );
+    const dateFilterActive = isToolbarDateFilterActive({
+      dateFrom: poolInput.dateFrom,
+      dateTo: poolInput.dateTo,
+      dateField: poolInput.dateField,
+      crmMonthWindow: poolInput.crmMonthWindow,
+    });
+    const authoritativeTotal = dateFilterActive
+      ? Math.max(totalElements, pool.totalRows)
+      : Math.max(
+          Number(countsJson?.totalElements ?? 0),
+          totalElements,
+          pool.totalRows,
+        );
     /** Sales journey uses id-merge (not phone) so blank milestone stays Fresh Lead. */
     const salesJourneyRows =
       input.workspace === "sales" ? mergeLeadsById(leads) : pickMilestoneRepresentativeRows(leads);
@@ -772,17 +780,18 @@ export async function fetchAdminLeadsHeatmapData(
     const hubHasByLeadType = Boolean(hubByLeadType && Object.keys(hubByLeadType).length > 0);
     const hubTotalElements = Number(countsJson?.totalElements ?? 0);
     /**
-     * Prefer Hub `/counts` for Total + source tiles (esp. `byLeadType.ivrlead`).
-     * Journey-row counts only fill gaps — they under-count IVR at Decision/Closed
-     * when merge inventory is incomplete (Aman 34 vs 37 / IVR 3 vs 6).
+     * Prefer Hub `/counts` for Total + source tiles when no toolbar date filter.
+     * With a date filter, Hub `/counts` often ignores dateFrom/dateTo → keep row
+     * inventory only (otherwise Total stays 450 while Lead/Opp show ~41).
      */
-    const leadTypeCounts = hubHasByLeadType
-      ? adminByLeadTypeToSourceCounts(
-          hubByLeadType,
-          Math.max(hubTotalElements, authoritativeTotal, fromRowsTypes.all),
-        )
-      : fromRowsTypes;
-    if (hubHasByLeadType) {
+    const leadTypeCounts =
+      !dateFilterActive && hubHasByLeadType
+        ? adminByLeadTypeToSourceCounts(
+            hubByLeadType,
+            Math.max(hubTotalElements, authoritativeTotal, fromRowsTypes.all),
+          )
+        : fromRowsTypes;
+    if (!dateFilterActive && hubHasByLeadType) {
       leadTypeCounts.all = Math.max(
         hubTotalElements,
         Number(leadTypeCounts.all ?? 0),
@@ -813,11 +822,14 @@ export async function fetchAdminLeadsHeatmapData(
           : leads;
 
     let leadTypeCountsForUi = leadTypeCounts;
-    // Sales source tiles must stay on Hub byLeadType (not phone-primary undercount).
+    // Sales source tiles must stay on Hub byLeadType (not phone-primary undercount)
+    // unless a toolbar date filter is active (Hub `/counts` ignores dates).
     let leadTypeAllRowsForUi =
-      input.workspace === "sales" && hubHasByLeadType ? { ...leadTypeCounts } : fromRowsTypes;
+      input.workspace === "sales" && hubHasByLeadType && !dateFilterActive
+        ? { ...leadTypeCounts }
+        : fromRowsTypes;
     let leadTypePrimaryForUi =
-      input.workspace === "sales" && hubHasByLeadType
+      input.workspace === "sales" && hubHasByLeadType && !dateFilterActive
         ? { ...leadTypeCounts }
         : input.workspace === "sales"
           ? fromRowsTypes
@@ -882,7 +894,7 @@ export async function fetchAdminLeadsHeatmapData(
         leadTypePrimaryForUi,
         pool.primaryRows.length > 0 ? pool.primaryRows : leads,
       );
-    } else if (hubHasByLeadType) {
+    } else if (hubHasByLeadType && !dateFilterActive) {
       leadTypeAllRowsForUi = { ...leadTypeCountsForUi };
       leadTypePrimaryForUi = { ...leadTypeCountsForUi };
     }
@@ -895,16 +907,18 @@ export async function fetchAdminLeadsHeatmapData(
           )
         : 0;
     /**
-     * Sales Total Leads pill: Hub `/counts.totalElements` when present (full CRM scope).
-     * Do not use Lead+Opportunity card sum (can omit Decision/Closed / incomplete merge).
+     * Sales Total Leads pill: Hub `/counts.totalElements` when no date filter.
+     * With a date filter, Hub counts stay unscoped — use date-filtered journey only.
      */
     const displayTotal =
       input.workspace === "sales"
-        ? Math.max(
-            hubTotalElements,
-            journeyTotal,
-            leadTypeCountsForUi.all || 0,
-          )
+        ? dateFilterActive
+          ? Math.max(journeyTotal, leadTypeCountsForUi.all || 0, salesJourneyRows.length)
+          : Math.max(
+              hubTotalElements,
+              journeyTotal,
+              leadTypeCountsForUi.all || 0,
+            )
         : Math.max(
             authoritativeTotal,
             leadTypeCountsForUi.all,
@@ -914,7 +928,9 @@ export async function fetchAdminLeadsHeatmapData(
 
     const salesUniqueTotal =
       input.workspace === "sales"
-        ? Math.max(hubTotalElements, salesJourneyRows.length, displayTotal)
+        ? dateFilterActive
+          ? Math.max(salesJourneyRows.length, displayTotal)
+          : Math.max(hubTotalElements, salesJourneyRows.length, displayTotal)
         : pool.uniquePrimaryTotal;
 
     return finalizeAdminHeatmapData(

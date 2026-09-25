@@ -10,6 +10,7 @@ import {
   SALES_POOL_NO_MILESTONE,
   salesPoolMilestoneStage,
   isCrmLeadVerified,
+  isCrmLeadVerificationUnknown,
   type ApiLead,
 } from "@/lib/leads-filter";
 import { normalizeStageKey } from "@/lib/milestone-progress";
@@ -148,10 +149,30 @@ export function defaultLeadsVerificationStatus(
   return "unverified";
 }
 
+/**
+ * Discovery+ CRM journey — not Fresh intake.
+ * Older Hub rows (e.g. Connection after inactive-SE reassign) often omit `assigneeRole`
+ * and `verificationStatus`; `assigneeRoleFromLead` then defaults them to PRESALES and the
+ * sales inbox filter silently drops them from Lead/Opp/Total (Razi 133 vs Hub 154).
+ */
+function isCrmOpenSalesJourneyPastIntake(lead: ApiLead): boolean {
+  const key = normalizeStageKey(crmLeadTopLevelStage(lead) || "");
+  return (
+    key === "discovery" ||
+    key === "connection" ||
+    key === "experience & design" ||
+    key === "decision" ||
+    key === "closed"
+  );
+}
+
 /** Dedicated walk-in / WhatsApp are not in admin assignee rows — bucket by assignee pool. */
 export function leadBelongsToAdminWorkspacePool(lead: ApiLead, workspace: CrmWorkspace): boolean {
   const role = assigneeRoleFromLead(lead);
-  return workspace === "presales" ? isPresalesAssigneeRole(role) : isSalesAssigneeRole(role);
+  if (workspace === "presales") return isPresalesAssigneeRole(role);
+  if (isSalesAssigneeRole(role)) return true;
+  // Keep Hub CRM-open journey rows even when assigneeRole/verification meta is missing.
+  return isCrmOpenSalesJourneyPastIntake(lead);
 }
 
 export function filterLeadsForAdminWorkspacePool(
@@ -172,7 +193,12 @@ export function filterLeadsForSalesClientInbox(
     return pool.filter((lead) => !isCrmLeadVerified(lead));
   }
   if (vs === "verified" || !vs) {
-    return pool.filter((lead) => isCrmLeadVerified(lead));
+    return pool.filter(
+      (lead) =>
+        isCrmLeadVerified(lead) ||
+        // Missing verification fields ≠ unverified intake — keep CRM-open Discovery+.
+        (isCrmLeadVerificationUnknown(lead) && isCrmOpenSalesJourneyPastIntake(lead)),
+    );
   }
   return pool;
 }
