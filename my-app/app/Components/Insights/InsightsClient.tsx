@@ -1710,7 +1710,13 @@ export default function InsightsClient1() {
             loading={
               performanceCardsLoading || (isSalesManager && !smScopeReady)
             }
-            revenueForecastTargetInr={Number(dashboard.revenueForecast?.target ?? 0) || undefined}
+            revenueForecastTargetInr={
+              Number(
+                dashboard.revenueForecast?.activeTargetInr ??
+                  dashboard.revenueForecast?.target ??
+                  0,
+              ) || undefined
+            }
             kpis={{
               ...dashboard.kpis,
               totalLeads: {

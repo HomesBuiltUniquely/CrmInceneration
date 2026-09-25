@@ -330,6 +330,8 @@ export async function fetchBookingTokenDeals(opts?: {
   submittedTo?: string;
   submittedByRole?: string;
   assignee?: string;
+  /** Manager + all SEs under them (active and inactive). Hub expands — do not FE-expand. */
+  salesManagerId?: number;
   cancellationStatus?: string;
 }): Promise<BookingTokenDealsResponse> {
   const params = new URLSearchParams();
@@ -356,6 +358,9 @@ export async function fetchBookingTokenDeals(opts?: {
   if (opts?.assignee?.trim()) {
     params.set("assignee", opts.assignee.trim());
   }
+  if (opts?.salesManagerId != null && opts.salesManagerId > 0) {
+    params.set("salesManagerId", String(opts.salesManagerId));
+  }
   if (opts?.cancellationStatus) {
     params.set("cancellationStatus", opts.cancellationStatus);
   }
@@ -370,6 +375,45 @@ export async function fetchBookingTokenDeals(opts?: {
     throw new Error(parseApiError(text, "Unable to load booking deals."));
   }
   return JSON.parse(text) as BookingTokenDealsResponse;
+}
+
+export type BookingTokenGlobalSearchResponse = {
+  q: string;
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  scope?: string;
+  matchFields?: string[];
+  deals: BookingTokenDeal[];
+  salesManagerId?: number | null;
+};
+
+/** Cross-tab search: token + booking + cancel (name / phone / lead id / Easebuzz txn). */
+export async function fetchBookingTokenGlobalSearch(opts: {
+  q: string;
+  page?: number;
+  size?: number;
+}): Promise<BookingTokenGlobalSearchResponse> {
+  const q = opts.q.trim();
+  if (q.length < 2) {
+    throw new Error("Enter at least 2 characters to search.");
+  }
+  const params = new URLSearchParams();
+  params.set("q", q);
+  params.set("page", String(opts.page ?? 0));
+  params.set("size", String(opts.size ?? 20));
+
+  const res = await fetch(`/api/crm/booking-token/deals/search?${params.toString()}`, {
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to run global search."));
+  }
+  return JSON.parse(text) as BookingTokenGlobalSearchResponse;
 }
 
 export type BookingTokenCancelScope = "deal" | "payments";

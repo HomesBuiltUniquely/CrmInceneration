@@ -19,6 +19,8 @@ export type BookingDashboardFetchOptions = {
   tab: BookingTokenTab;
   dateFilter: BookingDateFilterState;
   dealFilters?: BookingDealFilterState;
+  /** In-tab search — Hub `GET /deals?search=` (name / phone / lead id). */
+  search?: string;
   page?: number;
   size?: number;
 };
@@ -136,6 +138,7 @@ export async function fetchDashboardBookingTokenDeals(
     page: 0,
     size: opts.size ?? BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
     listingType: listingTypeQueryForTab(opts.tab),
+    search: opts.search?.trim() || undefined,
     ...bookingDateFilterApiParams(opts.dateFilter),
     ...bookingDealFilterQueryParams(dealFilters),
   });
@@ -167,13 +170,17 @@ export async function fetchDashboardDealsPage(
   const page = Math.max(0, opts.page ?? 0);
   const size = opts.size ?? BOOKING_TOKEN_DEALS_PAGE_SIZE;
   const apiParams = bookingDealFilterQueryParams(dealFilters);
+  const search = opts.search?.trim() || undefined;
   const managerOnlyClientFilter =
-    dealFilters.teamAssigneeScopes.length > 0 && !apiParams.assignee;
+    dealFilters.teamAssigneeScopes.length > 0 &&
+    !apiParams.assignee &&
+    apiParams.salesManagerId == null;
   const clientSidePagination = managerOnlyClientFilter || dealFilters.bufferDealsOnly;
 
   if (clientSidePagination) {
     const deals = await fetchDashboardBookingTokenDeals({
       ...opts,
+      search,
       size: BOOKING_TOKEN_DASHBOARD_FETCH_SIZE,
     });
     let rows = deals.map(bookingTokenDealToDealRow);
@@ -195,6 +202,7 @@ export async function fetchDashboardDealsPage(
     page,
     size,
     listingType: listingTypeQueryForTab(opts.tab),
+    search,
     ...bookingDateFilterApiParams(opts.dateFilter),
     ...apiParams,
   });

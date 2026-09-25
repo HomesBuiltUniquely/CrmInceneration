@@ -116,15 +116,46 @@ function Shell({
   );
 }
 
-function BookingValueTile({ card }: { card: BookingValueCard }) {
-  const t = TONE[card.tone];
-  const fill = clampPct(card.progressRatio * 100);
-  const pct = Number.isFinite(card.completionPercent)
-    ? `${card.completionPercent}%`
-    : "0%";
+function BookingValueTile({
+  card,
+  bookingValueInr,
+  revenueForecastTargetInr,
+}: {
+  card: BookingValueCard;
+  /** Live booking value (KPI / Hub) — same money as card hero when present. */
+  bookingValueInr?: number;
+  /** Same active-SE target as Revenue forecast TARGET bar. */
+  revenueForecastTargetInr?: number;
+}) {
+  const useForecastTarget =
+    revenueForecastTargetInr != null &&
+    Number.isFinite(revenueForecastTargetInr) &&
+    revenueForecastTargetInr > 0;
+
+  const targetInr = useForecastTarget
+    ? revenueForecastTargetInr
+    : Number(card.targetInr) || 0;
+  const actualInr =
+    bookingValueInr != null && Number.isFinite(bookingValueInr)
+      ? bookingValueInr
+      : Number(card.valueInr) || 0;
+
+  const progressRatio = targetInr > 0 ? actualInr / targetInr : 0;
+  const fill = clampPct(progressRatio * 100);
+  const completionPercent = Math.round(fill);
+  const targetLabel = useForecastTarget
+    ? formatInsightsInrCompact(targetInr)
+    : card.targetLabel;
+  const valueLabel =
+    bookingValueInr != null && Number.isFinite(bookingValueInr)
+      ? formatInsightsInrCompact(bookingValueInr)
+      : card.valueLabel;
+
+  const tone: InsightsTone = card.tone;
+  const t = TONE[tone];
 
   return (
-    <Shell tone={card.tone}>
+    <Shell tone={tone}>
       <p className="text-[11px] font-semibold leading-none text-gray-500">
         {card.title || "Booking Value"}
       </p>
@@ -132,13 +163,15 @@ function BookingValueTile({ card }: { card: BookingValueCard }) {
         Quotation value · full selected quote (not 10% paid)
       </p>
       <p className="mt-3 text-[1.7rem] font-extrabold leading-none tracking-tight text-gray-900 sm:text-[1.85rem]">
-        {card.valueLabel}
+        {valueLabel}
       </p>
       <div className="mt-3 flex items-end justify-between gap-2">
         <p className="text-[10px] font-semibold tracking-wide text-gray-400">
-          <span className="uppercase">Target</span> {card.targetLabel}
+          <span className="uppercase">Target</span> {targetLabel}
         </p>
-        <p className={`text-sm font-extrabold leading-none ${t.accent}`}>{pct}</p>
+        <p className={`text-sm font-extrabold leading-none ${t.accent}`}>
+          {completionPercent}%
+        </p>
       </div>
       <div className="mt-auto pt-3">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-200/80">
@@ -360,7 +393,15 @@ export default function InsightsPerformanceCards({
           </>
         ) : (
           <>
-            {cards ? <BookingValueTile card={cards.bookingValue} /> : <SkeletonCard />}
+            {cards ? (
+              <BookingValueTile
+                card={cards.bookingValue}
+                bookingValueInr={bookingValue}
+                revenueForecastTargetInr={revenueForecastTargetInr}
+              />
+            ) : (
+              <SkeletonCard />
+            )}
             <GrowthMoneyTile
               title="Gross Booking Value"
               hint="Quotation value · Token quote + Booking quote (not paid / 10%)"
