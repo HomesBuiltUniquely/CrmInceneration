@@ -48,7 +48,10 @@ import {
   uploadBookingPaymentProofs,
 } from "@/lib/booking-done-api";
 import { buildBookingDoneSubmitPayload, validateBookingDoneHandoff } from "@/lib/booking-token-leads";
-import { persistClosedWonCustomerMilestoneFromPayment } from "@/lib/closed-won-customer-milestone";
+import {
+  persistBookingTokenPendingMilestone,
+  persistClosedWonCustomerMilestoneFromPayment,
+} from "@/lib/closed-won-customer-milestone";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import {
   getLeadDetail,
@@ -551,6 +554,9 @@ export default function BookingDoneModal({
         hubLeadId: hubLeadId || undefined,
       });
       applyAttempt(result.attempt);
+      // Persist Decision → Decision Won → Booking/Token Pending upon successful payment link generation
+      await persistBookingTokenPendingMilestone(leadType, leadId);
+      onHandoffComplete?.();
       if (result.warnings?.length) {
         setHandoffError(result.warnings.join(" · "));
       }

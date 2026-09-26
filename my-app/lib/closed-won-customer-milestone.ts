@@ -7,6 +7,10 @@ import {
 } from "@/lib/lead-details-client";
 import { FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
 
+export const DECISION_STAGE = "Decision";
+export const DECISION_WON_CATEGORY = "Decision Won";
+export const BOOKING_TOKEN_PENDING_SUBSTAGE = "Booking/Token Pending";
+
 export const CLOSED_WON_STAGE = "Closed";
 export const CLOSED_WON_CATEGORY = "Closed Won";
 export const BOOKING_DONE_SUBSTAGE = "Booking Done (Booking)";
@@ -28,6 +32,50 @@ function readStageBlock(detail: Record<string, unknown>): Record<string, unknown
     return { ...(stage as Record<string, unknown>) };
   }
   return {};
+}
+
+/** Persist Decision → Decision Won → Booking/Token Pending when an online payment link is created. */
+export async function persistBookingTokenPendingMilestone(
+  leadType: CrmLeadType,
+  leadId: string,
+): Promise<void> {
+  const detail = await getLeadDetail(leadType, leadId);
+  const prevStage = readStageBlock(detail);
+
+  await putLeadDetail(leadType, leadId, {
+    ...detail,
+    status: BOOKING_TOKEN_PENDING_SUBSTAGE,
+    milestoneStage: DECISION_STAGE,
+    milestoneStageCategory: DECISION_WON_CATEGORY,
+    milestoneSubStage: BOOKING_TOKEN_PENDING_SUBSTAGE,
+    stage: {
+      ...prevStage,
+      milestoneStage: DECISION_STAGE,
+      milestoneStageCategory: DECISION_WON_CATEGORY,
+      milestoneSubStage: BOOKING_TOKEN_PENDING_SUBSTAGE,
+      substage: { substage: BOOKING_TOKEN_PENDING_SUBSTAGE },
+    },
+  });
+}
+
+/** Persist Decision → Decision Won stage when Mark As Won is clicked. */
+export async function persistDecisionWonStage(
+  leadType: CrmLeadType,
+  leadId: string,
+): Promise<void> {
+  const detail = await getLeadDetail(leadType, leadId);
+  const prevStage = readStageBlock(detail);
+
+  await putLeadDetail(leadType, leadId, {
+    ...detail,
+    milestoneStage: DECISION_STAGE,
+    milestoneStageCategory: DECISION_WON_CATEGORY,
+    stage: {
+      ...prevStage,
+      milestoneStage: DECISION_STAGE,
+      milestoneStageCategory: DECISION_WON_CATEGORY,
+    },
+  });
 }
 
 /** Persist Closed → Closed Won → Token Done | Booking Done (Booking) after B&T handoff or convert. */
