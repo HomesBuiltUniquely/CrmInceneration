@@ -27,6 +27,7 @@ import {
 } from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
 import { computeLeadTypeCountsFromRows, normalizeLeadTypeKey } from "@/lib/primary-source-leads";
+import { isCrmLeadReinquiry } from "@/lib/lead-source-utils";
 import { isPresalesRole } from "@/lib/roleUtils";
 import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
 import {
@@ -452,6 +453,7 @@ function filterAndSortMergedLeads(
   const verificationStatus = (url.searchParams.get("verificationStatus") ?? "")
     .trim()
     .toLowerCase();
+  const reinquiryFilter = (url.searchParams.get("reinquiry") ?? "").trim().toLowerCase();
   const dateFrom = effDates.from;
   const dateTo = effDates.to;
 
@@ -459,6 +461,38 @@ function filterAndSortMergedLeads(
     .filter((lead) => {
       if (verificationStatus === "verified" && !isCrmLeadVerified(lead)) return false;
       if (verificationStatus === "unverified" && isCrmLeadVerified(lead)) return false;
+
+      if (reinquiryFilter === "true" || reinquiryFilter === "1" || reinquiryFilter === "yes") {
+        const r = lead as Record<string, unknown>;
+        if (
+          !isCrmLeadReinquiry({
+            additionalLeadSources: lead.additionalLeadSources,
+            leadType: lead.leadType,
+            leadSource: r.leadSource,
+            LeadSource: r.LeadSource,
+            source: r.source,
+          })
+        ) {
+          return false;
+        }
+      } else if (
+        reinquiryFilter === "false" ||
+        reinquiryFilter === "0" ||
+        reinquiryFilter === "no"
+      ) {
+        const r = lead as Record<string, unknown>;
+        if (
+          isCrmLeadReinquiry({
+            additionalLeadSources: lead.additionalLeadSources,
+            leadType: lead.leadType,
+            leadSource: r.leadSource,
+            LeadSource: r.LeadSource,
+            source: r.source,
+          })
+        ) {
+          return false;
+        }
+      }
 
       if (search && !trustUpstreamSearch) {
         const needle = search.toLowerCase();
