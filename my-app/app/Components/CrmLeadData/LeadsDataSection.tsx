@@ -121,6 +121,7 @@ import {
 import {
   appendCrmDateFilters,
   isToolbarDateFilterActive,
+  preferFilteredLeadInventoryOverHubCounts,
   type CrmDateFieldSelection,
 } from "@/lib/crm-date-field-filter";
 import {
@@ -3390,20 +3391,26 @@ export default function LeadsDataSection({
             hubByLeadType && Object.keys(hubByLeadType).length > 0,
           );
           const hubTotal = Number(hubCounts?.totalElements ?? 0);
-          const dateFilterActive = isToolbarDateFilterActive({
+          const preferFilteredInventory = preferFilteredLeadInventoryOverHubCounts({
             dateField,
             dateFrom,
             dateTo,
             crmMonthWindow: crmMonthWindowProp,
+            assignee: effectiveAssignee,
+            assigneeAliasSet:
+              activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
+            search: debouncedSearch,
+            reinquiry,
+            leadType: summaryLeadType,
           });
           const baseCounts =
-            !dateFilterActive && hubHasByLeadType
+            !preferFilteredInventory && hubHasByLeadType
               ? adminByLeadTypeToSourceCounts(
                   hubByLeadType,
                   Math.max(hubTotal, fromRows.all, journeyRows.length),
                 )
               : fromRows;
-          if (!dateFilterActive && hubHasByLeadType) {
+          if (!preferFilteredInventory && hubHasByLeadType) {
             baseCounts.all = Math.max(hubTotal, Number(baseCounts.all ?? 0), fromRows.all);
             for (const t of CRM_LEAD_TYPES) {
               baseCounts[t] = Math.max(
@@ -3453,7 +3460,7 @@ export default function LeadsDataSection({
             lastAdminMilestoneCountsKeyRef.current = milestoneKey;
             onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
           }
-          const displayTotal = dateFilterActive
+          const displayTotal = preferFilteredInventory
             ? Math.max(journeyRows.length, ivrRaised.all || 0, summaryTotals.lead + summaryTotals.opportunity)
             : Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
           setVisibleFilteredTotal(displayTotal);
@@ -3533,11 +3540,17 @@ export default function LeadsDataSection({
           heatmapData = await fetchAdminLeadsHeatmapData(filterInput, authHeaders);
         }
         if (cancelled) return;
-        const dateFilterActive = isToolbarDateFilterActive({
+        const preferFilteredInventory = preferFilteredLeadInventoryOverHubCounts({
           dateField,
           dateFrom,
           dateTo,
           crmMonthWindow: crmMonthWindowProp,
+          assignee: effectiveAssignee,
+          assigneeAliasSet:
+            activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
+          search: debouncedSearch,
+          reinquiry,
+          leadType: summaryLeadType,
         });
         const poolTotal = Number(heatmapData.totalElements ?? heatmapData.leads.length ?? 0);
         const uniquePrimaryPool = Number(
@@ -3564,12 +3577,12 @@ export default function LeadsDataSection({
               : uniquePrimaryPool > 0
                 ? uniquePrimaryPool
                 : poolTotal;
-          // Sales: Total Leads = Hub `/counts` when unfiltered; date filter → journey pool.
+          // Sales: Total Leads = Hub `/counts` when unfiltered; filtered → journey pool.
           const rows =
             leadsWorkspace === "sales"
               ? Math.max(poolTotal, customers)
               : Math.max(poolTotal, customers);
-          if (customers > 0 || rows > 0 || dateFilterActive) {
+          if (customers > 0 || rows > 0 || preferFilteredInventory) {
             setAdminPoolDisplayTotals({ uniquePrimary: customers, totalRows: rows });
             setVisibleFilteredTotal(customers);
           }
@@ -4039,16 +4052,25 @@ export default function LeadsDataSection({
         /**
          * Hub/BFF sometimes echoes the current page size as totalElements (e.g. 20 of 20).
          * Do not treat a real short page (e.g. 4 IVR rows of 4 total) as that bug.
-         * Date-filtered pools often fit on one page — always trust total when date filter is on.
+         * Filtered pools often fit on one page — always trust total when list filters are on.
          */
-        const dateFilterActive = isToolbarDateFilterActive({
+        const preferFilteredInventory = preferFilteredLeadInventoryOverHubCounts({
           dateField,
           dateFrom,
           dateTo,
           crmMonthWindow: crmMonthWindowProp,
+          assignee: effectiveAssignee,
+          assigneeAliasSet:
+            activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
+          search: debouncedSearch,
+          reinquiry,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          leadType: requestLeadType,
         });
         const looksLikePageSizedTotal =
-          !dateFilterActive &&
+          !preferFilteredInventory &&
           pageSizeHint > 0 &&
           pageContentLen === pageSizeHint &&
           totalRows === pageSizeHint &&
@@ -4095,11 +4117,20 @@ export default function LeadsDataSection({
 
       const applyLoadedPageMeta = (pageJson: SpringPage<ApiLead>, usePageMetaForUi: boolean) => {
         setData(pageJson);
-        const dateFilterActive = isToolbarDateFilterActive({
+        const preferFilteredInventory = preferFilteredLeadInventoryOverHubCounts({
           dateField,
           dateFrom,
           dateTo,
           crmMonthWindow: crmMonthWindowProp,
+          assignee: effectiveAssignee,
+          assigneeAliasSet:
+            activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
+          search: debouncedSearch,
+          reinquiry,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          leadType: requestLeadType,
         });
         const superAdminCrossPoolSearch =
           roleKeyForLoad === "SUPER_ADMIN" && debouncedSearch.trim().length > 0;
@@ -4138,25 +4169,25 @@ export default function LeadsDataSection({
                 milestoneStageCategory.trim() ||
                 milestoneSubStage.trim(),
             );
-            if (!milestoneToolbarActive || dateFilterActive) {
+            if (!milestoneToolbarActive || preferFilteredInventory) {
               applyAdminTotalsFromTablePage(pageJson);
             }
           } else {
             setVisibleFilteredTotal(pageJson.totalElements ?? 0);
           }
         } else if (
-          dateFilterActive ||
+          preferFilteredInventory ||
           Boolean(
             milestoneStage.trim() ||
               milestoneStageCategory.trim() ||
               milestoneSubStage.trim(),
           )
         ) {
-          // Client-scoped / admin: page or stage/date filter totals must update Total Leads.
+          // Client-scoped / admin: page or list-filter totals must update Total Leads.
           const filteredTotal = Number(pageJson.totalElements ?? 0);
           setVisibleFilteredTotal(filteredTotal);
           if (
-            dateFilterActive &&
+            preferFilteredInventory &&
             (roleKeyForLoad === "SUPER_ADMIN" ||
               roleKeyForLoad === "SALES_ADMIN" ||
               roleKeyForLoad === "SALES_MANAGER" ||
@@ -4173,8 +4204,8 @@ export default function LeadsDataSection({
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
-          if (dateFilterActive) {
-            // Date-scoped page meta replaces full-pool tiles (do not Math.max with 450).
+          if (preferFilteredInventory) {
+            // Filtered page meta replaces full-pool tiles (do not Math.max with org-wide).
             setLeadTypeCounts({
               ...sourceCounts,
               all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
@@ -4198,7 +4229,7 @@ export default function LeadsDataSection({
               };
             });
           }
-        } else if (dateFilterActive && pageJson.sourceCounts) {
+        } else if (preferFilteredInventory && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
           setLeadTypeCounts({
             ...sourceCounts,
