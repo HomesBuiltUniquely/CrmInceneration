@@ -33,7 +33,9 @@ import {
   usesAdminLeadsApi,
 } from "@/lib/admin-leads-api";
 import { appendLeadPoolQuery, type CrmWorkspace } from "@/lib/crm-workspace";
-import { isToolbarDateFilterActive } from "@/lib/crm-date-field-filter";
+import {
+  preferFilteredLeadInventoryOverHubCounts,
+} from "@/lib/crm-date-field-filter";
 import { leadMatchesAssigneeScope } from "@/lib/admin-assignee-match";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
@@ -855,15 +857,27 @@ export default function JourneyPhaseHeatmap({
     : clientSyncedJourneyCounts
       ? summaryTotalsOverride?.opportunity ?? adminOppSummaryTotal ?? opportunityTotal
       : summaryTotalsOverride?.opportunity ?? opportunityTotal;
-  const dateFilterActive = useMemo(() => {
+  const listFilterActive = useMemo(() => {
     const q = milestoneFilterQuery?.trim() ?? "";
     if (!q) return false;
     const p = new URLSearchParams(q);
-    return isToolbarDateFilterActive({
+    const aliasRaw = (p.get("assigneeAliasSet") ?? "").trim();
+    return preferFilteredLeadInventoryOverHubCounts({
       dateFrom: p.get("dateFrom"),
       dateTo: p.get("dateTo"),
       dateField: p.get("dateField"),
       crmMonthWindow: p.get("crmMonthWindow"),
+      assignee: p.get("assignee"),
+      assigneeAliasSet: aliasRaw
+        ? aliasRaw.split("\0").map((s) => s.trim()).filter(Boolean)
+        : undefined,
+      search: p.get("search"),
+      reinquiry: p.get("reinquiry"),
+      milestoneStage: p.get("milestoneStage") ?? p.get("presalesMilestoneStage"),
+      milestoneStageCategory:
+        p.get("milestoneStageCategory") ?? p.get("presalesMilestoneCategory"),
+      milestoneSubStage: p.get("milestoneSubStage") ?? p.get("presalesMilestoneSubStage"),
+      leadType: p.get("leadType"),
     });
   }, [milestoneFilterQuery]);
   const journeyCardSum =
@@ -871,8 +885,8 @@ export default function JourneyPhaseHeatmap({
     (summaryTotalsOverride?.opportunity ?? summaryOpportunityTotal);
   const adminGrandTotal =
     isAdminHeatmapViewer && !usePresalesSummaryUi
-      ? dateFilterActive
-        ? // Date filter: Hub `/counts` stays unscoped — share % must use journey inventory.
+      ? listFilterActive
+        ? // List filter: Hub `/counts` stays unscoped — share % must use journey inventory.
           Math.max(journeyCardSum, summaryLeadTotal + summaryOpportunityTotal)
         : Math.max(
             // Prefer Hub `/counts.totalElements` (full CRM scope) — not Lead+Opportunity card sum.
@@ -905,19 +919,32 @@ export default function JourneyPhaseHeatmap({
       return;
     }
     if (assigneeScope.length > 0 || summaryTotalsOverride != null) {
-      // Keep pool total aligned with date-scoped Lead/Opp when parent owns the sync.
+      // Keep pool total aligned with list-scoped Lead/Opp when parent owns the sync.
       if (summaryTotalsOverride != null) {
         const q = milestoneFilterQuery?.trim() ?? "";
         const p = q ? new URLSearchParams(q) : null;
-        const dateOn = p
-          ? isToolbarDateFilterActive({
+        const aliasRaw = (p?.get("assigneeAliasSet") ?? "").trim();
+        const listOn = p
+          ? preferFilteredLeadInventoryOverHubCounts({
               dateFrom: p.get("dateFrom"),
               dateTo: p.get("dateTo"),
               dateField: p.get("dateField"),
               crmMonthWindow: p.get("crmMonthWindow"),
+              assignee: p.get("assignee"),
+              assigneeAliasSet: aliasRaw
+                ? aliasRaw.split("\0").map((s) => s.trim()).filter(Boolean)
+                : undefined,
+              search: p.get("search"),
+              reinquiry: p.get("reinquiry"),
+              milestoneStage: p.get("milestoneStage") ?? p.get("presalesMilestoneStage"),
+              milestoneStageCategory:
+                p.get("milestoneStageCategory") ?? p.get("presalesMilestoneCategory"),
+              milestoneSubStage:
+                p.get("milestoneSubStage") ?? p.get("presalesMilestoneSubStage"),
+              leadType: p.get("leadType"),
             })
-          : false;
-        if (dateOn) {
+          : assigneeScope.length > 0;
+        if (listOn || assigneeScope.length > 0) {
           setAdminPoolTotalLocal(
             summaryTotalsOverride.lead + summaryTotalsOverride.opportunity,
           );

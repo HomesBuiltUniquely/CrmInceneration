@@ -123,6 +123,39 @@ export function isToolbarDateFilterActive(input: CrmDateFilterInput): boolean {
 }
 
 /**
+ * When any list-narrowing filter is on, Hub `/counts` (and byLeadType) often stay
+ * org-wide or ignore the param — while merge/list rows are correctly scoped.
+ * Prefer row inventory for Total Leads, source tiles, and share % (same bug as
+ * date filter: Lead/Opp 41 vs Total 450).
+ */
+export function preferFilteredLeadInventoryOverHubCounts(input: {
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  dateField?: string | null;
+  crmMonthWindow?: string | null;
+  assignee?: string | null;
+  assigneeAliasSet?: readonly string[] | null;
+  search?: string | null;
+  reinquiry?: string | null;
+  milestoneStage?: string | null;
+  milestoneStageCategory?: string | null;
+  milestoneSubStage?: string | null;
+  leadType?: string | null;
+}): boolean {
+  if (isToolbarDateFilterActive(input)) return true;
+  if ((input.assignee ?? "").trim()) return true;
+  if ((input.assigneeAliasSet?.length ?? 0) > 0) return true;
+  if ((input.search ?? "").trim()) return true;
+  if ((input.reinquiry ?? "").trim()) return true;
+  if ((input.milestoneStage ?? "").trim()) return true;
+  if ((input.milestoneStageCategory ?? "").trim()) return true;
+  if ((input.milestoneSubStage ?? "").trim()) return true;
+  const lt = (input.leadType ?? "").trim().toLowerCase();
+  if (lt && lt !== "all" && lt !== "verified") return true;
+  return false;
+}
+
+/**
  * Whether BFF may skip in-memory date filtering because Hub already applied it.
  *
  * Always `false`: Hub `/filter`, `/counts`, and SM my/team endpoints routinely
