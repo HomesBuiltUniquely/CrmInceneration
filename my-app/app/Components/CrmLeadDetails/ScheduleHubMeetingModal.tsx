@@ -3,10 +3,12 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchDesignerAppointments,
-  fetchDesignersForHubMeeting,
+  fetchDesignersFromDesignModule,
+  lookupDesignerEmailInList,
   normalizeDesignerNameForAppointmentLookup,
   type DesignModuleDesigner,
 } from "@/lib/appointment-client";
+import DesignerEmailMissingDialog from "@/app/Components/Appointment/DesignerEmailMissingDialog";
 import {
   appointmentToBookedBlock,
   buildHubMeetingDateTimeIso,
@@ -35,6 +37,7 @@ const PX_PER_MIN = 0.95;
 
 export type ScheduleHubMeetingConfirmPayload = {
   designerName: string;
+  designerEmail?: string;
   date: string;
   startTime: string;
   endTime: string;
@@ -304,6 +307,8 @@ export default function ScheduleHubMeetingModal({
   const [designersLoading, setDesignersLoading] = useState(false);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
   const [bookedBlocks, setBookedBlocks] = useState<BookedTimelineBlock[]>([]);
+  const [emailMissingOpen, setEmailMissingOpen] = useState(false);
+  const [emailMissingDesignerName, setEmailMissingDesignerName] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -326,7 +331,7 @@ export default function ScheduleHubMeetingModal({
     if (!open) return;
     let cancelled = false;
     setDesignersLoading(true);
-    void fetchDesignersForHubMeeting()
+    void fetchDesignersFromDesignModule()
       .then((list) => {
         if (!cancelled) setDesigners(list);
       })
@@ -430,8 +435,15 @@ export default function ScheduleHubMeetingModal({
       appointmentDate.trim(),
       selectedStartMin + HUB_MEETING_DURATION_MIN,
     );
+    const designerEmail = lookupDesignerEmailInList(designerName.trim(), designers);
+    if (!designerEmail) {
+      setEmailMissingDesignerName(designerName.trim());
+      setEmailMissingOpen(true);
+      return;
+    }
     await onConfirm({
       designerName: designerName.trim(),
+      designerEmail,
       date: appointmentDate.trim(),
       startTime,
       endTime,
@@ -443,6 +455,7 @@ export default function ScheduleHubMeetingModal({
   const displayError = error || localError;
 
   return (
+    <>
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 px-3 py-4 backdrop-blur-[2px]"
       role="dialog"
@@ -517,7 +530,9 @@ export default function ScheduleHubMeetingModal({
               }}
               options={designers.map((designer) => ({
                 value: designer.name,
-                label: designer.name,
+                label: designer.email?.trim()
+                  ? designer.name
+                  : `${designer.name} — no email in Design Module`,
               }))}
               placeholder={
                 designersLoading
@@ -863,5 +878,11 @@ export default function ScheduleHubMeetingModal({
         </div>
       </div>
     </div>
+    <DesignerEmailMissingDialog
+      open={emailMissingOpen}
+      designerName={emailMissingDesignerName}
+      onClose={() => setEmailMissingOpen(false)}
+    />
+    </>
   );
 }

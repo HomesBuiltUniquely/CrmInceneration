@@ -19,6 +19,8 @@ import {
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
+import DesignerEmailMissingDialog from "./DesignerEmailMissingDialog";
+import { isDesignerEmailMissingError } from "@/lib/designer-meeting-email";
 
 function formatDt(value: unknown): string {
   if (value === undefined || value === null || value === "") return "—";
@@ -125,6 +127,8 @@ export default function AppointmentManagementClient() {
   const [designersError, setDesignersError] = useState(false);
   const [slots, setSlots] = useState<AvailableSlotRow[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [emailMissingOpen, setEmailMissingOpen] = useState(false);
+  const [emailMissingDesignerName, setEmailMissingDesignerName] = useState("");
 
   const minDate = useMemo(() => {
     const d = new Date();
@@ -196,10 +200,16 @@ export default function AppointmentManagementClient() {
       notifyInfo("Designer, date, and slot are required");
       return;
     }
+    if (!selectedDesigner.email?.trim()) {
+      setEmailMissingDesignerName(selectedDesigner.name);
+      setEmailMissingOpen(true);
+      return;
+    }
     setBusy(true);
     try {
       await createAppointment({
         designerName: selectedDesigner.name,
+        designerEmail: selectedDesigner.email,
         date: apptDate.trim(),
         slotId: slotId.trim(),
         description: `Meeting with ${crmLeadTypeToApiLabel(leadType)} - Lead ID: ${idNum}`,
@@ -213,7 +223,12 @@ export default function AppointmentManagementClient() {
       notifySuccess("Appointment created");
       await load();
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Create failed");
+      if (isDesignerEmailMissingError(e)) {
+        setEmailMissingDesignerName(e.designerName);
+        setEmailMissingOpen(true);
+      } else {
+        notifyError(e instanceof Error ? e.message : "Create failed");
+      }
     } finally {
       setBusy(false);
     }
@@ -533,6 +548,11 @@ export default function AppointmentManagementClient() {
           </div>
         </div>
       ) : null}
+      <DesignerEmailMissingDialog
+        open={emailMissingOpen}
+        designerName={emailMissingDesignerName}
+        onClose={() => setEmailMissingOpen(false)}
+      />
     </div>
   );
 }

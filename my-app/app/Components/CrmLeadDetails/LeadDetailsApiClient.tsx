@@ -81,6 +81,7 @@ import {
   type CreateAppointmentResponse,
   resolveAppointmentContextForLead,
 } from "@/lib/appointment-client";
+import { isDesignerEmailMissingError } from "@/lib/designer-meeting-email";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { validateDiscoveryToConnectionTransition } from "@/lib/discovery-to-connection-validation";
@@ -3236,6 +3237,7 @@ export default function LeadDetailsApiClient({
         if (args.meetingAppointment) {
           const apptBody: import("@/lib/appointment-client").CreateAppointmentBody = {
             designerName: args.meetingAppointment.designerName,
+            designerEmail: args.meetingAppointment.designerEmail,
             meetingType: args.meetingAppointment.meetingType,
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
@@ -3544,6 +3546,7 @@ export default function LeadDetailsApiClient({
           });
         }
       } catch (e) {
+        if (isDesignerEmailMissingError(e)) throw e;
         throw new Error(mapMilestoneValidationError(e));
       }
   };
