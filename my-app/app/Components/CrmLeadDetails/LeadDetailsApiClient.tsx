@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Lead } from "@/lib/data";
 import {
   getLeadActivities,
@@ -103,6 +103,19 @@ import {
   maybeOpenSalesClosureOnWon,
   validateClosedLeadQuickAction,
 } from "@/lib/sales-closure";
+import {
+  PAYMENT_LINK_STATE_EVENT,
+  PAYMENT_LINK_UPDATED_EVENT,
+  doesPaymentLinkBlockMarkAsWon,
+  fetchLeadPaymentLinkActive,
+  isBannerPaymentLink,
+  markPaymentLinkHoldMarkAsWon,
+  markPaymentLinkOnlineSuccess,
+  notifyPaymentLinkUpdated,
+  readCachedPaymentLinkAttempt,
+  readPaymentLinkOnlineSuccess,
+} from "@/lib/booking-payment-link-api";
+import { shouldProbeActivePaymentLink } from "@/lib/lead-payment-link-probe";
 import { clearFollowUpDateAliases, FOLLOW_UP_DATE_CLEAR_SENTINEL } from "@/lib/lead-schedule-payload";
 import {
   applyStoredPresalesMilestoneToDetail,
@@ -960,6 +973,11 @@ export default function LeadDetailsApiClient({
     meetingFeedback?: string;
   } | null>(null);
   const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
+  const bookingDoneOpenRef = useRef(bookingDoneOpen);
+  bookingDoneOpenRef.current = bookingDoneOpen;
+  const [paymentLinkBlocksMarkAsWon, setPaymentLinkBlocksMarkAsWon] = useState(() =>
+    doesPaymentLinkBlockMarkAsWon(leadTypeParam, leadId),
+  );
   const [completeTaskVerifyFocus, setCompleteTaskVerifyFocus] = useState(false);
   const [designQaOpen, setDesignQaOpen] = useState(false);
   const [loading, setLoading] = useState(validLeadType);
@@ -1036,13 +1054,17 @@ export default function LeadDetailsApiClient({
     [leadId, leadType, validLeadType],
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!isCrmLeadType(leadTypeParam)) {
       return;
     }
-    setLoading(true);
+    // Never hard-reload while Booking Done is open — that remounts the modal mid-send success.
+    const quiet = Boolean(opts?.quiet) || bookingDoneOpenRef.current;
+    if (!quiet) {
+      setLoading(true);
+      setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
+    }
     setError(null);
-    setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
     try {
       const lt = leadTypeParam as CrmLeadType;
       let detailJson = await getLeadDetail(lt, leadId);
@@ -1639,9 +1661,85 @@ export default function LeadDetailsApiClient({
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
     [viewerRoleKey],
   );
+  const syncPaymentLinkBlocksMarkAsWon = useCallback(() => {
+    setPaymentLinkBlocksMarkAsWon(
+      doesPaymentLinkBlockMarkAsWon(leadType, leadId, lead.activities),
+    );
+  }, [lead.activities, leadId, leadType]);
+
+  useEffect(() => {
+    syncPaymentLinkBlocksMarkAsWon();
+
+    const onPaymentLinkEvent = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ leadType?: string; leadId?: string }>
+      ).detail;
+      if (detail?.leadType !== leadType || String(detail?.leadId) !== String(leadId)) {
+        return;
+      }
+      syncPaymentLinkBlocksMarkAsWon();
+    };
+
+    window.addEventListener(PAYMENT_LINK_UPDATED_EVENT, onPaymentLinkEvent);
+    window.addEventListener(PAYMENT_LINK_STATE_EVENT, onPaymentLinkEvent);
+    return () => {
+      window.removeEventListener(PAYMENT_LINK_UPDATED_EVENT, onPaymentLinkEvent);
+      window.removeEventListener(PAYMENT_LINK_STATE_EVENT, onPaymentLinkEvent);
+    };
+  }, [leadId, leadType, syncPaymentLinkBlocksMarkAsWon]);
+
+  useEffect(() => {
+    if (!validLeadType) return;
+    const cached = readCachedPaymentLinkAttempt(leadType, leadId);
+    if (cached) {
+      syncPaymentLinkBlocksMarkAsWon();
+      return;
+    }
+    if (readPaymentLinkOnlineSuccess(leadType, leadId)) {
+      syncPaymentLinkBlocksMarkAsWon();
+      return;
+    }
+    if (!shouldProbeActivePaymentLink(lead)) {
+      syncPaymentLinkBlocksMarkAsWon();
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const attempt = await fetchLeadPaymentLinkActive(leadType, leadId);
+        if (cancelled) return;
+        const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
+        const status = String(attempt?.status ?? "").toUpperCase();
+        if (isBannerPaymentLink(attempt)) {
+          notifyPaymentLinkUpdated(leadType, leadId, attempt);
+        } else if (paid) {
+          markPaymentLinkOnlineSuccess(leadType, leadId);
+        } else if (status === "EXPIRED") {
+          // Keep Mark as Won hidden until user deletes — do not release gate
+          notifyPaymentLinkUpdated(leadType, leadId, null);
+          markPaymentLinkHoldMarkAsWon(leadType, leadId);
+        } else {
+          notifyPaymentLinkUpdated(leadType, leadId, null);
+        }
+      } catch {
+        /* keep cache */
+      } finally {
+        if (!cancelled) syncPaymentLinkBlocksMarkAsWon();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lead, leadId, leadType, syncPaymentLinkBlocksMarkAsWon, validLeadType]);
+
   const showMarkAsWon = useMemo(
-    () => canClosedLeadHeader && canShowClosedLeadQuickAction(lead),
-    [canClosedLeadHeader, lead],
+    () =>
+      canClosedLeadHeader &&
+      canShowClosedLeadQuickAction(lead) &&
+      !paymentLinkBlocksMarkAsWon,
+    [canClosedLeadHeader, lead, paymentLinkBlocksMarkAsWon],
   );
 
   useEffect(() => {
@@ -3601,15 +3699,30 @@ export default function LeadDetailsApiClient({
 
   if (loading) {
     return (
-      <main
-        className={
-          uiVariant === "v2"
-            ? "min-h-screen bg-[#eef1f5] px-4 py-12 text-center text-[#8a96a8]"
-            : "min-h-screen bg-[var(--crm-app-bg)] px-4 py-12 text-center text-[var(--crm-text-muted)]"
-        }
-      >
-        Loading lead…
-      </main>
+      <>
+        <main
+          className={
+            uiVariant === "v2"
+              ? "min-h-screen bg-[#eef1f5] px-4 py-12 text-center text-[#8a96a8]"
+              : "min-h-screen bg-[var(--crm-app-bg)] px-4 py-12 text-center text-[var(--crm-text-muted)]"
+          }
+        >
+          Loading lead…
+        </main>
+        {uiVariant === "v2" ? (
+          <BookingDoneModal
+            open={bookingDoneOpen}
+            leadType={leadType}
+            leadId={leadId}
+            onClose={() => setBookingDoneOpen(false)}
+            onHandoffComplete={() => {
+              void load({ quiet: true });
+              void refreshActivities();
+              dispatchCrmLeadsInvalidate();
+            }}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -3741,7 +3854,8 @@ export default function LeadDetailsApiClient({
           leadId={leadId}
           onClose={() => setBookingDoneOpen(false)}
           onHandoffComplete={() => {
-            void load();
+            void load({ quiet: true });
+            void refreshActivities();
             dispatchCrmLeadsInvalidate();
           }}
         />

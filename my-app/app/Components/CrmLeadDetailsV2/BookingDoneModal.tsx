@@ -23,6 +23,7 @@ import { publishLeadQuoteSelection, readLeadQuoteSelection } from "@/lib/lead-qu
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
 import BookingDateSection from "@/app/Components/CrmLeadDetailsV2/BookingDateSection";
 import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
+import SendPaymentLinkButton from "@/app/Components/CrmLeadDetailsV2/SendPaymentLinkButton";
 import PaymentChannelSelector from "@/app/Components/BookingToken/components/PaymentChannelSelector";
 import PaymentLinkPendingBanner from "@/app/Components/BookingToken/components/PaymentLinkPendingBanner";
 import {
@@ -75,7 +76,9 @@ import {
   isBannerPaymentLink,
   isStalePaymentLinkAction,
   notifyPaymentLinkUpdated,
+  markPaymentLinkHoldMarkAsWon,
   markPaymentLinkOnlineSuccess,
+  releasePaymentLinkMarkAsWonGate,
   PaymentLinkApiError,
   isPaymentLinkActiveConflict,
   resolveSwitchOfflineAmount,
@@ -193,6 +196,10 @@ export default function BookingDoneModal({
   const [linkPaid, setLinkPaid] = useState(false);
   const [paidRecordId, setPaidRecordId] = useState("");
   const [viewerRole, setViewerRole] = useState("");
+  /** Keeps send-animation footer mounted until plane + success finish (banner would otherwise remount it). */
+  const [linkDeliveryActive, setLinkDeliveryActive] = useState(false);
+  const pendingAttemptRef = useRef<PaymentLinkAttempt | null>(null);
+  const dismissTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -205,9 +212,9 @@ export default function BookingDoneModal({
   }, []);
 
   const handleClose = useCallback(() => {
-    if (submitting) return;
+    if (submitting || linkDeliveryActive) return;
     onClose();
-  }, [onClose, submitting]);
+  }, [linkDeliveryActive, onClose, submitting]);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -246,6 +253,8 @@ export default function BookingDoneModal({
       setActiveAttempt(null);
       setLinkPaid(false);
       setPaidRecordId("");
+      setLinkDeliveryActive(false);
+      pendingAttemptRef.current = null;
       return;
     }
 
@@ -326,12 +335,41 @@ export default function BookingDoneModal({
   }, [leadId, leadType, open]);
 
   const applyAttempt = useCallback((attempt: PaymentLinkAttempt | null | undefined) => {
-    const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
+    const status = String(attempt?.status ?? "").toUpperCase();
+    const paid = status === "PAID";
     const next = isBannerPaymentLink(attempt) ? attempt ?? null : null;
     setActiveAttempt(next);
     notifyPaymentLinkUpdated(leadType, leadId, next);
     if (paid) markPaymentLinkOnlineSuccess(leadType, leadId);
+    if (status === "EXPIRED") markPaymentLinkHoldMarkAsWon(leadType, leadId);
   }, [leadId, leadType]);
+
+  const handleLinkDelivered = useCallback(() => {
+    if (pendingAttemptRef.current) {
+      applyAttempt(pendingAttemptRef.current);
+      pendingAttemptRef.current = null;
+    }
+    // Keep delivery footer mounted through exit so success toast does not flash to Close.
+    setPanelEntered(false);
+    if (dismissTimerRef.current != null) {
+      window.clearTimeout(dismissTimerRef.current);
+    }
+    dismissTimerRef.current = window.setTimeout(() => {
+      dismissTimerRef.current = null;
+      setLinkDeliveryActive(false);
+      onHandoffComplete?.();
+      onClose();
+    }, 420);
+  }, [applyAttempt, onClose, onHandoffComplete]);
+
+  useEffect(() => {
+    return () => {
+      if (dismissTimerRef.current != null) {
+        window.clearTimeout(dismissTimerRef.current);
+        dismissTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const loadActiveAttempt = useCallback(async () => {
     if (!canUsePaymentLinks) {
@@ -516,29 +554,29 @@ export default function BookingDoneModal({
     }
   }
 
-  async function handleSendLeadPaymentLink() {
+  async function handleSendLeadPaymentLink(): Promise<boolean> {
     setHandoffError("");
     if (!isCrmLeadType(leadType)) {
       setHandoffError("Invalid lead type.");
-      return;
+      return false;
     }
     if (isBannerPaymentLink(activeAttempt)) {
       setHandoffError(
         "A payment link is already active. Delete it, wait for payment, or switch to offline.",
       );
-      return;
+      return false;
     }
     if (!selectedQuote || selectedQuote.amount == null) {
       setHandoffError("Select a quotation version before sending a payment link.");
-      return;
+      return false;
     }
     if (!hasBookingDate) {
       setHandoffError("Select a booking date before sending a payment link.");
-      return;
+      return false;
     }
     if (missingContacts) {
       setHandoffError("Phone and email are both missing. Add a contact before sending a payment link.");
-      return;
+      return false;
     }
     const amount = parsePaymentAmountInput(readPaymentAmount(leadType, leadId));
     setLinkBusy(true);
@@ -553,13 +591,14 @@ export default function BookingDoneModal({
         bookingDate: readBookingDate(leadType, leadId),
         hubLeadId: hubLeadId || undefined,
       });
-      applyAttempt(result.attempt);
-      // Persist Decision → Decision Won → Booking/Token Pending upon successful payment link generation
+      // Defer banner + parent refresh until plane / success finish.
+      // Calling onHandoffComplete here remounted this modal mid-animation.
+      pendingAttemptRef.current = result.attempt ?? null;
       await persistBookingTokenPendingMilestone(leadType, leadId);
-      onHandoffComplete?.();
       if (result.warnings?.length) {
         setHandoffError(result.warnings.join(" · "));
       }
+      return true;
     } catch (err) {
       if (isPaymentLinkActiveConflict(err)) {
         if (err.attempt) applyAttempt(err.attempt);
@@ -569,10 +608,11 @@ export default function BookingDoneModal({
         );
       } else if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
-        setHandoffError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+        setHandoffError(`${err.message} Online payment is unavailable — record an Offline proof instead.`);
       } else {
         setHandoffError(err instanceof Error ? err.message : "Unable to send payment link.");
       }
+      return false;
     } finally {
       setLinkBusy(false);
     }
@@ -605,7 +645,7 @@ export default function BookingDoneModal({
       }
       if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
-        setHandoffError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+        setHandoffError(`${err.message} Online payment is unavailable — record an Offline proof instead.`);
       } else {
         setHandoffError(err instanceof Error ? err.message : "Unable to resend payment link.");
       }
@@ -643,6 +683,8 @@ export default function BookingDoneModal({
       const result = await switchPaymentLinkOffline(activeAttempt.id);
       const switchedAmount = resolveSwitchOfflineAmount(result, activeAttempt);
       setActiveAttempt(null);
+      notifyPaymentLinkUpdated(leadType, leadId, null);
+      releasePaymentLinkMarkAsWonGate(leadType, leadId);
       setChannel("offline");
       if (switchedAmount != null) {
         writePaymentAmount(leadType, leadId, formatPaymentAmountInput(switchedAmount));
@@ -663,6 +705,7 @@ export default function BookingDoneModal({
       await cancelPaymentLink(activeAttempt.id);
       setActiveAttempt(null);
       notifyPaymentLinkUpdated(leadType, leadId, null);
+      releasePaymentLinkMarkAsWonGate(leadType, leadId);
     } catch (err) {
       if (isStalePaymentLinkAction(err)) {
         await loadActiveAttempt();
@@ -734,7 +777,7 @@ export default function BookingDoneModal({
       <div
         ref={panelRef}
         className={`fixed z-[115] flex max-h-[calc(100vh-2rem)] w-[min(920px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-          panelEntered ? "scale-100 opacity-100" : "scale-[0.86] opacity-0"
+          panelEntered ? "scale-100 opacity-100 translate-y-0" : "scale-[0.96] opacity-0 translate-y-2"
         }`}
         style={{ left: panelPosition.x, top: panelPosition.y }}
         role="dialog"
@@ -842,25 +885,45 @@ export default function BookingDoneModal({
           ) : (
             <>
               {canUsePaymentLinks ? (
-                <div className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
-                  <PaymentChannelSelector
-                    channel={channel}
-                    offlineMethod={offlineMethod}
-                    disabled={submitting || linkBusy || handoffComplete}
-                    onChannelChange={setChannel}
-                    onOfflineMethodChange={setOfflineMethod}
+                <div className="mt-4 overflow-hidden rounded-2xl border border-[#e2e8f0] bg-white shadow-[0_10px_30px_-24px_rgba(15,23,42,0.35)]">
+                  <div className="p-4 pb-3">
+                    <PaymentChannelSelector
+                      channel={channel}
+                      offlineMethod={offlineMethod}
+                      disabled={submitting || linkBusy || handoffComplete}
+                      onChannelChange={setChannel}
+                      onOfflineMethodChange={setOfflineMethod}
+                    />
+                  </div>
+                  <div
+                    className={`px-4 pb-4 pt-1 transition-colors duration-300 ${
+                      channel === "online" ? "bg-emerald-50/30" : "bg-amber-50/30"
+                    }`}
+                  >
+                    <PaymentProofUploadSection
+                      leadType={leadType}
+                      leadId={leadId}
+                      selectedQuote={selectedQuote}
+                      quoteAmountRefreshing={quoteAmountRefreshing}
+                      onPaymentDraftChange={bumpPaymentDraft}
+                      hideProofs={channel === "online"}
+                      paymentChannel={channel}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <PaymentProofUploadSection
+                    leadType={leadType}
+                    leadId={leadId}
+                    selectedQuote={selectedQuote}
+                    quoteAmountRefreshing={quoteAmountRefreshing}
+                    onPaymentDraftChange={bumpPaymentDraft}
+                    hideProofs={false}
+                    paymentChannel="offline"
                   />
                 </div>
-              ) : null}
-
-              <PaymentProofUploadSection
-                leadType={leadType}
-                leadId={leadId}
-                selectedQuote={selectedQuote}
-                quoteAmountRefreshing={quoteAmountRefreshing}
-                onPaymentDraftChange={bumpPaymentDraft}
-                hideProofs={canUsePaymentLinks && channel === "online"}
-              />
+              )}
             </>
           )}
 
@@ -881,13 +944,12 @@ export default function BookingDoneModal({
             </div>
           ) : null}
 
-          <p className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3 text-[13px] text-[#475569]">
-            {canUsePaymentLinks && showBanner
-              ? "Customer pays on Easebuzz. Token is created when payment succeeds — Convert stays manual."
-              : canUsePaymentLinks && channel === "online"
-                ? "Send the Easebuzz link after selecting quote and booking date. Token is not created until the customer pays."
-                : `Select quote and payment, then click ${CONFIRM_BOOKING_TOKEN_LABEL} to send this lead to Booking & Token.`}
-          </p>
+          {(!canUsePaymentLinks || channel === "offline") &&
+          !(canUsePaymentLinks && showBanner) ? (
+            <p className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3 text-[13px] text-[#475569]">
+              {`Select quote and payment, then click ${CONFIRM_BOOKING_TOKEN_LABEL} to send this lead to Booking & Token.`}
+            </p>
+          ) : null}
 
           {handoffError ? (
             <p className="mt-4 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[13px] text-[#b91c1c]">
@@ -896,42 +958,58 @@ export default function BookingDoneModal({
           ) : null}
         </div>
 
-        <div className="shrink-0 border-t border-[#eef1f5] bg-white px-5 py-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <button
-              type="button"
-              onClick={handleClose}
-              disabled={submitting || linkBusy}
-              className="inline-flex h-10 items-center justify-center rounded-[6px] border border-[#d6dce6] bg-white px-4 text-[12px] font-bold uppercase tracking-wide text-[#374151] transition hover:bg-[#f8fafc] disabled:opacity-60"
-            >
-              Close
-            </button>
-            {(canUsePaymentLinks && (showBanner || linkPaid)) ? null : canUsePaymentLinks && channel === "online" ? (
+        <div className="shrink-0 border-t border-[#eef1f5] bg-white px-5 py-2.5">
+          {(canUsePaymentLinks && (showBanner || linkPaid) && !linkDeliveryActive) ? (
+            <div className="flex justify-center sm:justify-end">
               <button
                 type="button"
-                onClick={() => void handleSendLeadPaymentLink()}
+                onClick={handleClose}
+                disabled={submitting || linkBusy}
+                className="inline-flex h-9 items-center justify-center rounded-[6px] border border-[#d6dce6] bg-white px-4 text-[12px] font-bold uppercase tracking-wide text-[#374151] transition hover:bg-[#f8fafc] disabled:opacity-60"
+              >
+                Close
+              </button>
+            </div>
+          ) : canUsePaymentLinks && channel === "online" ? (
+            <div className="flex justify-center py-0.5">
+              <SendPaymentLinkButton
+                customerName={customerName}
+                busy={linkBusy}
                 disabled={
                   handoffComplete ||
-                  linkBusy ||
                   !selectedQuote ||
                   !hasBookingDate ||
                   missingContacts
                 }
-                className="inline-flex h-10 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] transition hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-60"
+                onSend={async () => {
+                  setLinkDeliveryActive(true);
+                  const ok = await handleSendLeadPaymentLink();
+                  if (!ok) setLinkDeliveryActive(false);
+                  return ok;
+                }}
+                onDelivered={handleLinkDelivered}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={handleClose}
+                disabled={submitting || linkBusy}
+                className="inline-flex h-9 items-center justify-center rounded-[6px] border border-[#d6dce6] bg-white px-4 text-[12px] font-bold uppercase tracking-wide text-[#374151] transition hover:bg-[#f8fafc] disabled:opacity-60"
               >
-                {linkBusy ? "Sending…" : "Send payment link"}
+                Close
               </button>
-            ) : (
               <button
                 type="button"
                 onClick={() => void handleConfirmSubmit()}
                 disabled={handoffComplete || submitting || !selectedQuote || !paymentKind || !hasBookingDate}
-                className="inline-flex h-10 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] transition hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-9 items-center justify-center rounded-[6px] bg-[#1dde63] px-4 text-[12px] font-bold uppercase tracking-wide text-[#05220f] transition hover:bg-[#1ed760] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {submitting ? "Sending…" : CONFIRM_BOOKING_TOKEN_LABEL}
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </>

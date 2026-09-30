@@ -422,6 +422,8 @@ export const PAYMENT_LINK_STATE_EVENT = "crm-payment-link-state";
 
 const activePaymentLinkCache = new Map<string, PaymentLinkAttempt | null>();
 const paymentLinkSuccessCache = new Map<string, boolean>();
+/** Blocks Mark as Won until user deletes/cancels/switches offline — survives expire. */
+const paymentLinkHoldMarkAsWonCache = new Map<string, boolean>();
 
 export function paymentLinkCacheKey(leadType: string, leadId: string): string {
   return `${leadType}:${leadId}`;
@@ -453,6 +455,28 @@ export function markPaymentLinkOnlineSuccess(leadType: string, leadId: string): 
   emitPaymentLinkState(leadType, leadId, readCachedPaymentLinkAttempt(leadType, leadId));
 }
 
+/** True after a link was sent; stays true through expire until explicit delete/cancel/offline. */
+export function readPaymentLinkHoldMarkAsWon(leadType: string, leadId: string): boolean {
+  return paymentLinkHoldMarkAsWonCache.get(paymentLinkCacheKey(leadType, leadId)) === true;
+}
+
+export function markPaymentLinkHoldMarkAsWon(leadType: string, leadId: string): void {
+  paymentLinkHoldMarkAsWonCache.set(paymentLinkCacheKey(leadType, leadId), true);
+  emitPaymentLinkState(leadType, leadId, readCachedPaymentLinkAttempt(leadType, leadId));
+}
+
+export function clearPaymentLinkHoldMarkAsWon(leadType: string, leadId: string): void {
+  paymentLinkHoldMarkAsWonCache.delete(paymentLinkCacheKey(leadType, leadId));
+  emitPaymentLinkState(leadType, leadId, readCachedPaymentLinkAttempt(leadType, leadId));
+}
+
+/** Call only from delete / cancel / switch-offline — not from expire. */
+export function releasePaymentLinkMarkAsWonGate(leadType: string, leadId: string): void {
+  clearPaymentLinkHoldMarkAsWon(leadType, leadId);
+  clearPaymentLinkOnlineSuccess(leadType, leadId);
+  emitPaymentLinkState(leadType, leadId, readCachedPaymentLinkAttempt(leadType, leadId));
+}
+
 export function readCachedPaymentLinkAttempt(
   leadType: string,
   leadId: string,
@@ -467,7 +491,10 @@ export function writeCachedPaymentLinkAttempt(
   attempt: PaymentLinkAttempt | null | undefined,
 ): void {
   const banner = isBannerPaymentLink(attempt) ? attempt ?? null : null;
-  if (banner) clearPaymentLinkOnlineSuccess(leadType, leadId);
+  if (banner) {
+    clearPaymentLinkOnlineSuccess(leadType, leadId);
+    paymentLinkHoldMarkAsWonCache.set(paymentLinkCacheKey(leadType, leadId), true);
+  }
   activePaymentLinkCache.set(paymentLinkCacheKey(leadType, leadId), banner);
   emitPaymentLinkState(leadType, leadId, banner);
 }
@@ -484,4 +511,67 @@ export function notifyPaymentLinkUpdated(
       detail: { leadType, leadId, attempt: attempt ?? null },
     }),
   );
+}
+
+/** Hide Mark as Won while link active, paid, expired (until delete), or hold flag set. */
+export function doesPaymentLinkBlockMarkAsWon(
+  leadType: string,
+  leadId: string,
+  activities?: Array<{ rawActivityType?: string | null }> | null,
+): boolean {
+  if (readCachedPaymentLinkAttempt(leadType, leadId)) return true;
+  if (readPaymentLinkOnlineSuccess(leadType, leadId)) return true;
+  if (readPaymentLinkHoldMarkAsWon(leadType, leadId)) return true;
+  return doesPaymentLinkHistoryBlockMarkAsWon(activities);
+}
+
+function normalizeHoldActivityKey(raw?: string | null): string {
+  return String(raw ?? "")
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+}
+
+const MARK_AS_WON_RELEASE_ACTIVITY = new Set([
+  "BOOKING_PAYMENT_LINK_DELETED",
+  "BOOKING_PAYMENT_LINK_CANCELLED",
+  "BOOKING_PAYMENT_SWITCH_OFFLINE",
+  "LINK_DELETED",
+  "LINK_CANCELLED",
+  "SWITCH_OFFLINE",
+]);
+
+/** After refresh: only expire/paid keep Mark as Won hidden without an explicit delete. */
+const MARK_AS_WON_HISTORY_BLOCK_ACTIVITY = new Set([
+  "BOOKING_PAYMENT_EXPIRED",
+  "BOOKING_PAYMENT_PAID",
+  "BOOKING_PAYMENT_STAGE",
+  "EXPIRED",
+  "PAID",
+  "STAGE",
+]);
+
+function doesPaymentLinkHistoryBlockMarkAsWon(
+  activities?: Array<{ rawActivityType?: string | null }> | null,
+): boolean {
+  if (!activities?.length) return false;
+  for (const activity of activities) {
+    const key = normalizeHoldActivityKey(activity.rawActivityType);
+    if (!key) continue;
+    const isPayment =
+      key.startsWith("BOOKING_PAYMENT_") ||
+      key.startsWith("PAYMENT_LINK_") ||
+      key === "LINK_SENT" ||
+      key === "LINK_DELETED" ||
+      key === "LINK_CANCELLED" ||
+      key === "SWITCH_OFFLINE" ||
+      key === "EXPIRED" ||
+      key === "PAID" ||
+      key === "STAGE";
+    if (!isPayment) continue;
+    if (MARK_AS_WON_RELEASE_ACTIVITY.has(key)) return false;
+    if (MARK_AS_WON_HISTORY_BLOCK_ACTIVITY.has(key)) return true;
+    // SENT / copied / etc. — live hold + banner cover the active session
+    return false;
+  }
+  return false;
 }

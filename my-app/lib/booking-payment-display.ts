@@ -13,7 +13,7 @@ export function formatPaymentSource(source?: string | null): string {
   const normalized = source.trim();
   if (normalized === "booking_done") return "Booking Done";
   if (normalized === "pay_action") return "Pay action";
-  if (normalized.toUpperCase() === "EASEBUZZ") return "Easebuzz";
+  if (normalized.toUpperCase() === "EASEBUZZ") return "Online";
   return normalized.replace(/_/g, " ");
 }
 

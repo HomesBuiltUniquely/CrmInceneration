@@ -42,7 +42,9 @@ import {
   isBannerPaymentLink,
   isStalePaymentLinkAction,
   notifyPaymentLinkUpdated,
+  markPaymentLinkHoldMarkAsWon,
   markPaymentLinkOnlineSuccess,
+  releasePaymentLinkMarkAsWonGate,
   PaymentLinkApiError,
   isPaymentLinkActiveConflict,
   resolveSwitchOfflineAmount,
@@ -451,11 +453,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         setActiveAttempt(isBannerPaymentLink(attempt) ? attempt ?? null : null);
         return;
       }
-      const paid = String(attempt?.status ?? "").toUpperCase() === "PAID";
+      const status = String(attempt?.status ?? "").toUpperCase();
+      const paid = status === "PAID";
       const banner = isBannerPaymentLink(attempt) ? attempt ?? null : null;
       setActiveAttempt(banner);
       notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), banner);
       if (paid) markPaymentLinkOnlineSuccess(deal.leadType, String(deal.leadId));
+      if (status === "EXPIRED") markPaymentLinkHoldMarkAsWon(deal.leadType, String(deal.leadId));
     },
     [deal],
   );
@@ -497,7 +501,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         );
       } else if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
-        setError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+        setError(`${err.message} Online payment is unavailable — record an Offline proof instead.`);
       } else {
         setError(err instanceof Error ? err.message : "Unable to send payment link.");
       }
@@ -535,7 +539,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       }
       if (err instanceof PaymentLinkApiError && err.useOfflineFallback) {
         setChannel("offline");
-        setError(`${err.message} Easebuzz is unavailable — record an Offline proof instead.`);
+        setError(`${err.message} Online payment is unavailable — record an Offline proof instead.`);
       } else {
         setError(err instanceof Error ? err.message : "Unable to resend payment link.");
       }
@@ -565,7 +569,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   );
 
   const handleSwitchOffline = useCallback(async () => {
-    if (!activeAttempt) return;
+    if (!activeAttempt || !deal) return;
     const confirmed = window.confirm(
       "Switch this payment to Offline? The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment.",
     );
@@ -576,6 +580,8 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       const result = await switchPaymentLinkOffline(activeAttempt.id);
       const switchedAmount = resolveSwitchOfflineAmount(result, activeAttempt);
       setActiveAttempt(null);
+      notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), null);
+      releasePaymentLinkMarkAsWonGate(deal.leadType, String(deal.leadId));
       setChannel("offline");
       setHistoryDetailOpen(false);
       if (switchedAmount != null) {
@@ -586,15 +592,17 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setLinkBusy(false);
     }
-  }, [activeAttempt]);
+  }, [activeAttempt, deal]);
 
   const handleDeletePaymentLink = useCallback(async () => {
-    if (!activeAttempt) return;
+    if (!activeAttempt || !deal) return;
     setLinkBusy(true);
     setError("");
     try {
       await cancelPaymentLink(activeAttempt.id);
       setActiveAttempt(null);
+      notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), null);
+      releasePaymentLinkMarkAsWonGate(deal.leadType, String(deal.leadId));
       setCopiedNotice("Payment link deleted — you can send a new one.");
       window.setTimeout(() => setCopiedNotice(""), 2500);
       onUpdated?.();
@@ -606,7 +614,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setLinkBusy(false);
     }
-  }, [activeAttempt, loadActiveAttempt, onUpdated]);
+  }, [activeAttempt, deal, loadActiveAttempt, onUpdated]);
 
   const handleRemovePayment = useCallback(async () => {
     if (!deal || !selectedEntry) return;
@@ -951,7 +959,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                         : "border-[#e5e7eb] bg-white text-[#6b7280]"
                     }`}
                   >
-                    {filter === "all" ? "All" : filter === "online" ? "Easebuzz" : "Proof"}
+                    {filter === "all" ? "All" : filter === "online" ? "Online" : "Proof"}
                   </button>
                 ))}
               </div>
@@ -1410,7 +1418,7 @@ function HistoryDetailSection({
         {entry.proofs.length === 0 ? (
           <p className="mt-2 text-[12px] text-[#9ca3af]">
             {isEasebuzzPayment(entry)
-              ? "Online Easebuzz payment — no screenshot required."
+              ? "Online payment — no screenshot required."
               : "No screenshots attached for this payment."}
           </p>
         ) : (
@@ -1449,7 +1457,7 @@ function OnlineLinkFormSection({
   return (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-        Send Easebuzz link
+        Send payment link
       </p>
       <p className="mt-1 text-[11px] leading-relaxed text-[#6b7280]">
         Default is the remaining 10% amount. WhatsApp and email are sent together; SMS is used if

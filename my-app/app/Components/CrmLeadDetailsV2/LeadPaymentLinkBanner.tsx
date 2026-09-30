@@ -18,7 +18,9 @@ import {
   resendPaymentLink,
   switchPaymentLinkOffline,
   writeCachedPaymentLinkAttempt,
+  markPaymentLinkHoldMarkAsWon,
   markPaymentLinkOnlineSuccess,
+  releasePaymentLinkMarkAsWonGate,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
@@ -56,10 +58,12 @@ export default function LeadPaymentLinkBanner({
 
   const applyAttempt = useCallback(
     (next: PaymentLinkAttempt | null | undefined) => {
-      const paid = String(next?.status ?? "").toUpperCase() === "PAID";
+      const status = String(next?.status ?? "").toUpperCase();
+      const paid = status === "PAID";
       const bannerAttempt = isBannerPaymentLink(next) ? next ?? null : null;
       writeCachedPaymentLinkAttempt(leadType, leadId, bannerAttempt);
       if (paid) markPaymentLinkOnlineSuccess(leadType, leadId);
+      if (status === "EXPIRED") markPaymentLinkHoldMarkAsWon(leadType, leadId);
       setAttempt(bannerAttempt);
     },
     [leadId, leadType],
@@ -220,6 +224,7 @@ export default function LeadPaymentLinkBanner({
       }
       notifyPaymentLinkUpdated(leadType, leadId, null);
       setAttempt(null);
+      releasePaymentLinkMarkAsWonGate(leadType, leadId);
       onSwitchOffline?.();
       window.dispatchEvent(new Event("crm-open-booking-done"));
     } catch (err) {
@@ -240,6 +245,7 @@ export default function LeadPaymentLinkBanner({
     try {
       await cancelPaymentLink(attempt.id);
       notifyPaymentLinkUpdated(leadType, leadId, null);
+      releasePaymentLinkMarkAsWonGate(leadType, leadId);
       setAttempt(null);
       dispatchCrmLeadsInvalidate();
     } catch (err) {
