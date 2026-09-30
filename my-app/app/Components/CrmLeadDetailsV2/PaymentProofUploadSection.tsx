@@ -31,6 +31,8 @@ type Props = {
   onPaymentDraftChange?: () => void;
   /** Online link send hides proof upload; amount stays editable. */
   hideProofs?: boolean;
+  /** Ties amount box copy/colors to Online vs Offline selection. */
+  paymentChannel?: "online" | "offline";
 };
 
 export default function PaymentProofUploadSection({
@@ -40,6 +42,7 @@ export default function PaymentProofUploadSection({
   quoteAmountRefreshing = false,
   onPaymentDraftChange,
   hideProofs = false,
+  paymentChannel = "offline",
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<PaymentProofFile[]>([]);
@@ -48,6 +51,22 @@ export default function PaymentProofUploadSection({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const { maxFiles } = getPaymentProofLimits();
+  const isOnline = paymentChannel === "online";
+  const accent = isOnline
+    ? {
+        section: "border-emerald-200/80 bg-gradient-to-b from-emerald-50/80 to-[#f8fafc]",
+        iconWrap: "bg-emerald-100 text-emerald-700",
+        focus: "focus-within:border-emerald-300 focus-within:ring-emerald-100",
+        hint: "text-emerald-700",
+        chip: "border-emerald-200 bg-emerald-50 text-emerald-800",
+      }
+    : {
+        section: "border-amber-200/80 bg-gradient-to-b from-amber-50/70 to-[#f8fafc]",
+        iconWrap: "bg-amber-100 text-amber-800",
+        focus: "focus-within:border-amber-300 focus-within:ring-amber-100",
+        hint: "text-amber-800",
+        chip: "border-amber-200 bg-amber-50 text-amber-900",
+      };
 
   useEffect(() => {
     setFiles(readPaymentProofs(leadType, leadId));
@@ -156,22 +175,52 @@ export default function PaymentProofUploadSection({
   );
 
   return (
-    <section className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
-      <div className="flex items-start gap-2">
+    <section
+      className={`mt-0 rounded-xl border p-4 shadow-[0_1px_0_rgba(15,23,42,0.02)] transition-all duration-300 ease-out ${accent.section}`}
+    >
+      <div className="flex items-start gap-3">
         <span
-          className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#ecfdf5] text-[15px] text-[#047857]"
+          className={`mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-xl text-[15px] transition-colors duration-300 ${accent.iconWrap}`}
           aria-hidden
         >
-          📎
+          {isOnline ? (
+            <svg viewBox="0 0 24 24" className="h-4.5 w-4.5 h-[18px] w-[18px]" fill="none">
+              <path
+                d="M7 12h10M13 8l4 4-4 4"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none">
+              <path
+                d="M12 4v16M8 8.5c0-1.7 1.8-3 4-3s4 1.3 4 3-1.8 3-4 3-4 1.3-4 3 1.8 3 4 3 4-1.3 4-3"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
         </span>
-        <div>
-          <p className="text-[15px] font-bold text-[#0f172a]">
-            {hideProofs ? "Payment amount" : "Payment Proof"}
-          </p>
-          <p className="mt-1 text-[13px] text-[#64748b]">
-            {hideProofs
-              ? "Default is 10% of the selected quote. Edit the amount, then send the Easebuzz link."
-              : "Enter the payment amount received and upload screenshots (UPI, bank transfer, cheque, etc.)."}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[15px] font-bold text-[#0f172a]">
+              {hideProofs || isOnline ? "Payment amount" : "Payment proof"}
+            </p>
+            <span
+              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide transition-colors duration-300 ${accent.chip}`}
+            >
+              {isOnline ? "Online · Payment link" : "Offline · Proof"}
+            </span>
+          </div>
+          <p className="mt-1 text-[13px] leading-snug text-[#64748b] transition-opacity duration-300">
+            {isOnline
+              ? "Default is 10% of the selected quote. Edit the amount, then send the payment link (UPI / Card / Netbanking)."
+              : hideProofs
+                ? "Default is 10% of the selected quote. Edit the amount for this offline payment."
+                : "Enter the amount received and upload proof for cash, cheque, bank transfer, or DD."}
           </p>
         </div>
       </div>
@@ -179,19 +228,21 @@ export default function PaymentProofUploadSection({
       <label className="mt-4 block">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#94a3b8]">
-            Amount received
+            {isOnline ? "Amount to collect" : "Amount received"}
           </span>
           {tenPercentAmount != null ? (
             <button
               type="button"
               onClick={fillTenPercent}
-              className="text-[11px] font-bold uppercase tracking-wide text-[#047857] hover:underline"
+              className={`text-[11px] font-bold uppercase tracking-wide transition hover:underline ${accent.hint}`}
             >
               Use 10% amount ({formatQuoteAmount(tenPercentAmount)})
             </button>
           ) : null}
         </div>
-        <div className="mt-2 flex overflow-hidden rounded-lg border border-[#d6dce6] bg-white focus-within:border-[#86efac] focus-within:ring-2 focus-within:ring-[#bbf7d0]">
+        <div
+          className={`mt-2 flex overflow-hidden rounded-xl border border-[#d6dce6] bg-white shadow-sm transition-all duration-300 focus-within:ring-2 ${accent.focus}`}
+        >
           <span className="inline-flex items-center border-r border-[#e2e8f0] bg-[#f8fafc] px-3 text-[14px] font-semibold text-[#334155]">
             ₹
           </span>
@@ -212,7 +263,9 @@ export default function PaymentProofUploadSection({
                 commitAmountDraft(amountInput);
               }
             }}
-            placeholder="Enter amount received"
+            placeholder={
+              isOnline ? "Enter amount for payment link" : "Enter amount received"
+            }
             className="h-11 w-full px-3 text-[15px] font-semibold text-[#0f172a] outline-none placeholder:font-normal placeholder:text-[#94a3b8]"
           />
         </div>
@@ -224,7 +277,7 @@ export default function PaymentProofUploadSection({
               Selected quotation amount: {formatQuoteAmount(selectedQuote.amount)}
             </p>
             {tenPercentAmount != null ? (
-              <p className="text-[12px] font-semibold text-[#047857]">
+              <p className={`text-[12px] font-semibold transition-colors duration-300 ${accent.hint}`}>
                 Required 10% booking advance: {formatQuoteAmount(tenPercentAmount)}
               </p>
             ) : null}

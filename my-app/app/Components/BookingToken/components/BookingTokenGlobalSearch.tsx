@@ -218,7 +218,7 @@ export default function BookingTokenGlobalSearch() {
               value={query}
               autoComplete="off"
               spellCheck={false}
-              placeholder="Name, phone, or Easebuzz txn id"
+              placeholder="Name, phone, or payment txn id"
               onFocus={() => setOpen(true)}
               onChange={(event) => {
                 setQuery(event.target.value);

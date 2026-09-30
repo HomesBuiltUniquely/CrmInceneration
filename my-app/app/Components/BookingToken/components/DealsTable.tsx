@@ -741,7 +741,7 @@ export default function DealsTable({
       const mode = String(result.financeHandlingMode ?? "").toUpperCase();
       if (mode === "AUTO_APPROVED") {
         window.alert(
-          "Converted. Finance auto-approved via Easebuzz — Design stage moved toward 10–20%.",
+          "Converted. Finance auto-approved via online payment — Design stage moved toward 10–20%.",
         );
       } else if (mode === "MANUAL_QUEUE") {
         window.alert(
