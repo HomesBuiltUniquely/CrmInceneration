@@ -190,6 +190,35 @@ export function shouldExcludeLostPathFromTablePagination(args: {
   });
 }
 
+/** Query flag used by `/api/crm/leads` to drop lost-path rows before slice. */
+export function readExcludeLostPathParam(url: URL): boolean {
+  const v = (url.searchParams.get("excludeLostPath") ?? "").trim().toLowerCase();
+  return v === "1" || v === "true";
+}
+
+/**
+ * Filter lost-path (optional) then slice. Always exclude-before-page so
+ * size=20 yields up to 20 visible rows (not 20 fetched → 11 after hide).
+ */
+export function paginateLeadsForTableInventory<T extends ApiLead>(
+  leads: T[],
+  page: number,
+  size: number,
+  excludeLostPath: boolean,
+): { content: T[]; totalElements: number; totalPages: number; number: number; size: number } {
+  const inventory = excludeLostPath ? leads.filter((lead) => !isLostPathLead(lead)) : leads;
+  const pageSize = Math.max(1, Number(size) || 20);
+  const pageNum = Math.max(0, Number(page) || 0);
+  const start = pageNum * pageSize;
+  return {
+    content: inventory.slice(start, start + pageSize),
+    totalElements: inventory.length,
+    totalPages: Math.max(1, Math.ceil(inventory.length / pageSize)),
+    number: pageNum,
+    size: pageSize,
+  };
+}
+
 function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {
   if (!meNorm) return false;
   return assigneeAliasNorms(lead).has(meNorm);
