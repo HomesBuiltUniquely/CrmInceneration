@@ -97,7 +97,14 @@ import {
   computeAutoFollowUpDateToPersist,
   persistAutoFollowUpDatesForLeads,
 } from "@/lib/lead-follow-up-persist";
-import { computeLostSegmentCounts, isLostPathLead, isLostSegmentInsightMode, shouldShowLostPathLeadsInTable } from "@/lib/lead-lost-segment";
+import {
+  computeLostSegmentCounts,
+  isLeadsListFilterActiveForLostPath,
+  isLostPathLead,
+  isLostSegmentInsightMode,
+  shouldExcludeLostPathFromTablePagination,
+  shouldShowLostPathLeadsInTable,
+} from "@/lib/lead-lost-segment";
 import { isExecutiveAssigneeRole, includeInactiveExecutivesInHierarchyFilters, isUserActive } from "@/lib/user-active";
 import {
   mergeSalesPoolInsightCounts,
@@ -1023,7 +1030,27 @@ async function fetchMergedPage(
           ),
         )
       : fullJourney;
-    const countBasis = filteredJourney;
+    /**
+     * Default inbox hides lost-path rows in the table. Exclude them before slice so
+     * page size 100 yields 100 selectable rows (not 100 fetched → 18 visible).
+     * Cards still use fullJourney.
+     */
+    const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
+      search,
+      dateField,
+      dateFrom,
+      dateTo,
+      crmMonthWindow,
+      leadType: normalizedLeadType,
+      assignee,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+    });
+    const countBasis = excludeLostFromTable
+      ? filteredJourney.filter((lead) => !isLostPathLead(lead))
+      : filteredJourney;
     const start = Math.max(0, page * size);
     const pageRows = countBasis.slice(start, start + size);
     return {
@@ -1035,7 +1062,7 @@ async function fetchMergedPage(
       number: page,
       size,
       sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-      // Heatmap cards/phases = full journey; table Total Leads = filtered length above.
+      // Heatmap cards/phases = full journey; table Total Leads = visible table inventory.
       summaryTotals: computeJourneySummaryCounts(fullJourney),
       milestoneCounts: milestoneCountsFromLeads(fullJourney, leadsWorkspace),
     };
@@ -1187,6 +1214,23 @@ async function fetchMergedPage(
   if (usesRoleEndpoint) qs.set("roleView", leadView);
   appendIvrLeadSourceFilter(qs, normalizedLeadType);
   appendLeadPoolQuery(qs, leadsWorkspace);
+  if (
+    shouldExcludeLostPathFromTablePagination({
+      search,
+      dateField,
+      dateFrom,
+      dateTo,
+      crmMonthWindow,
+      leadType: normalizedLeadType,
+      assignee,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+    })
+  ) {
+    qs.set("excludeLostPath", "1");
+  }
 
   const res = await fetch(
     `/api/crm/leads?${qs.toString()}`,
@@ -1555,6 +1599,8 @@ export default function LeadsDataSection({
   const [presalesManagers, setPresalesManagers] = useState<HierarchyUser[]>([]);
   const [presalesExecs, setPresalesExecs] = useState<HierarchyUser[]>([]);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
+  /** Keep selected row models across pages so Assign/Delete/count stay correct. */
+  const selectedRowsByIdRef = useRef<Map<string, LeadRowModel>>(new Map());
   const [assigneeUsers, setAssigneeUsers] = useState<AssigneeUser[]>([]);
   const [assignmentMode, setAssignmentMode] = useState<AssignmentMode>("AUTO");
   const [assigneeRoleFilter, setAssigneeRoleFilter] = useState<string>("ALL");
@@ -1859,6 +1905,7 @@ export default function LeadsDataSection({
 
   const clearSelection = useCallback(() => {
     setSelectedRowIds([]);
+    selectedRowsByIdRef.current.clear();
     setShowAssignModal(false);
     setDeleteModalType(null);
     setDeleteRowCandidate(null);
@@ -2758,9 +2805,15 @@ export default function LeadsDataSection({
         const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const stageForReq =
           stageOverride !== undefined ? stageOverride : milestoneStage;
+        // SM combined rebuilds my∪team per request — one large page avoids N× rebuilds.
+        const pageSize =
+          leadViewKey === "combined" &&
+          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")
+            ? 50_000
+            : 500;
         const firstPage = await fetchMergedPage(
           0,
-          500,
+          pageSize,
           targetLeadType,
           targetSort,
           debouncedSearch,
@@ -2792,7 +2845,7 @@ export default function LeadsDataSection({
           Array.from({ length: totalPages - 1 }, (_, idx) =>
             fetchMergedPage(
               idx + 1,
-              500,
+              pageSize,
               targetLeadType,
               targetSort,
               debouncedSearch,
@@ -2835,18 +2888,21 @@ export default function LeadsDataSection({
           trustPresalesUpstreamLeadScope(clientScopeRoleKey) ||
           (leadsWorkspace === "presales" &&
             (clientScopeRoleKey === "SUPER_ADMIN" || clientScopeRoleKey === "ADMIN"));
+        const trustHubSmCombinedInventory =
+          leadViewKey === "combined" &&
+          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER");
         const skipClientRoleFilter =
           useTeamPersonFetch ||
           useUnifiedAssigneeScopeFetch ||
           trustPresalesScope ||
           !requiresClientScopedDataset ||
-          isGlobalSearchActive;
+          isGlobalSearchActive ||
+          // Hub my∪team is already SM membership — re-filtering by Header team names
+          // drops rows (empty table / "No leads found") while Lead/Opp cards stay full.
+          trustHubSmCombinedInventory;
         // Global search may return unverified / presales IVR rows — do not strip them
         // with the sales verified-inbox filter (same reason Presales search finds them).
         // SM combined: Hub my∪team is authoritative — same trust as fetchMergedPage combined.
-        const trustHubSmCombinedInventory =
-          leadViewKey === "combined" &&
-          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER");
         const inboxScoped =
           usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) &&
           !isGlobalSearchActive &&
@@ -2889,7 +2945,22 @@ export default function LeadsDataSection({
             : visibleMerged;
         /** Id-merge inventory (blank → Fresh); no phone collapse — same as SM Total Leads. */
         const journeyRows = scopedIdRows;
-        const countBasis = journeyRows;
+        const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
+          search: debouncedSearch,
+          dateField,
+          dateFrom,
+          dateTo,
+          crmMonthWindow: crmMonthWindowProp,
+          leadType: targetLeadType,
+          assignee: effectiveAssignee,
+          milestoneStage,
+          milestoneStageCategory,
+          milestoneSubStage,
+          reinquiry,
+        });
+        const countBasis = excludeLostFromTable
+          ? journeyRows.filter((lead) => !isLostPathLead(lead))
+          : journeyRows;
         const start = targetPage * targetSize;
         return {
           content: countBasis.slice(start, start + targetSize),
@@ -2900,19 +2971,28 @@ export default function LeadsDataSection({
           number: targetPage,
           size: targetSize,
           sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-          summaryTotals: computeJourneySummaryCounts(countBasis),
+          summaryTotals: computeJourneySummaryCounts(journeyRows),
           // Phase cards for SE/SM: same map as Lead/Opp (id-merge + blank→Fresh + canonical).
-          milestoneCounts: milestoneCountsFromLeads(countBasis, leadsWorkspace),
+          milestoneCounts: milestoneCountsFromLeads(journeyRows, leadsWorkspace),
         };
       };
       /** SE/SM/PE must always use full id-merge journey (never trust Hub page totalElements while only
        * filtering the current page content) or Lead/Opp/phase/Total cards diverge (e.g. 308 vs 287 vs 412).
+       * Exception: SM combined — Hub my∪team + BFF page meta already match cards; downloading the
+       * full inventory on every table load hung on "Loading leads…" then client canView emptied rows.
        */
+      const trustHubSmCombinedPaged =
+        leadViewKey === "combined" &&
+        (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER") &&
+        !salesHierarchyFilterActive &&
+        !useTeamPersonFetch &&
+        activeAssigneeScope.length === 0 &&
+        !superAdminPresalesPoolActive;
       const requiresFullyVisiblePage =
         activeAssigneeScope.length > 1 ||
         salesHierarchyFilterActive ||
         useTeamPersonFetch ||
-        requiresClientScopedDataset ||
+        (requiresClientScopedDataset && !trustHubSmCombinedPaged) ||
         superAdminPresalesPoolActive;
 
       if (useTeamPersonFetch) {
@@ -2989,8 +3069,14 @@ export default function LeadsDataSection({
           );
           if (activeAssigneeScope.length === 0) {
             // Same as origin/main: trust Hub/BFF page meta (full pool totals).
-            // Only re-scope when sales-manager/exec client inbox filter is needed.
-            if (!usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey)) {
+            // SM combined: Hub my∪team already scoped — do not re-strip with inbox/canView.
+            const trustHubSmCombinedInventory =
+              leadViewKey === "combined" &&
+              (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER");
+            if (
+              !usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) ||
+              trustHubSmCombinedInventory
+            ) {
               return pageJson;
             }
             const inboxScoped = filterLeadsForClientWorkspaceInbox(
@@ -3145,9 +3231,14 @@ export default function LeadsDataSection({
         const categoryForReq =
           stageOverride !== undefined ? "" : categoryForFetch;
         const subForReq = stageOverride !== undefined ? "" : subStageForFetch;
+        const pageSize =
+          leadViewKey === "combined" &&
+          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")
+            ? 50_000
+            : 500;
         const firstPage = await fetchMergedPage(
           0,
-          500,
+          pageSize,
           targetLeadType,
           targetSort,
           debouncedSearch,
@@ -3179,7 +3270,7 @@ export default function LeadsDataSection({
           Array.from({ length: totalPages - 1 }, (_, idx) =>
             fetchMergedPage(
               idx + 1,
-              500,
+              pageSize,
               targetLeadType,
               targetSort,
               debouncedSearch,
@@ -3883,7 +3974,10 @@ export default function LeadsDataSection({
             )
           : raw;
         const scoped =
-          isGlobalSearchActive || trustPresalesUpstreamLeadScope(roleKey)
+          isGlobalSearchActive ||
+          trustPresalesUpstreamLeadScope(roleKey) ||
+          (leadViewKey === "combined" &&
+            (roleKey === "SALES_MANAGER" || roleKey === "MANAGER"))
             ? inboxScoped
             : inboxScoped.filter((lead) => canViewLeadByRole(lead, roleKey));
         const journeyScoped = scoped;
@@ -4564,7 +4658,10 @@ export default function LeadsDataSection({
     verificationStatusFromHeader,
   ]);
   const roleScopedContent =
-    isClientScopedRole && !isGlobalSearchActive && !trustPresalesScope
+    isClientScopedRole &&
+    !isGlobalSearchActive &&
+    !trustPresalesScope &&
+    !trustHubSmCombinedInventory
       ? workspaceInboxFiltered.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
       : workspaceInboxFiltered;
   const hasMilestoneFilter = Boolean(
@@ -4590,23 +4687,18 @@ export default function LeadsDataSection({
       insightTableMode,
       milestoneStageCategory,
       milestoneSubStage,
-      listFiltersActive: (() => {
-        const lt = leadType.trim().toLowerCase();
-        const leadTypeFilterOn =
-          Boolean(lt) && lt !== "all" && lt !== "verified";
-        return (
-          isToolbarDateFilterActive({ dateField, dateFrom, dateTo }) ||
-          Boolean((crmMonthWindowProp ?? "").trim()) ||
-          leadTypeFilterOn ||
-          Boolean(assignee.trim()) ||
-          Boolean(
-            milestoneStage.trim() ||
-              milestoneStageCategory.trim() ||
-              milestoneSubStage.trim(),
-          ) ||
-          Boolean(reinquiry.trim())
-        );
-      })(),
+      listFiltersActive: isLeadsListFilterActiveForLostPath({
+        dateField,
+        dateFrom,
+        dateTo,
+        crmMonthWindow: crmMonthWindowProp,
+        leadType,
+        assignee,
+        milestoneStage,
+        milestoneStageCategory,
+        milestoneSubStage,
+        reinquiry,
+      }),
     }) || isIvrCallFilterKey(leadType);
   const tableContent = showLostPathLeadsInTable
     ? content
@@ -4716,10 +4808,19 @@ export default function LeadsDataSection({
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(rows.map((row) => [row.id, row]));
+  for (const row of rows) {
+    if (selectedRowIds.includes(row.id)) {
+      selectedRowsByIdRef.current.set(row.id, row);
+    }
+  }
+  for (const id of [...selectedRowsByIdRef.current.keys()]) {
+    if (!selectedRowIds.includes(id)) selectedRowsByIdRef.current.delete(id);
+  }
   const selectedLeads = selectedRowIds
-    .map((id) => rowsById.get(id))
+    .map((id) => selectedRowsByIdRef.current.get(id) ?? rowsById.get(id))
     .filter((row): row is NonNullable<typeof row> => Boolean(row));
-  const selectedCount = selectedLeads.length;
+  /** Count selected IDs (not only those still on the current page). */
+  const selectedCount = selectedRowIds.length;
   const selectedAreAllIvr =
     selectedCount > 0 &&
     selectedLeads.every((row) => isIvrLeadDeleteTarget(row.leadType, row.leadSource));

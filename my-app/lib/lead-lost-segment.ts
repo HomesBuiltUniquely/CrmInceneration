@@ -135,6 +135,61 @@ export function shouldShowLostPathLeadsInTable(args: {
   return false;
 }
 
+/** Same “any list filter” rule used by the leads toolbar for revealing lost-path rows. */
+export function isLeadsListFilterActiveForLostPath(args: {
+  dateField?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  crmMonthWindow?: string | null;
+  leadType?: string | null;
+  assignee?: string | null;
+  milestoneStage?: string | null;
+  milestoneStageCategory?: string | null;
+  milestoneSubStage?: string | null;
+  reinquiry?: string | null;
+}): boolean {
+  const lt = (args.leadType ?? "").trim().toLowerCase();
+  const leadTypeFilterOn = Boolean(lt) && lt !== "all" && lt !== "verified";
+  const dateOn =
+    (args.crmMonthWindow ?? "").trim().toLowerCase() === "current" ||
+    (Boolean((args.dateField ?? "").trim()) &&
+      Boolean((args.dateFrom ?? "").trim()) &&
+      Boolean((args.dateTo ?? "").trim()));
+  return (
+    dateOn ||
+    leadTypeFilterOn ||
+    Boolean((args.assignee ?? "").trim()) ||
+    Boolean((args.milestoneStage ?? "").trim()) ||
+    Boolean((args.milestoneStageCategory ?? "").trim()) ||
+    Boolean((args.milestoneSubStage ?? "").trim()) ||
+    Boolean((args.reinquiry ?? "").trim())
+  );
+}
+
+/** Default inbox: hide lost-path rows before pagination so page size matches visible rows. */
+export function shouldExcludeLostPathFromTablePagination(args: {
+  search?: string | null;
+  insightTableMode?: string | null;
+  dateField?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  crmMonthWindow?: string | null;
+  leadType?: string | null;
+  assignee?: string | null;
+  milestoneStage?: string | null;
+  milestoneStageCategory?: string | null;
+  milestoneSubStage?: string | null;
+  reinquiry?: string | null;
+}): boolean {
+  return !shouldShowLostPathLeadsInTable({
+    searchActive: Boolean((args.search ?? "").trim()),
+    insightTableMode: args.insightTableMode ?? null,
+    milestoneStageCategory: args.milestoneStageCategory ?? "",
+    milestoneSubStage: args.milestoneSubStage ?? "",
+    listFiltersActive: isLeadsListFilterActiveForLostPath(args),
+  });
+}
+
 function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {
   if (!meNorm) return false;
   return assigneeAliasNorms(lead).has(meNorm);

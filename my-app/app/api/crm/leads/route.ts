@@ -26,6 +26,7 @@ import {
   whatsappHubUnavailableMessage,
 } from "@/lib/crm-whatsapp-leads";
 import { leadAssignedTimestampForPresalesMonthWindow } from "@/lib/presales-heatmap-helpers";
+import { isLostPathLead } from "@/lib/lead-lost-segment";
 import { computeLeadTypeCountsFromRows, normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isCrmLeadReinquiry } from "@/lib/lead-source-utils";
 import { isPresalesRole } from "@/lib/roleUtils";
@@ -1011,21 +1012,29 @@ export async function GET(req: NextRequest) {
     search,
   );
 
+  const excludeLostPath =
+    (url.searchParams.get("excludeLostPath") ?? "").trim() === "1" ||
+    (url.searchParams.get("excludeLostPath") ?? "").trim().toLowerCase() === "true";
+  /** Cards use full merge; table pagination excludes lost on default inbox. */
+  const summaryTotals = computeSummaryTotals(merged);
+  const tableInventory = excludeLostPath
+    ? merged.filter((lead) => !isLostPathLead(lead))
+    : merged;
+
   const pageNum = Number.parseInt(page, 10) || 0;
   const pageSize = Number.parseInt(size, 10) || 20;
   const start = pageNum * pageSize;
-  const slice = merged.slice(start, start + pageSize);
-  const totalElements = merged.length;
-  const totalPages = Math.max(1, Math.ceil(totalElements / pageSize));
+  const slice = tableInventory.slice(start, start + pageSize);
+  const totalElements = tableInventory.length;
+  const totalPages = Math.max(1, Math.ceil(totalElements / Math.max(1, pageSize)));
   const sourceCounts = await augmentMergeSourceCounts(
     req,
     url,
     effDates,
     sort,
     search,
-    computeSourceCounts(merged),
+    computeSourceCounts(tableInventory),
   );
-  const summaryTotals = computeSummaryTotals(merged);
 
   const body: SpringPage<ApiLead> = {
     content: slice,
