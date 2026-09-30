@@ -102,6 +102,7 @@ import {
   isLeadsListFilterActiveForLostPath,
   isLostPathLead,
   isLostSegmentInsightMode,
+  paginateLeadsForTableInventory,
   shouldExcludeLostPathFromTablePagination,
   shouldShowLostPathLeadsInTable,
 } from "@/lib/lead-lost-segment";
@@ -1051,16 +1052,20 @@ async function fetchMergedPage(
     const countBasis = excludeLostFromTable
       ? filteredJourney.filter((lead) => !isLostPathLead(lead))
       : filteredJourney;
-    const start = Math.max(0, page * size);
-    const pageRows = countBasis.slice(start, start + size);
-    return {
-      content: pageRows,
-      totalElements: countBasis.length,
-      uniquePrimaryTotal: countBasis.length,
-      totalRowCount: workspaceScoped.length,
-      totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, size))),
-      number: page,
+    const paged = paginateLeadsForTableInventory(
+      filteredJourney,
+      page,
       size,
+      excludeLostFromTable,
+    );
+    return {
+      content: paged.content,
+      totalElements: paged.totalElements,
+      uniquePrimaryTotal: paged.totalElements,
+      totalRowCount: workspaceScoped.length,
+      totalPages: paged.totalPages,
+      number: paged.number,
+      size: paged.size,
       sourceCounts: computeLeadTypeCountsFromRows(countBasis),
       // Heatmap cards/phases = full journey; table Total Leads = visible table inventory.
       summaryTotals: computeJourneySummaryCounts(fullJourney),
@@ -1182,8 +1187,29 @@ async function fetchMergedPage(
   }
 
   const qs = new URLSearchParams();
+  const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
+    search,
+    dateField,
+    dateFrom,
+    dateTo,
+    crmMonthWindow,
+    leadType: normalizedLeadType,
+    assignee,
+    milestoneStage,
+    milestoneStageCategory,
+    milestoneSubStage,
+    reinquiry,
+  });
+  /**
+   * Always merge when we must drop lost-path before pagination. Thin Hub `/filter`
+   * proxy paginates first; client hide-lost then yields short pages (20→11, 100→18).
+   */
   const shouldMerge =
-    usesRoleEndpoint || leadView === "combined" || normalizedLeadType === "all" || normalizedLeadType === "verified";
+    usesRoleEndpoint ||
+    leadView === "combined" ||
+    normalizedLeadType === "all" ||
+    normalizedLeadType === "verified" ||
+    excludeLostFromTable;
   const effectiveDateFrom = dateFrom.trim() || null;
   const effectiveDateTo = dateTo.trim() || null;
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
@@ -1214,21 +1240,7 @@ async function fetchMergedPage(
   if (usesRoleEndpoint) qs.set("roleView", leadView);
   appendIvrLeadSourceFilter(qs, normalizedLeadType);
   appendLeadPoolQuery(qs, leadsWorkspace);
-  if (
-    shouldExcludeLostPathFromTablePagination({
-      search,
-      dateField,
-      dateFrom,
-      dateTo,
-      crmMonthWindow,
-      leadType: normalizedLeadType,
-      assignee,
-      milestoneStage,
-      milestoneStageCategory,
-      milestoneSubStage,
-      reinquiry,
-    })
-  ) {
+  if (excludeLostFromTable) {
     qs.set("excludeLostPath", "1");
   }
 
@@ -1247,9 +1259,41 @@ async function fetchMergedPage(
     throw new Error(text || `HTTP ${res.status}`);
   }
   const pageJson = (await res.json()) as SpringPage<ApiLead>;
+  const pageContent = Array.isArray(pageJson.content) ? pageJson.content : [];
+  /**
+   * Safety net: if Hub/proxy ignored excludeLostPath, rebuilding from a large
+   * merge page avoids paginate-then-hide short pages.
+   */
+  if (
+    excludeLostFromTable &&
+    pageContent.some((lead) => isLostPathLead(lead))
+  ) {
+    const fullQs = new URLSearchParams(qs);
+    fullQs.set("mergeAll", "1");
+    fullQs.set("page", "0");
+    fullQs.set("size", "50000");
+    fullQs.set("excludeLostPath", "1");
+    const fullRes = await fetch(`/api/crm/leads?${fullQs.toString()}`, {
+      cache: "no-store",
+      credentials: "include",
+      headers: getCrmAuthHeaders(),
+    });
+    if (fullRes.ok) {
+      const fullJson = (await fullRes.json()) as SpringPage<ApiLead>;
+      const inventory = Array.isArray(fullJson.content) ? fullJson.content : [];
+      const paged = paginateLeadsForTableInventory(inventory, page, size, true);
+      return {
+        ...fullJson,
+        ...paged,
+        summaryTotals: fullJson.summaryTotals ?? pageJson.summaryTotals,
+        sourceCounts: fullJson.sourceCounts ?? pageJson.sourceCounts,
+        milestoneCounts: fullJson.milestoneCounts ?? pageJson.milestoneCounts,
+      };
+    }
+  }
   return {
     ...pageJson,
-    content: Array.isArray(pageJson.content) ? pageJson.content : [],
+    content: pageContent,
   };
 }
 
@@ -2958,18 +3002,23 @@ export default function LeadsDataSection({
           milestoneSubStage,
           reinquiry,
         });
+        const paged = paginateLeadsForTableInventory(
+          journeyRows,
+          targetPage,
+          targetSize,
+          excludeLostFromTable,
+        );
         const countBasis = excludeLostFromTable
           ? journeyRows.filter((lead) => !isLostPathLead(lead))
           : journeyRows;
-        const start = targetPage * targetSize;
         return {
-          content: countBasis.slice(start, start + targetSize),
-          totalElements: countBasis.length,
-          uniquePrimaryTotal: countBasis.length,
-          totalRowCount: countBasis.length,
-          totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
-          number: targetPage,
-          size: targetSize,
+          content: paged.content,
+          totalElements: paged.totalElements,
+          uniquePrimaryTotal: paged.totalElements,
+          totalRowCount: paged.totalElements,
+          totalPages: paged.totalPages,
+          number: paged.number,
+          size: paged.size,
           sourceCounts: computeLeadTypeCountsFromRows(countBasis),
           summaryTotals: computeJourneySummaryCounts(journeyRows),
           // Phase cards for SE/SM: same map as Lead/Opp (id-merge + blank→Fresh + canonical).
@@ -3070,55 +3119,13 @@ export default function LeadsDataSection({
           if (activeAssigneeScope.length === 0) {
             // Same as origin/main: trust Hub/BFF page meta (full pool totals).
             // SM combined: Hub my∪team already scoped — do not re-strip with inbox/canView.
-            const trustHubSmCombinedInventory =
-              leadViewKey === "combined" &&
-              (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER");
-            if (
-              !usesClientWorkspaceInboxFilter(leadsWorkspace, clientScopeRoleKey) ||
-              trustHubSmCombinedInventory
-            ) {
-              return pageJson;
-            }
-            const inboxScoped = filterLeadsForClientWorkspaceInbox(
-              Array.isArray(pageJson.content) ? pageJson.content : [],
-              leadsWorkspace,
-              verificationStatusFromHeader,
-            );
-            const roleScoped =
-              requiresClientScopedDataset && !isGlobalSearchActive
-                ? inboxScoped.filter((lead) => canViewLeadByRole(lead, clientScopeRoleKey))
-                : inboxScoped;
-            // Client inbox filter only drops rows on the current page — keep Hub totals.
-            return {
-              ...pageJson,
-              content: roleScoped,
-            };
+            // Never filter-only the current page (keeps Hub totals but short rows: 20→11).
+            // Inbox / canView stripping belongs in buildVisiblePage (requiresFullyVisiblePage).
+            return pageJson;
           }
-          const scopedContent = filterLeadsByAssigneeScope(
-            Array.isArray(pageJson.content) ? pageJson.content : [],
-            activeAssigneeScope,
-            assigneeMatchOpts,
-          );
-          const scopedIdRows =
-            leadsWorkspace === "sales"
-              ? dedupeAdminPoolLeads(scopedContent as ApiLead[])
-              : scopedContent;
-          const journeyRows = scopedIdRows;
-          const countBasis = journeyRows;
-          const start = targetPage * targetSize;
-          return {
-            ...pageJson,
-            content: countBasis.slice(start, start + targetSize),
-            totalElements: countBasis.length,
-            uniquePrimaryTotal: countBasis.length,
-            totalRowCount: countBasis.length,
-            totalPages: Math.max(1, Math.ceil(countBasis.length / Math.max(1, targetSize))),
-            number: targetPage,
-            size: targetSize,
-            sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-            summaryTotals: computeJourneySummaryCounts(countBasis),
-            milestoneCounts: milestoneCountsFromLeads(countBasis, leadsWorkspace),
-          };
+          // BFF already received assigneeAliasSet — trust paginated content.
+          // Re-filtering then re-slicing a single Hub page caused empty/short pages.
+          return pageJson;
         }
         const allLeads = await fetchAllPagesForAssignee(assigneeFetchSeed);
         if (includeUnassignedFreshForSmParity) {
@@ -4115,6 +4122,8 @@ export default function LeadsDataSection({
       leadsWorkspace,
       roleKeyForLoad,
       insightModeActive: false,
+      /** Bust short-page caches + journey vs table total split (badge flash 1085→3388). */
+      tablePagination: "exclude-lost-before-slice-v3",
     });
     const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
@@ -4293,8 +4302,40 @@ export default function LeadsDataSection({
             });
           }
         } else {
-          // Stage filter cleared — drop stale filtered total; badge uses Hub/full-pool meta.
-          setVisibleFilteredTotal(null);
+          /**
+           * Unfiltered admin/SM: Total Leads = full journey (uniquePrimary / Lead+Opp),
+           * NOT `totalElements` (may be lost-excluded table pager size — flashed 1085 then
+           * corrected to ~3388 when heatmap finished).
+           */
+          const st = pageJson.summaryTotals;
+          const journeyFromSummary =
+            st && Number.isFinite(st.lead) && Number.isFinite(st.opportunity)
+              ? Number(st.lead) + Number(st.opportunity)
+              : 0;
+          const journeyTotal = Number(
+            pageJson.uniquePrimaryTotal ??
+              pageJson.totalRowCount ??
+              (journeyFromSummary > 0 ? journeyFromSummary : 0),
+          );
+          if (journeyTotal > 0) {
+            setVisibleFilteredTotal(journeyTotal);
+            if (
+              roleKeyForLoad === "SUPER_ADMIN" ||
+              roleKeyForLoad === "SALES_ADMIN" ||
+              roleKeyForLoad === "SALES_MANAGER" ||
+              roleKeyForLoad === "MANAGER"
+            ) {
+              setAdminPoolDisplayTotals({
+                uniquePrimary: journeyTotal,
+                totalRows: Math.max(
+                  Number(pageJson.totalRowCount ?? 0),
+                  journeyTotal,
+                ),
+              });
+            }
+          } else {
+            setVisibleFilteredTotal(null);
+          }
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
@@ -4353,10 +4394,14 @@ export default function LeadsDataSection({
         } else if (
           !usePageMetaForUi &&
           pageJson.summaryTotals &&
-          (roleKeyForLoad === "SALES_MANAGER" || roleKeyForLoad === "MANAGER") &&
+          (roleKeyForLoad === "SALES_MANAGER" ||
+            roleKeyForLoad === "MANAGER" ||
+            roleKeyForLoad === "SUPER_ADMIN" ||
+            roleKeyForLoad === "SALES_ADMIN" ||
+            roleKeyForLoad === "ADMIN") &&
           !superAdminCrossPoolSearch
         ) {
-          // SM combined page returns journey summary — sync heatmap cards to same totals.
+          // Page merge returns journey summary — sync Lead/Opp cards without waiting on heatmap.
           const st = pageJson.summaryTotals;
           const summaryKey = `${st.lead}:${st.opportunity}`;
           if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
@@ -4615,8 +4660,33 @@ export default function LeadsDataSection({
 
   const adminMilestoneTableActive = adminMilestoneTableLeads !== null;
   const insightTablePoolActive = insightTablePoolLeads !== null;
+  const showLostPathLeadsInTable =
+    shouldShowLostPathLeadsInTable({
+      searchActive: isGlobalSearchActive,
+      insightTableMode,
+      milestoneStageCategory,
+      milestoneSubStage,
+      // Same scope as buildVisiblePage / fetch — not toolbar `assignee` alone
+      // (Sales Exec / hierarchy filters must count as listFiltersActive).
+      listFiltersActive: isLeadsListFilterActiveForLostPath({
+        dateField,
+        dateFrom,
+        dateTo,
+        crmMonthWindow: crmMonthWindowProp,
+        leadType,
+        assignee: effectiveAssignee,
+        milestoneStage,
+        milestoneStageCategory,
+        milestoneSubStage,
+        reinquiry,
+      }),
+    }) || isIvrCallFilterKey(leadType);
+  const adminMilestoneInventory =
+    adminMilestoneTableActive && !showLostPathLeadsInTable
+      ? adminMilestoneTableLeads.filter((lead) => !isLostPathLead(lead))
+      : adminMilestoneTableLeads;
   const contentFromApi = adminMilestoneTableActive
-    ? adminMilestoneTableLeads.slice(page * size, page * size + size)
+    ? (adminMilestoneInventory ?? []).slice(page * size, page * size + size)
     : insightTablePoolActive
       ? insightTablePoolLeads
       : (data?.content ?? []);
@@ -4636,8 +4706,11 @@ export default function LeadsDataSection({
   const trustHubSmCombinedInventory =
     leadView === "combined" &&
     (scopeRoleKey === "SALES_MANAGER" || scopeRoleKey === "MANAGER");
+  /** Server/BFF (or buildVisiblePage) already scoped this page — do not shrink it again. */
+  const pagedFromApi = !adminMilestoneTableActive && !insightTablePoolActive;
   const workspaceInboxFiltered = useMemo(() => {
     if (
+      pagedFromApi ||
       !usesClientWorkspaceInboxFilter(leadsWorkspace, scopeRoleKey) ||
       isGlobalSearchActive ||
       trustHubSmCombinedInventory
@@ -4653,11 +4726,13 @@ export default function LeadsDataSection({
     contentFromApi,
     isGlobalSearchActive,
     leadsWorkspace,
+    pagedFromApi,
     scopeRoleKey,
     trustHubSmCombinedInventory,
     verificationStatusFromHeader,
   ]);
   const roleScopedContent =
+    !pagedFromApi &&
     isClientScopedRole &&
     !isGlobalSearchActive &&
     !trustPresalesScope &&
@@ -4670,7 +4745,7 @@ export default function LeadsDataSection({
   const dedicatedFilterTableView = isDedicatedFilterLeadType(leadType);
   const content = adminMilestoneTableActive
     ? contentFromApi
-    : hasMilestoneFilter && !dedicatedFilterTableView
+    : !pagedFromApi && hasMilestoneFilter && !dedicatedFilterTableView
       ? roleScopedContent.filter((lead) =>
           leadMatchesWorkspaceMilestoneFilter(
             lead,
@@ -4681,28 +4756,16 @@ export default function LeadsDataSection({
           ),
         )
       : roleScopedContent;
-  const showLostPathLeadsInTable =
-    shouldShowLostPathLeadsInTable({
-      searchActive: isGlobalSearchActive,
-      insightTableMode,
-      milestoneStageCategory,
-      milestoneSubStage,
-      listFiltersActive: isLeadsListFilterActiveForLostPath({
-        dateField,
-        dateFrom,
-        dateTo,
-        crmMonthWindow: crmMonthWindowProp,
-        leadType,
-        assignee,
-        milestoneStage,
-        milestoneStageCategory,
-        milestoneSubStage,
-        reinquiry,
-      }),
-    }) || isIvrCallFilterKey(leadType);
+  /**
+   * Lost-path must be excluded before pagination (fetch/BFF / full-pool paths).
+   * Never strip lost from an already-sliced Hub page — that yields 20→11 / 100→18.
+   * Insight pool is a full inventory (local slice happens in visibleRows).
+   */
   const tableContent = showLostPathLeadsInTable
     ? content
-    : content.filter((lead) => !isLostPathLead(lead));
+    : insightTablePoolActive
+      ? content.filter((lead) => !isLostPathLead(lead))
+      : content;
   const leadTypeFallbackForPersist = asCrmLeadType(
     leadType,
     (leadType.trim().toLowerCase() === "all" || leadType.trim().toLowerCase() === "verified"
@@ -4778,7 +4841,7 @@ export default function LeadsDataSection({
     insightTableMode !== null
       ? rows.length
       : adminMilestoneTableActive
-        ? adminMilestoneTableLeads.length
+        ? (adminMilestoneInventory ?? []).length
         : clientSideMilestoneFilterActive
           ? Number(
               visibleFilteredTotal !== null
@@ -4787,7 +4850,19 @@ export default function LeadsDataSection({
             )
           : ivrCallFilterActive
             ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
-            : (visibleFilteredTotal ?? data?.totalElements ?? rows.length);
+            : (visibleFilteredTotal ??
+              data?.uniquePrimaryTotal ??
+              data?.totalRowCount ??
+              data?.totalElements ??
+              rows.length);
+  /**
+   * Total Leads badge may use full journey (uniquePrimary) while the table pages
+   * lost-excluded inventory (`data.totalElements` / `data.totalPages`). Prefer BFF
+   * pager meta when badge total is larger than the table inventory.
+   */
+  const tableInventoryTotal = Number(data?.totalElements ?? 0);
+  const tablePagerPages =
+    data?.totalPages && Number(data.totalPages) > 0 ? Number(data.totalPages) : null;
   const totalPages =
     insightTableMode !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
@@ -4800,11 +4875,15 @@ export default function LeadsDataSection({
                 ? Number(data?.totalPages)
                 : Math.ceil(total / Math.max(1, size)),
             )
-          : visibleFilteredTotal !== null
-            ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-            : data?.totalPages && data.totalPages > 0
-              ? data.totalPages
-              : Math.max(1, Math.ceil(total / Math.max(1, size)));
+          : tablePagerPages !== null &&
+              tableInventoryTotal > 0 &&
+              total > tableInventoryTotal
+            ? tablePagerPages
+            : visibleFilteredTotal !== null
+              ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+              : tablePagerPages !== null
+                ? tablePagerPages
+                : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(rows.map((row) => [row.id, row]));
