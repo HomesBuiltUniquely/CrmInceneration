@@ -593,7 +593,7 @@ export default function BookingDoneModal({
       });
       // Defer banner + parent refresh until plane / success finish.
       // Calling onHandoffComplete here remounted this modal mid-animation.
-      pendingAttemptRef.current = result.attempt;
+      pendingAttemptRef.current = result.attempt ?? null;
       await persistBookingTokenPendingMilestone(leadType, leadId);
       if (result.warnings?.length) {
         setHandoffError(result.warnings.join(" · "));
