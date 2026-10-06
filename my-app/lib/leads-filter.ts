@@ -542,6 +542,48 @@ export function salesPoolMilestoneStage(lead: ApiLead): string {
   return raw;
 }
 
+/** Map "Discovery Lost" / "Exp & Design Lost" style labels to parent journey phase. */
+function salesLostPathParentStage(stage: string, stageCategory: string): string | null {
+  const stageKey = normalizeStageKey(stage);
+  const categoryKey = normalizeStageKey(stageCategory);
+  const haystack = `${categoryKey} ${stageKey}`.trim();
+  if (!/\blost\b/i.test(haystack)) return null;
+
+  if (categoryKey.includes("closed") || stageKey === "closed" || stageKey.startsWith("closed")) {
+    return "Closed";
+  }
+  if (categoryKey.includes("decision") || stageKey === "decision" || stageKey.startsWith("decision")) {
+    return "Decision";
+  }
+  if (
+    (categoryKey.includes("experience") && categoryKey.includes("design")) ||
+    (/\bexp\b/.test(categoryKey) && categoryKey.includes("design")) ||
+    (stageKey.includes("experience") && stageKey.includes("design")) ||
+    (/\bexp\b/.test(stageKey) && stageKey.includes("design"))
+  ) {
+    return "Experience & Design";
+  }
+  if (
+    categoryKey.includes("connection") ||
+    stageKey === "connection" ||
+    stageKey.startsWith("connection")
+  ) {
+    return "Connection";
+  }
+  if (
+    categoryKey.includes("discovery") ||
+    stageKey === "discovery" ||
+    stageKey.startsWith("discovery")
+  ) {
+    return "Discovery";
+  }
+  // Unmatched lost (incl. Fresh Lead Lost) — keep out of blank→Fresh collapse.
+  if (stageKey === "fresh lead" || stageKey === "fresh leads" || /^fresh\s+leads?$/.test(stageKey)) {
+    return "Fresh Lead";
+  }
+  return "Discovery";
+}
+
 /** Same rules as the leads table journey column and journey summary cards. */
 export function crmLeadTopLevelStage(lead: ApiLead): string {
   const { milestoneStage: stage, milestoneStageCategory: stageCategory, milestoneSubStage: subStage } =
@@ -558,6 +600,10 @@ export function crmLeadTopLevelStage(lead: ApiLead): string {
   ) {
     return "Closed";
   }
+
+  // Lost path before blank→Fresh: empty stage + "Discovery Lost" must stay Discovery.
+  const lostParent = salesLostPathParentStage(stage, stageCategory);
+  if (lostParent) return lostParent;
 
   const looksFreshLead = [stage, stageCategory, subStage].some((value) => {
     const normalized = normalizeStageKey(value);

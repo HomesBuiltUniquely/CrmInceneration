@@ -157,12 +157,20 @@ export function defaultLeadsVerificationStatus(
  */
 function isCrmOpenSalesJourneyPastIntake(lead: ApiLead): boolean {
   const key = normalizeStageKey(crmLeadTopLevelStage(lead) || "");
-  return (
+  if (
     key === "discovery" ||
     key === "connection" ||
     key === "experience & design" ||
     key === "decision" ||
     key === "closed"
+  ) {
+    return true;
+  }
+  // Lost-path rows with odd stage labels still belong in the sales journey inventory.
+  const { milestoneStage, milestoneStageCategory, milestoneSubStage } =
+    readSalesStageFieldsFromLead(lead);
+  return /\blost\b/i.test(
+    `${milestoneStageCategory} ${milestoneStage} ${milestoneSubStage}`.trim(),
   );
 }
 

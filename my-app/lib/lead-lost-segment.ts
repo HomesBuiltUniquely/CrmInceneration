@@ -1,15 +1,11 @@
 import { crmLeadAssigneeAliasNorms, readSalesStageFieldsFromLead, type ApiLead } from "@/lib/leads-filter";
 import { isLostCategory } from "@/lib/crm-pipeline";
 import type { InsightCountOpts } from "@/lib/lead-follow-up-insights";
-
-function readMilestoneStageNorm(lead: ApiLead): string {
-  const st = lead.stage;
-  const raw =
-    typeof st === "object" && st && "milestoneStage" in st
-      ? String((st as { milestoneStage?: string | null }).milestoneStage ?? "")
-      : "";
-  return raw.trim().toLowerCase().replace(/\s+/g, " ");
-}
+import {
+  leadPhoneDigits,
+  parseLeadCreatedAtMs,
+  parseLeadUpdatedAtMs,
+} from "@/lib/primary-source-leads";
 
 function assigneeAliasNorms(lead: ApiLead): Set<string> {
   return crmLeadAssigneeAliasNorms(lead);
@@ -34,60 +30,134 @@ function norm(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-export function readMilestoneStageCategoryNorm(lead: ApiLead): string {
+function hasLostToken(...parts: string[]): boolean {
+  return parts.some((p) => /\blost\b/i.test(p));
+}
+
+function isExperienceDesignText(text: string): boolean {
+  const t = norm(text);
+  if (!t) return false;
+  if (t.includes("experience") && t.includes("design")) return true;
+  if (/\bexp\b/.test(t) && t.includes("design")) return true;
+  return false;
+}
+
+function stageMatchesMilestone(stage: string, milestone: string): boolean {
+  const s = norm(stage);
+  const m = norm(milestone);
+  if (!s || !m) return false;
+  if (s === m || s.startsWith(`${m} `) || s.startsWith(`${m}-`)) return true;
+  try {
+    return new RegExp(`\\b${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(s);
+  } catch {
+    return false;
+  }
+}
+
+function readPresalesLostFields(lead: ApiLead): {
+  category: string;
+  stage: string;
+  subStage: string;
+} {
   const st = lead.stage;
-  const raw =
-    typeof st === "object" && st && "milestoneStageCategory" in st
-      ? String((st as { milestoneStageCategory?: string | null }).milestoneStageCategory ?? "")
-      : "";
-  return norm(raw);
+  const category = String(
+    st?.presalesMilestoneCategory ??
+      (lead as { presalesMilestoneCategory?: string | null }).presalesMilestoneCategory ??
+      "",
+  ).trim();
+  const stage = String(
+    st?.presalesMilestoneStage ??
+      (lead as { presalesMilestoneStage?: string | null }).presalesMilestoneStage ??
+      "",
+  ).trim();
+  const subStage = String(
+    st?.presalesMilestoneSubStage ??
+      (lead as { presalesMilestoneSubStage?: string | null }).presalesMilestoneSubStage ??
+      "",
+  ).trim();
+  return { category, stage, subStage };
+}
+
+export function readMilestoneStageCategoryNorm(lead: ApiLead): string {
+  return norm(readSalesStageFieldsFromLead(lead).milestoneStageCategory);
 }
 
 /** Classify a lead into one of the five lost-segment buckets (or null). */
 export function classifyLostSegment(lead: ApiLead): LostSegmentMode | null {
   const sales = readSalesStageFieldsFromLead(lead);
-  const categoryRaw = sales.milestoneStageCategory;
-  const stage = sales.milestoneStage.trim().toLowerCase().replace(/\s+/g, " ");
-  if (!categoryRaw && !stage) return null;
+  let categoryRaw = sales.milestoneStageCategory;
+  let stageRaw = sales.milestoneStage;
+  let subRaw = sales.milestoneSubStage;
 
-  const cat = categoryRaw.trim().toLowerCase().replace(/\s+/g, " ");
-  const combined = `${cat} ${stage}`.trim();
-
-  if (!isLostCategory(categoryRaw) && !/\blost\b/.test(combined)) {
-    return null;
+  // Presales-only lost (no sales milestone yet) still belongs in Lost Segment.
+  if (!categoryRaw && !stageRaw) {
+    const presales = readPresalesLostFields(lead);
+    if (isLostCategory(presales.category) || hasLostToken(presales.category, presales.stage, presales.subStage)) {
+      categoryRaw = presales.category;
+      stageRaw = presales.stage;
+      subRaw = presales.subStage;
+    }
   }
 
-  const isExperienceDesign =
-    (cat.includes("experience") && cat.includes("design")) ||
-    stage === "experience & design" ||
-    stage === "experience and design" ||
-    (stage.includes("experience") && stage.includes("design"));
+  const cat = norm(categoryRaw);
+  const stage = norm(stageRaw);
+  const sub = norm(subRaw);
+  if (!cat && !stage && !sub) return null;
 
-  if (cat.includes("closed") && cat.includes("lost")) return "lostClosed";
-  if (stage === "closed" || stage.startsWith("closed")) {
-    if (cat.includes("lost") || isLostCategory(categoryRaw)) return "lostClosed";
+  const haystack = `${cat} ${stage} ${sub}`.trim();
+  const lost =
+    isLostCategory(categoryRaw) ||
+    hasLostToken(categoryRaw, stageRaw, subRaw) ||
+    /\blost\b/.test(haystack);
+  if (!lost) return null;
+
+  // Priority: Closed → Decision → Exp&Design → Connection → Discovery (docs §5.2).
+  // Match category labels ("Discovery Lost"), stage labels ("Discovery Lost"),
+  // and stage+lost-category pairs ("Discovery" + "LOST").
+  const lostOnStageLabel = /\blost\b/.test(stage) || /\blost\b/.test(sub);
+
+  if (
+    (cat.includes("closed") && cat.includes("lost")) ||
+    ((stageMatchesMilestone(stage, "closed") || stage.startsWith("closed")) &&
+      (cat.includes("lost") || isLostCategory(categoryRaw) || lostOnStageLabel))
+  ) {
+    return "lostClosed";
   }
 
-  if (cat.includes("decision") && cat.includes("lost")) return "lostDecision";
-  if (stage === "decision" && (cat.includes("lost") || isLostCategory(categoryRaw))) {
+  if (
+    (cat.includes("decision") && cat.includes("lost")) ||
+    ((stageMatchesMilestone(stage, "decision") || stage.startsWith("decision")) &&
+      (cat.includes("lost") || isLostCategory(categoryRaw) || lostOnStageLabel))
+  ) {
     return "lostDecision";
   }
 
-  if (isExperienceDesign && (cat.includes("lost") || isLostCategory(categoryRaw))) {
+  if (isExperienceDesignText(cat) || isExperienceDesignText(stage)) {
     return "lostExperienceDesign";
   }
 
-  if (cat.includes("connection") && cat.includes("lost")) return "lostConnection";
-  if (stage === "connection" && (cat.includes("lost") || isLostCategory(categoryRaw))) {
+  if (
+    (cat.includes("connection") && cat.includes("lost")) ||
+    ((stageMatchesMilestone(stage, "connection") ||
+      stage.startsWith("connection") ||
+      sub.includes("connection lost")) &&
+      (cat.includes("lost") || isLostCategory(categoryRaw) || lostOnStageLabel))
+  ) {
     return "lostConnection";
   }
 
-  if (cat.includes("discovery") && cat.includes("lost")) return "lostDiscovery";
-  if (stage === "discovery" && (cat.includes("lost") || isLostCategory(categoryRaw))) {
+  if (
+    (cat.includes("discovery") && cat.includes("lost")) ||
+    ((stageMatchesMilestone(stage, "discovery") ||
+      stage.startsWith("discovery") ||
+      sub.includes("discovery lost")) &&
+      (cat.includes("lost") || isLostCategory(categoryRaw) || lostOnStageLabel))
+  ) {
     return "lostDiscovery";
   }
 
-  return null;
+  // Fresh Lead Lost / unmatched lost → Discovery Lost (safe default per Lost Funnel handoff).
+  return "lostDiscovery";
 }
 
 export function isLostSegmentLead(lead: ApiLead): boolean {
@@ -98,14 +168,13 @@ export function isLostSegmentLead(lead: ApiLead): boolean {
 export function isLostPathLead(lead: ApiLead): boolean {
   const sales = readSalesStageFieldsFromLead(lead);
   if (isLostCategory(sales.milestoneStageCategory)) return true;
-  const st = lead.stage;
-  const presalesCategory = String(
-    st?.presalesMilestoneCategory ?? lead.presalesMilestoneCategory ?? "",
-  ).trim();
-  if (isLostCategory(presalesCategory)) return true;
-  const stage = sales.milestoneStage.trim().toLowerCase().replace(/\s+/g, " ");
-  const cat = sales.milestoneStageCategory.trim().toLowerCase().replace(/\s+/g, " ");
-  return /\blost\b/.test(`${cat} ${stage}`.trim());
+  const presales = readPresalesLostFields(lead);
+  if (isLostCategory(presales.category)) return true;
+  const stage = norm(sales.milestoneStage);
+  const cat = norm(sales.milestoneStageCategory);
+  const sub = norm(sales.milestoneSubStage);
+  if (/\blost\b/.test(`${cat} ${stage} ${sub}`.trim())) return true;
+  return hasLostToken(presales.category, presales.stage, presales.subStage);
 }
 
 /**
@@ -245,6 +314,41 @@ function leadMatchesInsightAssigneeScope(lead: ApiLead, opts: InsightCountOpts):
   return true;
 }
 
+/**
+ * Phone-dedupe for Lost Segment tiles: prefer the latest lost-path row per phone
+ * so earliest-created active siblings do not hide lost leads from counts.
+ */
+export function pickLostSegmentCountRows(leads: ApiLead[]): ApiLead[] {
+  const byKey = new Map<string, ApiLead[]>();
+  let orphanSeq = 0;
+  for (const lead of leads) {
+    const phone = leadPhoneDigits(lead);
+    const key =
+      phone.length >= 8
+        ? `p:${phone}`
+        : `id:${String((lead as { id?: string | number }).id ?? "").trim() || `orphan_${orphanSeq++}`}`;
+    const list = byKey.get(key) ?? [];
+    list.push(lead);
+    byKey.set(key, list);
+  }
+
+  const out: ApiLead[] = [];
+  for (const group of byKey.values()) {
+    const lostRows = group.filter((lead) => isLostPathLead(lead));
+    const pool = lostRows.length > 0 ? lostRows : group;
+    out.push(
+      [...pool].sort((a, b) => {
+        const updatedDiff = parseLeadUpdatedAtMs(b) - parseLeadUpdatedAtMs(a);
+        if (updatedDiff !== 0) return updatedDiff;
+        const createdDiff = parseLeadCreatedAtMs(b) - parseLeadCreatedAtMs(a);
+        if (createdDiff !== 0) return createdDiff;
+        return String(a.id ?? "").localeCompare(String(b.id ?? ""));
+      })[0]!,
+    );
+  }
+  return out;
+}
+
 export function computeLostSegmentCounts(
   leads: ApiLead[],
   opts: InsightCountOpts,
@@ -256,7 +360,9 @@ export function computeLostSegmentCounts(
     lostDecision: 0,
     lostClosed: 0,
   };
-  for (const lead of leads) {
+  // Accept raw or pre-deduped pools; re-dedupe preferring lost-path current row.
+  const pool = pickLostSegmentCountRows(leads);
+  for (const lead of pool) {
     if (!leadMatchesInsightAssigneeScope(lead, opts)) continue;
     const bucket = classifyLostSegment(lead);
     if (bucket) counts[bucket] += 1;
@@ -275,7 +381,7 @@ export function computeLostSegmentDropReasons(
   const byReason = new Map<string, { reason: string; count: number }>();
   let total = 0;
 
-  for (const lead of leads) {
+  for (const lead of pickLostSegmentCountRows(leads)) {
     if (!leadMatchesInsightAssigneeScope(lead, opts)) continue;
     if (!classifyLostSegment(lead)) continue;
     total += 1;

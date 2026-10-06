@@ -54,6 +54,7 @@ export function mergeSalesPoolInsightCounts(
     ...base,
     ...computeFollowUpInsightCounts(insightPool, normalized),
     ...computeMilestoneTileCounts(insightPool, normalized),
-    ...computeLostSegmentCounts(insightPool, normalized),
+    // Lost Segment needs raw pool so lost-aware phone dedupe can prefer lost siblings.
+    ...computeLostSegmentCounts(leads, normalized),
   };
 }
