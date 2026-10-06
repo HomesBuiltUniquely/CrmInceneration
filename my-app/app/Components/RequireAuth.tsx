@@ -2,6 +2,7 @@
 
 import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import { useLayoutEffect, useState } from "react";
 
 type Props = {
@@ -21,8 +22,8 @@ export default function RequireAuth({ children }: Props) {
 
     const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
     if (!token) {
-      // Hard navigation — client router-only redirects can leave the gate stuck on “Loading…” in automation.
-      window.location.replace(`${window.location.origin}/login`);
+      // Login is via Hallway Digital Corridor — do not show CRM /login.
+      redirectToHallwayPortal();
       return;
     }
 
