@@ -79,10 +79,7 @@ import {
   computeLostSegmentCounts,
   computeLostSegmentDropReasons,
 } from "@/lib/lead-lost-segment";
-import {
-  salesAdminPoolInsightOpts,
-  salesInsightCountLeads,
-} from "@/lib/sales-admin-insight-tiles";
+import { salesAdminPoolInsightOpts } from "@/lib/sales-admin-insight-tiles";
 import { filterLeadsForSalesClientInbox } from "@/lib/crm-workspace";
 import {
   computeTeamMatrixIncentiveMetrics,
@@ -1336,9 +1333,10 @@ export default function InsightsClient1() {
               })
             : scopedRows;
 
-        // Funnel = id-merged stage inventory (My Leads phases). Lost Segment still phone-primary.
+        // Funnel = id-merged stage inventory (My Leads phases).
+        // Lost Segment: raw scope → lost-aware phone dedupe inside computeLostSegmentCounts.
         const funnelPool = scopedRows;
-        const lostCountPool = salesInsightCountLeads(lostScopeRows);
+        const lostCountPool = lostScopeRows;
 
         // Month charts need inventory WITHOUT the Insights date cut — otherwise trailing
         // months (Aug, …) stay at 0 leads / 0% conversion when filter is “this month”.

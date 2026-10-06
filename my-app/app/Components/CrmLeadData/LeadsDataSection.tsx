@@ -750,6 +750,11 @@ async function fetchMergedPage(
    * walk-in / source rows that SM my-leads still returns. Force filter merge for those pulls.
    */
   forceFilterMerge = false,
+  /**
+   * Insight tiles (Lost Segment, Quote Sent Lost) need lost-path rows.
+   * Default inbox table still excludes them via `excludeLostPath`.
+   */
+  includeLostPath = false,
 ): Promise<SpringPage<ApiLead>> {
   const normalizedLeadType = leadType.trim().toLowerCase();
   const normalizedViewerRole = normalizeRole(viewerRole);
@@ -1187,19 +1192,21 @@ async function fetchMergedPage(
   }
 
   const qs = new URLSearchParams();
-  const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
-    search,
-    dateField,
-    dateFrom,
-    dateTo,
-    crmMonthWindow,
-    leadType: normalizedLeadType,
-    assignee,
-    milestoneStage,
-    milestoneStageCategory,
-    milestoneSubStage,
-    reinquiry,
-  });
+  const excludeLostFromTable =
+    !includeLostPath &&
+    shouldExcludeLostPathFromTablePagination({
+      search,
+      dateField,
+      dateFrom,
+      dateTo,
+      crmMonthWindow,
+      leadType: normalizedLeadType,
+      assignee,
+      milestoneStage,
+      milestoneStageCategory,
+      milestoneSubStage,
+      reinquiry,
+    });
   /**
    * Always merge when we must drop lost-path before pagination. Thin Hub `/filter`
    * proxy paginates first; client hide-lost then yields short pages (20→11, 100→18).
@@ -1209,7 +1216,8 @@ async function fetchMergedPage(
     leadView === "combined" ||
     normalizedLeadType === "all" ||
     normalizedLeadType === "verified" ||
-    excludeLostFromTable;
+    excludeLostFromTable ||
+    includeLostPath;
   const effectiveDateFrom = dateFrom.trim() || null;
   const effectiveDateTo = dateTo.trim() || null;
   const isNewCrmGlobalSearchMode = search.trim().length > 0;
@@ -3187,7 +3195,7 @@ export default function LeadsDataSection({
     async (
       targetLeadType: string,
       targetSort: string,
-      opts?: { ignoreMilestoneFilter?: boolean },
+      opts?: { ignoreMilestoneFilter?: boolean; includeLostPath?: boolean },
     ): Promise<ApiLead[]> => {
       /**
        * SA → SM heatmap: hierarchy team + unassigned Fresh (Hub act-as unusable for SA).
@@ -3199,6 +3207,7 @@ export default function LeadsDataSection({
         Boolean(salesManagerFilter.trim()) &&
         !salesExecFilter.trim() &&
         leadsWorkspace === "sales";
+      const includeLostPath = Boolean(opts?.includeLostPath);
       const bffAssigneeAliasSet =
         !useTeamPersonFetch && effectiveAssigneeScope.length > 0
           ? effectiveAssigneeScope
@@ -3266,6 +3275,7 @@ export default function LeadsDataSection({
           userIdsForRequest,
           0,
           forceFilterMerge,
+          includeLostPath,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -3298,6 +3308,7 @@ export default function LeadsDataSection({
               userIdsForRequest,
               0,
               forceFilterMerge,
+              includeLostPath,
             ),
           ),
         );
@@ -3959,7 +3970,10 @@ export default function LeadsDataSection({
           summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
             : summaryLeadTypeRaw;
-        const raw = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc");
+        // Must include lost-path rows — default inbox fetch strips them via excludeLostPath.
+        const raw = await fetchAllScopedMergedLeads(summaryLeadType, "updatedAt,desc", {
+          includeLostPath: true,
+        });
         if (cancelled) return;
         const scopedTeam =
           managerScopedTeam.length > 0
@@ -4047,7 +4061,8 @@ export default function LeadsDataSection({
         };
         const insights = computeFollowUpInsightCounts(insightPool, insightCountOpts);
         const milestoneTiles = computeMilestoneTileCounts(insightPool, insightCountOpts);
-        const lostSegment = computeLostSegmentCounts(insightPool, insightCountOpts);
+        // Raw journey pool: lost-aware dedupe inside computeLostSegmentCounts.
+        const lostSegment = computeLostSegmentCounts(journeyScoped, insightCountOpts);
         setLeadTypeCounts({
           ...base,
           ...insights,
@@ -4340,11 +4355,12 @@ export default function LeadsDataSection({
         if (usePageMetaForUi && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
           if (preferFilteredInventory) {
-            // Filtered page meta replaces full-pool tiles (do not Math.max with org-wide).
-            setLeadTypeCounts({
+            // Keep insight tiles (lost segment / follow-up / meetings) computed in parallel.
+            setLeadTypeCounts((prev) => ({
+              ...prev,
               ...sourceCounts,
               all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
-            });
+            }));
           } else {
             // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
             setLeadTypeCounts((prev) => {
@@ -4366,10 +4382,11 @@ export default function LeadsDataSection({
           }
         } else if (preferFilteredInventory && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
-          setLeadTypeCounts({
+          setLeadTypeCounts((prev) => ({
+            ...prev,
             ...sourceCounts,
             all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
-          });
+          }));
         }
         if (pageJson.accessDeniedLeadTypes?.length) {
           notifyError(
@@ -4544,9 +4561,17 @@ export default function LeadsDataSection({
           summaryLeadTypeRaw === "verified" || summaryLeadTypeRaw === "ivr_call"
             ? "all"
             : summaryLeadTypeRaw;
-        const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort);
+        const needsLostPathPool =
+          isLostSegmentInsightMode(insightTableMode) ||
+          insightTableMode === "lostQuoteSent";
+        const scopedRows = await fetchAllScopedMergedLeads(summaryLeadType, sort, {
+          includeLostPath: needsLostPathPool,
+        });
         if (cancelled) return;
-        let pool = salesInsightCountLeads(scopedRows);
+        // Lost Segment / lost quote drill-down: keep lost rows (no earliest-created collapse).
+        let pool = needsLostPathPool
+          ? scopedRows
+          : salesInsightCountLeads(scopedRows);
         if (activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0) {
           pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope, {
             userIds: effectiveAssigneeUserIds,
