@@ -8,7 +8,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
-import { useRouter } from "next/navigation";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import { useState } from "react";
 
 type Props = {
@@ -16,7 +16,6 @@ type Props = {
 };
 
 export default function LogoutButton({ className = "" }: Props) {
-  const router = useRouter();
   const [busy, setBusy] = useState(false);
 
   async function handleLogout() {
@@ -32,7 +31,7 @@ export default function LogoutButton({ className = "" }: Props) {
       localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
       localStorage.removeItem(CRM_DESIGNER_NAME_STORAGE_KEY);
       localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
-      router.replace("/login");
+      redirectToHallwayPortal();
       setBusy(false);
     }
   }

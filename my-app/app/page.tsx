@@ -9,6 +9,7 @@ import {
   landingPathByRole,
   normalizeRole,
 } from "@/lib/auth/api";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 
 /**
  * CRM sales dashboard (`/`). Sales executives land on My Leads — no dashboard access.
@@ -19,7 +20,7 @@ export default function Home() {
   useLayoutEffect(() => {
     const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
     if (!token) {
-      window.location.replace(`${window.location.origin}/login`);
+      redirectToHallwayPortal();
       return;
     }
     const role = normalizeRole(localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");

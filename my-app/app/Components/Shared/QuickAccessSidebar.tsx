@@ -9,6 +9,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import {
   canAccessBookingTokenDashboard,
   canAccessCrmInsights,
@@ -266,7 +267,7 @@ export default function QuickAccessSidebar({
       window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
       window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
       clearActiveModule?.();
-      router.replace("/login");
+      redirectToHallwayPortal();
       setLogoutBusy(false);
     }
   };

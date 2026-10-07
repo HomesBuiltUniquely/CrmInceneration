@@ -1,6 +1,5 @@
 ﻿"use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
   CRM_ROLE_STORAGE_KEY,
@@ -8,6 +7,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import { cn } from "@/lib/cn";
 import ThemeToggle from "./ThemeToggle";
 
@@ -44,7 +44,6 @@ export default function CrmUserMenu({
   profileRole = "USER",
   profileInitials = "U",
 }: CrmUserMenuProps) {
-  const router = useRouter();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [logoutBusy, setLogoutBusy] = useState(false);
@@ -96,7 +95,7 @@ export default function CrmUserMenu({
       window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
       window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
       window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
-      router.replace("/login");
+      redirectToHallwayPortal();
       setLogoutBusy(false);
     }
   };

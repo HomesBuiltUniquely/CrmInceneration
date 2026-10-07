@@ -8,6 +8,7 @@ import {
   landingPathByRole,
 } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 
 /**
  * Preferred Hallway → CRM handoff entry (same pattern as Design Module).
@@ -26,8 +27,8 @@ export default function AuthAcceptPage() {
     const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
 
     if (!token) {
-      setMessage("Missing session. Redirecting to login…");
-      window.location.replace(`${window.location.origin}/login`);
+      setMessage("Missing session. Redirecting to Hallway…");
+      redirectToHallwayPortal();
       return;
     }
 

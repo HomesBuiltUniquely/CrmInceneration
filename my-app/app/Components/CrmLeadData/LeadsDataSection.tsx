@@ -1431,6 +1431,7 @@ function toAdminBulkDeletePath(leadType: string): string {
   if (leadType === "glead") return "bulk-delete-gleads";
   if (leadType === "mlead") return "bulk-delete-mleads";
   if (leadType === "addlead") return "bulk-delete-addleads";
+  if (leadType === "quikrlead") return "bulk-delete-quikrleads";
   if (isIvrLeadTypeKey(leadType)) return "bulk-delete-ivrleads";
   if (leadType === "walkinlead") return "bulk-delete-walkinleads";
   if (leadType === "whatsapplead") return "bulk-delete-whatsappleads";
@@ -1442,6 +1443,7 @@ function toAdminDeleteAllPath(leadType: string): string {
   if (leadType === "glead") return "delete-all-gleads";
   if (leadType === "mlead") return "delete-all-mleads";
   if (leadType === "addlead") return "delete-all-addleads";
+  if (leadType === "quikrlead") return "delete-all-quikrleads";
   if (isIvrLeadTypeKey(leadType)) return "delete-all-ivrleads";
   if (leadType === "walkinlead") return "delete-all-walkinleads";
   if (leadType === "whatsapplead") return "delete-all-whatsappleads";
@@ -4967,7 +4969,9 @@ export default function LeadsDataSection({
   const deleteAllConfirmPhrase =
     leadType === "all"
       ? "DELETE ALL"
-      : `DELETE ${toAssignmentLeadType(leadType).toUpperCase()}`;
+      : leadType === "quikrlead"
+        ? "DELETE QUIKR"
+        : `DELETE ${toAssignmentLeadType(leadType).toUpperCase()}`;
   const previewSuccess = previewResult?.success === true;
   const previewDistribution = Array.isArray(previewResult?.distribution)
     ? (previewResult.distribution as Array<Record<string, unknown>>)
@@ -5312,6 +5316,7 @@ export default function LeadsDataSection({
           "glead",
           "mlead",
           "addlead",
+          "quikrlead",
           "ivrlead",
           "websitelead",
           "walkinlead",

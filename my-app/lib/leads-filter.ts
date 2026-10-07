@@ -34,6 +34,7 @@ export const CRM_LEAD_TYPES = [
   "glead",
   "mlead",
   "addlead",
+  "quikrlead",
   "ivrlead",
   "websitelead",
   "walkinlead",
@@ -698,6 +699,7 @@ export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): C
     t === "glead" ||
     t === "mlead" ||
     t === "addlead" ||
+    t === "quikrlead" ||
     t === "ivrlead" ||
     t === "websitelead" ||
     t === "walkinlead" ||
@@ -707,6 +709,7 @@ export function asCrmLeadType(raw: string | undefined, fallback: CrmLeadType): C
   }
   const compact = t.replace(/[^a-z0-9]/g, "");
   if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
+  if (compact === "quikrlead" || compact === "quikr" || compact === "qk") return "quikrlead";
   return fallback;
 }
 

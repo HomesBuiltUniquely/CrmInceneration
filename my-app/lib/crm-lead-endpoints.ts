@@ -5,14 +5,15 @@ import type { CrmLeadType } from "@/lib/leads-filter";
  *
  * Meta (`mlead` → `/v1/MetaLead`): use GET list/detail, PUT update, POST verify,
  * DELETE (Admin/Super Admin), activities, and shared assign API.
- * Hub disabled `POST /v1/MetaLead` create (HTTP 410) —
- * Instant Form leads arrive via Meta webhook `/meta/webhook` only.
+ * `POST /v1/MetaLead` create: Super Admin manual only; others / sheet / Zapier → 410.
+ * Instant Form leads still arrive via Meta webhook `/meta/webhook`.
  */
 export const LEAD_TYPE_TO_BASE: Record<CrmLeadType, string> = {
   formlead: "/v1/FormLead",
   glead: "/v1/Home1",
   mlead: "/v1/MetaLead",
   addlead: "/v1/AddLead",
+  quikrlead: "/v1/QuikrLead",
   ivrlead: "/v1/IvrLead",
   websitelead: "/v1/WebsiteLead",
   walkinlead: "/v1/WalkinLead",

@@ -93,6 +93,7 @@ const LEAD_TYPES: { value: CrmLeadType; label: string }[] = [
   { value: "glead", label: "G Lead" },
   { value: "mlead", label: "M Lead" },
   { value: "addlead", label: "Add Lead" },
+  { value: "quikrlead", label: "Quikr Leads" },
   { value: "websitelead", label: "Website Lead" },
   { value: "walkinlead", label: "Walk-in Lead" },
   { value: "whatsapplead", label: "WhatsApp" },

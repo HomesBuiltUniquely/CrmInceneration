@@ -1149,7 +1149,7 @@ export function mergeSecondBoxIntoDetail(base: Record<string, unknown>, lead: Le
   if (lead.requirements?.length) {
     next.requirements = lead.requirements;
   }
-  if (boxLt === "addlead" || boxLt === "ivrlead") {
+  if (boxLt === "addlead" || boxLt === "quikrlead" || boxLt === "ivrlead") {
     next.property_type = resolvedConfiguration;
   }
   const floorPlanValue = lead.floorPlan.trim();

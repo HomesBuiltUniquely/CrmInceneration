@@ -7,6 +7,7 @@ export function crmLeadTypeToApiLabel(leadType: CrmLeadType): string {
   if (leadType === "glead") return "G Lead";
   if (leadType === "mlead") return "M Lead";
   if (leadType === "addlead") return "Add Lead";
+  if (leadType === "quikrlead") return "Quikr Lead";
   if (leadType === "ivrlead") return "IVR Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";
@@ -24,6 +25,7 @@ export function crmLeadTypeToAssignmentLabel(leadType: string): string {
   if (leadType === "glead") return "G Lead";
   if (leadType === "mlead") return "Meta Ads";
   if (leadType === "addlead") return "Add Lead";
+  if (leadType === "quikrlead") return "Quikr Lead";
   if (isIvrLeadTypeKey(leadType)) return "IVR Lead";
   if (leadType === "websitelead") return "Website Lead";
   if (leadType === "walkinlead") return "Walk-in Lead";

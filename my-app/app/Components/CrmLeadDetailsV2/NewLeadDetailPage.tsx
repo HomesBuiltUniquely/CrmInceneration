@@ -315,7 +315,10 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
       setIvrDeleting(true);
       const body = await deleteIvrInboundLead(leadType, lead.leadSource, leadId);
       notifySuccess(body.message || "IVR lead deleted successfully");
-      dispatchCrmLeadsInvalidate({ leadTypes: ["ivrlead", "addlead"], reason: "delete" });
+      dispatchCrmLeadsInvalidate({
+        leadTypes: ["ivrlead", "addlead", "quikrlead"],
+        reason: "delete",
+      });
       requestLeadDetailOverlayClose();
     } catch (error) {
       notifyError(error instanceof Error ? error.message : "Failed to delete IVR lead");

@@ -11,6 +11,7 @@ const CRM_TO_FLOOR_PLAN: Record<CrmLeadType, string> = {
   websitelead: "website",
   formlead: "form",
   addlead: "add",
+  quikrlead: "quikrlead",
   ivrlead: "ivrlead",
   walkinlead: "walkin",
   whatsapplead: "whatsapp",
@@ -29,6 +30,7 @@ export function toFloorPlanLeadType(source: string): string {
   if (["website", "website-lead", "wl", "websitelead"].includes(s)) return "website";
   if (["form", "form-lead", "external", "fl", "formlead"].includes(s)) return "form";
   if (["add", "add-lead", "al", "addlead"].includes(s)) return "add";
+  if (["quikr", "quikr-lead", "quikrlead", "qk"].includes(s)) return "quikrlead";
   if (["ivr", "ivr-lead", "ivrlead", "ivr-call", "ivrcall"].includes(s)) return "ivrlead";
   if (["walkin", "walk-in", "walk-in-lead", "walkinlead"].includes(s)) return "walkin";
   if (["whatsapp", "whatsapplead"].includes(s)) return "whatsapp";

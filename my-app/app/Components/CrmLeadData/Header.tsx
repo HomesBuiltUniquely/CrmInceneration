@@ -21,6 +21,7 @@ import {
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
+import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import {
   appendWorkspaceMilestoneFilterQuery,
   defaultLeadsVerificationStatus,
@@ -282,7 +283,7 @@ export default function Header() {
         window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
       }
       if (typeof window !== "undefined") {
-        window.location.replace("/login");
+        redirectToHallwayPortal();
       }
       setAuthResolved(true);
       return;
@@ -345,7 +346,7 @@ export default function Header() {
         window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
         window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
       } finally {
-        window.location.replace("/login");
+        redirectToHallwayPortal();
       }
     };
     window.addEventListener("crm:auth-expired", onAuthExpired);

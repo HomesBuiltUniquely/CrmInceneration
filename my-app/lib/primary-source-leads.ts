@@ -15,6 +15,7 @@ export function normalizeLeadTypeKey(raw: unknown): CrmLeadType {
   if (compact === "glead" || compact === "googleads") return "glead";
   if (compact === "mlead" || compact === "metaads") return "mlead";
   if (compact === "addlead" || compact === "alead") return "addlead";
+  if (compact === "quikrlead" || compact === "quikr" || compact === "qk") return "quikrlead";
   if (compact === "ivrlead" || compact === "ivr" || compact === "ivrcall") return "ivrlead";
   if (compact === "websitelead" || compact === "wlead") return "websitelead";
   if (compact === "walkinlead" || compact === "walkin") return "walkinlead";

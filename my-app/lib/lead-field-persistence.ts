@@ -32,6 +32,7 @@ export function configurationDbColumnForLeadType(leadType: CrmLeadType): Configu
     case "websitelead":
       return "interior_setup";
     case "addlead":
+    case "quikrlead":
     case "ivrlead":
     case "walkinlead":
       return "property_type";

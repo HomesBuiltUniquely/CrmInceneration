@@ -24,9 +24,18 @@ import {
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
+import {
+  isLocalCrmHost,
+  redirectToAuthEntry,
+} from "@/lib/auth/hallway-portal";
 
+/**
+ * Localhost: full CRM login form for development.
+ * Deployed: no form — redirect to Hallway (unless handoff / already logged in).
+ */
 export default function LoginPage() {
   const router = useRouter();
+  const [ready, setReady] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -36,16 +45,27 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Cross-origin Hallway handoff may land on /login#payload=...
+
     const landing = tryConsumeHallwayHandoffFromUrl();
     if (landing) {
       router.replace(landing);
       return;
     }
-    if (localStorage.getItem(CRM_TOKEN_STORAGE_KEY)) {
+
+    const token = localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+    if (token) {
       const role = localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
       router.replace(landingPathByRole(role));
+      return;
     }
+
+    // Production: hide CRM login — send to Hallway.
+    if (!isLocalCrmHost()) {
+      redirectToAuthEntry();
+      return;
+    }
+
+    setReady(true);
   }, [router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -55,8 +75,6 @@ export default function LoginPage() {
     try {
       const { token, user } = await login(username, password);
       localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
-      // Store the login credential — used for Go backend scope filtering
-      // (leadDetails.assigned_to stores the username, not the display name).
       localStorage.setItem(CRM_LOGIN_USERNAME_KEY, username);
       let sessionUser: Record<string, unknown> = user;
       try {
@@ -83,7 +101,6 @@ export default function LoginPage() {
       } else {
         localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
       }
-      // Store numeric user ID — used for ID-based RBAC checks (e.g. notification filtering).
       const rawUserId = sessionUser.id ?? sessionUser.userId;
       const numericUserId = rawUserId != null ? Number(rawUserId) : NaN;
       if (Number.isFinite(numericUserId) && numericUserId > 0) {
@@ -111,6 +128,14 @@ export default function LoginPage() {
     }
   }
 
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100 text-sm text-gray-600">
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md border border-gray-200">
@@ -126,7 +151,7 @@ export default function LoginPage() {
             Sign in to CRM
           </h1>
           <p className="text-sm font-medium text-gray-500 text-center">
-            Backend:{" "}
+            Local development — Backend:{" "}
             <span className="font-mono text-gray-700">{apiBase}</span>
           </p>
         </div>

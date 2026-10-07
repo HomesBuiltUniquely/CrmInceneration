@@ -17,6 +17,7 @@ export const ADMIN_SOURCE_LEAD_TYPE_TILES: LeadTypeSourceTile[] = [
   { label: "Google Ads", leadTypeKey: "glead" },
   { label: "Meta Ads", leadTypeKey: "mlead" },
   { label: "Add Lead", leadTypeKey: "addlead" },
+  { label: "Quikr Leads", leadTypeKey: "quikrlead" },
   { label: "IVR Lead", leadTypeKey: "ivrlead" },
   { label: "Website Lead", leadTypeKey: "websitelead" },
   { label: "Walk-in Lead", leadTypeKey: "walkinlead" },
