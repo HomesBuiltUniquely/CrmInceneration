@@ -567,30 +567,6 @@ export default function CreateLeadClient({ mode }: CreateLeadClientProps) {
                 </div>
               ) : null}
 
-              {isSuperAdmin ? (
-                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
-                  <p className="font-semibold text-[var(--crm-text-primary)]">
-                    Lead Source (required) — Super Admin
-                  </p>
-                  <p className="mt-1 leading-relaxed">
-                    Choose the CRM source — the lead is created on that source
-                    (Google Ads → glead, Meta Ads → mlead, Quikr → quikrlead, etc.).
-                    Meta Instant Forms still sync from Facebook webhook; this option is
-                    Super Admin manual create only.
-                  </p>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
-                  <p className="font-semibold text-[var(--crm-text-primary)]">
-                    Add Lead
-                  </p>
-                  <p className="mt-1 leading-relaxed">
-                    Creates an Add Lead. Meta Instant Form leads sync from Facebook
-                    automatically (manual Meta create is off).
-                  </p>
-                </div>
-              )}
-
               {success ? (
                 <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-success-text)]">
                   <div>{success}</div>
