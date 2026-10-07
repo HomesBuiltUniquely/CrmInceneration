@@ -132,6 +132,7 @@ export function flattenDesignerLeadsBundle(data: unknown): DesignerQueueLeadRow[
     ["mleads", "mlead"],
     ["gleads", "glead"],
     ["addLeads", "addlead"],
+    ["quikrLeads", "quikrlead"],
     ["ivrLeads", "ivrlead"],
     ["ivrleads", "ivrlead"],
     ["websiteLeads", "websitelead"],

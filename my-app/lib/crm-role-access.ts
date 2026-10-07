@@ -55,6 +55,7 @@ export function getLeadTypeFilterOptions(
       { value: "glead", label: "Google Ads" },
       { value: "mlead", label: "Meta Ads" },
       { value: "addlead", label: "Add Lead" },
+      { value: "quikrlead", label: "Quikr Leads" },
       { value: "ivrlead", label: "IVR Lead" },
       { value: "websitelead", label: "Website Lead" },
       { value: "walkinlead", label: "Walk-in Lead" },
@@ -64,6 +65,7 @@ export function getLeadTypeFilterOptions(
   return [
     { value: "all", label: "All Types" },
     { value: "addlead", label: "Add Lead" },
+    { value: "quikrlead", label: "Quikr Leads" },
     { value: "ivrlead", label: "IVR Lead" },
     { value: "formlead", label: "External Lead" },
     { value: "glead", label: "Google Ads" },

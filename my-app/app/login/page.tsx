@@ -1,23 +1,47 @@
 "use client";
 
-import { useEffect } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { BASE_URL } from "@/lib/base-url";
 import {
+  CRM_ACTIVE_MODULE_KEY,
+  CRM_DESIGNER_ID_STORAGE_KEY,
+  CRM_DESIGNER_NAME_STORAGE_KEY,
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
+  defaultModuleByRole,
+  CRM_USER_ID_STORAGE_KEY,
+  CRM_USER_NAME_STORAGE_KEY,
+  getDesignerIdFromUser,
+  getDesignerNameFromUser,
+  getMe,
+  getNameFromUser,
+  getRoleFromUser,
   landingPathByRole,
+  login,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
-import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
+import {
+  isLocalCrmHost,
+  redirectToAuthEntry,
+} from "@/lib/auth/hallway-portal";
 
 /**
- * CRM login form is hidden — auth is via Hallway.
- * Keep this route only to:
- * 1) consume rare `/login#payload=...` handoffs
- * 2) send everyone else to Hallway
+ * Localhost: full CRM login form for development.
+ * Deployed: no form — redirect to Hallway (unless handoff / already logged in).
  */
 export default function LoginPage() {
   const router = useRouter();
+  const [ready, setReady] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const apiBase = BASE_URL;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -35,12 +59,154 @@ export default function LoginPage() {
       return;
     }
 
-    redirectToHallwayPortal();
+    // Production: hide CRM login — send to Hallway.
+    if (!isLocalCrmHost()) {
+      redirectToAuthEntry();
+      return;
+    }
+
+    setReady(true);
   }, [router]);
 
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const { token, user } = await login(username, password);
+      localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
+      localStorage.setItem(CRM_LOGIN_USERNAME_KEY, username);
+      let sessionUser: Record<string, unknown> = user;
+      try {
+        const me = await getMe(token);
+        sessionUser = unwrapAuthUserPayload(me as Record<string, unknown>);
+      } catch {
+        /* use login payload if /api/auth/me is unavailable */
+      }
+      const role = getRoleFromUser(sessionUser);
+      const name = getNameFromUser(sessionUser);
+      if (role) {
+        localStorage.setItem(CRM_ROLE_STORAGE_KEY, role);
+      } else {
+        localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
+      }
+      const defaultModule = defaultModuleByRole(role);
+      if (defaultModule) {
+        localStorage.setItem(CRM_ACTIVE_MODULE_KEY, defaultModule);
+      } else {
+        localStorage.removeItem(CRM_ACTIVE_MODULE_KEY);
+      }
+      if (name) {
+        localStorage.setItem(CRM_USER_NAME_STORAGE_KEY, name);
+      } else {
+        localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      }
+      const rawUserId = sessionUser.id ?? sessionUser.userId;
+      const numericUserId = rawUserId != null ? Number(rawUserId) : NaN;
+      if (Number.isFinite(numericUserId) && numericUserId > 0) {
+        localStorage.setItem(CRM_USER_ID_STORAGE_KEY, String(numericUserId));
+      } else {
+        localStorage.removeItem(CRM_USER_ID_STORAGE_KEY);
+      }
+      const designerName = getDesignerNameFromUser(sessionUser);
+      const designerId = getDesignerIdFromUser(sessionUser);
+      if (designerName) {
+        localStorage.setItem(CRM_DESIGNER_NAME_STORAGE_KEY, designerName);
+      } else {
+        localStorage.removeItem(CRM_DESIGNER_NAME_STORAGE_KEY);
+      }
+      if (designerId) {
+        localStorage.setItem(CRM_DESIGNER_ID_STORAGE_KEY, designerId);
+      } else {
+        localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
+      }
+      router.replace(landingPathByRole(role));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100 text-sm text-gray-600">
+        Loading…
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-100 text-sm text-gray-600">
-      Redirecting to Hallway…
+    <div className="min-h-screen bg-gray-100 flex flex-col items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md rounded-xl bg-white p-8 shadow-md border border-gray-200">
+        <div className="flex flex-col items-center gap-2 mb-6">
+          <Image
+            src="/HowsCrmLogo.png"
+            alt="CRM"
+            width={56}
+            height={56}
+            className="rounded-lg"
+          />
+          <h1 className="text-xl font-bold tracking-tight text-gray-900 text-center">
+            Sign in to CRM
+          </h1>
+          <p className="text-sm font-medium text-gray-500 text-center">
+            Local development — Backend:{" "}
+            <span className="font-mono text-gray-700">{apiBase}</span>
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div>
+            <label
+              htmlFor="username"
+              className="block text-sm font-semibold text-gray-700 mb-1"
+            >
+              Username
+            </label>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="password"
+              className="block text-sm font-semibold text-gray-700 mb-1"
+            >
+              Password
+            </label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+          </div>
+          {error && (
+            <p className="text-sm text-red-600" role="alert">
+              {error}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={loading}
+            className="mt-2 rounded-lg bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

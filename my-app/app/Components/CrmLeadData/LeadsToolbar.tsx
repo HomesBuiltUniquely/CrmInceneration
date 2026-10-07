@@ -408,6 +408,7 @@ export default function LeadsToolbar({
       glead: Number(leadTypeCounts.glead ?? 0),
       mlead: Number(leadTypeCounts.mlead ?? 0),
       addlead: Number(leadTypeCounts.addlead ?? 0),
+      quikrlead: Number(leadTypeCounts.quikrlead ?? 0),
       ivrlead: Number(leadTypeCounts.ivrlead ?? 0),
       websitelead: Number(leadTypeCounts.websitelead ?? 0),
       walkinlead: Number(leadTypeCounts.walkinlead ?? 0),

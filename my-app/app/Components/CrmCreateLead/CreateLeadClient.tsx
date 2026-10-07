@@ -22,19 +22,14 @@ import { getFriendlyApiErrorMessage } from "@/lib/friendly-api-error";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import { parseCrossMergeIntoWhatsapp } from "@/lib/lead-source-utils";
 import {
+  CREATE_LEAD_SOURCE_OPTIONS,
+  createLeadSourceOption,
+  isCreatableLeadType,
+} from "@/lib/create-lead-sources";
+import {
   DEFAULT_FOLLOW_UP_OFFSET_MS,
   formatDateTimeLocalInputValue,
 } from "@/lib/follow-up-date";
-
-const LEAD_SOURCES = [
-  "Website",
-  "Referral",
-  "Social Media",
-  "Walk-in",
-  "Call",
-  "Email",
-  "Advertisement",
-];
 
 const LANGUAGE_OPTIONS = [
   "English",
@@ -233,9 +228,16 @@ function CreateLeadFieldLabel({
   );
 }
 
-export default function CreateLeadClient() {
+type CreateLeadMode = "addlead" | "quikrlead";
+
+type CreateLeadClientProps = {
+  /** Optional preset for Lead Source dropdown (`addlead` or `quikrlead`). */
+  mode?: CreateLeadMode;
+};
+
+export default function CreateLeadClient({ mode }: CreateLeadClientProps) {
   const router = useRouter();
-  const [role, setRole] = useState("SUPER_ADMIN");
+  const [role, setRole] = useState("");
   const [currentUserName, setCurrentUserName] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
@@ -252,7 +254,33 @@ export default function CreateLeadClient() {
     const rawId = Number(window.localStorage.getItem(CRM_USER_ID_STORAGE_KEY) ?? "");
     setCurrentUserId(Number.isFinite(rawId) && rawId > 0 ? rawId : null);
   }, []);
-  const [form, setForm] = useState<CreateLeadFormState>(INITIAL_FORM);
+  const isSuperAdmin = role === "SUPER_ADMIN";
+  /**
+   * Super Admin: `form.leadSource` = CRM leadType key (glead, quikrlead, …).
+   * Everyone else: marketing label (Website, Referral, …); create always `addlead`.
+   */
+  const [form, setForm] = useState<CreateLeadFormState>(() => ({
+    ...INITIAL_FORM,
+    leadSource: "",
+  }));
+  // After role loads, Super Admin may preselect from `mode` (e.g. /create-quikr-lead).
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    if (mode && isCreatableLeadType(mode)) {
+      setForm((current) =>
+        current.leadSource ? current : { ...current, leadSource: mode },
+      );
+    }
+  }, [isSuperAdmin, mode]);
+  const selectedCrmSource = isSuperAdmin
+    ? createLeadSourceOption(form.leadSource)
+    : createLeadSourceOption("addlead");
+  const createLeadType = isSuperAdmin
+    ? selectedCrmSource?.leadType
+    : "addlead";
+  const sourceBadge = isSuperAdmin
+    ? (selectedCrmSource?.label ?? "Select Source")
+    : "Add Lead";
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [completeTaskOpen, setCompleteTaskOpen] = useState(false);
@@ -287,7 +315,9 @@ export default function CreateLeadClient() {
     propertyLocation: "",
     budget: form.budget,
     language: form.languagePrefered,
-    leadSource: form.leadSource,
+    leadSource: isSuperAdmin
+      ? (selectedCrmSource?.leadSourceBadge ?? form.leadSource)
+      : form.leadSource,
     bookingType: "",
     meetingType: "",
     propertyNotes: form.propertyDetails,
@@ -322,6 +352,15 @@ export default function CreateLeadClient() {
 
     if (!form.name.trim() || !form.phoneNumber.trim()) {
       setError("Name and phone are required.");
+      return;
+    }
+
+    if (isSuperAdmin && (!selectedCrmSource || !createLeadType)) {
+      setError("Lead Source is required. Select where this lead should be created.");
+      return;
+    }
+    if (!createLeadType) {
+      setError("Unable to resolve create source. Please refresh and try again.");
       return;
     }
 
@@ -362,7 +401,9 @@ export default function CreateLeadClient() {
       phone: form.phoneNumber.trim() || undefined,
       altPhoneNumber: form.altPhoneNumber.trim() || undefined,
       budget: form.budget.trim() || undefined,
-      leadSource: form.leadSource || undefined,
+      leadSource: isSuperAdmin
+        ? selectedCrmSource!.leadSourceBadge
+        : form.leadSource.trim() || "Add Lead",
       languagePrefered: form.languagePrefered || undefined,
       propertyPincode: form.propertyPincode.trim() || undefined,
       propertyPin: form.propertyPincode.trim() || undefined,
@@ -408,7 +449,8 @@ export default function CreateLeadClient() {
 
     startTransition(async () => {
       try {
-        const response = await fetch("/api/crm/add-lead", {
+        const createUrl = `/api/crm/create-lead?leadType=${encodeURIComponent(createLeadType)}`;
+        const response = await fetch(createUrl, {
           method: "POST",
           headers: getCrmAuthHeaders({
             "Content-Type": "application/json",
@@ -430,12 +472,16 @@ export default function CreateLeadClient() {
 
         if (crossMerge) {
           setSuccess(
-            "Same phone already on WhatsApp — Add Lead merged into the existing WhatsApp lead.",
+            `Same phone already on WhatsApp — ${sourceBadge} merged into the existing WhatsApp lead.`,
           );
           setCreatedLeadInfo(null);
-          setForm(INITIAL_FORM);
+          setForm({
+            ...INITIAL_FORM,
+            leadSource:
+              isSuperAdmin && mode && isCreatableLeadType(mode) ? mode : "",
+          });
           dispatchCrmLeadsInvalidate({
-            leadTypes: ["whatsapplead", "addlead"],
+            leadTypes: ["whatsapplead", createLeadType],
             reason: "cross-merge-whatsapp",
           });
           router.push(`/Leads/whatsapplead/${crossMerge.whatsappLeadId}`);
@@ -451,17 +497,28 @@ export default function CreateLeadClient() {
           result = { message: responseText.trim() || "Lead saved." };
         }
 
+        // Duplicate / cross-source merge: do not treat as a brand-new card.
+        const isUpdate = result.isUpdate === true;
         setSuccess(
           typeof result.message === "string"
             ? result.message
-            : "Lead created successfully.",
+            : isUpdate
+              ? "Existing lead updated (same phone)."
+              : `${sourceBadge} created successfully.`,
         );
         setCreatedLeadInfo({
           id: result.id as string | number | undefined,
           customerId: result.customerId as string | undefined,
         });
-        setForm(INITIAL_FORM);
-        dispatchCrmLeadsInvalidate({ leadTypes: ["addlead"], reason: "create" });
+        setForm({
+          ...INITIAL_FORM,
+          leadSource:
+            isSuperAdmin && mode && isCreatableLeadType(mode) ? mode : "",
+        });
+        dispatchCrmLeadsInvalidate({ leadTypes: [createLeadType], reason: "create" });
+        if (result.id != null && String(result.id).trim()) {
+          router.push(`/Leads/${createLeadType}/${result.id}`);
+        }
       } catch (submitError) {
         setError(
           submitError instanceof Error
@@ -499,7 +556,7 @@ export default function CreateLeadClient() {
                     Lead Details
                   </h1>
                   <span className="inline-flex items-center rounded-full bg-[var(--crm-warning-bg)] px-5 py-2 text-sm font-bold text-[var(--crm-warning-text)]">
-                    Add Lead
+                    {sourceBadge}
                   </span>
                 </div>
               </div>
@@ -510,18 +567,29 @@ export default function CreateLeadClient() {
                 </div>
               ) : null}
 
-              <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
-                <p className="font-semibold text-[var(--crm-text-primary)]">
-                  Meta Ads / Instant Forms
-                </p>
-                <p className="mt-1 leading-relaxed">
-                  Meta Instant Form leads sync automatically from Facebook. New
-                  leads start as Unverified and go to Presales. After
-                  verification they move to Sales, same as Google leads. Manual /
-                  Sheet create for Meta Ads is turned off — use this form for
-                  Add Lead only.
-                </p>
-              </div>
+              {isSuperAdmin ? (
+                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
+                  <p className="font-semibold text-[var(--crm-text-primary)]">
+                    Lead Source (required) — Super Admin
+                  </p>
+                  <p className="mt-1 leading-relaxed">
+                    Choose the CRM source — the lead is created on that source
+                    (Google Ads → glead, Meta Ads → mlead, Quikr → quikrlead, etc.).
+                    Meta Instant Forms still sync from Facebook webhook; this option is
+                    Super Admin manual create only.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-3 text-sm text-[var(--crm-text-secondary)]">
+                  <p className="font-semibold text-[var(--crm-text-primary)]">
+                    Add Lead
+                  </p>
+                  <p className="mt-1 leading-relaxed">
+                    Creates an Add Lead. Meta Instant Form leads sync from Facebook
+                    automatically (manual Meta create is off).
+                  </p>
+                </div>
+              )}
 
               {success ? (
                 <div className="rounded-2xl border border-[var(--crm-success)] bg-[var(--crm-success-bg)] px-4 py-3 text-sm font-medium text-[var(--crm-success-text)]">
@@ -667,24 +735,30 @@ export default function CreateLeadClient() {
                             ))}
                           </SelectField>
                         </div>
-                        <div>
-                          <CreateLeadFieldLabel>
-                            Lead Source
-                          </CreateLeadFieldLabel>
-                          <SelectField
-                            value={form.leadSource}
-                            onChange={(e) =>
-                              updateField("leadSource", e.target.value)
-                            }
-                          >
-                            <option value="">Select Source</option>
-                            {LEAD_SOURCES.map((source) => (
-                              <option key={source} value={source}>
-                                {source}
-                              </option>
-                            ))}
-                          </SelectField>
-                        </div>
+                        {isSuperAdmin ? (
+                          <div>
+                            <CreateLeadFieldLabel required>
+                              Lead Source
+                            </CreateLeadFieldLabel>
+                            <SelectField
+                              value={form.leadSource}
+                              required
+                              onChange={(e) =>
+                                updateField("leadSource", e.target.value)
+                              }
+                            >
+                              <option value="">Select Source</option>
+                              {CREATE_LEAD_SOURCE_OPTIONS.map((source) => (
+                                <option
+                                  key={source.leadType}
+                                  value={source.leadType}
+                                >
+                                  {source.label}
+                                </option>
+                              ))}
+                            </SelectField>
+                          </div>
+                        ) : null}
                         <div>
                           <CreateLeadFieldLabel>
                             Language Preferred

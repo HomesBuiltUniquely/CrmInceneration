@@ -41,6 +41,7 @@ export function normalizeLeadTypeLabel(raw: unknown): string {
   }
   if (compact === "mlead" || compact === "metaads") return "Meta Ads";
   if (compact === "alead" || compact === "addlead") return "Add Lead";
+  if (compact === "quikrlead" || compact === "quikr" || compact === "qk") return "Quikr Lead";
   if (compact === "ivrlead") return "IVR Lead";
   if (compact === "wlead" || compact === "websitelead") return "Website Lead";
   if (compact === "walkinlead" || compact === "walkin") return "Walk-in Lead";

@@ -96,6 +96,7 @@ function emptySourceCounts(): LeadSourceCounts {
     glead: 0,
     mlead: 0,
     addlead: 0,
+    quikrlead: 0,
     ivrlead: 0,
     websitelead: 0,
     walkinlead: 0,
