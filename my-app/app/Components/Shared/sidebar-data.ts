@@ -17,7 +17,6 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       { id: "crm-my-leads", label: "My Leads", description: "View and manage pipeline", icon: "chart", href: "/Leads" },
       { id: "crm-incentives", label: "Incentives", description: "Performance incentives & bonuses", icon: "receipt", href: "/incentives" },
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
-      { id: "crm-create-quikr-lead", label: "Create Quikr Lead", description: "Add Quikr lead manually", icon: "plus", href: "/create-quikr-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
       { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar", href: "/google-calendar" },
       { id: "crm-sales-managers", label: "Sales Managers", description: "View managers list", icon: "id-card", href: "/admin-panel" },
@@ -53,7 +52,6 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       },
       { id: "presales-my-leads", label: "My Leads", description: "Presales team pipeline & month totals", icon: "chart", href: "/presales-leads" },
       { id: "presales-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
-      { id: "presales-create-quikr-lead", label: "Create Quikr Lead", description: "Add Quikr lead manually", icon: "plus", href: "/create-quikr-lead" },
     ],
   },
   {
