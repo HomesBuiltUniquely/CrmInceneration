@@ -6,6 +6,7 @@ export type LeadQuoteOption = {
   customerQuoteUrl: string;
   internalQuoteUrl: string;
   createdAt?: string;
+  createdBy?: string;
   amount?: number | null;
   configuration?: string;
   isLatest?: boolean;
@@ -128,6 +129,8 @@ function quoteOptionFromRow(row: unknown, index: number): LeadQuoteOption | null
     record.latest === true ||
     record.isCurrent === true;
 
+  const createdBy = pickStr(record, "createdBy", "createdByName", "created_by");
+
   const id = quoteId || customerQuoteUrl || internalQuoteUrl || `quote-${index}`;
 
   return {
@@ -138,6 +141,7 @@ function quoteOptionFromRow(row: unknown, index: number): LeadQuoteOption | null
     customerQuoteUrl,
     internalQuoteUrl,
     createdAt: createdAt || undefined,
+    createdBy: createdBy || undefined,
     amount,
     isLatest,
   };
@@ -229,6 +233,26 @@ export function sortQuotesForRevisionDisplay(options: LeadQuoteOption[]): LeadQu
   return [...options].sort((a, b) => (a.version ?? 0) - (b.version ?? 0));
 }
 
+function appendCrmAuthParams(urlStr: string): string {
+  if (typeof window === "undefined" || !urlStr) return urlStr;
+  try {
+    const userName = (
+      window.localStorage.getItem("crm_user_name") ||
+      window.localStorage.getItem("crm_login_username") ||
+      ""
+    ).trim();
+    const userRole = (window.localStorage.getItem("crm_role") || "").trim();
+    if (!userName && !userRole) return urlStr;
+
+    const u = new URL(urlStr, window.location.href);
+    if (userName && !u.searchParams.has("crmUser")) u.searchParams.set("crmUser", userName);
+    if (userRole && !u.searchParams.has("crmRole")) u.searchParams.set("crmRole", userRole);
+    return u.toString();
+  } catch {
+    return urlStr;
+  }
+}
+
 export function buildDesignQuotePageUrl(
   quoteId: string,
   options?: { internal?: boolean; hubLeadId?: string },
@@ -238,7 +262,8 @@ export function buildDesignQuotePageUrl(
   const base = `https://design.hubinterior.com/quote/${encodeURIComponent(id)}`;
   const hubLeadId = options?.hubLeadId?.trim();
   if (options?.internal && hubLeadId) {
-    return `${base}?internal=1&leadId=${encodeURIComponent(hubLeadId)}`;
+    const raw = `${base}?internal=1&leadId=${encodeURIComponent(hubLeadId)}`;
+    return appendCrmAuthParams(raw);
   }
   return base;
 }
@@ -248,7 +273,7 @@ export function resolveQuoteVerifyUrl(
   hubLeadId?: string,
 ): string {
   const internal = option.internalQuoteUrl.trim();
-  if (internal) return internal;
+  if (internal) return appendCrmAuthParams(internal);
   const quoteKey = option.quoteId?.trim() || option.id.trim();
   if (quoteKey) {
     return buildDesignQuotePageUrl(quoteKey, {

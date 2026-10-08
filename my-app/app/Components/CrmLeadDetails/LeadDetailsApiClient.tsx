@@ -129,6 +129,7 @@ import { normalizeLeadTypeLabel } from "@/lib/lead-source-utils";
 import { dispatchCrmLeadsInvalidate } from "@/lib/crm-leads-invalidate";
 import {
   CRM_USER_NAME_STORAGE_KEY,
+  CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   getAuthApiBaseUrl,
@@ -2703,7 +2704,25 @@ export default function LeadDetailsApiClient({
         );
       }
       if (internalLink && typeof window !== "undefined") {
-        window.open(internalLink, "_blank", "noopener,noreferrer");
+        const crmUserName =
+          (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ||
+            window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY) ||
+            "").trim();
+        const crmRole = (window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) || "").trim();
+        let targetUrl = internalLink;
+        try {
+          const u = new URL(internalLink, window.location.href);
+          if (crmUserName) u.searchParams.set("crmUser", crmUserName);
+          if (crmRole) u.searchParams.set("crmRole", crmRole);
+          targetUrl = u.toString();
+        } catch {
+          const sep = internalLink.includes("?") ? "&" : "?";
+          const queryParts: string[] = [];
+          if (crmUserName) queryParts.push(`crmUser=${encodeURIComponent(crmUserName)}`);
+          if (crmRole) queryParts.push(`crmRole=${encodeURIComponent(crmRole)}`);
+          if (queryParts.length > 0) targetUrl = `${internalLink}${sep}${queryParts.join("&")}`;
+        }
+        window.open(targetUrl, "_blank", "noopener,noreferrer");
       }
     } catch (e) {
       notifyError(

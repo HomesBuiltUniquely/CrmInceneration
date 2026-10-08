@@ -1101,6 +1101,11 @@ function QuotationSection({
                   {option.quoteId ? (
                     <p className="mt-1 text-[12px] text-[#64748b]">ID {option.quoteId}</p>
                   ) : null}
+                  {option.createdBy ? (
+                    <p className="mt-1 text-[12px] font-medium text-[#475569]">
+                      Created by {option.createdBy.replace(/^(created by|by)[:\s]*/i, "")}
+                    </p>
+                  ) : null}
                   <p className="mt-3 text-[18px] font-bold text-[#0f172a]">
                     {formatQuoteAmount(option.amount)}
                   </p>
