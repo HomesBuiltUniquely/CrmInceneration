@@ -673,10 +673,6 @@ export default function BookingDoneModal({
 
   async function handleSwitchLeadOffline() {
     if (!activeAttempt) return;
-    const confirmed = window.confirm(
-      "Switch this payment to Offline? The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment.",
-    );
-    if (!confirmed) return;
     setLinkBusy(true);
     setHandoffError("");
     try {
@@ -697,15 +693,23 @@ export default function BookingDoneModal({
     }
   }
 
-  async function handleDeleteLeadPaymentLink() {
+  async function handleDeleteLeadPaymentLink(opts: { notifyCustomer: boolean }) {
     if (!activeAttempt) return;
     setLinkBusy(true);
     setHandoffError("");
     try {
-      await cancelPaymentLink(activeAttempt.id);
+      const result = await cancelPaymentLink(activeAttempt.id, {
+        notifyCustomer: opts.notifyCustomer,
+      });
       setActiveAttempt(null);
       notifyPaymentLinkUpdated(leadType, leadId, null);
       releasePaymentLinkMarkAsWonGate(leadType, leadId);
+      const warning =
+        result.warning?.trim() ||
+        (result.deactivateSucceeded === false
+          ? "Link cancelled in CRM, but Easebuzz deactivate may have failed."
+          : "");
+      if (warning) setHandoffError(warning);
     } catch (err) {
       if (isStalePaymentLinkAction(err)) {
         await loadActiveAttempt();
@@ -879,7 +883,7 @@ export default function BookingDoneModal({
                 onResend={() => void handleResendLeadPaymentLink()}
                 onEdit={(amount) => void handleEditLeadPaymentLink(amount)}
                 onSwitchOffline={() => void handleSwitchLeadOffline()}
-                onDelete={() => void handleDeleteLeadPaymentLink()}
+                onDelete={(opts) => void handleDeleteLeadPaymentLink(opts)}
               />
             </div>
           ) : (

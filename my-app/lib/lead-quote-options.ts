@@ -65,7 +65,12 @@ function mergeQuoteOptions(...groups: LeadQuoteOption[][]): LeadQuoteOption[] {
   const byKey = new Map<string, LeadQuoteOption>();
   for (const group of groups) {
     for (const option of group) {
-      const key = option.customerQuoteUrl || option.internalQuoteUrl || option.id;
+      // Prefer quoteId/id so the same revision with different URLs does not duplicate.
+      const key =
+        option.quoteId?.trim() ||
+        option.id.trim() ||
+        option.customerQuoteUrl ||
+        option.internalQuoteUrl;
       if (!key || byKey.has(key)) continue;
       byKey.set(key, option);
     }

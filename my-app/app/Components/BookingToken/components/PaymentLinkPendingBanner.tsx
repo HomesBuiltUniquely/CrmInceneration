@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import AppConfirmModal from "@/app/Components/Shared/AppConfirmModal";
 import {
   formatPaymentAmountInput,
   parsePaymentAmountInput,
@@ -23,7 +24,7 @@ type Props = {
   onResend: () => void;
   onEdit: (amount: number) => void;
   onSwitchOffline: () => void;
-  onDelete?: () => void;
+  onDelete?: (opts: { notifyCustomer: boolean }) => void;
 };
 
 function formatRelativePast(iso?: string | null): string {
@@ -170,6 +171,10 @@ export default function PaymentLinkPendingBanner({
   const [, setTick] = useState(0);
   const [editing, setEditing] = useState(false);
   const [editAmount, setEditAmount] = useState(formatPaymentAmountInput(attempt.amount));
+  const [confirmKind, setConfirmKind] = useState<"resend" | "delete" | "switch-offline" | null>(
+    null,
+  );
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((value) => value + 1), 30_000);
@@ -180,6 +185,10 @@ export default function PaymentLinkPendingBanner({
     setEditAmount(formatPaymentAmountInput(attempt.amount));
     setEditing(false);
   }, [attempt.id, attempt.amount]);
+
+  useEffect(() => {
+    if (confirmKind === "delete") setNotifyCustomer(true);
+  }, [confirmKind]);
 
   const sentTime = formatRelativePast(attempt.createdAt);
   const expiryRemaining = formatExpiryRemaining(attempt.expiresAt);
@@ -206,6 +215,28 @@ export default function PaymentLinkPendingBanner({
     const amount = parsePaymentAmountInput(editAmount);
     if (amount == null || amount <= 0) return;
     onEdit(amount);
+  };
+
+  const closeConfirm = () => {
+    if (busy) return;
+    setConfirmKind(null);
+  };
+
+  const handleConfirm = () => {
+    if (confirmKind === "resend") {
+      setConfirmKind(null);
+      onResend();
+      return;
+    }
+    if (confirmKind === "switch-offline") {
+      setConfirmKind(null);
+      onSwitchOffline();
+      return;
+    }
+    if (confirmKind === "delete" && onDelete) {
+      setConfirmKind(null);
+      onDelete({ notifyCustomer });
+    }
   };
 
   return (
@@ -241,10 +272,7 @@ export default function PaymentLinkPendingBanner({
             <IconActionButton
               label="Resend payment link"
               disabled={busy}
-              onClick={() => {
-                if (!window.confirm("Resend payment link with same amount?")) return;
-                onResend();
-              }}
+              onClick={() => setConfirmKind("resend")}
             >
               <ResendIcon />
             </IconActionButton>
@@ -259,16 +287,7 @@ export default function PaymentLinkPendingBanner({
               <IconActionButton
                 label="Delete payment link"
                 disabled={busy}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      "Delete this payment link? Customer will no longer be able to pay with it. You can send a new link after deleting.",
-                    )
-                  ) {
-                    return;
-                  }
-                  onDelete();
-                }}
+                onClick={() => setConfirmKind("delete")}
               >
                 <DeleteIcon />
               </IconActionButton>
@@ -340,16 +359,7 @@ export default function PaymentLinkPendingBanner({
             <button
               type="button"
               disabled={busy}
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    "Delete this payment link? Customer will no longer be able to pay with it. You can send a new link after deleting.",
-                  )
-                ) {
-                  return;
-                }
-                onDelete();
-              }}
+              onClick={() => setConfirmKind("delete")}
               className="text-[10.5px] font-semibold text-red-600 underline-offset-2 hover:underline disabled:opacity-60"
             >
               Delete link
@@ -358,7 +368,7 @@ export default function PaymentLinkPendingBanner({
           <button
             type="button"
             disabled={busy}
-            onClick={onSwitchOffline}
+            onClick={() => setConfirmKind("switch-offline")}
             className="text-[10.5px] font-semibold text-[#2563eb] underline-offset-2 hover:underline disabled:opacity-60"
           >
             Switch to offline
@@ -400,6 +410,55 @@ export default function PaymentLinkPendingBanner({
         </p>
       </div>
     ) : null}
+
+      <AppConfirmModal
+        open={confirmKind === "resend"}
+        title="Resend payment link?"
+        message="Resend this payment link with the same amount?"
+        confirmLabel="Resend"
+        submitting={busy}
+        onClose={closeConfirm}
+        onConfirm={handleConfirm}
+      />
+
+      <AppConfirmModal
+        open={confirmKind === "switch-offline"}
+        title="Switch to offline?"
+        message="The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment."
+        confirmLabel="Switch to offline"
+        submitting={busy}
+        onClose={closeConfirm}
+        onConfirm={handleConfirm}
+      />
+
+      <AppConfirmModal
+        open={confirmKind === "delete"}
+        title="Delete payment link?"
+        message="Customer will no longer be able to pay with this link. You can send a new link after deleting."
+        confirmLabel="Delete link"
+        danger
+        submitting={busy}
+        onClose={closeConfirm}
+        onConfirm={handleConfirm}
+      >
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2.5">
+          <input
+            type="checkbox"
+            checked={notifyCustomer}
+            onChange={(event) => setNotifyCustomer(event.target.checked)}
+            disabled={busy}
+            className="mt-0.5 shrink-0"
+          />
+          <span>
+            <span className="block text-[13px] font-semibold text-[#111827]">
+              Notify customer by email
+            </span>
+            <span className="mt-0.5 block text-[12px] text-[#6b7280]">
+              Send a cancellation email so they know not to use the old link.
+            </span>
+          </span>
+        </label>
+      </AppConfirmModal>
     </div>
   );
 }

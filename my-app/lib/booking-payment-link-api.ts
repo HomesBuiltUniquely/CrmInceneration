@@ -53,6 +53,16 @@ export type PaymentLinkResponse = {
   paymentLinkUrl?: string | null;
   switchedToOffline?: boolean;
   amount?: number;
+  /** Easebuzz deactivate outcome on cancel/delete. */
+  deactivateSucceeded?: boolean;
+  /** Whether cancel/delete emailed the customer. */
+  customerNotified?: boolean;
+  warning?: string;
+};
+
+export type CancelPaymentLinkOptions = {
+  /** Email customer that the link is cancelled. Default true. */
+  notifyCustomer?: boolean;
 };
 
 export type CreateLeadPaymentLinkInput = {
@@ -215,6 +225,13 @@ function parsePaymentLinkResponse(text: string): PaymentLinkResponse {
       paymentLinkUrl: pickStr(parsed, "paymentLinkUrl", "payment_link_url") || null,
       switchedToOffline: parsed.switchedToOffline === true,
       amount: pickNum(parsed, "amount"),
+      deactivateSucceeded:
+        typeof parsed.deactivateSucceeded === "boolean"
+          ? parsed.deactivateSucceeded
+          : undefined,
+      customerNotified:
+        typeof parsed.customerNotified === "boolean" ? parsed.customerNotified : undefined,
+      warning: typeof parsed.warning === "string" ? parsed.warning : undefined,
     };
   } catch {
     return { success: false };
@@ -263,9 +280,18 @@ export async function createLeadPaymentLink(
   return readJsonResponse(res, "Unable to send payment link.");
 }
 
+export type CreateDealPaymentLinkInput = {
+  amount?: number;
+  quoteId?: string;
+  quoteAmount?: number;
+  tenPercentAmount?: number | null;
+  quoteVersionLabel?: string;
+  quoteVerifyUrl?: string;
+};
+
 export async function createDealPaymentLink(
   recordId: string,
-  input: { amount?: number } = {},
+  input: CreateDealPaymentLinkInput = {},
 ): Promise<PaymentLinkResponse> {
   const res = await fetch(
     `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payment-links`,
@@ -349,12 +375,18 @@ export function switchPaymentLinkOffline(attemptId: string): Promise<PaymentLink
 }
 
 /** Cancel/delete unpaid active link. Tries `cancel`, then `delete` on 404. */
-export async function cancelPaymentLink(attemptId: string): Promise<PaymentLinkResponse> {
+export async function cancelPaymentLink(
+  attemptId: string,
+  options?: CancelPaymentLinkOptions,
+): Promise<PaymentLinkResponse> {
+  const body = {
+    notifyCustomer: options?.notifyCustomer !== false,
+  };
   try {
-    return await postPaymentLinkAction(attemptId, "cancel");
+    return await postPaymentLinkAction(attemptId, "cancel", body);
   } catch (err) {
     if (err instanceof PaymentLinkApiError && err.status === 404) {
-      return postPaymentLinkAction(attemptId, "delete");
+      return postPaymentLinkAction(attemptId, "delete", body);
     }
     throw err;
   }

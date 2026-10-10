@@ -3131,8 +3131,8 @@ export default function LeadsDataSection({
             // SM combined: Hub my∪team already scoped — do not re-strip with inbox/canView.
             // Never filter-only the current page (keeps Hub totals but short rows: 20→11).
             // Inbox / canView stripping belongs in buildVisiblePage (requiresFullyVisiblePage).
-            return pageJson;
-          }
+              return pageJson;
+            }
           // BFF already received assigneeAliasSet — trust paginated content.
           // Re-filtering then re-slicing a single Hub page caused empty/short pages.
           return pageJson;
@@ -3516,11 +3516,11 @@ export default function LeadsDataSection({
           });
           const baseCounts =
             !preferFilteredInventory && hubHasByLeadType
-              ? adminByLeadTypeToSourceCounts(
-                  hubByLeadType,
-                  Math.max(hubTotal, fromRows.all, journeyRows.length),
-                )
-              : fromRows;
+            ? adminByLeadTypeToSourceCounts(
+                hubByLeadType,
+                Math.max(hubTotal, fromRows.all, journeyRows.length),
+              )
+            : fromRows;
           if (!preferFilteredInventory && hubHasByLeadType) {
             baseCounts.all = Math.max(hubTotal, Number(baseCounts.all ?? 0), fromRows.all);
             for (const t of CRM_LEAD_TYPES) {
@@ -4351,7 +4351,7 @@ export default function LeadsDataSection({
               });
             }
           } else {
-            setVisibleFilteredTotal(null);
+          setVisibleFilteredTotal(null);
           }
         }
         if (usePageMetaForUi && pageJson.sourceCounts) {
@@ -4364,23 +4364,23 @@ export default function LeadsDataSection({
               all: Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
             }));
           } else {
-            // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
-            setLeadTypeCounts((prev) => {
-              const nextAll = Math.max(
-                Number(prev.all ?? 0),
-                Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
-              );
-              const nextIvr = Math.max(
-                Number(prev.ivrlead ?? 0),
-                Number(sourceCounts.ivrlead ?? 0),
-              );
-              return {
-                ...prev,
-                ...sourceCounts,
-                all: nextAll,
-                ivrlead: nextIvr,
-              };
-            });
+          // Never lower Hub Total / IVR with incomplete merge page meta (Aman 34/3).
+          setLeadTypeCounts((prev) => {
+            const nextAll = Math.max(
+              Number(prev.all ?? 0),
+              Number(sourceCounts.all ?? pageJson.totalElements ?? 0),
+            );
+            const nextIvr = Math.max(
+              Number(prev.ivrlead ?? 0),
+              Number(sourceCounts.ivrlead ?? 0),
+            );
+            return {
+              ...prev,
+              ...sourceCounts,
+              all: nextAll,
+              ivrlead: nextIvr,
+            };
+          });
           }
         } else if (preferFilteredInventory && pageJson.sourceCounts) {
           const sourceCounts = pageJson.sourceCounts;
@@ -4906,11 +4906,11 @@ export default function LeadsDataSection({
               tableInventoryTotal > 0 &&
               total > tableInventoryTotal
             ? tablePagerPages
-            : visibleFilteredTotal !== null
-              ? Math.max(1, Math.ceil(total / Math.max(1, size)))
+          : visibleFilteredTotal !== null
+            ? Math.max(1, Math.ceil(total / Math.max(1, size)))
               : tablePagerPages !== null
                 ? tablePagerPages
-                : Math.max(1, Math.ceil(total / Math.max(1, size)));
+              : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(rows.map((row) => [row.id, row]));
@@ -4971,7 +4971,7 @@ export default function LeadsDataSection({
       ? "DELETE ALL"
       : leadType === "quikrlead"
         ? "DELETE QUIKR"
-        : `DELETE ${toAssignmentLeadType(leadType).toUpperCase()}`;
+      : `DELETE ${toAssignmentLeadType(leadType).toUpperCase()}`;
   const previewSuccess = previewResult?.success === true;
   const previewDistribution = Array.isArray(previewResult?.distribution)
     ? (previewResult.distribution as Array<Record<string, unknown>>)

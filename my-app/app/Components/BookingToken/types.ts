@@ -43,6 +43,9 @@ export type DealRow = {
   /** When Booking Done form was saved (prefer over submittedAt for display). */
   createdAt?: string | null;
   asset: string;
+  /** Locked quote identity on the Booking Token deal (Hub). */
+  quoteId?: string | null;
+  quoteVersionLabel?: string | null;
   dealValue: string;
   dealValueAmount: number;
   preBooking: string;

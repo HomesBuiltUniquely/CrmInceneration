@@ -89,6 +89,119 @@ export type DesignModuleDesigner = {
   email: string;
 };
 
+/** Designer availability for a fixed 90-min slot (Design Module P0). */
+export type AvailableDesignerRow = {
+  id: number;
+  name: string;
+  email: string;
+  available: boolean;
+  conflictCount: number;
+  conflictReason?: string;
+};
+
+export type AvailableDesignersResponse = {
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  durationMinutes?: number;
+  hubWindow?: { start: string; end: string };
+  onlyAvailable?: boolean;
+  designers?: AvailableDesignerRow[];
+  error?: string;
+};
+
+export type AvailabilityByDateDesigner = {
+  id?: number;
+  name?: string;
+  email?: string;
+  freeStarts?: string[];
+  busyBlocks?: unknown[];
+};
+
+export type AvailabilityByDateResponse = {
+  date?: string;
+  durationMinutes?: number;
+  designers?: AvailabilityByDateDesigner[];
+  error?: string;
+};
+
+/**
+ * Sales: who is free for this date + 90-min slot.
+ * Proxies Design Module GET /api/appointment/available-designers
+ */
+export async function fetchAvailableDesignersForSlot(params: {
+  date: string;
+  startTime: string;
+  endTime?: string;
+  durationMinutes?: number;
+  meetingType?: string;
+  includeUnavailable?: boolean;
+}): Promise<AvailableDesignersResponse> {
+  const qs = new URLSearchParams();
+  qs.set("date", params.date);
+  qs.set("startTime", params.startTime);
+  if (params.endTime) qs.set("endTime", params.endTime);
+  if (params.durationMinutes != null) {
+    qs.set("durationMinutes", String(params.durationMinutes));
+  }
+  if (params.meetingType) qs.set("meetingType", params.meetingType);
+  if (params.includeUnavailable) qs.set("includeUnavailable", "true");
+
+  const res = await fetch(`/api/crm/appointment/available-designers?${qs}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  let data: AvailableDesignersResponse = {};
+  try {
+    data = text ? (JSON.parse(text) as AvailableDesignersResponse) : {};
+  } catch {
+    throw new Error(text?.slice(0, 180) || `HTTP ${res.status}`);
+  }
+  if (!res.ok) {
+    throw new Error(data.error || text?.slice(0, 180) || `HTTP ${res.status}`);
+  }
+  if (data.designers != null && !Array.isArray(data.designers)) {
+    data.designers = [];
+  }
+  return data;
+}
+
+/**
+ * Sales: day overview — each designer + freeStarts / busyBlocks.
+ * Proxies Design Module GET /api/appointment/availability-by-date
+ */
+export async function fetchAvailabilityByDate(params: {
+  date: string;
+  durationMinutes?: number;
+}): Promise<AvailabilityByDateResponse> {
+  const qs = new URLSearchParams();
+  qs.set("date", params.date);
+  if (params.durationMinutes != null) {
+    qs.set("durationMinutes", String(params.durationMinutes));
+  }
+  const res = await fetch(`/api/crm/appointment/availability-by-date?${qs}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const text = await res.text();
+  let data: AvailabilityByDateResponse = {};
+  try {
+    data = text ? (JSON.parse(text) as AvailabilityByDateResponse) : {};
+  } catch {
+    throw new Error(text?.slice(0, 180) || `HTTP ${res.status}`);
+  }
+  if (!res.ok) {
+    throw new Error(data.error || text?.slice(0, 180) || `HTTP ${res.status}`);
+  }
+  if (data.designers != null && !Array.isArray(data.designers)) {
+    data.designers = [];
+  }
+  return data;
+}
+
 /**
  * Fetch designers from Design Module (single source of truth).
  * Returns { id, name, email } — name for slot matching, email for Google Calendar.

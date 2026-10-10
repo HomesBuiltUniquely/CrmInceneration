@@ -26,6 +26,7 @@ import {
 } from "@/lib/configuration-scope-client";
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import BookingCelebrationOverlay from "./BookingCelebrationOverlay";
+import ConvertTransformerManIcon from "./ConvertTransformerManIcon";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { formatBookingDateDisplay } from "@/lib/booking-token-display-format";
 import { dealLevelLabel } from "@/lib/booking-token-listing-type";
@@ -710,8 +711,12 @@ export default function ConvertToBookingModal({
               type="button"
               onClick={handleConfirm}
               disabled={submitting || celebrating || savingSpecialNotes || !readyToConvert}
-              className="bt-btn bt-btn-modal bt-btn-modal-primary disabled:opacity-60"
+              className="bt-btn bt-btn-modal bt-btn-modal-primary inline-flex items-center justify-center gap-2 disabled:opacity-60"
             >
+              <ConvertTransformerManIcon
+                className="h-6 w-6"
+                walking={submitting || celebrating}
+              />
               {savingSpecialNotes
                 ? "Saving notes…"
                 : submitting

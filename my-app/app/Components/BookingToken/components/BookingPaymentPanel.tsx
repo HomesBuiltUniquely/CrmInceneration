@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -19,11 +20,26 @@ import {
 } from "@/lib/booking-token-finance-status";
 import {
   fetchPaymentHistory,
+  rebindDealQuote,
   removeBookingPayment,
   submitBookingPayment,
   type PaymentHistoryEntry,
   type PaymentHistoryResponse,
 } from "@/lib/booking-payment-history-api";
+import { previewQuoteChange } from "@/lib/booking-done-payment-rules";
+import {
+  fetchQuoteOptionsForLeadDetail,
+  refreshQuoteOptionDetails,
+} from "@/lib/lead-quote-options";
+import {
+  formatQuoteAmount,
+  resolveQuoteVerifyUrl,
+  type LeadQuoteOption,
+} from "@/lib/crm-quote-links";
+import { getLeadDetail } from "@/lib/lead-details-client";
+import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
+import type { CrmLeadType } from "@/lib/leads-filter";
+import type { QuoteLoadState } from "./BookingQuoteVersionPicker";
 import {
   formatPaymentKind,
   isEasebuzzPayment,
@@ -52,9 +68,9 @@ import {
   switchPaymentLinkOffline,
   type PaymentLinkAttempt,
 } from "@/lib/booking-payment-link-api";
+import AppConfirmModal from "@/app/Components/Shared/AppConfirmModal";
 import PaymentProofThumbnail from "./PaymentProofThumbnail";
 import PaymentProofViewModal from "./PaymentProofViewModal";
-import PaymentChannelSelector from "./PaymentChannelSelector";
 import PaymentLinkPendingBanner from "./PaymentLinkPendingBanner";
 import LeadPaymentLinkStatusChip from "@/app/Components/CrmLeadDetailsV2/LeadPaymentLinkStatusChip";
 import BookingLeadDetailsGrid from "./BookingLeadDetailsGrid";
@@ -71,7 +87,6 @@ import {
 import {
   splitPaymentTowardTenAndExtra,
 } from "@/lib/booking-payment-overpay";
-import { formatQuoteAmount } from "@/lib/crm-quote-links";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { isSuperAdminRole, canUsePaymentLinkIntegration } from "@/lib/roleUtils";
 import {
@@ -83,6 +98,12 @@ import {
   dealLevelTone,
   type DealLevelTone,
 } from "@/lib/booking-token-listing-type";
+import {
+  SendPaymentBody,
+  SendPaymentModal,
+  validateSendPaymentForm,
+  type SendPaymentFieldErrors,
+} from "./SendPayment";
 
 export type BookingPaymentPanelMode = "view" | "pay";
 
@@ -100,11 +121,16 @@ type DraftProof = {
   previewUrl: string;
 };
 
-function clampPanelPosition(x: number, y: number, panelWidth: number, panelHeight: number) {
-  const margin = 8;
+function clampPanelPosition(
+  x: number,
+  y: number,
+  panelWidth: number,
+  panelHeight: number,
+  margin = 8,
+) {
   return {
-    x: Math.min(Math.max(margin, x), window.innerWidth - panelWidth - margin),
-    y: Math.min(Math.max(margin, y), window.innerHeight - panelHeight - margin),
+    x: Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - panelWidth - margin)),
+    y: Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - panelHeight - margin)),
   };
 }
 
@@ -114,6 +140,17 @@ function getTopAlignedPanelPosition(panelWidth: number, panelHeight: number) {
     16,
     panelWidth,
     panelHeight,
+  );
+}
+
+function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
+  const viewportH = window.visualViewport?.height ?? window.innerHeight;
+  return clampPanelPosition(
+    (window.innerWidth - panelWidth) / 2,
+    (viewportH - panelHeight) / 2,
+    panelWidth,
+    panelHeight,
+    40,
   );
 }
 
@@ -133,6 +170,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [error, setError] = useState("");
   const [historyData, setHistoryData] = useState<PaymentHistoryResponse | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
@@ -152,6 +190,15 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const [linkBusy, setLinkBusy] = useState(false);
   const [copiedNotice, setCopiedNotice] = useState("");
   const [historyDetailOpen, setHistoryDetailOpen] = useState(false);
+  const [quoteLoadState, setQuoteLoadState] = useState<QuoteLoadState>("idle");
+  const [quoteError, setQuoteError] = useState("");
+  const [quoteOptions, setQuoteOptions] = useState<LeadQuoteOption[]>([]);
+  const [selectedQuoteId, setSelectedQuoteId] = useState("");
+  const [hubLeadId, setHubLeadId] = useState("");
+  const [quoteAmountRefreshing, setQuoteAmountRefreshing] = useState(false);
+  const [rebindingQuote, setRebindingQuote] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<SendPaymentFieldErrors>({});
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -173,6 +220,35 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   const isRichDetailView = mode === "view";
 
   const summary = historyData ?? (deal ? buildSummaryFromDeal(deal) : null);
+  const selectedQuote = useMemo(
+    () => quoteOptions.find((option) => option.id === selectedQuoteId) ?? null,
+    [quoteOptions, selectedQuoteId],
+  );
+  const dealQuoteId = (summary?.quoteId ?? deal?.quoteId ?? null)?.trim() || null;
+  const quoteSelectionDiffers =
+    Boolean(selectedQuote) &&
+    Boolean(summary) &&
+    Boolean(deal) &&
+    !isDealLockedQuote(selectedQuote, dealQuoteId, summary?.quoteAmount ?? deal?.dealValueAmount);
+  const quotePreview =
+    quoteSelectionDiffers && selectedQuote?.amount != null
+      ? previewQuoteChange({
+          amountReceived: summary?.amountReceived,
+          extraAmountReceived: summary?.extraAmountReceived,
+          totalAmountReceived: summary?.totalAmountReceived,
+          quoteAmount: selectedQuote.amount,
+        })
+      : null;
+  const displayQuoteAmount = quotePreview?.quoteAmount ?? summary?.quoteAmount ?? 0;
+  const displayTenPercent = quotePreview?.tenPercentAmount ?? summary?.tenPercentAmount ?? 0;
+  const displayPaidSoFar = (() => {
+    if (quotePreview) return quotePreview.paidSoFar;
+    const total = Number(summary?.totalAmountReceived);
+    if (Number.isFinite(total)) return Math.max(0, total);
+    return Math.max(0, Number(summary?.amountReceived ?? 0)) + Math.max(0, Number(summary?.extraAmountReceived ?? 0));
+  })();
+  const displayRemaining = quotePreview?.remainingAmount ?? summary?.remainingAmount ?? 0;
+  const displayExtra = quotePreview?.extraAmountReceived ?? summary?.extraAmountReceived ?? 0;
   const history = summary?.history ?? [];
   const visibleHistory = history.filter((entry) => {
     if (historyFilter === "online") return isEasebuzzPayment(entry);
@@ -242,11 +318,80 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setHistoryFilter("all");
     setCopiedNotice("");
     setHistoryDetailOpen(false);
+    setQuoteLoadState("idle");
+    setQuoteError("");
+    setQuoteOptions([]);
+    setSelectedQuoteId("");
+    setHubLeadId("");
+    setQuoteAmountRefreshing(false);
+    setRebindingQuote(false);
+    setFieldErrors({});
+    setDiscardConfirmOpen(false);
     void loadHistory();
     if (canUsePaymentLinks) {
       void loadActiveAttempt();
     }
   }, [open, deal, loadHistory, loadActiveAttempt, mode, viewerRole]);
+
+  useEffect(() => {
+    if (!open || !deal || mode !== "pay") return;
+    if (!isCrmLeadType(deal.leadType)) {
+      setQuoteLoadState("error");
+      setQuoteError("Invalid lead type.");
+      return;
+    }
+    let cancelled = false;
+    const activeDeal = deal;
+    const validLeadType = activeDeal.leadType as CrmLeadType;
+
+    async function loadQuotes() {
+      setQuoteLoadState("loading");
+      setQuoteError("");
+      try {
+        const detail = await getLeadDetail(validLeadType, String(activeDeal.leadId));
+        if (cancelled) return;
+        const { options: merged, hubLeadId: resolvedHubLeadId } =
+          await fetchQuoteOptionsForLeadDetail(detail, String(activeDeal.leadId));
+        if (cancelled) return;
+        if (merged.length === 0) {
+          setQuoteOptions([]);
+          setSelectedQuoteId("");
+          setHubLeadId("");
+          setQuoteLoadState("empty");
+          return;
+        }
+        setHubLeadId(resolvedHubLeadId);
+        setQuoteOptions(merged);
+        const lockedId = (activeDeal.quoteId ?? "").trim();
+        const locked =
+          lockedId
+            ? merged.find((option) => option.quoteId === lockedId || option.id === lockedId) ?? null
+            : merged.find(
+                (option) =>
+                  option.amount != null &&
+                  Math.round(option.amount) === Math.round(activeDeal.dealValueAmount),
+              ) ?? null;
+        const defaultSelection =
+          locked?.id ?? merged.find((option) => option.isLatest)?.id ?? merged[0]?.id ?? "";
+        setSelectedQuoteId(defaultSelection);
+        setQuoteLoadState("ready");
+      } catch (err) {
+        if (cancelled) return;
+        setQuoteOptions([]);
+        setSelectedQuoteId("");
+        setHubLeadId("");
+        setQuoteLoadState("error");
+        setQuoteError(
+          err instanceof Error ? err.message : "Unable to load quotations for this lead.",
+        );
+      }
+    }
+
+    void loadQuotes();
+    return () => {
+      cancelled = true;
+    };
+  }, [deal, mode, open]);
 
   useEffect(() => {
     if (!open || !deal || (!isRichDetailView && mode !== "pay")) return;
@@ -288,16 +433,33 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   useLayoutEffect(() => {
     if (!open) return;
-    const panelWidth = Math.min(920, window.innerWidth - 32);
-    const estimatedHeight = Math.min(window.innerHeight - 32, mode === "pay" ? 560 : 520);
-    setPanelPosition(getTopAlignedPanelPosition(panelWidth, estimatedHeight));
+    const viewportH = window.visualViewport?.height ?? window.innerHeight;
+    const panelWidth =
+      mode === "pay"
+        ? Math.min(1120, window.innerWidth - 48)
+        : Math.min(920, window.innerWidth - 32);
+    const estimatedHeight = Math.min(
+      viewportH - (mode === "pay" ? 80 : 24),
+      mode === "pay" ? 640 : 520,
+    );
+    setPanelPosition(
+      mode === "pay"
+        ? getCenteredPanelPosition(panelWidth, estimatedHeight)
+        : getTopAlignedPanelPosition(panelWidth, estimatedHeight),
+    );
     setPanelEntered(false);
   }, [open, mode, deal?.id]);
 
   useLayoutEffect(() => {
     if (!open || !panelRef.current) return;
     const rect = panelRef.current.getBoundingClientRect();
-    setPanelPosition(getTopAlignedPanelPosition(rect.width, rect.height));
+    const maxPayH = (window.visualViewport?.height ?? window.innerHeight) - 80;
+    const height = mode === "pay" ? Math.min(rect.height, maxPayH) : rect.height;
+    setPanelPosition(
+      mode === "pay"
+        ? getCenteredPanelPosition(rect.width, height)
+        : getTopAlignedPanelPosition(rect.width, rect.height),
+    );
   }, [open, mode, historyData, draftProofs.length, loading]);
 
   useEffect(() => {
@@ -309,7 +471,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode === "pay") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") handleClose();
     };
@@ -317,7 +479,18 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
-  const handleClose = useCallback(() => {
+  const isPayFormDirty = useCallback(() => {
+    if (mode !== "pay") return false;
+    if (draftProofs.length > 0) return true;
+    if (notes.trim()) return true;
+    if (offlineMethod) return true;
+    const amount = parsePaymentAmountInput(amountInput);
+    if (amount != null && amount > 0 && amount !== Math.round(displayRemaining)) return true;
+    return false;
+  }, [amountInput, displayRemaining, draftProofs.length, mode, notes, offlineMethod]);
+
+  const closePanelNow = useCallback(() => {
+    setDiscardConfirmOpen(false);
     setPanelEntered(false);
     for (const proof of draftProofs) {
       URL.revokeObjectURL(proof.previewUrl);
@@ -325,6 +498,15 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     setDraftProofs([]);
     window.setTimeout(() => onClose(), 280);
   }, [draftProofs, onClose]);
+
+  const handleClose = useCallback(() => {
+    if (submitting || linkBusy || rebindingQuote) return;
+    if (isPayFormDirty()) {
+      setDiscardConfirmOpen(true);
+      return;
+    }
+    closePanelNow();
+  }, [closePanelNow, isPayFormDirty, linkBusy, rebindingQuote, submitting]);
 
   const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!panelRef.current || event.button !== 0) return;
@@ -385,6 +567,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         });
       }
       setDraftProofs(nextProofs);
+      setFieldErrors((prev) => ({ ...prev, proofCount: undefined }));
     },
     [deal, draftProofs],
   );
@@ -398,36 +581,125 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   }, []);
 
   const handleUseRemaining = useCallback(() => {
-    if (!summary) return;
-    setAmountInput(formatPaymentAmountInput(summary.remainingAmount));
-  }, [summary]);
+    if (displayRemaining <= 0) return;
+    setAmountInput(formatPaymentAmountInput(displayRemaining));
+  }, [displayRemaining]);
+
+  const buildQuotePayload = useCallback(() => {
+    if (!selectedQuote || selectedQuote.amount == null) return {};
+    const quoteId = selectedQuote.quoteId?.trim() || selectedQuote.id;
+    if (!quoteId) return {};
+    // Always send selected quote on pay/link so Hub can no-op or rebind.
+    const tenPercent =
+      quotePreview?.tenPercentAmount ?? Math.round(selectedQuote.amount * 0.1);
+    return {
+      quoteId,
+      quoteVersionLabel: selectedQuote.label,
+      quoteAmount: selectedQuote.amount,
+      tenPercentAmount: tenPercent,
+      quoteVerifyUrl: resolveQuoteVerifyUrl(selectedQuote, hubLeadId) || undefined,
+    };
+  }, [hubLeadId, quotePreview?.tenPercentAmount, selectedQuote]);
+
+  const handleSelectQuote = useCallback(
+    async (id: string) => {
+      setSelectedQuoteId(id);
+      setError("");
+      const option = quoteOptions.find((row) => row.id === id);
+      if (!option) return;
+      setQuoteAmountRefreshing(true);
+      try {
+        const refreshed = await refreshQuoteOptionDetails(option);
+        setQuoteOptions((prev) =>
+          prev.map((row) => (row.id === refreshed.id ? refreshed : row)),
+        );
+        const preview =
+          refreshed.amount != null
+            ? previewQuoteChange({
+                amountReceived: summary?.amountReceived,
+                extraAmountReceived: summary?.extraAmountReceived,
+                totalAmountReceived: summary?.totalAmountReceived,
+                quoteAmount: refreshed.amount,
+              })
+            : null;
+        if (preview && preview.dueNow > 0) {
+          setAmountInput(formatPaymentAmountInput(preview.dueNow));
+        } else {
+          setAmountInput("");
+        }
+      } finally {
+        setQuoteAmountRefreshing(false);
+      }
+    },
+    [quoteOptions, summary?.amountReceived, summary?.extraAmountReceived, summary?.totalAmountReceived],
+  );
+
+  const handleApplyQuoteOnly = useCallback(async () => {
+    if (!deal || !selectedQuote || selectedQuote.amount == null) return;
+    const quoteId = selectedQuote.quoteId?.trim() || selectedQuote.id;
+    if (!quoteId) {
+      setError("Selected quotation is missing a quote id.");
+      return;
+    }
+    setRebindingQuote(true);
+    setError("");
+    try {
+      await rebindDealQuote(deal.id, {
+        quoteId,
+        quoteVersionLabel: selectedQuote.label,
+        quoteAmount: selectedQuote.amount,
+        tenPercentAmount: Math.round(selectedQuote.amount * 0.1),
+        quoteVerifyUrl: resolveQuoteVerifyUrl(selectedQuote, hubLeadId) || undefined,
+      });
+      await loadHistory();
+      await loadActiveAttempt();
+      onUpdated?.();
+      closePanelNow();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update quote on this deal.");
+    } finally {
+      setRebindingQuote(false);
+    }
+  }, [closePanelNow, deal, hubLeadId, loadActiveAttempt, loadHistory, onUpdated, selectedQuote]);
 
   const handleSubmitPayment = useCallback(async () => {
     if (!deal || !summary) return;
-    const amount = parsePaymentAmountInput(amountInput);
-    if (amount == null || amount <= 0) {
-      setError("Enter the payment amount to record.");
+    if (quoteSelectionDiffers && displayRemaining <= 0) {
+      await handleApplyQuoteOnly();
       return;
     }
-    if (draftProofs.length === 0) {
-      setError("Upload at least one payment proof screenshot.");
+    const amount = parsePaymentAmountInput(amountInput);
+    const validated = validateSendPaymentForm({
+      versionId: selectedQuoteId || (deal.quoteId ?? ""),
+      type: "offline",
+      method: canUsePaymentLinks ? offlineMethod : offlineMethod || "CASH",
+      amount,
+      notes,
+      proofCount: draftProofs.length,
+    });
+    if (!validated.ok) {
+      setFieldErrors(validated.errors);
+      setError(validated.errors.root || validated.errors.amount || validated.errors.proofCount || validated.errors.method || "Check the form and try again.");
       return;
     }
     if (canUsePaymentLinks && !offlineMethod) {
+      setFieldErrors({ method: "Select Cash, Cheque, Bank Transfer, or DD." });
       setError("Select Cash, Cheque, Bank Transfer, or DD.");
       return;
     }
 
     setSubmitting(true);
     setError("");
+    setFieldErrors({});
     try {
       await submitBookingPayment(deal.id, {
-        amount,
+        amount: validated.values.amount,
         notes,
         files: draftProofs.map((proof) => proof.file),
         ...(canUsePaymentLinks
           ? { paymentMethod: offlineMethod, paymentChannel: "OFFLINE" }
           : {}),
+        ...buildQuotePayload(),
       });
       for (const proof of draftProofs) {
         URL.revokeObjectURL(proof.previewUrl);
@@ -436,16 +708,35 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       setAmountInput("");
       setNotes("");
       await loadHistory();
+      await loadActiveAttempt();
       onUpdated?.();
       if (mode === "pay") {
-        handleClose();
+        closePanelNow();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to record payment.");
     } finally {
       setSubmitting(false);
     }
-  }, [amountInput, canUsePaymentLinks, deal, draftProofs, handleClose, loadHistory, mode, notes, offlineMethod, onUpdated, summary]);
+  }, [
+    amountInput,
+    buildQuotePayload,
+    canUsePaymentLinks,
+    closePanelNow,
+    deal,
+    displayRemaining,
+    draftProofs,
+    handleApplyQuoteOnly,
+    loadActiveAttempt,
+    loadHistory,
+    mode,
+    notes,
+    offlineMethod,
+    onUpdated,
+    quoteSelectionDiffers,
+    selectedQuoteId,
+    summary,
+  ]);
 
   const applyAttempt = useCallback(
     (attempt: PaymentLinkAttempt | null | undefined) => {
@@ -466,7 +757,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   const handleSendPaymentLink = useCallback(async () => {
     if (!deal || !summary) return;
-    if (isBannerPaymentLink(activeAttempt)) {
+    if (quoteSelectionDiffers && displayRemaining <= 0) {
+      await handleApplyQuoteOnly();
+      return;
+    }
+    if (isBannerPaymentLink(activeAttempt) && !quoteSelectionDiffers) {
       setError(
         "A payment link is already pending. Wait for payment, delete the link, or switch to offline.",
       );
@@ -478,17 +773,28 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     }
     const amount = parsePaymentAmountInput(amountInput);
     if (amountInput.trim() && (amount == null || amount <= 0)) {
+      setFieldErrors({ amount: "Enter a valid payment amount greater than 0." });
       setError("Enter a valid payment amount, or leave it blank to use the remaining amount.");
+      return;
+    }
+    const effectiveAmount = amount != null && amount > 0 ? amount : displayRemaining;
+    if (!(effectiveAmount > 0)) {
+      setFieldErrors({ amount: "Amount must be greater than 0." });
+      setError("Enter a payment amount greater than 0.");
       return;
     }
     setLinkBusy(true);
     setError("");
+    setFieldErrors({});
     try {
-      const result = await createDealPaymentLink(
-        deal.id,
-        amount != null && amount > 0 ? { amount } : {},
-      );
+      const quoteFields = buildQuotePayload();
+      const result = await createDealPaymentLink(deal.id, {
+        ...(amount != null && amount > 0 ? { amount } : {}),
+        ...quoteFields,
+      });
       applyAttempt(result.attempt);
+      await loadHistory();
+      onUpdated?.();
       if (result.warnings?.length) {
         setError(result.warnings.join(" · "));
       }
@@ -508,7 +814,21 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     } finally {
       setLinkBusy(false);
     }
-  }, [activeAttempt, amountInput, applyAttempt, deal, leadDetails.email, leadDetails.phone, summary]);
+  }, [
+    activeAttempt,
+    amountInput,
+    applyAttempt,
+    buildQuotePayload,
+    deal,
+    displayRemaining,
+    handleApplyQuoteOnly,
+    leadDetails.email,
+    leadDetails.phone,
+    loadHistory,
+    onUpdated,
+    quoteSelectionDiffers,
+    summary,
+  ]);
 
   const handleCopyPaymentLink = useCallback(async () => {
     if (!activeAttempt) return;
@@ -570,10 +890,6 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   const handleSwitchOffline = useCallback(async () => {
     if (!activeAttempt || !deal) return;
-    const confirmed = window.confirm(
-      "Switch this payment to Offline? The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment.",
-    );
-    if (!confirmed) return;
     setLinkBusy(true);
     setError("");
     try {
@@ -594,41 +910,49 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     }
   }, [activeAttempt, deal]);
 
-  const handleDeletePaymentLink = useCallback(async () => {
-    if (!activeAttempt || !deal) return;
-    setLinkBusy(true);
-    setError("");
-    try {
-      await cancelPaymentLink(activeAttempt.id);
-      setActiveAttempt(null);
-      notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), null);
-      releasePaymentLinkMarkAsWonGate(deal.leadType, String(deal.leadId));
-      setCopiedNotice("Payment link deleted — you can send a new one.");
-      window.setTimeout(() => setCopiedNotice(""), 2500);
-      onUpdated?.();
-    } catch (err) {
-      if (isStalePaymentLinkAction(err)) {
-        await loadActiveAttempt();
+  const handleDeletePaymentLink = useCallback(
+    async (opts: { notifyCustomer: boolean }) => {
+      if (!activeAttempt || !deal) return;
+      setLinkBusy(true);
+      setError("");
+      try {
+        const result = await cancelPaymentLink(activeAttempt.id, {
+          notifyCustomer: opts.notifyCustomer,
+        });
+        setActiveAttempt(null);
+        notifyPaymentLinkUpdated(deal.leadType, String(deal.leadId), null);
+        releasePaymentLinkMarkAsWonGate(deal.leadType, String(deal.leadId));
+        const warning =
+          result.warning?.trim() ||
+          (result.deactivateSucceeded === false
+            ? "Link cancelled in CRM, but Easebuzz deactivate may have failed."
+            : "");
+        setCopiedNotice(
+          warning || "Payment link deleted — you can send a new one.",
+        );
+        window.setTimeout(() => setCopiedNotice(""), 2500);
+        onUpdated?.();
+      } catch (err) {
+        if (isStalePaymentLinkAction(err)) {
+          await loadActiveAttempt();
+        }
+        setError(err instanceof Error ? err.message : "Unable to delete payment link.");
+      } finally {
+        setLinkBusy(false);
       }
-      setError(err instanceof Error ? err.message : "Unable to delete payment link.");
-    } finally {
-      setLinkBusy(false);
-    }
-  }, [activeAttempt, deal, loadActiveAttempt, onUpdated]);
+    },
+    [activeAttempt, deal, loadActiveAttempt, onUpdated],
+  );
 
   const handleRemovePayment = useCallback(async () => {
     if (!deal || !selectedEntry) return;
-    const confirmed = window.confirm(
-      `Remove payment ${formatQuoteAmount(selectedEntry.amount)}? If 10% is no longer complete, the deal returns to the Token tab so you can Convert to Booking again.`,
-    );
-    if (!confirmed) return;
-
     setRemoving(true);
     setError("");
     try {
       const data = await removeBookingPayment(deal.id, selectedEntry.id);
       setHistoryData(data);
       setSelectedEntryId(data.history[data.history.length - 1]?.id ?? "");
+      setRemoveConfirmOpen(false);
       onUpdated?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to remove payment.");
@@ -649,16 +973,31 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           : isTokenView
             ? "Token details"
             : "Deal details";
-  const canPay = summary.remainingAmount > 0;
+  const canChangeQuote =
+    mode === "pay" &&
+    deal.listingType === "token" &&
+    Number(summary.remainingAmount) > 0 &&
+    deal.cancellationApprovalStatus !== "PENDING";
+  const canPay =
+    deal.listingType === "token" &&
+    Number(displayRemaining) > 0 &&
+    deal.cancellationApprovalStatus !== "PENDING";
+  const quoteCompleteAfterRebind =
+    canChangeQuote && quoteSelectionDiffers && displayRemaining <= 0;
   const showBanner = canUsePaymentLinks && isBannerPaymentLink(activeAttempt);
-  const showPayComposer = mode === "pay" && (canPay || showBanner);
+  const showPayComposer =
+    mode === "pay" && (canPay || showBanner || quoteCompleteAfterRebind || canChangeQuote);
   const missingContacts =
     !loadingLead && !hasLeadContact(leadDetails.phone, leadDetails.email);
 
   const parsedPayAmount = parsePaymentAmountInput(amountInput);
   const paySplit =
     parsedPayAmount != null && parsedPayAmount > 0
-      ? splitPaymentTowardTenAndExtra(parsedPayAmount, summary.remainingAmount)
+      ? splitPaymentTowardTenAndExtra(parsedPayAmount, displayRemaining)
+      : null;
+  const quoteHelperText =
+    quoteSelectionDiffers && quotePreview
+      ? `Paid ${formatQuoteAmount(quotePreview.paidSoFar)} against previous quote · New 10% ${formatQuoteAmount(quotePreview.tenPercentAmount)} · Due now ${formatQuoteAmount(quotePreview.dueNow)}`
       : null;
 
   const pendingLinkBanner =
@@ -670,7 +1009,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         onResend={() => void handleResendPaymentLink()}
         onEdit={(amount) => void handleEditPaymentLink(amount)}
         onSwitchOffline={() => void handleSwitchOffline()}
-        onDelete={() => void handleDeletePaymentLink()}
+        onDelete={(opts) => void handleDeletePaymentLink(opts)}
       />
     ) : null;
   const onlineSuccessChip =
@@ -750,12 +1089,251 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
             entry={selectedEntry}
             canRemove={canRemoveSelectedPayment}
             removing={removing}
-            onRemove={() => void handleRemovePayment()}
+            onRemove={() => setRemoveConfirmOpen(true)}
           />
         </div>
       </div>
     </div>
   );
+
+  const payComposer = showPayComposer ? (
+    <SendPaymentBody
+      totalAmount={displayQuoteAmount}
+      bookingAmount10={displayTenPercent}
+      amountPaid={displayPaidSoFar}
+      remaining10={displayRemaining}
+      quoteLoadState={canChangeQuote ? quoteLoadState : "idle"}
+      quoteError={quoteError}
+      quoteOptions={canChangeQuote ? quoteOptions : []}
+      hubLeadId={hubLeadId}
+      selectedQuoteId={selectedQuoteId}
+      selectedQuote={selectedQuote}
+      dealQuoteId={dealQuoteId}
+      quoteAmountRefreshing={quoteAmountRefreshing}
+      onSelectQuote={(id) => void handleSelectQuote(id)}
+      historyLoading={loading}
+      history={visibleHistory}
+      paymentCount={summary.summary?.paymentCount ?? history.length}
+      proofCount={
+        summary.summary?.proofCount ??
+        history.reduce((n, entry) => n + (entry.proofs?.length ?? 0), 0)
+      }
+      historyFilter={historyFilter}
+      onHistoryFilterChange={setHistoryFilter}
+      selectedEntryId={selectedEntryId}
+      onSelectEntry={(id) => {
+        setSelectedEntryId(id);
+        setHistoryDetailOpen(true);
+      }}
+      showHistoryFilters={canUsePaymentLinks}
+      channel={channel}
+      onChannelChange={(next) => {
+        setFieldErrors({});
+        if (next === "offline" && showBanner && !quoteSelectionDiffers) {
+          void handleSwitchOffline();
+          return;
+        }
+        setChannel(next);
+      }}
+      showOnlineChannel={canUsePaymentLinks}
+      offlineMethod={offlineMethod}
+      onOfflineMethodChange={(method) => {
+        setFieldErrors((prev) => ({ ...prev, method: undefined }));
+        setOfflineMethod(method);
+      }}
+      amountInput={amountInput}
+      onAmountChange={(value) => {
+        setFieldErrors((prev) => ({ ...prev, amount: undefined }));
+        setAmountInput(value);
+      }}
+      onUseRemaining={handleUseRemaining}
+      extraToFinance={paySplit?.extraToFinance ?? 0}
+      notes={notes}
+      onNotesChange={setNotes}
+      draftProofs={draftProofs}
+      dragActive={dragActive}
+      fileInputRef={fileInputRef}
+      onPickFiles={() => fileInputRef.current?.click()}
+      onFileInputChange={(event) => {
+        if (event.target.files) void addProofFiles(event.target.files);
+        event.target.value = "";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        if (event.dataTransfer.files.length > 0) {
+          void addProofFiles(event.dataTransfer.files);
+        }
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={() => setDragActive(false)}
+      onRemoveProof={removeDraftProof}
+      onPreviewProof={setDraftProofViewer}
+      fieldErrors={fieldErrors}
+      disabled={submitting || linkBusy || rebindingQuote}
+      submitting={submitting || linkBusy || rebindingQuote}
+      primaryLabel={
+        quoteCompleteAfterRebind
+          ? "Apply quote change"
+          : canUsePaymentLinks && channel === "online"
+            ? `Send payment link · ${formatQuoteAmount(parsePaymentAmountInput(amountInput) ?? displayRemaining)}`
+            : `Save payment · ${formatQuoteAmount(parsePaymentAmountInput(amountInput) ?? 0)}`
+      }
+      onPrimaryAction={() => {
+        if (quoteCompleteAfterRebind) {
+          void handleApplyQuoteOnly();
+          return;
+        }
+        if (canUsePaymentLinks && channel === "online") {
+          void handleSendPaymentLink();
+          return;
+        }
+        void handleSubmitPayment();
+      }}
+      primaryDisabled={
+        quoteCompleteAfterRebind
+          ? rebindingQuote || submitting || linkBusy
+          : canUsePaymentLinks && channel === "online"
+            ? (showBanner && !quoteSelectionDiffers) ||
+              linkBusy ||
+              loadingLead ||
+              missingContacts ||
+              rebindingQuote
+            : submitting || rebindingQuote
+      }
+      helperSlot={
+        <>
+          {quoteHelperText ? (
+            <p className="rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-950">
+              {quoteHelperText}
+            </p>
+          ) : null}
+          {deal && (deal.bufferApplied || deal.bookingApprovalMode === "BUFFER_9_9") ? (
+            <div className="rounded-[14px] border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] leading-relaxed text-sky-950">
+              {deal.financeBufferNote?.trim() ||
+                "Booking via 9.9% buffer. Remaining toward 10% is expected until Finance collects the shortfall."}
+            </div>
+          ) : null}
+          {error ? (
+            <p
+              className="rounded-[14px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+              role="alert"
+              aria-live="polite"
+            >
+              {error}
+            </p>
+          ) : null}
+          {copiedNotice ? (
+            <p className="text-[12px] font-semibold text-emerald-700">{copiedNotice}</p>
+          ) : null}
+        </>
+      }
+      bannerSlot={
+        <>
+          {pendingLinkBanner}
+          {!pendingLinkBanner ? onlineSuccessChip : null}
+        </>
+      }
+      historyDetailOpen={Boolean(historyDetailOpen && selectedEntry)}
+      middleTopSlot={
+        historyDetailOpen && selectedEntry ? (
+          <div className="rounded-2xl border border-[#E3E8EE] bg-[#F7F9FA] p-3">
+            <button
+              type="button"
+              onClick={() => setHistoryDetailOpen(false)}
+              className="mb-2 text-[12px] font-semibold text-[#047857] hover:underline"
+            >
+              ← Back to payment form
+            </button>
+            <HistoryDetailSection
+              deal={deal}
+              entry={selectedEntry}
+              canRemove={canRemoveSelectedPayment}
+              removing={removing}
+              onRemove={() => setRemoveConfirmOpen(true)}
+            />
+          </div>
+        ) : quoteCompleteAfterRebind ? (
+          <div className="rounded-[14px] border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[13px] text-emerald-900">
+            With this quote, paid amount already meets the new 10%. Apply the quote
+            change to freeze it and unlock Convert to Booking — no extra payment needed.
+          </div>
+        ) : null
+      }
+    />
+  ) : (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+      <p className="rounded-[14px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        Full 10% is already received. Use Convert to Booking on the deal row.
+      </p>
+      {error ? (
+        <p className="rounded-[14px] border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+
+  if (mode === "pay") {
+    return (
+      <>
+        <SendPaymentModal
+          open={open}
+          entered={panelEntered}
+          customer={deal.customer}
+          quoteId={selectedQuote?.quoteId || deal.quoteId}
+          bookingRef={deal.asset}
+          onClose={handleClose}
+          panelRef={panelRef}
+          position={panelPosition}
+          isDragging={isDragging}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+        >
+          {payComposer}
+        </SendPaymentModal>
+
+        <PaymentProofViewModal
+          open={draftProofViewer != null}
+          onClose={() => setDraftProofViewer(null)}
+          fileName={draftProofViewer?.file.name ?? "Payment proof"}
+          mimeType={draftProofViewer?.file.type}
+          previewUrl={draftProofViewer?.previewUrl}
+        />
+
+        <AppConfirmModal
+          open={removeConfirmOpen && selectedEntry != null}
+          title="Remove payment?"
+          message={
+            selectedEntry
+              ? `Remove payment ${formatQuoteAmount(selectedEntry.amount)}? If 10% is no longer complete, the deal returns to the Token tab so you can Convert to Booking again.`
+              : ""
+          }
+          confirmLabel="Remove payment"
+          danger
+          submitting={removing}
+          onClose={() => {
+            if (!removing) setRemoveConfirmOpen(false);
+          }}
+          onConfirm={() => void handleRemovePayment()}
+        />
+
+        <AppConfirmModal
+          open={discardConfirmOpen}
+          title="Discard payment?"
+          message="You have unsaved payment details. Close anyway?"
+          confirmLabel="Discard"
+          danger
+          onClose={() => setDiscardConfirmOpen(false)}
+          onConfirm={closePanelNow}
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -769,7 +1347,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
       <div
         ref={panelRef}
-        className={`fixed z-[95] flex max-h-[calc(100vh-2rem)] w-[min(920px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#e0e5ec] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        className={`fixed z-[95] flex max-h-[calc(100vh-2rem)] w-[min(920px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#E3E8EE] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           panelEntered ? "scale-100 opacity-100" : "scale-[0.86] opacity-0"
         }`}
         style={{ left: panelPosition.x, top: panelPosition.y }}
@@ -778,7 +1356,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         aria-label={title}
       >
         <div
-          className={`flex items-center justify-between border-b border-[#eef1f5] px-5 py-4 select-none touch-none ${
+          className={`flex items-center justify-between border-b border-[#E3E8EE] px-5 py-4 select-none touch-none ${
             isDragging ? "cursor-grabbing" : "cursor-grab"
           }`}
           onPointerDown={handleDragStart}
@@ -787,26 +1365,30 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           onPointerCancel={handleDragEnd}
         >
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
               <span
-                className={`inline-flex h-7 w-7 items-center justify-center rounded-md ${
+                className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-[22px] font-bold ${
                   isCancelView
                     ? "bg-red-50 text-red-600"
-                    : "bg-[#ecfdf5] text-[#059669]"
+                    : "bg-[#E7F6EF] text-[#047857]"
                 }`}
               >
                 {isCancelView ? "✕" : "₹"}
               </span>
-              <h2 className="text-[13px] font-bold uppercase tracking-[0.08em] text-[#374151]">{title}</h2>
+              <div className="min-w-0">
+                <h2 className="text-[18px] font-bold tracking-tight text-[#0F172A]">
+                  {title}
+                </h2>
+                <p className="mt-0.5 truncate text-[13px] text-[#5B6778]">
+                  {`${deal.customer} · ${deal.asset}`}
+                </p>
+              </div>
             </div>
-            <p className="mt-1 truncate text-[12px] text-[#6b7280]">
-              {deal.customer} · {deal.asset}
-            </p>
           </div>
           <button
             type="button"
             onClick={handleClose}
-            className="bt-btn bt-btn-modal-close"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#E3E8EE] bg-white text-[22px] leading-none text-[#5B6778] transition hover:bg-[#F7F9FA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40"
             aria-label="Close payment panel"
           >
             ×
@@ -897,308 +1479,43 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
               ) : null}
             </div>
           </div>
-        ) : (
-          <>
-        <div className="grid gap-3 border-b border-[#eef1f5] px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
-          <SummaryCard label="10% amount" value={formatQuoteAmount(summary.tenPercentAmount)} />
-          <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
-          {summary.remainingAmount > 0 ? (
-            <SummaryCard
-              label="Remaining (10%)"
-              value={formatQuoteAmount(summary.remainingAmount)}
-              highlight
-            />
-          ) : null}
-          {(summary.extraAmountReceived ?? 0) > 0 ? (
-            <SummaryCard
-              label="Extra (Finance)"
-              value={formatQuoteAmount(summary.extraAmountReceived ?? 0)}
-              highlight
-            />
-          ) : null}
-        </div>
-        {pendingLinkBanner ? (
-          <div className="border-b border-[#eef1f5] px-5 py-3">{pendingLinkBanner}</div>
-        ) : onlineSuccessChip ? (
-          <div className="border-b border-[#eef1f5] px-5 py-3">{onlineSuccessChip}</div>
         ) : null}
-        {deal && (deal.bufferApplied || deal.bookingApprovalMode === "BUFFER_9_9") ? (
-          <div className="border-b border-[#eef1f5] px-5 py-3">
-            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-[12px] leading-relaxed text-sky-950">
-              {deal.financeBufferNote?.trim() ||
-                "Booking via 9.9% buffer. Remaining toward 10% is expected until Finance collects the shortfall."}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1.05fr_0.95fr]">
-          <div className="min-h-0 overflow-hidden border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
-            <p className="px-4 py-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-              Payment history
-              {summary.summary ? (
-                <span className="ml-2 font-normal normal-case tracking-normal text-[#6b7280]">
-                  · {summary.summary.paymentCount} payment
-                  {summary.summary.paymentCount === 1 ? "" : "s"}
-                  {summary.summary.proofCount > 0
-                    ? ` · ${summary.summary.proofCount} proof${summary.summary.proofCount === 1 ? "" : "s"}`
-                    : ""}
-                </span>
-              ) : null}
-            </p>
-            {history.length > 0 && canUsePaymentLinks ? (
-              <div className="flex gap-1 px-4 pb-2">
-                {(["all", "online", "offline"] as const).map((filter) => (
-                  <button
-                    key={filter}
-                    type="button"
-                    onClick={() => setHistoryFilter(filter)}
-                    className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
-                      historyFilter === filter
-                        ? "border-emerald-300 bg-emerald-50 text-emerald-800"
-                        : "border-[#e5e7eb] bg-white text-[#6b7280]"
-                    }`}
-                  >
-                    {filter === "all" ? "All" : filter === "online" ? "Online" : "Proof"}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {loading ? (
-              <p className="px-4 py-6 text-sm text-[#6b7280]">Loading history…</p>
-            ) : visibleHistory.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-[#6b7280]">
-                {history.length === 0 ? "No payments recorded yet." : "No payments in this filter."}
-              </p>
-            ) : (
-              <ul className="max-h-[min(280px,calc(100vh-22rem))] overflow-y-auto">
-                {visibleHistory.map((entry) => (
-                  <li key={entry.id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedEntryId(entry.id);
-                        setHistoryDetailOpen(true);
-                      }}
-                      className={`bt-btn bt-btn-list-row ${
-                        historyDetailOpen && selectedEntry?.id === entry.id
-                          ? "bt-btn-list-row-active"
-                          : ""
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-[12px] font-bold text-[#111827]">
-                            Payment {entry.sequence} · {formatQuoteAmount(entry.amount)}
-                            {(entry.extraAmount ?? 0) > 0 ? (
-                              <span className="ml-1 font-semibold text-violet-700">
-                                · Extra {formatQuoteAmount(entry.extraAmount ?? 0)}
-                              </span>
-                            ) : null}
-                            {entry.paymentKind ? (
-                              <span className="ml-1 font-semibold text-[#059669]">
-                                · {formatPaymentKind(entry.paymentKind)}
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="mt-1 text-[11px] text-[#6b7280]">
-                            Total paid {formatQuoteAmount(entry.cumulativeReceived)} · Remaining{" "}
-                            {formatQuoteAmount(entry.remainingAfter)}
-                            {entry.source || entry.paymentChannel || entry.paymentMethod ? (
-                              <span className="text-[#9ca3af]"> · {paymentHistoryMetaLine(entry)}</span>
-                            ) : null}
-                          </p>
-                          {entry.recordedBy ? (
-                            <p className="mt-1 text-[10px] text-[#9ca3af]">By {entry.recordedBy}</p>
-                          ) : null}
-                        </div>
-                        <p className="shrink-0 text-[10px] text-[#9ca3af]">
-                          {formatHistoryDate(entry.createdAt)}
-                        </p>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {showPayComposer && !historyDetailOpen ? (
-                <div className="space-y-4">
-                  {canUsePaymentLinks ? (
-                    <PaymentChannelSelector
-                      channel={channel}
-                      offlineMethod={offlineMethod}
-                      disabled={submitting || linkBusy}
-                      onChannelChange={(next) => {
-                        if (next === "offline" && showBanner) {
-                          void handleSwitchOffline();
-                          return;
-                        }
-                        setChannel(next);
-                      }}
-                      onOfflineMethodChange={setOfflineMethod}
-                    />
-                  ) : null}
-                  {canUsePaymentLinks && channel === "online" ? (
-                    <div
-                      className={
-                        showBanner ? "pointer-events-none space-y-1 opacity-55" : undefined
-                      }
-                    >
-                      <OnlineLinkFormSection
-                        amountInput={amountInput}
-                        remainingAmount={summary.remainingAmount}
-                        missingContacts={missingContacts}
-                        disabled={showBanner}
-                        onAmountChange={setAmountInput}
-                        onUseRemaining={handleUseRemaining}
-                      />
-                      {showBanner ? (
-                        <p className="text-[11px] font-medium text-amber-800">
-                          A payment link is already open above. Wait for payment, delete it, or
-                          switch to offline before sending another.
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <PayFormSection
-                      amountInput={amountInput}
-                      notes={notes}
-                      draftProofs={draftProofs}
-                      dragActive={dragActive}
-                      remainingAmount={summary.remainingAmount}
-                      paySplit={paySplit}
-                      fileInputRef={fileInputRef}
-                      onAmountChange={setAmountInput}
-                      onNotesChange={setNotes}
-                      onUseRemaining={handleUseRemaining}
-                      onPickFiles={() => fileInputRef.current?.click()}
-                      onFileInputChange={(event) => {
-                        if (event.target.files) void addProofFiles(event.target.files);
-                        event.target.value = "";
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        setDragActive(false);
-                        if (event.dataTransfer.files.length > 0) {
-                          void addProofFiles(event.dataTransfer.files);
-                        }
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        setDragActive(true);
-                      }}
-                      onDragLeave={() => setDragActive(false)}
-                      onRemoveProof={removeDraftProof}
-                      onPreviewProof={setDraftProofViewer}
-                    />
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {mode === "pay" && historyDetailOpen ? (
-                    <button
-                      type="button"
-                      onClick={() => setHistoryDetailOpen(false)}
-                      className="bt-btn bt-btn-link text-[12px]"
-                    >
-                      ← Back to send payment
-                    </button>
-                  ) : null}
-                  <HistoryDetailSection
-                    deal={deal}
-                    entry={selectedEntry}
-                    canRemove={canRemoveSelectedPayment}
-                    removing={removing}
-                    onRemove={() => void handleRemovePayment()}
-                  />
-                </div>
-              )}
-
-              {mode === "pay" && !canPay && !showBanner ? (
-                <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                  Full 10% is already received. Use Convert to Booking on the deal row.
-                </p>
-              ) : null}
-
-              {mode !== "pay" || !showPayComposer ? (
-                error ? (
-                  <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </p>
-                ) : null
-              ) : null}
-            </div>
-
-            {showPayComposer && !historyDetailOpen ? (
-              <div className="shrink-0 border-t border-[#eef1f5] bg-white px-4 py-3">
-                {copiedNotice ? (
-                  <p className="mb-2 text-[12px] font-semibold text-emerald-700">{copiedNotice}</p>
-                ) : null}
-                {error ? (
-                  <p className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </p>
-                ) : null}
-                {canUsePaymentLinks && channel === "online" ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleSendPaymentLink()}
-                    disabled={showBanner || linkBusy || loadingLead || missingContacts}
-                    className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
-                    title={
-                      showBanner
-                        ? "Delete or wait for the open payment link before sending another."
-                        : undefined
-                    }
-                  >
-                    {linkBusy
-                      ? "Sending link…"
-                      : showBanner
-                        ? "Link open — delete to send another"
-                        : "Send payment link"}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => void handleSubmitPayment()}
-                    disabled={submitting}
-                    className="bt-btn bt-btn-modal bt-btn-action-pay h-10 w-full disabled:opacity-60"
-                  >
-                    {submitting ? "Saving payment…" : "Save payment"}
-                  </button>
-                )}
-              </div>
-            ) : showPayComposer && historyDetailOpen && (error || copiedNotice) ? (
-              <div className="shrink-0 border-t border-[#eef1f5] bg-white px-4 py-3">
-                {copiedNotice ? (
-                  <p className="mb-2 text-[12px] font-semibold text-emerald-700">{copiedNotice}</p>
-                ) : null}
-                {error ? (
-                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </div>
-          </>
-        )}
       </div>
 
-      <PaymentProofViewModal
-        open={draftProofViewer != null}
-        onClose={() => setDraftProofViewer(null)}
-        fileName={draftProofViewer?.file.name ?? "Payment proof"}
-        mimeType={draftProofViewer?.file.type}
-        previewUrl={draftProofViewer?.previewUrl}
+      <AppConfirmModal
+        open={removeConfirmOpen && selectedEntry != null}
+        title="Remove payment?"
+        message={
+          selectedEntry
+            ? `Remove payment ${formatQuoteAmount(selectedEntry.amount)}? If 10% is no longer complete, the deal returns to the Token tab so you can Convert to Booking again.`
+            : ""
+        }
+        confirmLabel="Remove payment"
+        danger
+        submitting={removing}
+        onClose={() => {
+          if (!removing) setRemoveConfirmOpen(false);
+        }}
+        onConfirm={() => void handleRemovePayment()}
       />
     </>
   );
+}
+
+function isDealLockedQuote(
+  option: LeadQuoteOption | null,
+  dealQuoteId: string | null,
+  dealQuoteAmount?: number | null,
+): boolean {
+  if (!option) return false;
+  const locked = dealQuoteId?.trim();
+  if (locked) {
+    return option.quoteId === locked || option.id === locked;
+  }
+  if (option.amount == null || dealQuoteAmount == null || !Number.isFinite(dealQuoteAmount)) {
+    return false;
+  }
+  return Math.round(option.amount) === Math.round(dealQuoteAmount);
 }
 
 function buildSummaryFromDeal(deal: DealRow): PaymentHistoryResponse {
@@ -1208,6 +1525,8 @@ function buildSummaryFromDeal(deal: DealRow): PaymentHistoryResponse {
     leadId: deal.leadId,
     leadIdentifier: deal.leadIdentifier,
     customerName: deal.customer,
+    quoteId: deal.quoteId ?? null,
+    quoteVersionLabel: deal.quoteVersionLabel ?? null,
     quoteAmount: deal.dealValueAmount,
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: deal.paidAmount,
