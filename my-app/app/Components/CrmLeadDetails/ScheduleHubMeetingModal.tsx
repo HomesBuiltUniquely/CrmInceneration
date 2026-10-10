@@ -1184,7 +1184,9 @@ export default function ScheduleHubMeetingModal({
                                   </span>
                                 </span>
                                 {selected ? (
-                                  <Icon name="check" className="ml-auto h-5 w-5" style={{ color: C.primary }} />
+                                  <span className="ml-auto inline-flex" style={{ color: C.primary }}>
+                                    <Icon name="check" className="h-5 w-5" />
+                                  </span>
                                 ) : null}
                               </button>
                             );
