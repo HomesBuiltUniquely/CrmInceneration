@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import AppConfirmModal from "@/app/Components/Shared/AppConfirmModal";
 import { cn } from "@/lib/cn";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import {
@@ -101,6 +102,7 @@ export default function FloorPlanUpload({
   const [dragOver, setDragOver] = useState(false);
   const [previewSrc, setPreviewSrc] = useState("");
   const [opening, setOpening] = useState(false);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const busy = uploading || removing;
 
   const processFile = useCallback(
@@ -194,8 +196,7 @@ export default function FloorPlanUpload({
 
   const handleRemove = () => {
     if (!onRemove || busy) return;
-    if (!window.confirm("Remove this floor plan from the lead?")) return;
-    void onRemove();
+    setRemoveConfirmOpen(true);
   };
 
   return (
@@ -438,6 +439,22 @@ export default function FloorPlanUpload({
           Drag & drop supported
         </p>
       ) : null}
+
+      <AppConfirmModal
+        open={removeConfirmOpen}
+        title="Remove floor plan?"
+        message="Remove this floor plan from the lead?"
+        confirmLabel="Remove"
+        danger
+        submitting={Boolean(removing)}
+        onClose={() => {
+          if (!removing) setRemoveConfirmOpen(false);
+        }}
+        onConfirm={() => {
+          setRemoveConfirmOpen(false);
+          void onRemove?.();
+        }}
+      />
     </div>
   );
 }

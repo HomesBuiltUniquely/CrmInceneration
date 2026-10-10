@@ -27,6 +27,7 @@ import {
   detectPaymentReceivedKind,
   formatBookingPaymentActivityDetail,
   formatBookingPaymentActivityTitle,
+  formatBookingTokenQuoteChangedTitle,
   isBookingPaymentActivityType,
   isBookingPaymentFailedActivity,
   isBookingPaymentStageActivity,
@@ -198,25 +199,31 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
     detail,
     activity.change?.new,
   );
+  const quoteChangedTitle = formatBookingTokenQuoteChangedTitle(
+    activity.rawActivityType,
+    activity.description,
+  );
   const title = isQuoteSent
     ? quoteId
       ? `Quote Sent to Customer ⭐ · #${quoteId}`
       : "Quote Sent to Customer ⭐"
-    : isPaymentFailed
-      ? formatBookingPaymentActivityTitle(
-          activity.rawActivityType,
-          activity.description,
-        )
-      : isPaymentStage && paymentKind
-        ? paymentStageHeadline(paymentKind)
-        : isPaymentReceived && paymentKind
-          ? paymentReceivedHeadline(paymentKind)
-          : isBookingPaymentActivityType(activity.rawActivityType) || activity.type === "payment"
-            ? formatBookingPaymentActivityTitle(
-                activity.rawActivityType,
-                activity.description,
-              )
-            : formatActivitySummaryTitle(activity.description);
+    : quoteChangedTitle
+      ? quoteChangedTitle
+      : isPaymentFailed
+        ? formatBookingPaymentActivityTitle(
+            activity.rawActivityType,
+            activity.description,
+          )
+        : isPaymentStage && paymentKind
+          ? paymentStageHeadline(paymentKind)
+          : isPaymentReceived && paymentKind
+            ? paymentReceivedHeadline(paymentKind)
+            : isBookingPaymentActivityType(activity.rawActivityType) || activity.type === "payment"
+              ? formatBookingPaymentActivityTitle(
+                  activity.rawActivityType,
+                  activity.description,
+                )
+              : formatActivitySummaryTitle(activity.description);
   const kind: ActivityKind =
     paymentBucket != null || activity.type === "payment"
       ? "payment"

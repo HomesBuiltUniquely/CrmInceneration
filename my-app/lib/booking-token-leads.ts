@@ -249,6 +249,9 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     createdAt:
       readOptionalDealString(deal, "createdAt", "created_at") ?? deal.createdAt ?? null,
     asset: assetParts.join(" · "),
+    quoteId: deal.quoteId?.trim() || null,
+    quoteVersionLabel:
+      readOptionalDealString(deal, "quoteVersionLabel", "quote_version_label") ?? null,
     dealValue: formatQuoteAmount(deal.dealValue),
     dealValueAmount: deal.dealValue,
     preBooking: formatQuoteAmount(deal.preBookingAmount),

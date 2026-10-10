@@ -62,6 +62,8 @@ export type PaymentHistoryResponse = {
   cancellationRequestedAt?: string | null;
   cancellationApprovedByName?: string | null;
   cancellationApprovedAt?: string | null;
+  quoteId?: string | null;
+  quoteVersionLabel?: string | null;
   quoteAmount: number;
   tenPercentAmount: number;
   amountReceived: number;
@@ -136,6 +138,8 @@ export function buildFallbackPaymentHistory(deal: DealRow): PaymentHistoryRespon
     bookingDate: deal.bookingDate ?? null,
     createdAt: deal.createdAt ?? null,
     submittedAt: deal.submittedAt,
+    quoteId: deal.quoteId ?? null,
+    quoteVersionLabel: deal.quoteVersionLabel ?? null,
     quoteAmount: deal.dealValueAmount,
     tenPercentAmount: deal.tenPercentAmount,
     amountReceived: paid,
@@ -221,11 +225,26 @@ export async function removeBookingPayment(
   };
 }
 
+export type BookingPaymentQuoteFields = {
+  quoteId?: string;
+  quoteVersionLabel?: string;
+  quoteAmount?: number;
+  tenPercentAmount?: number | null;
+  quoteVerifyUrl?: string;
+};
+
 export type BookingPaymentSubmitResponse = PaymentHistoryEntry & {
   listingType?: string;
   paymentKind?: string;
   amountReceived?: number;
   remainingAmount?: number;
+  quoteId?: string;
+  quoteVersionLabel?: string;
+  quoteAmount?: number;
+  tenPercentAmount?: number;
+  extraAmountReceived?: number;
+  totalAmountReceived?: number;
+  canConvertToBooking?: boolean;
 };
 
 export async function submitBookingPayment(
@@ -236,7 +255,7 @@ export async function submitBookingPayment(
     files: File[];
     paymentMethod?: string;
     paymentChannel?: string;
-  },
+  } & BookingPaymentQuoteFields,
 ): Promise<BookingPaymentSubmitResponse> {
   const form = new FormData();
   form.append("amount", String(input.amount));
@@ -248,6 +267,21 @@ export async function submitBookingPayment(
   }
   if (input.paymentChannel?.trim()) {
     form.append("paymentChannel", input.paymentChannel.trim());
+  }
+  if (input.quoteId?.trim()) {
+    form.append("quoteId", input.quoteId.trim());
+  }
+  if (input.quoteVersionLabel?.trim()) {
+    form.append("quoteVersionLabel", input.quoteVersionLabel.trim());
+  }
+  if (input.quoteAmount != null && Number.isFinite(input.quoteAmount)) {
+    form.append("quoteAmount", String(input.quoteAmount));
+  }
+  if (input.tenPercentAmount != null && Number.isFinite(input.tenPercentAmount)) {
+    form.append("tenPercentAmount", String(input.tenPercentAmount));
+  }
+  if (input.quoteVerifyUrl?.trim()) {
+    form.append("quoteVerifyUrl", input.quoteVerifyUrl.trim());
   }
   for (const file of input.files) {
     form.append("files", file, file.name);
@@ -265,6 +299,37 @@ export async function submitBookingPayment(
     throw new Error(parseApiError(text, "Unable to record payment."));
   }
   return JSON.parse(text) as BookingPaymentSubmitResponse;
+}
+
+/** Optional standalone quote rebind before paying (Hub PATCH …/quote). */
+export async function rebindDealQuote(
+  recordId: string,
+  input: {
+    quoteId: string;
+    quoteVersionLabel?: string;
+    quoteAmount: number;
+    tenPercentAmount?: number | null;
+    quoteVerifyUrl?: string;
+  },
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/quote`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      quoteId: input.quoteId,
+      quoteVersionLabel: input.quoteVersionLabel,
+      quoteAmount: input.quoteAmount,
+      tenPercentAmount: input.tenPercentAmount ?? undefined,
+      quoteVerifyUrl: input.quoteVerifyUrl,
+    }),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseApiError(text, "Unable to update quote on this deal."));
+  }
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** Always route proof bytes through the Next.js BFF (img tags cannot send Bearer auth to Hub). */

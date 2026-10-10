@@ -98,6 +98,8 @@ export type BookingTokenDeal = {
   cancellationReason?: string | null;
   cancelledAt?: string | null;
   quoteId?: string;
+  quoteVersionLabel?: string;
+  quoteVerifyUrl?: string;
   hubLeadId?: string;
   submittedAt: string;
   /** Calendar booking date (`YYYY-MM-DD`). */

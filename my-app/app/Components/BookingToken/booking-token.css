@@ -152,11 +152,57 @@
   border: 1px solid rgba(52, 211, 153, 0.55);
   background: var(--bt-green);
   color: var(--bt-navy);
+  gap: 0.4rem;
 }
 
 .bt-btn-action-convert:hover:not(:disabled) {
   filter: brightness(1.06);
   box-shadow: 0 4px 14px rgba(0, 230, 118, 0.35);
+}
+
+/* Convert button — 3D Transformer man (stand → walk on hover) */
+.bt-convert-man {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 2px 6px rgba(15, 23, 42, 0.18);
+  transform: perspective(120px) rotateY(-8deg) translateZ(0);
+  transition:
+    transform 0.35s cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 0.35s ease;
+}
+
+.bt-convert-man-stand,
+.bt-convert-man-walk {
+  transition: opacity 0.28s ease, transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.bt-btn-action-convert:hover:not(:disabled) .bt-convert-man,
+.bt-btn-modal-primary:hover:not(:disabled) .bt-convert-man {
+  transform: perspective(120px) rotateY(6deg) translateZ(4px) scale(1.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    0 4px 12px rgba(15, 23, 42, 0.28);
+}
+
+.bt-btn-action-convert:hover:not(:disabled) .bt-convert-man-stand,
+.bt-btn-modal-primary:hover:not(:disabled) .bt-convert-man-stand {
+  opacity: 0;
+  transform: translateX(-4px) scale(0.92);
+}
+
+.bt-btn-action-convert:hover:not(:disabled) .bt-convert-man-walk,
+.bt-btn-modal-primary:hover:not(:disabled) .bt-convert-man-walk {
+  opacity: 1;
+  animation: bt-convert-man-stride 0.55s ease-in-out infinite alternate;
+}
+
+@keyframes bt-convert-man-stride {
+  from {
+    transform: translateX(-1px) rotate(-2deg);
+  }
+  to {
+    transform: translateX(2px) rotate(2deg);
+  }
 }
 
 .bt-btn-action-danger {

@@ -2170,8 +2170,8 @@ export default function CompleteTaskModal({
         scheduleInstruction={
           <>
             <p>
-              Pick designer, date, and slot. Hub creates the booking; description uses:
-              Meeting with [Lead type] - Lead ID: [id].
+              Pick date and time first, then choose an available designer. Hub creates the booking;
+              description uses: Meeting with [Lead type] - Lead ID: [id].
             </p>
             {isDesignRefinementSchedulingSubstage(feedback) ? (
               <p>

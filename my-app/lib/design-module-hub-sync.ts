@@ -10,7 +10,9 @@ import {
 import type { BookingApprovalMode } from "@/app/Components/BookingToken/types";
 
 export const DESIGN_MODULE_URL = (
-  process.env.DESIGN_MODULE_URL?.trim() || "http://localhost:3001"
+  process.env.DESIGN_MODULE_URL?.trim() ||
+  process.env.NEXT_PUBLIC_API?.trim() ||
+  "https://api.hubinterior.com"
 ).replace(/\/+$/, "");
 
 export const HUB_SYNC_API_KEY =

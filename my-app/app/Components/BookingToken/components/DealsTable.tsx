@@ -8,6 +8,7 @@ import {
   financeReviewLabel,
   shouldShowFinanceReview,
 } from "@/lib/booking-token-finance-status";
+import AppConfirmModal from "@/app/Components/Shared/AppConfirmModal";
 import BookingPaymentPanel, {
   type BookingPaymentPanelMode,
 } from "./BookingPaymentPanel";
@@ -585,6 +586,7 @@ export default function DealsTable({
   const [pageSize, setPageSize] = useState<DealsPageSize>(
     normalizeDealsPageSize(BOOKING_TOKEN_DEALS_PAGE_SIZE),
   );
+  const [convertNotice, setConvertNotice] = useState("");
 
   useEffect(() => {
     const t = window.setTimeout(() => setTabSearch(tabSearchInput.trim()), 300);
@@ -740,11 +742,11 @@ export default function DealsTable({
       onConvertedToBooking?.();
       const mode = String(result.financeHandlingMode ?? "").toUpperCase();
       if (mode === "AUTO_APPROVED") {
-        window.alert(
+        setConvertNotice(
           "Converted. Finance auto-approved via online payment — Design stage moved toward 10–20%.",
         );
       } else if (mode === "MANUAL_QUEUE") {
-        window.alert(
+        setConvertNotice(
           "Converted. Awaiting Design finance approval (offline / proofs or mixed payments).",
         );
       }
@@ -948,6 +950,15 @@ export default function DealsTable({
           setApprovalError("");
         }}
         onConfirm={(reason) => void handleRejectCancellation(reason)}
+      />
+      <AppConfirmModal
+        open={Boolean(convertNotice)}
+        title="Converted to booking"
+        message={convertNotice}
+        confirmLabel="OK"
+        noticeOnly
+        onClose={() => setConvertNotice("")}
+        onConfirm={() => setConvertNotice("")}
       />
       <div className="overflow-hidden rounded-xl border border-[var(--bt-border)] bg-[var(--bt-surface)] shadow-sm">
         <div className="border-b border-[var(--bt-border)] px-3 py-2">

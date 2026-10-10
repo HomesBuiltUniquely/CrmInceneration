@@ -31,6 +31,19 @@ export async function POST(
       upstreamForm.append("paymentChannel", paymentChannel.trim());
     }
 
+    for (const quoteField of [
+      "quoteId",
+      "quoteVersionLabel",
+      "quoteAmount",
+      "tenPercentAmount",
+      "quoteVerifyUrl",
+    ] as const) {
+      const value = incoming.get(quoteField);
+      if (typeof value === "string" && value.trim()) {
+        upstreamForm.append(quoteField, value.trim());
+      }
+    }
+
     for (const [key, value] of incoming.entries()) {
       if (key !== "files" || !(value instanceof Blob) || value.size === 0) continue;
       const name = value instanceof File ? value.name : "payment-proof";

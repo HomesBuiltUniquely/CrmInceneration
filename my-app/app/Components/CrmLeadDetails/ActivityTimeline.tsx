@@ -8,6 +8,7 @@ import {
   classifyPaymentActivityBucket,
   detectPaymentReceivedKind,
   formatBookingPaymentActivityTitle,
+  formatBookingTokenQuoteChangedTitle,
   isBookingPaymentActivityType,
   isBookingPaymentFailedActivity,
   isBookingPaymentStageActivity,
@@ -147,17 +148,23 @@ function ActivityDetail({ item }: { item: ActivityItem }) {
     : (isPayReceived || isPayStage) && paymentKind
       ? pickPaymentReceivedMotivateLine(paymentKind, item.id)
       : null;
+  const quoteChangedTitle = formatBookingTokenQuoteChangedTitle(
+    item.rawActivityType,
+    item.description,
+  );
   const headline = isQuoteSent
     ? "Quote Sent to Customer"
-    : isPayFail
-      ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
-      : isPayStage && paymentKind
-        ? paymentStageHeadline(paymentKind)
-        : isPayReceived && paymentKind
-          ? paymentReceivedHeadline(paymentKind)
-          : isBookingPaymentActivityType(item.rawActivityType)
-            ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
-            : cfg.label;
+    : quoteChangedTitle
+      ? quoteChangedTitle
+      : isPayFail
+        ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
+        : isPayStage && paymentKind
+          ? paymentStageHeadline(paymentKind)
+          : isPayReceived && paymentKind
+            ? paymentReceivedHeadline(paymentKind)
+            : isBookingPaymentActivityType(item.rawActivityType)
+              ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
+              : cfg.label;
   const badgeTone = isQuoteSent
     ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-300"
     : isPayFail
@@ -295,15 +302,21 @@ function ActivityListRow({
       : (isPayReceived || isPayStage) && paymentKind
         ? pickPaymentReceivedMotivateLine(paymentKind, item.id)
         : null;
+  const quoteChangedTitle = formatBookingTokenQuoteChangedTitle(
+    item.rawActivityType,
+    item.description,
+  );
   const rowTitle = isQuoteSent
     ? "Quote Sent to Customer"
-    : isPayFail
-      ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
-      : isPayStage && paymentKind
-        ? paymentStageHeadline(paymentKind)
-        : isPayReceived && paymentKind
-          ? paymentReceivedHeadline(paymentKind)
-          : item.description;
+    : quoteChangedTitle
+      ? quoteChangedTitle
+      : isPayFail
+        ? formatBookingPaymentActivityTitle(item.rawActivityType, item.description)
+        : isPayStage && paymentKind
+          ? paymentStageHeadline(paymentKind)
+          : isPayReceived && paymentKind
+            ? paymentReceivedHeadline(paymentKind)
+            : item.description;
   const rowClass = isQuoteSent
     ? selected
       ? "bg-emerald-500/20"

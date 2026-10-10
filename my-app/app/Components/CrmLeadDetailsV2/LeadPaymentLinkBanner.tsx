@@ -210,10 +210,6 @@ export default function LeadPaymentLinkBanner({
 
   const handleSwitchOffline = useCallback(async () => {
     if (!attempt) return;
-    const confirmed = window.confirm(
-      "Switch this payment to Offline? The online link will be cancelled. Record one cash/cheque/bank payment — not a second payment.",
-    );
-    if (!confirmed) return;
     setBusy(true);
     setError("");
     try {
@@ -238,29 +234,40 @@ export default function LeadPaymentLinkBanner({
     }
   }, [attempt, leadId, leadType, onSwitchOffline]);
 
-  const handleDelete = useCallback(async () => {
-    if (!attempt) return;
-    setBusy(true);
-    setError("");
-    try {
-      await cancelPaymentLink(attempt.id);
-      notifyPaymentLinkUpdated(leadType, leadId, null);
-      releasePaymentLinkMarkAsWonGate(leadType, leadId);
-      setAttempt(null);
-      dispatchCrmLeadsInvalidate();
-    } catch (err) {
-      if (isStalePaymentLinkAction(err)) {
-        await loadActive();
+  const handleDelete = useCallback(
+    async (opts: { notifyCustomer: boolean }) => {
+      if (!attempt) return;
+      setBusy(true);
+      setError("");
+      try {
+        const result = await cancelPaymentLink(attempt.id, {
+          notifyCustomer: opts.notifyCustomer,
+        });
+        notifyPaymentLinkUpdated(leadType, leadId, null);
+        releasePaymentLinkMarkAsWonGate(leadType, leadId);
+        setAttempt(null);
+        dispatchCrmLeadsInvalidate();
+        const warning =
+          result.warning?.trim() ||
+          (result.deactivateSucceeded === false
+            ? "Link cancelled in CRM, but Easebuzz deactivate may have failed."
+            : "");
+        if (warning) setError(warning);
+      } catch (err) {
+        if (isStalePaymentLinkAction(err)) {
+          await loadActive();
+        }
+        if (err instanceof PaymentLinkApiError) {
+          setError(err.message);
+        } else {
+          setError(err instanceof Error ? err.message : "Unable to delete payment link.");
+        }
+      } finally {
+        setBusy(false);
       }
-      if (err instanceof PaymentLinkApiError) {
-        setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : "Unable to delete payment link.");
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, [attempt, leadId, leadType, loadActive]);
+    },
+    [attempt, leadId, leadType, loadActive],
+  );
 
   if (!canUsePaymentLinks) return null;
   if (!isBannerPaymentLink(attempt) || !attempt) {
@@ -283,7 +290,7 @@ export default function LeadPaymentLinkBanner({
         onResend={() => void handleResend()}
         onEdit={(amount) => void handleEdit(amount)}
         onSwitchOffline={() => void handleSwitchOffline()}
-        onDelete={() => void handleDelete()}
+        onDelete={(opts) => void handleDelete(opts)}
       />
       {copied ? (
         <p className="mt-1 text-[12px] font-semibold text-emerald-700">Link copied</p>

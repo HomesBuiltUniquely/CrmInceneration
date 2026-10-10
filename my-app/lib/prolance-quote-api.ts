@@ -249,7 +249,25 @@ export async function buildLeadQuoteOptionsFromProlance(
   const revisions = await fetchProlanceQuoteRevisions(anchorQuoteId);
   if (revisions.length === 0) return [];
 
-  const chronological = [...revisions].sort(
+  // API can return the same quoteId more than once; keep one row per id.
+  const uniqueByQuoteId = new Map<number, ProlanceQuoteRevision>();
+  for (const revision of revisions) {
+    const existing = uniqueByQuoteId.get(revision.quoteId);
+    if (!existing) {
+      uniqueByQuoteId.set(revision.quoteId, revision);
+      continue;
+    }
+    const existingTs = Date.parse(existing.createdAt);
+    const nextTs = Date.parse(revision.createdAt);
+    if (
+      Number.isFinite(nextTs) &&
+      (!Number.isFinite(existingTs) || nextTs >= existingTs)
+    ) {
+      uniqueByQuoteId.set(revision.quoteId, revision);
+    }
+  }
+
+  const chronological = [...uniqueByQuoteId.values()].sort(
     (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
   );
 

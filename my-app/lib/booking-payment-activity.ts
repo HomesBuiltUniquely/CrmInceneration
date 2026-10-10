@@ -14,6 +14,7 @@ const BOOKING_PAYMENT_TITLES: Record<string, string> = {
   BOOKING_PAYMENT_EXPIRED: "Payment link expired",
   BOOKING_PAYMENT_SWITCH_OFFLINE: "Switched to offline",
   BOOKING_PAYMENT_ANOMALY: "Payment review needed",
+  BOOKING_TOKEN_QUOTE_CHANGED: "Quote changed",
 };
 
 /** Easebuzz / payment-link lifecycle (sent, copy, resend, delete, expire, delivery). */
@@ -57,6 +58,23 @@ export function isBookingPaymentActivityType(raw?: string | null): boolean {
     key === "LINK_CANCELLED" ||
     key === "SWITCH_OFFLINE"
   );
+}
+
+export function isBookingTokenQuoteChangedActivity(raw?: string | null): boolean {
+  return normalizePaymentActivityKey(raw) === "BOOKING_TOKEN_QUOTE_CHANGED";
+}
+
+export function formatBookingTokenQuoteChangedTitle(
+  rawType?: string | null,
+  description?: string | null,
+): string | null {
+  if (!isBookingTokenQuoteChangedActivity(rawType)) return null;
+  const detail = description?.trim();
+  if (detail) {
+    if (/^quote\s*changed/i.test(detail)) return detail;
+    return `Quote changed · ${detail}`;
+  }
+  return "Quote changed";
 }
 
 export function isPaymentLinkActivityType(raw?: string | null): boolean {
