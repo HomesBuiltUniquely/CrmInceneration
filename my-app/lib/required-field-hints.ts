@@ -5,7 +5,7 @@ export const REQUIRED_FIELD_HINTS = {
   configuration:
     "Please select Configuration (BHK). We need this before the next phase can open.",
   bookingType:
-    "Please choose Type. This small step unlocks booking and meeting flows.",
+    "Please choose Property Type. This small step unlocks booking and meeting flows.",
   propertyNotes:
     "Please add Property Notes. A few lines help the team, and we need them to advance.",
   floorPlan:

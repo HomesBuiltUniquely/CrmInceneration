@@ -8,13 +8,8 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Plus_Jakarta_Sans } from "next/font/google";
-
-const sendPaymentFont = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  display: "swap",
-});
+import { createPortal } from "react-dom";
+import "./send-payment-motion.css";
 
 export type SendPaymentModalProps = {
   open: boolean;
@@ -58,6 +53,8 @@ function buildSubtitle(
 /**
  * Desktop: ~1120×640 dialog, vertically centered with top/bottom margin.
  * Mobile (&lt;768px): full-screen sheet.
+ * Rendered via portal so the dim overlay covers the full viewport
+ * (avoids white bottom strip from page overflow shells).
  */
 export default function SendPaymentModal({
   open,
@@ -78,6 +75,11 @@ export default function SendPaymentModal({
   const dialogRef = panelRef ?? localRef;
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const [isDesktop, setIsDesktop] = useState(true);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
@@ -86,6 +88,15 @@ export default function SendPaymentModal({
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -130,17 +141,18 @@ export default function SendPaymentModal({
     };
   }, [dialogRef, onClose, open]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   const subtitle = buildSubtitle(customer, quoteId, bookingRef);
   const positioned = isDesktop && position != null;
 
-  return (
+  const node = (
     <>
       <div
-        className={`fixed inset-0 z-[90] bg-black/35 backdrop-blur-[2px] transition-opacity duration-300 ${
+        className={`sp-backdrop fixed inset-0 z-[200] bg-black/25 backdrop-blur-[2px] ${
           entered ? "opacity-100" : "opacity-0"
         }`}
+        style={{ top: 0, right: 0, bottom: 0, left: 0 }}
         onClick={onClose}
         aria-hidden="true"
       />
@@ -150,9 +162,9 @@ export default function SendPaymentModal({
         role="dialog"
         aria-modal="true"
         aria-label="Send payment"
-        className={`${sendPaymentFont.className} fixed z-[95] flex flex-col overflow-hidden border border-[#E3E8EE] bg-white shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-          entered ? "scale-100 opacity-100" : "scale-[0.96] opacity-0"
-        } inset-0 h-[100dvh] w-full rounded-none md:inset-auto md:h-[min(640px,calc(100vh-80px))] md:w-[min(1120px,calc(100vw-48px))] md:rounded-[24px]`}
+        className={`sp-sheet font-sans fixed z-[210] flex flex-col overflow-hidden border border-[#E3E8EE] bg-white shadow-2xl ${
+          entered ? "sp-sheet-enter" : "sp-sheet-exit"
+        } inset-0 h-[100dvh] max-h-[100dvh] w-full rounded-none md:inset-auto md:h-[min(640px,calc(100dvh-80px))] md:max-h-[calc(100dvh-80px)] md:w-[min(1120px,calc(100vw-48px))] md:rounded-[24px]`}
         style={positioned ? { left: position.x, top: position.y } : undefined}
       >
         <header
@@ -185,7 +197,7 @@ export default function SendPaymentModal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E3E8EE] bg-white text-[16px] leading-none text-[#5B6778] transition hover:bg-[#F7F9FA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40"
+            className="sp-icon-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E3E8EE] bg-white text-[16px] leading-none text-[#5B6778] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40"
             aria-label="Close"
           >
             ×
@@ -196,4 +208,6 @@ export default function SendPaymentModal({
       </div>
     </>
   );
+
+  return createPortal(node, document.body);
 }

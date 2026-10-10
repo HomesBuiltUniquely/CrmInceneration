@@ -72,7 +72,7 @@ export default function AmountInput({
           type="button"
           onClick={onUseRemaining}
           disabled={disabled || remainingAmount <= 0}
-          className="inline-flex min-h-9 items-center rounded-full border border-[#047857]/30 bg-[#E7F6EF] px-3 text-[12px] font-semibold text-[#047857] transition hover:bg-[#d8f3e7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-50"
+          className="sp-chip inline-flex min-h-9 items-center rounded-full border border-[#047857]/30 bg-[#E7F6EF] px-3 text-[12px] font-semibold text-[#047857] hover:bg-[#d8f3e7] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Use full remaining {formatQuoteAmount(remainingAmount)}
         </button>

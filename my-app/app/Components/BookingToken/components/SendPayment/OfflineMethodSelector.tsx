@@ -78,9 +78,9 @@ export default function OfflineMethodSelector({
               aria-checked={active}
               disabled={disabled}
               onClick={() => onChange(item.id)}
-              className={`inline-flex min-h-14 flex-col items-center justify-center gap-1 rounded-[14px] border-2 px-2 py-2 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/40 disabled:opacity-60 ${
+              className={`sp-card inline-flex min-h-14 flex-col items-center justify-center gap-1 rounded-[14px] border-2 px-2 py-2 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/40 disabled:opacity-60 ${
                 active
-                  ? "border-[#D97706] bg-[#FFF8EB] text-[#92400E]"
+                  ? "sp-card-selected border-[#D97706] bg-[#FFF8EB] text-[#92400E]"
                   : "border-[#E3E8EE] bg-white text-[#5B6778] hover:border-[#CBD3DD]"
               }`}
             >

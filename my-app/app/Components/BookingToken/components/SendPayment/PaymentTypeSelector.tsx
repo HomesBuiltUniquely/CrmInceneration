@@ -32,7 +32,7 @@ export default function PaymentTypeSelector({
       <div
         role="radiogroup"
         aria-label="Payment type"
-        className={`mt-2 grid gap-2.5 ${showOnline ? "sm:grid-cols-2" : "grid-cols-1"}`}
+        className={`sp-stagger mt-2 grid gap-2.5 ${showOnline ? "sm:grid-cols-2" : "grid-cols-1"}`}
       >
         {showOnline ? (
           <button
@@ -41,9 +41,9 @@ export default function PaymentTypeSelector({
             aria-checked={onlineActive}
             disabled={disabled}
             onClick={() => onChannelChange("online")}
-            className={`min-h-[88px] rounded-2xl border-2 px-3.5 py-3.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-60 ${
+            className={`sp-card min-h-[88px] rounded-2xl border-2 px-3.5 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-60 ${
               onlineActive
-                ? "border-[#047857] bg-[#E7F6EF]"
+                ? "sp-card-selected border-[#047857] bg-[#E7F6EF]"
                 : "border-[#E3E8EE] bg-white hover:border-[#CBD3DD]"
             }`}
           >
@@ -79,9 +79,9 @@ export default function PaymentTypeSelector({
           aria-checked={offlineActive}
           disabled={disabled}
           onClick={() => onChannelChange("offline")}
-          className={`min-h-[88px] rounded-2xl border-2 px-3.5 py-3.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/40 disabled:cursor-not-allowed disabled:opacity-60 ${
+          className={`sp-card min-h-[88px] rounded-2xl border-2 px-3.5 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D97706]/40 disabled:cursor-not-allowed disabled:opacity-60 ${
             offlineActive
-              ? "border-[#D97706] bg-[#FFF8EB]"
+              ? "sp-card-selected border-[#D97706] bg-[#FFF8EB]"
               : "border-[#E3E8EE] bg-white hover:border-[#CBD3DD]"
           }`}
         >

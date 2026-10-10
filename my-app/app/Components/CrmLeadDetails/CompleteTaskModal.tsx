@@ -1844,7 +1844,7 @@ export default function CompleteTaskModal({
                   <div className="grid grid-cols-2 gap-3.5">
                     <div>
                       <FieldLabel required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
-                        Booking Type
+                        Property Type
                       </FieldLabel>
                       <Select
                         value={modalBookingType}
@@ -1852,7 +1852,7 @@ export default function CompleteTaskModal({
                         missing={showErrors && !modalBookingType.trim()}
                         className="h-[42px] rounded-[12px] bg-[var(--crm-input-bg)] text-[14px]"
                       >
-                        <option value="">Select Booking Type</option>
+                        <option value="">Select Property Type</option>
                         {BOOKING_TYPE_OPTIONS.map((b) => (
                           <option key={b} value={b}>{b}</option>
                         ))}

@@ -144,9 +144,10 @@ function getTopAlignedPanelPosition(panelWidth: number, panelHeight: number) {
 }
 
 function getCenteredPanelPosition(panelWidth: number, panelHeight: number) {
+  const viewportH = window.visualViewport?.height ?? window.innerHeight;
   return clampPanelPosition(
     (window.innerWidth - panelWidth) / 2,
-    (window.innerHeight - panelHeight) / 2,
+    (viewportH - panelHeight) / 2,
     panelWidth,
     panelHeight,
     40,
@@ -432,12 +433,13 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   useLayoutEffect(() => {
     if (!open) return;
+    const viewportH = window.visualViewport?.height ?? window.innerHeight;
     const panelWidth =
       mode === "pay"
         ? Math.min(1120, window.innerWidth - 48)
         : Math.min(920, window.innerWidth - 32);
     const estimatedHeight = Math.min(
-      window.innerHeight - (mode === "pay" ? 80 : 24),
+      viewportH - (mode === "pay" ? 80 : 24),
       mode === "pay" ? 640 : 520,
     );
     setPanelPosition(
@@ -451,9 +453,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
   useLayoutEffect(() => {
     if (!open || !panelRef.current) return;
     const rect = panelRef.current.getBoundingClientRect();
+    const maxPayH = (window.visualViewport?.height ?? window.innerHeight) - 80;
+    const height = mode === "pay" ? Math.min(rect.height, maxPayH) : rect.height;
     setPanelPosition(
       mode === "pay"
-        ? getCenteredPanelPosition(rect.width, rect.height)
+        ? getCenteredPanelPosition(rect.width, height)
         : getTopAlignedPanelPosition(rect.width, rect.height),
     );
   }, [open, mode, historyData, draftProofs.length, loading]);

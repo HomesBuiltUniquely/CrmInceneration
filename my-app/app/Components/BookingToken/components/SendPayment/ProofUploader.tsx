@@ -72,11 +72,11 @@ export default function ProofUploader({
         onDrop={disabled ? undefined : onDrop}
         onDragOver={disabled ? undefined : onDragOver}
         onDragLeave={disabled ? undefined : onDragLeave}
-        className={`mt-2 flex min-h-[140px] flex-1 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-5 text-center transition ${
+        className={`sp-card mt-2 flex min-h-[140px] flex-1 flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-5 text-center ${
           dragActive
             ? "border-[#047857] bg-[#E7F6EF]"
-            : "border-[#CBD3DD] bg-[#F7F9FA]"
-        } ${disabled ? "opacity-60" : ""}`}
+            : "border-[#CBD3DD] bg-[#F7F9FA] hover:border-[#0F172A]/30"
+        } ${disabled ? "pointer-events-none opacity-60" : ""}`}
       >
         <span
           className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#E7F6EF] text-[#047857]"
@@ -99,7 +99,7 @@ export default function ProofUploader({
           type="button"
           onClick={onPickFiles}
           disabled={disabled}
-          className="mt-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#E3E8EE] bg-white px-4 text-[13px] font-semibold text-[#0F172A] shadow-sm transition hover:border-[#CBD3DD] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:opacity-60"
+          className="sp-chip mt-3 inline-flex min-h-11 items-center rounded-[14px] border border-[#E3E8EE] bg-white px-4 text-[13px] font-semibold text-[#0F172A] shadow-sm hover:border-[#CBD3DD] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:opacity-60"
         >
           Browse files
         </button>

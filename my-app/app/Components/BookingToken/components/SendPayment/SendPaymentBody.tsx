@@ -129,7 +129,7 @@ function FooterActions({
         type="button"
         onClick={onPrimaryAction}
         disabled={primaryDisabled || submitting}
-        className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-[14px] bg-[#047857] text-[15px] font-bold text-white transition hover:bg-[#036B4F] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-60"
+        className="sp-primary inline-flex h-14 w-full items-center justify-center gap-2 rounded-[14px] bg-[#047857] text-[15px] font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {submitting ? (
           <>
@@ -359,11 +359,13 @@ export default function SendPaymentBody({
         ) : null}
       </div>
 
-      {/* Desktop: 3 columns, no modal scroll — only history list scrolls */}
+      {/* Desktop: 3 columns — quote stays slim; history takes remaining height */}
       <div className="hidden min-h-0 flex-1 overflow-hidden md:grid md:grid-cols-[340px_minmax(0,1fr)_340px]">
-        <aside className="flex min-h-0 flex-col overflow-hidden border-r border-[#E3E8EE] bg-[#F7F9FA] px-4 py-4">
+        <aside className="flex min-h-0 flex-col overflow-hidden border-r border-[#E3E8EE] bg-[#F7F9FA] px-3 py-3">
           <div className="shrink-0">{quotePicker}</div>
-          <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">{historyList}</div>
+          <div className="mt-2 flex min-h-[240px] flex-1 flex-col overflow-hidden border-t border-[#0F172A]/15 pt-2.5">
+            {historyList}
+          </div>
         </aside>
 
         <div className="flex min-h-0 flex-col gap-4 overflow-hidden px-4 py-4">
@@ -372,12 +374,12 @@ export default function SendPaymentBody({
               {middleTopSlot}
             </div>
           ) : (
-            <>
+            <div className="sp-stagger flex min-h-0 flex-col gap-4">
               {middleTopSlot}
               {typeSelector}
               {methodSelector}
               {amountField}
-            </>
+            </div>
           )}
         </div>
 

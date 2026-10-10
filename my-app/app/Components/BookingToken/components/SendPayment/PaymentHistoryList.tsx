@@ -35,9 +35,9 @@ export default function PaymentHistoryList({
   showFilters = true,
 }: Props) {
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#5B6778]">
+    <section className="flex min-h-[220px] flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#0F172A]">
           Payment history
         </p>
         <p className="text-[11px] text-[#5B6778]">
@@ -49,7 +49,11 @@ export default function PaymentHistoryList({
       </div>
 
       {showFilters ? (
-        <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="History filter">
+        <div
+          className="mt-1.5 flex shrink-0 flex-wrap gap-1"
+          role="group"
+          aria-label="History filter"
+        >
           {(
             [
               ["all", "All"],
@@ -61,7 +65,7 @@ export default function PaymentHistoryList({
               key={id}
               type="button"
               onClick={() => onFilterChange(id)}
-              className={`min-h-9 rounded-full border px-3 text-[11px] font-bold uppercase tracking-wide transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 ${
+              className={`sp-chip min-h-8 rounded-full border px-2.5 text-[10px] font-bold uppercase tracking-wide focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 ${
                 filter === id
                   ? "border-[#047857] bg-[#E7F6EF] text-[#047857]"
                   : "border-[#E3E8EE] bg-white text-[#5B6778] hover:border-[#CBD3DD]"
@@ -73,15 +77,15 @@ export default function PaymentHistoryList({
         </div>
       ) : null}
 
-      <div className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+      <div className="mt-1.5 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
         {loading ? (
-          <p className="py-4 text-[13px] text-[#5B6778]">Loading history…</p>
+          <p className="py-3 text-[13px] text-[#5B6778]">Loading history…</p>
         ) : history.length === 0 ? (
-          <p className="py-4 text-[13px] text-[#5B6778]">
+          <p className="py-3 text-[13px] text-[#5B6778]">
             {paymentCount === 0 ? "No payments recorded yet." : "No payments in this filter."}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="sp-stagger space-y-1.5 pb-1">
             {history.map((entry) => {
               const selected = entry.id === selectedEntryId;
               const source = formatPaymentSource(entry.source);
@@ -92,9 +96,9 @@ export default function PaymentHistoryList({
                   <button
                     type="button"
                     onClick={() => onSelectEntry(entry.id)}
-                    className={`w-full rounded-2xl border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 ${
+                    className={`sp-card w-full rounded-[12px] border px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40 ${
                       selected
-                        ? "border-[#86efac] bg-white shadow-sm"
+                        ? "sp-card-selected border-[#047857] bg-white"
                         : "border-[#E3E8EE] bg-white hover:border-[#CBD3DD]"
                     }`}
                   >
@@ -112,7 +116,7 @@ export default function PaymentHistoryList({
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-1 text-[11px] leading-snug text-[#5B6778]">
+                    <p className="mt-0.5 text-[11px] leading-snug text-[#5B6778]">
                       {formatFormSubmittedAt(entry.createdAt)}
                       {source ? ` · ${source}` : ""}
                       {entry.recordedBy ? ` · by ${entry.recordedBy}` : ""}
