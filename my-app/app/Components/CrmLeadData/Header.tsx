@@ -395,8 +395,13 @@ export default function Header() {
         if (cancelled) return;
         const names = new Set<string>();
         // Filter dropdown + roster labels: one primary display name per SE.
-        // Assignee aliases stay expanded only when matching leads (see LeadsDataSection scope).
+        // Always require managerId match — users-by-role can return org-wide SEs and would
+        // put another SM's exec (e.g. Razi) into this manager's team bucket.
         for (const u of users) {
+          const managerId = Number(
+            (u as { managerId?: unknown }).managerId ?? 0,
+          );
+          if (managerId > 0 && managerId !== Number(currentUserId)) continue;
           const n = hierarchyUserDisplayName(
             u as { fullName?: string; name?: string; username?: string; email?: string },
           );

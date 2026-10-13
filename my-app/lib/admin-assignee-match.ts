@@ -30,6 +30,11 @@ function namesLooselyEqual(left: string, right: string): boolean {
 export type AssigneeScopeMatchOpts = {
   /** Hierarchy user ids — Hub team-leads membership is id-based; names alone miss variants. */
   userIds?: number[];
+  /**
+   * Exact alias / userId only (SE own-dashboard parity).
+   * Skips prefix name-drift matching that can pull sibling execs into a person filter.
+   */
+  exact?: boolean;
 };
 
 /** Match flattened admin pool rows against one or more assignee display names / aliases. */
@@ -75,15 +80,11 @@ export function leadMatchesAssigneeScope(
   for (const alias of aliases) {
     if (scopeSet.has(alias)) return true;
   }
-  // Name drift on assigned Fresh rows (e.g. "Meghana S" vs hierarchy "Meghana").
+  if (opts?.exact) return false;
+  // Name drift only: Kulwant↔Kulwanth. Do NOT prefix-match ("razi" must not pull "razia"/other buckets).
   for (const alias of aliases) {
     for (const scopeName of scopeSet) {
       if (namesLooselyEqual(alias, scopeName)) return true;
-      const a = looseNameToken(alias);
-      const b = looseNameToken(scopeName);
-      if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) {
-        return true;
-      }
     }
   }
   return false;

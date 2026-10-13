@@ -115,6 +115,8 @@ import {
 } from "@/lib/sales-admin-insight-tiles";
 import {
   countSalesManagerMineVsTeam,
+  filterLeadsToSalesManagerBucket,
+  type SalesManagerBucketScope,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
 import {
@@ -661,6 +663,30 @@ function computeJourneySummaryCounts(leads: ApiLead[]): { lead: number; opportun
   return salesJourneySummaryFromMilestoneCounts(milestoneCountsFromLeads(leads, "sales"));
 }
 
+/**
+ * Total Leads badge = full id-merged inventory (incl. lost path).
+ * Prefer totalRowCount / uniquePrimaryTotal — never lost-excluded `totalElements` pager,
+ * and do not collapse to Lead+Opp only (SE Assigned 341 vs Lead+Opp 108).
+ */
+function journeyBadgeTotalFromPage(pageJson: {
+  summaryTotals?: { lead?: number; opportunity?: number } | null;
+  uniquePrimaryTotal?: number | null;
+  totalRowCount?: number | null;
+  totalElements?: number | null;
+}): number {
+  const rows = Number(pageJson.totalRowCount ?? 0);
+  if (rows > 0) return rows;
+  const unique = Number(pageJson.uniquePrimaryTotal ?? 0);
+  if (unique > 0) return unique;
+  const st = pageJson.summaryTotals;
+  const fromSummary =
+    st && Number.isFinite(st.lead) && Number.isFinite(st.opportunity)
+      ? Number(st.lead) + Number(st.opportunity)
+      : 0;
+  if (fromSummary > 0) return fromSummary;
+  return Number(pageJson.totalElements ?? 0);
+}
+
 function appendAssigneeFilterQuery(
   qs: URLSearchParams,
   assignee: string,
@@ -755,6 +781,8 @@ async function fetchMergedPage(
    * Default inbox table still excludes them via `excludeLostPath`.
    */
   includeLostPath = false,
+  /** Drop leads that belong to another SM/SE bucket (Hub my∪team leaks). */
+  smBucketScope: SalesManagerBucketScope | null = null,
 ): Promise<SpringPage<ApiLead>> {
   const normalizedLeadType = leadType.trim().toLowerCase();
   const normalizedViewerRole = normalizeRole(viewerRole);
@@ -1007,13 +1035,11 @@ async function fetchMergedPage(
       (a, b) => parseLeadSortTimestamp(b) - parseLeadSortTimestamp(a),
     );
     /**
-     * Hub my-leads ∪ team-leads is already SM CRM membership (incl. Connection).
-     * Do NOT re-apply `filterLeadsForClientWorkspaceInbox`: missing verificationStatus /
-     * assigneeRole on older reassigned rows was classified as PRESALES and dropped
-     * (~21 Connection → Lead 131 / Total 133 vs Hub 154).
-     * Same trust rule as JourneyPhaseHeatmap `useSmCombinedEndpoints`.
+     * Hub my-leads ∪ team-leads is the base SM inventory, but Hub can leak another
+     * manager's SE (e.g. Razi) into this bucket. Allowlist by managerId + team userIds
+     * / exact aliases; keep blank-assignee Fresh. Do NOT use loose name prefix matching.
      */
-    const workspaceScoped = merged;
+    const workspaceScoped = filterLeadsToSalesManagerBucket(merged, smBucketScope);
     /**
      * Journey inventory = Hub rows after id-merge (same as SQL / Insights blank→Fresh).
      * Do NOT phone-collapse (`pickMilestoneRepresentativeRows`): that prefers non-blank
@@ -1037,43 +1063,30 @@ async function fetchMergedPage(
         )
       : fullJourney;
     /**
-     * Default inbox hides lost-path rows in the table. Exclude them before slice so
-     * page size 100 yields 100 selectable rows (not 100 fetched → 18 visible).
-     * Cards still use fullJourney.
+     * Total Leads includes lost-path rows — table must page the same inventory.
+     * Excluding lost left ~5 pages at size 100 while Total showed ~1492 (SM).
+     * Insight `includeLostPath` and default SM/SE inbox both keep lost in the pager.
      */
-    const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
-      search,
-      dateField,
-      dateFrom,
-      dateTo,
-      crmMonthWindow,
-      leadType: normalizedLeadType,
-      assignee,
-      milestoneStage,
-      milestoneStageCategory,
-      milestoneSubStage,
-      reinquiry,
-    });
-    const countBasis = excludeLostFromTable
-      ? filteredJourney.filter((lead) => !isLostPathLead(lead))
-      : filteredJourney;
+    const excludeLostFromTable = false;
     const paged = paginateLeadsForTableInventory(
       filteredJourney,
       page,
       size,
       excludeLostFromTable,
     );
+    const summaryTotals = computeJourneySummaryCounts(fullJourney);
     return {
       content: paged.content,
       totalElements: paged.totalElements,
-      uniquePrimaryTotal: paged.totalElements,
-      totalRowCount: workspaceScoped.length,
+      // Total Leads = full id-merged inventory (incl. lost); pager matches Total.
+      uniquePrimaryTotal: fullJourney.length,
+      totalRowCount: fullJourney.length,
       totalPages: paged.totalPages,
       number: paged.number,
       size: paged.size,
-      sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-      // Heatmap cards/phases = full journey; table Total Leads = visible table inventory.
-      summaryTotals: computeJourneySummaryCounts(fullJourney),
+      // Lead Types tiles (Google/Meta/…) use full journey — never lost-excluded table inventory.
+      sourceCounts: computeLeadTypeCountsFromRows(fullJourney),
+      summaryTotals,
       milestoneCounts: milestoneCountsFromLeads(fullJourney, leadsWorkspace),
     };
   }
@@ -2366,6 +2379,67 @@ export default function LeadsDataSection({
   }, [showPresalesHierarchyFilters, presalesManagerFilter, presalesExecFilter]);
   const managerTeamRoster =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
+  /** Strict SM bucket: own team only — blocks other SM/SE leads (e.g. Razi) from this inbox. */
+  const smBucketScope = useMemo((): SalesManagerBucketScope | null => {
+    if (
+      clientScopeRoleKey !== "SALES_MANAGER" &&
+      clientScopeRoleKey !== "MANAGER"
+    ) {
+      return null;
+    }
+    const myExecs = salesExecs.filter(
+      (u) => Number(u.managerId ?? 0) === Number(currentUserId),
+    );
+    const foreignExecs = salesExecs.filter((u) => {
+      const mid = Number(u.managerId ?? 0);
+      return mid > 0 && mid !== Number(currentUserId);
+    });
+    const teamAliases = new Set<string>();
+    for (const name of managerTeamRoster) {
+      if (name.trim()) teamAliases.add(name.trim());
+    }
+    for (const u of myExecs) {
+      for (const a of collectHierarchyUserAssigneeAliases(u)) {
+        if (a.trim()) teamAliases.add(a.trim());
+      }
+    }
+    const foreignSeAliases = new Set<string>();
+    for (const u of foreignExecs) {
+      for (const a of collectHierarchyUserAssigneeAliases(u)) {
+        if (a.trim()) foreignSeAliases.add(a.trim());
+      }
+    }
+    const foreignManagerAliases = new Set<string>();
+    for (const u of salesManagers) {
+      if (Number(u.id ?? 0) === Number(currentUserId)) continue;
+      for (const a of collectHierarchyUserAssigneeAliases(u)) {
+        if (a.trim()) foreignManagerAliases.add(a.trim());
+      }
+    }
+    const managerAliases = [
+      currentUserName ?? "",
+      ...currentUserAliases,
+    ].filter((s) => s.trim());
+    return {
+      managerUserId: currentUserId,
+      managerAliases,
+      teamUserIds: myExecs.map((u) => Number(u.id ?? 0)).filter((id) => id > 0),
+      teamAliases: [...teamAliases],
+      foreignSeUserIds: foreignExecs
+        .map((u) => Number(u.id ?? 0))
+        .filter((id) => id > 0),
+      foreignSeAliases: [...foreignSeAliases],
+      foreignManagerAliases: [...foreignManagerAliases],
+    };
+  }, [
+    clientScopeRoleKey,
+    currentUserId,
+    currentUserName,
+    currentUserAliases,
+    managerTeamRoster,
+    salesExecs,
+    salesManagers,
+  ]);
   const salesExecOptionsResolved = useMemo(() => {
     const uniqueCaseInsensitive = (names: string[]) => {
       // Prefer longer / Title-case display when "meghana" vs "Meghana" collide
@@ -2840,8 +2914,13 @@ export default function LeadsDataSection({
           : undefined;
       const useUnifiedAssigneeScopeFetch =
         !useTeamPersonFetch && effectiveAssigneeScope.length > 0;
+      /** Single SE/PE hierarchy pick must match that exec's own dashboard (no prefix drift). */
+      const exactPersonAssigneeMatch = Boolean(
+        salesExecFilter.trim() || effectivePresalesExecFilter.trim(),
+      );
       const assigneeMatchOpts = {
         userIds: effectiveAssigneeUserIds,
+        exact: exactPersonAssigneeMatch,
       };
       const applyAssigneeScopeFilter = (leads: ApiLead[]) => {
         return activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0
@@ -2888,6 +2967,8 @@ export default function LeadsDataSection({
           userIdsForRequest !== undefined ? userIdsForRequest : undefined,
           0,
           forceFilterMerge,
+          false,
+          smBucketScope,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -2920,6 +3001,8 @@ export default function LeadsDataSection({
               userIdsForRequest !== undefined ? userIdsForRequest : undefined,
               0,
               forceFilterMerge,
+              false,
+              smBucketScope,
             ),
           ),
         );
@@ -2999,38 +3082,25 @@ export default function LeadsDataSection({
             : visibleMerged;
         /** Id-merge inventory (blank → Fresh); no phone collapse — same as SM Total Leads. */
         const journeyRows = scopedIdRows;
-        const excludeLostFromTable = shouldExcludeLostPathFromTablePagination({
-          search: debouncedSearch,
-          dateField,
-          dateFrom,
-          dateTo,
-          crmMonthWindow: crmMonthWindowProp,
-          leadType: targetLeadType,
-          assignee: effectiveAssignee,
-          milestoneStage,
-          milestoneStageCategory,
-          milestoneSubStage,
-          reinquiry,
-        });
+        // Same inventory as Total Leads (incl. lost) so size=100 → pages = ceil(Total/100).
         const paged = paginateLeadsForTableInventory(
           journeyRows,
           targetPage,
           targetSize,
-          excludeLostFromTable,
+          false,
         );
-        const countBasis = excludeLostFromTable
-          ? journeyRows.filter((lead) => !isLostPathLead(lead))
-          : journeyRows;
+        const summaryTotals = computeJourneySummaryCounts(journeyRows);
         return {
           content: paged.content,
           totalElements: paged.totalElements,
-          uniquePrimaryTotal: paged.totalElements,
-          totalRowCount: paged.totalElements,
+          uniquePrimaryTotal: journeyRows.length,
+          totalRowCount: journeyRows.length,
           totalPages: paged.totalPages,
           number: paged.number,
           size: paged.size,
-          sourceCounts: computeLeadTypeCountsFromRows(countBasis),
-          summaryTotals: computeJourneySummaryCounts(journeyRows),
+          // Lead Types tiles use full journey (incl. lost) — same basis as insight effect.
+          sourceCounts: computeLeadTypeCountsFromRows(journeyRows),
+          summaryTotals,
           // Phase cards for SE/SM: same map as Lead/Opp (id-merge + blank→Fresh + canonical).
           milestoneCounts: milestoneCountsFromLeads(journeyRows, leadsWorkspace),
         };
@@ -3125,6 +3195,10 @@ export default function LeadsDataSection({
             clientScopeRoleKey,
             bffAssigneeAliasSet,
             effectiveAssigneeUserIds.length > 0 ? effectiveAssigneeUserIds : undefined,
+            0,
+            false,
+            false,
+            smBucketScope,
           );
           if (activeAssigneeScope.length === 0) {
             // Same as origin/main: trust Hub/BFF page meta (full pool totals).
@@ -3174,6 +3248,7 @@ export default function LeadsDataSection({
       hierarchyPersonFetchSeeds,
       salesManagerFilter,
       salesExecFilter,
+      effectivePresalesExecFilter,
       salesHierarchyFilterActive,
       superAdminPresalesPoolActive,
       superAdminPresalesPoolSet,
@@ -3190,6 +3265,7 @@ export default function LeadsDataSection({
       verificationStatusFromHeader,
       crmMonthWindowProp,
       leadsWorkspace,
+      smBucketScope,
     ],
   );
 
@@ -3216,7 +3292,13 @@ export default function LeadsDataSection({
           : undefined;
       const useUnifiedAssigneeScopeFetch =
         !useTeamPersonFetch && effectiveAssigneeScope.length > 0;
-      const assigneeMatchOpts = { userIds: effectiveAssigneeUserIds };
+      const exactPersonAssigneeMatch = Boolean(
+        salesExecFilter.trim() || effectivePresalesExecFilter.trim(),
+      );
+      const assigneeMatchOpts = {
+        userIds: effectiveAssigneeUserIds,
+        exact: exactPersonAssigneeMatch,
+      };
       const applyAssigneeScopeFilter = (leads: ApiLead[]) => {
         return activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0
           ? filterLeadsByAssigneeScope(leads, activeAssigneeScope, assigneeMatchOpts)
@@ -3278,6 +3360,7 @@ export default function LeadsDataSection({
           0,
           forceFilterMerge,
           includeLostPath,
+          smBucketScope,
         );
         const allLeads = Array.isArray(firstPage.content) ? [...firstPage.content] : [];
         const totalPages = Math.max(1, Number(firstPage.totalPages ?? 1));
@@ -3311,6 +3394,7 @@ export default function LeadsDataSection({
               0,
               forceFilterMerge,
               includeLostPath,
+              smBucketScope,
             ),
           ),
         );
@@ -3419,6 +3503,7 @@ export default function LeadsDataSection({
       hierarchyPersonFetchSeeds,
       salesManagerFilter,
       salesExecFilter,
+      effectivePresalesExecFilter,
       salesHierarchyFilterActive,
       leadViewKey,
       milestoneStage,
@@ -3432,6 +3517,7 @@ export default function LeadsDataSection({
       superAdminGlobalSearchActive,
       adminGlobalSearchAcrossPools,
       clientScopeRoleKey,
+      smBucketScope,
     ],
   );
 
@@ -3550,6 +3636,9 @@ export default function LeadsDataSection({
             activeAssigneeScope.length > 0
               ? filterLeadsByAssigneeScope(journeyRows, activeAssigneeScope, {
                   userIds: effectiveAssigneeUserIds,
+                  exact: Boolean(
+                    salesExecFilter.trim() || effectivePresalesExecFilter.trim(),
+                  ),
                 })
               : journeyRows;
           const countsWithInsights = roleUsesAdminPoolInsightTiles(roleKey)
@@ -4003,21 +4092,28 @@ export default function LeadsDataSection({
             (roleKey === "SALES_MANAGER" || roleKey === "MANAGER"))
             ? inboxScoped
             : inboxScoped.filter((lead) => canViewLeadByRole(lead, roleKey));
-        const journeyScoped = scoped;
+        // Same id-merge as table/heatmap — without this SE My Assigned (341) diverged from
+        // Lead+Opp Total (108) when mergeAll returned duplicate lead ids across sources.
+        const journeyScoped =
+          leadsWorkspace === "sales" ? dedupeAdminPoolLeads(scoped) : scoped;
         const base = computeLeadTypeCountsFromRows(journeyScoped);
         const summaryTotals = computeJourneySummaryCounts(journeyScoped);
         const milestoneMap = milestoneCountsFromLeads(journeyScoped, leadsWorkspace);
-        // Only update total from this effect when
-        // exec/hierarchy scope is active
-        // Otherwise load() already set correct total
-        if (
-          effectiveAssigneeScope.length === 0 &&
-          (roleKey === "SALES_MANAGER" || roleKey === "MANAGER")
-        ) {
-          // Manager all-team view — load() handles total + heatmap summary
-          // do not overwrite here
-        } else {
-          setVisibleFilteredTotal(journeyScoped.length);
+        // Total + My Assigned = full id-merged pool incl. lost (not Lead+Opp-only).
+        // Lead/Opp cards still use summaryTotals (open journey phases).
+        {
+          const displayTotal = journeyScoped.length;
+          setVisibleFilteredTotal(displayTotal);
+          if (
+            roleKey === "SALES_MANAGER" ||
+            roleKey === "MANAGER" ||
+            roleKey === "SALES_EXECUTIVE"
+          ) {
+            setAdminPoolDisplayTotals({
+              uniquePrimary: displayTotal,
+              totalRows: displayTotal,
+            });
+          }
           const summaryKey = `${summaryTotals.lead}:${summaryTotals.opportunity}:${journeyScoped.length}`;
           if (lastHeatmapSummaryKeyRef.current !== summaryKey) {
             lastHeatmapSummaryKeyRef.current = summaryKey;
@@ -4035,6 +4131,7 @@ export default function LeadsDataSection({
         if (isPresalesRole(roleKey) || superAdminPresalesPoolActive) {
           setLeadTypeCounts({
             ...base,
+            all: journeyScoped.length,
             verified: 0,
           });
           return;
@@ -4067,6 +4164,8 @@ export default function LeadsDataSection({
         const lostSegment = computeLostSegmentCounts(journeyScoped, insightCountOpts);
         setLeadTypeCounts({
           ...base,
+          // My Assigned / Leads for Month = Total Leads (full inventory incl. lost).
+          all: journeyScoped.length,
           ...insights,
           ...milestoneTiles,
           ...lostSegment,
@@ -4139,15 +4238,19 @@ export default function LeadsDataSection({
       leadsWorkspace,
       roleKeyForLoad,
       insightModeActive: false,
-      /** Bust short-page caches + journey vs table total split (badge flash 1085→3388). */
-      tablePagination: "exclude-lost-before-slice-v3",
+      /** Bust caches: SM bucket allowlist (block other SM/SE leaks e.g. Razi). */
+      tablePagination: "exclude-lost-before-slice-v9-sm-bucket-allowlist",
     });
     const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
     setError(null);
     if (cached) {
       setData(cached.data);
-      if (cached.visibleFilteredTotal !== null) {
+      // Prefer Lead+Opp from cached page meta — old caches stored lost-excluded pager size.
+      const cachedBadge = journeyBadgeTotalFromPage(cached.data);
+      if (cachedBadge > 0) {
+        setVisibleFilteredTotal(cachedBadge);
+      } else if (cached.visibleFilteredTotal !== null) {
         setVisibleFilteredTotal(cached.visibleFilteredTotal);
       }
       setLoading(false);
@@ -4165,9 +4268,7 @@ export default function LeadsDataSection({
       const applyAdminTotalsFromTablePage = (pageJson: SpringPage<ApiLead>) => {
         const pageContentLen = Array.isArray(pageJson.content) ? pageJson.content.length : 0;
         const totalRows = Number(pageJson.totalRowCount ?? pageJson.totalElements ?? 0);
-        const uniquePrimary = Number(
-          pageJson.uniquePrimaryTotal ?? pageJson.totalRowCount ?? pageJson.totalElements ?? 0,
-        );
+        const uniquePrimary = journeyBadgeTotalFromPage(pageJson);
         const pageSizeHint = Number(pageJson.size ?? 0);
         /**
          * Hub/BFF sometimes echoes the current page size as totalElements (e.g. 20 of 20).
@@ -4293,7 +4394,26 @@ export default function LeadsDataSection({
               applyAdminTotalsFromTablePage(pageJson);
             }
           } else {
-            setVisibleFilteredTotal(pageJson.totalElements ?? 0);
+            /**
+             * SM/SE/PM client inventory: Total Leads badge = Lead+Opp journey summary.
+             * `totalElements` is the lost-excluded table pager (was stuck at ~474 while
+             * cards showed 1129+361). Prefer summaryTotals / uniquePrimaryTotal.
+             */
+            const badgeTotal = journeyBadgeTotalFromPage(pageJson);
+            setVisibleFilteredTotal(badgeTotal);
+            if (
+              roleKeyForLoad === "SALES_MANAGER" ||
+              roleKeyForLoad === "MANAGER" ||
+              roleKeyForLoad === "SALES_EXECUTIVE"
+            ) {
+              setAdminPoolDisplayTotals({
+                uniquePrimary: badgeTotal,
+                totalRows: Math.max(
+                  Number(pageJson.totalRowCount ?? 0),
+                  badgeTotal,
+                ),
+              });
+            }
           }
         } else if (
           preferFilteredInventory ||
@@ -4303,8 +4423,8 @@ export default function LeadsDataSection({
               milestoneSubStage.trim(),
           )
         ) {
-          // Client-scoped / admin: page or list-filter totals must update Total Leads.
-          const filteredTotal = Number(pageJson.totalElements ?? 0);
+          // List filters: prefer Lead+Opp summary when present (matches heatmap cards).
+          const filteredTotal = journeyBadgeTotalFromPage(pageJson);
           setVisibleFilteredTotal(filteredTotal);
           if (
             preferFilteredInventory &&
@@ -4320,20 +4440,10 @@ export default function LeadsDataSection({
           }
         } else {
           /**
-           * Unfiltered admin/SM: Total Leads = full journey (uniquePrimary / Lead+Opp),
-           * NOT `totalElements` (may be lost-excluded table pager size — flashed 1085 then
-           * corrected to ~3388 when heatmap finished).
+           * Unfiltered admin/SM: Total Leads = Lead+Opp journey summary first,
+           * then uniquePrimaryTotal. Never prefer lost-excluded `totalElements`.
            */
-          const st = pageJson.summaryTotals;
-          const journeyFromSummary =
-            st && Number.isFinite(st.lead) && Number.isFinite(st.opportunity)
-              ? Number(st.lead) + Number(st.opportunity)
-              : 0;
-          const journeyTotal = Number(
-            pageJson.uniquePrimaryTotal ??
-              pageJson.totalRowCount ??
-              (journeyFromSummary > 0 ? journeyFromSummary : 0),
-          );
+          const journeyTotal = journeyBadgeTotalFromPage(pageJson);
           if (journeyTotal > 0) {
             setVisibleFilteredTotal(journeyTotal);
             if (
@@ -4354,7 +4464,16 @@ export default function LeadsDataSection({
           setVisibleFilteredTotal(null);
           }
         }
-        if (usePageMetaForUi && pageJson.sourceCounts) {
+        /**
+         * SM/SE/PE: insight effect owns Lead Types from the id-merged full journey.
+         * Never merge paged `sourceCounts` — that inflated SE My Assigned (341) above
+         * Lead+Opp Total (108) when duplicates raced with the table page.
+         */
+        if (
+          usePageMetaForUi &&
+          pageJson.sourceCounts &&
+          !requiresClientScopedDataset
+        ) {
           const sourceCounts = pageJson.sourceCounts;
           if (preferFilteredInventory) {
             // Keep insight tiles (lost segment / follow-up / meetings) computed in parallel.
@@ -4493,12 +4612,13 @@ export default function LeadsDataSection({
         writeLeadsListCache(
           cacheKey,
           fallbackJson,
-          fallbackJson.totalElements ?? null,
+          journeyBadgeTotalFromPage(fallbackJson),
         );
         return;
       }
       applyLoadedPageMeta(json, usePageMetaForUi);
-      writeLeadsListCache(cacheKey, json, json.totalElements ?? null);
+      // Cache Total badge as Lead+Opp — never lost-excluded table pager size.
+      writeLeadsListCache(cacheKey, json, journeyBadgeTotalFromPage(json));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load leads";
       if (msg.toLowerCase().includes("session expired")) {
@@ -4577,6 +4697,9 @@ export default function LeadsDataSection({
         if (activeAssigneeScope.length > 0 || effectiveAssigneeUserIds.length > 0) {
           pool = filterLeadsByAssigneeScope(pool, activeAssigneeScope, {
             userIds: effectiveAssigneeUserIds,
+            exact: Boolean(
+              salesExecFilter.trim() || effectivePresalesExecFilter.trim(),
+            ),
           });
         }
         setInsightTablePoolLeads(pool);
@@ -4864,6 +4987,8 @@ export default function LeadsDataSection({
   /** Stage filter on: prefer filtered pool total (not stale full-pool badge). */
   const clientSideMilestoneFilterActive =
     hasMilestoneFilter && !adminMilestoneTableActive && !dedicatedFilterTableView;
+  const journeyBadgeFromData =
+    data != null ? journeyBadgeTotalFromPage(data) : 0;
   const total =
     insightTableMode !== null
       ? rows.length
@@ -4878,39 +5003,34 @@ export default function LeadsDataSection({
           : ivrCallFilterActive
             ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
             : (visibleFilteredTotal ??
+              (journeyBadgeFromData > 0 ? journeyBadgeFromData : null) ??
               data?.uniquePrimaryTotal ??
               data?.totalRowCount ??
               data?.totalElements ??
               rows.length);
   /**
-   * Total Leads badge may use full journey (uniquePrimary) while the table pages
-   * lost-excluded inventory (`data.totalElements` / `data.totalPages`). Prefer BFF
-   * pager meta when badge total is larger than the table inventory.
+   * Page count always follows Total Leads (`total`) ÷ page size.
+   * Previously used lost-excluded `data.totalPages` when Total > table inventory
+   * (SM: Total 1492 / size 100 → only 5 pages). Table now pages the same full inventory.
    */
-  const tableInventoryTotal = Number(data?.totalElements ?? 0);
   const tablePagerPages =
     data?.totalPages && Number(data.totalPages) > 0 ? Number(data.totalPages) : null;
   const totalPages =
-    insightTableMode !== null
+    insightTableMode !== null ||
+    adminMilestoneTableActive ||
+    clientSideMilestoneFilterActive ||
+    visibleFilteredTotal !== null
       ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-      : adminMilestoneTableActive || clientSideMilestoneFilterActive
-        ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-        : ivrCallFilterActive
-          ? Math.max(
-              1,
-              Number(data?.totalPages) > 0
-                ? Number(data?.totalPages)
-                : Math.ceil(total / Math.max(1, size)),
-            )
-          : tablePagerPages !== null &&
-              tableInventoryTotal > 0 &&
-              total > tableInventoryTotal
-            ? tablePagerPages
-          : visibleFilteredTotal !== null
-            ? Math.max(1, Math.ceil(total / Math.max(1, size)))
-              : tablePagerPages !== null
-                ? tablePagerPages
-              : Math.max(1, Math.ceil(total / Math.max(1, size)));
+      : ivrCallFilterActive
+        ? Math.max(
+            1,
+            Number(data?.totalPages) > 0
+              ? Number(data?.totalPages)
+              : Math.ceil(total / Math.max(1, size)),
+          )
+        : tablePagerPages !== null
+          ? tablePagerPages
+          : Math.max(1, Math.ceil(total / Math.max(1, size)));
   const start = total === 0 ? 0 : page * size + 1;
   const end = Math.min(total, page * size + visibleRows.length);
   const rowsById = new Map(rows.map((row) => [row.id, row]));
