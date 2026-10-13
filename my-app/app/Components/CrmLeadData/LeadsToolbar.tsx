@@ -861,10 +861,8 @@ export default function LeadsToolbar({
                     ["Lead Overdue", leadTypeCounts.overdueActive ?? 0],
                     ["Opportunity Overdue", leadTypeCounts.overdueClosure ?? 0],
                     ...meetingQuoteTiles,
-                    ["Google Leads", leadTypeCounts.glead ?? 0],
-                    ["Meta Leads", leadTypeCounts.mlead ?? 0],
-                    ["Walk-in Leads", leadTypeCounts.walkinlead ?? 0],
-                    ["WhatsApp Leads", leadTypeCounts.whatsapplead ?? 0],
+                    // Full CRM sources (IVR, Add Lead, External, Website, Quikr, …) — same as SM.
+                    ...adminSourceLeadTypeRows,
                   ]
                 : isSalesManager
                   ? [

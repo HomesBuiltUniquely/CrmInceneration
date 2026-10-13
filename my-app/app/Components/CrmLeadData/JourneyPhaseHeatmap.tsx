@@ -37,6 +37,7 @@ import {
   preferFilteredLeadInventoryOverHubCounts,
 } from "@/lib/crm-date-field-filter";
 import { leadMatchesAssigneeScope } from "@/lib/admin-assignee-match";
+import { filterLeadsToSalesManagerBucket } from "@/lib/sales-manager-lead-scope";
 import { LEADS_PAGE_CONTAINER_CLASS } from "./leads-page-layout";
 
 type Phase = {
@@ -1162,12 +1163,16 @@ export default function JourneyPhaseHeatmap({
           return false;
         };
         /**
-         * REAL BUG FIX: Hub my-leads ∪ team-leads is already the SM membership.
-         * Re-filtering with Header display-name teamSet dropped hundreds of Hub team rows
-         * (usernames / alternate names), so Discovery/phases undercounted vs the table.
+         * Hub my∪team is the base inventory, but must allowlist this manager's roster
+         * (userId + exact aliases). Blind trust leaked other SM/SE leads (e.g. Razi).
          */
         const roleScopedLeads = useSmCombinedEndpoints
-          ? visibleLeads
+          ? filterLeadsToSalesManagerBucket(visibleLeads, {
+              managerUserId: currentUserId ?? 0,
+              managerAliases: [currentUserName ?? "", ...currentUserAliases],
+              teamUserIds: [],
+              teamAliases: managerTeamNames,
+            })
           : visibleLeads.filter((lead) => {
           if (trustPresalesUpstreamLeadScope(roleKey)) return true;
           if (

@@ -805,16 +805,15 @@ export async function GET(req: NextRequest) {
       Number.parseInt(size, 10) || 20,
       excludeLostPath,
     );
-    /** Full journey for Total Leads / tiles; `totalElements` stays table (lost-excluded) pager. */
-    const journeyTotal = merged.length;
+    /** Total Leads = full merge incl. lost; `totalElements` stays lost-excluded table pager. */
     const body: SpringPage<ApiLead> = {
       content: paged.content,
       totalElements: paged.totalElements,
       totalPages: paged.totalPages,
       number: paged.number,
       size: paged.size,
-      uniquePrimaryTotal: journeyTotal,
-      totalRowCount: journeyTotal,
+      uniquePrimaryTotal: merged.length,
+      totalRowCount: merged.length,
       sourceCounts: await augmentMergeSourceCounts(
         req,
         url,
@@ -1022,7 +1021,7 @@ export async function GET(req: NextRequest) {
   );
 
   const excludeLostPath = readExcludeLostPathParam(url);
-  /** Cards / Total Leads use full merge; table pagination may exclude lost on default inbox. */
+  /** Total Leads = full merge incl. lost; table pager may still exclude lost on default inbox. */
   const summaryTotals = computeSummaryTotals(merged);
   const paged = paginateLeadsForTableInventory(
     merged,
@@ -1030,7 +1029,6 @@ export async function GET(req: NextRequest) {
     Number.parseInt(size, 10) || 20,
     excludeLostPath,
   );
-  const journeyTotal = merged.length;
   const sourceCounts = await augmentMergeSourceCounts(
     req,
     url,
@@ -1046,8 +1044,8 @@ export async function GET(req: NextRequest) {
     totalPages: paged.totalPages,
     number: paged.number,
     size: paged.size,
-    uniquePrimaryTotal: journeyTotal,
-    totalRowCount: journeyTotal,
+    uniquePrimaryTotal: merged.length,
+    totalRowCount: merged.length,
     sourceCounts,
     summaryTotals,
     ...(accessDeniedLeadTypes.length > 0
