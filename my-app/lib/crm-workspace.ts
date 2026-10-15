@@ -13,7 +13,9 @@ import {
   isCrmLeadVerificationUnknown,
   type ApiLead,
 } from "@/lib/leads-filter";
+import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { normalizeStageKey } from "@/lib/milestone-progress";
+import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
 import type { MilestoneFilterQuery } from "@/lib/presales-milestone";
 import { presalesTopLevelStage, readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
 import { isAdminRole } from "@/lib/roleUtils";
@@ -23,6 +25,91 @@ import {
   presalesWorkspaceSidebarSections,
   salesWorkspaceSidebarSections,
 } from "@/app/Components/Shared/sidebar-data";
+
+/** Local copy of journey phase canonicalization — avoid importing admin-leads-api (cycle). */
+function canonicalSalesPhaseKey(raw: string): string {
+  const key = normalizeStageKey(raw);
+  if (!key || key === "null" || key === "undefined" || key === "none" || key === "n/a" || key === "na") {
+    return "fresh lead";
+  }
+  if (key.includes("no milestone") || key === "unassigned" || key === "initial stage" || key === "initial") {
+    return "fresh lead";
+  }
+  if (key.includes("closed") || key.includes("close")) return "closed";
+  if (key.includes("fresh")) return "fresh lead";
+  if (key.includes("discover")) return "discovery";
+  if (key.includes("meeting scheduled") || key.includes("connect")) return "connection";
+  if (key.includes("meeting successful") || key.includes("quote sent") || key.includes("experience") || key.includes("design")) {
+    return "experience & design";
+  }
+  if (key.includes("decision")) return "decision";
+  return key;
+}
+
+/** Collapse "RNR Call Back (Discovery)" / punctuation so Hub labels match toolbar picks. */
+function milestoneLabelCore(value: string): string {
+  return normalizeStageKey(value)
+    .replace(/\(.*?\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function salesMilestoneStagesMatch(filterStage: string, leadTop: string, leadRawStage: string): boolean {
+  const want = normalizeStageKey(filterStage);
+  if (!want) return true;
+  const top = normalizeStageKey(leadTop);
+  const raw = normalizeStageKey(leadRawStage);
+  if (top === want || raw === want) return true;
+  // Hub often stores stage as "Discovery Won" / "Discovery Lost" while toolbar picks "Discovery".
+  if (canonicalSalesPhaseKey(leadTop) === canonicalSalesPhaseKey(filterStage)) return true;
+  if (canonicalSalesPhaseKey(leadRawStage) === canonicalSalesPhaseKey(filterStage)) return true;
+  if (raw.startsWith(`${want} `) || raw.startsWith(`${want}-`)) return true;
+  return false;
+}
+
+function salesMilestoneCategoriesMatch(
+  filterCategory: string,
+  leadCategory: string,
+  leadRawStage: string,
+): boolean {
+  const want = normalizeStageKey(filterCategory);
+  if (!want) return true;
+  const have = normalizeStageKey(leadCategory);
+  const rawStage = normalizeStageKey(leadRawStage);
+  if (have === want || rawStage === want) return true;
+  const wantParent = want.replace(/\b(won|lost|hold)\b/g, " ").replace(/\s+/g, " ").trim();
+  const haveHay = `${have} ${rawStage}`.trim();
+  // "Discovery Won" vs lead category "Won" / stage "Discovery Won" (same parent stage).
+  if (isWonCategory(filterCategory) && (isWonCategory(leadCategory) || isWonCategory(leadRawStage))) {
+    if (!wantParent || haveHay.includes(wantParent)) return true;
+  }
+  if (isLostCategory(filterCategory) && (isLostCategory(leadCategory) || isLostCategory(leadRawStage))) {
+    if (!wantParent || haveHay.includes(wantParent)) return true;
+  }
+  const wantCore = milestoneLabelCore(filterCategory);
+  const haveCore = milestoneLabelCore(leadCategory || leadRawStage);
+  if (wantCore && haveCore && (wantCore === haveCore || wantCore.includes(haveCore) || haveCore.includes(wantCore))) {
+    return true;
+  }
+  return false;
+}
+
+function salesMilestoneSubStagesMatch(filterSub: string, leadSub: string): boolean {
+  const want = normalizeStageKey(filterSub);
+  if (!want) return true;
+  const have = normalizeStageKey(leadSub);
+  if (!have) return false;
+  if (have === want) return true;
+  const wantLabel = normalizeStageKey(pipelineSubStageLabel(filterSub));
+  const haveLabel = normalizeStageKey(pipelineSubStageLabel(leadSub));
+  if (wantLabel && haveLabel && wantLabel === haveLabel) return true;
+  const wantCore = milestoneLabelCore(filterSub);
+  const haveCore = milestoneLabelCore(leadSub);
+  if (wantCore && haveCore && (wantCore === haveCore || wantCore.includes(haveCore) || haveCore.includes(wantCore))) {
+    return true;
+  }
+  return false;
+}
 
 /** CRM area split: sales pipeline vs presales pipeline (routes + dashboards). */
 export type CrmWorkspace = "sales" | "presales";
@@ -94,7 +181,13 @@ export function isSalesPoolNoMilestoneFilter(stage: string): boolean {
   return normalizeStageKey(s) === normalizeStageKey(SALES_POOL_NO_MILESTONE);
 }
 
-/** Same rules as Journey Phase Heatmap (`crmLeadTopLevelStage` / `presalesTopLevelStage`). */
+/**
+ * Toolbar Stage / Category / Sub Stage filter for sales + presales.
+ * Sales matching is intentionally loose: Hub often stores
+ * `RNR Call Back` while the toolbar sends `RNR Call Back (Discovery)`,
+ * and stage may be `Discovery Won` while the toolbar picks `Discovery`.
+ * Exact-only compare caused SM/SE Total Leads 0 on valid sub-stage filters.
+ */
 export function leadMatchesWorkspaceMilestoneFilter(
   lead: ApiLead,
   workspace: CrmWorkspace,
@@ -112,12 +205,15 @@ export function leadMatchesWorkspaceMilestoneFilter(
     const top = presalesTopLevelStage(lead);
     if (st && normalizeStageKey(top) !== normalizeStageKey(st)) return false;
     if (cat && normalizeStageKey(ps.category) !== normalizeStageKey(cat)) return false;
-    if (sub && normalizeStageKey(ps.subStage) !== normalizeStageKey(sub)) return false;
+    if (sub && !salesMilestoneSubStagesMatch(sub, ps.subStage)) return false;
     return true;
   }
 
-  const { milestoneStageCategory: rawCat, milestoneSubStage: rawSub } =
-    readSalesStageFieldsFromLead(lead);
+  const {
+    milestoneStage: rawStage,
+    milestoneStageCategory: rawCat,
+    milestoneSubStage: rawSub,
+  } = readSalesStageFieldsFromLead(lead);
 
   if (st) {
     if (isSalesPoolNoMilestoneFilter(st)) {
@@ -129,10 +225,10 @@ export function leadMatchesWorkspaceMilestoneFilter(
     }
     // Blank milestone → Fresh Lead (Insights / heatmap / journey column).
     const top = crmLeadTopLevelStage(lead);
-    if (normalizeStageKey(top) !== normalizeStageKey(st)) return false;
+    if (!salesMilestoneStagesMatch(st, top, rawStage)) return false;
   }
-  if (cat && normalizeStageKey(rawCat) !== normalizeStageKey(cat)) return false;
-  if (sub && normalizeStageKey(rawSub) !== normalizeStageKey(sub)) return false;
+  if (cat && !salesMilestoneCategoriesMatch(cat, rawCat, rawStage)) return false;
+  if (sub && !salesMilestoneSubStagesMatch(sub, rawSub)) return false;
   return true;
 }
 

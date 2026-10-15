@@ -20,6 +20,11 @@ export function isSuperAdminRole(role: string): boolean {
   return normalizeRole(role) === "SUPER_ADMIN";
 }
 
+/** Meeting Management — Super Admin only. */
+export function canAccessMeetingManagement(role: string): boolean {
+  return isSuperAdminRole(role);
+}
+
 /** Easebuzz payment-link / online payment — available to all roles. */
 export function canUsePaymentLinkIntegration(_role: string): boolean {
   return true;

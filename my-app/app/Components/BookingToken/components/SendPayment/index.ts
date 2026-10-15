@@ -1,4 +1,5 @@
 export { default as SendPaymentModal } from "./SendPaymentModal";
+export { default as ClosePaymentChoiceModal } from "./ClosePaymentChoiceModal";
 export { default as SendPaymentBody } from "./SendPaymentBody";
 export { default as SummaryStats } from "./SummaryStats";
 export { default as QuotationVersionPicker } from "./QuotationVersionPicker";

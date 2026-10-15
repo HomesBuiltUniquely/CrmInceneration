@@ -19,6 +19,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       { id: "crm-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
       { id: "crm-import-leads", label: "Import Leads", description: "Upload from Excel", icon: "upload", href: "/import-leads" },
       { id: "crm-hub-calendar", label: "Hub Calendar", description: "View and manage calendar events", icon: "calendar", href: "/google-calendar" },
+      {
+        id: "crm-meeting-management",
+        label: "Meeting Management",
+        description: "Track meetings, prep and outcomes",
+        icon: "meeting",
+        href: "/meeting-management",
+      },
       { id: "crm-sales-managers", label: "Sales Managers", description: "View managers list", icon: "id-card", href: "/admin-panel" },
       { id: "crm-presales-executives", label: "Presales Executives", description: "View presales executives", icon: "users", href: "/admin-panel" },
       {

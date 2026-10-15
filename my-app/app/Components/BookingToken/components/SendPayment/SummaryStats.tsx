@@ -24,7 +24,8 @@ export default function SummaryStats({
 
   return (
     <div className="shrink-0 border-b border-[#E3E8EE] px-4 py-2.5">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      {/* md+ keeps 4 tiles in one row so booking/amount don't stack awkwardly on laptops */}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <div className="rounded-2xl border border-[#E3E8EE] bg-[#F7F9FA] px-3 py-2">
           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#5B6778]">
             Total amount

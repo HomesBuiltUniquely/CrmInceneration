@@ -35,6 +35,8 @@ function moduleFromPathname(pathname: string): CrmModuleId | null {
     p.startsWith("/import-leads/") ||
     p === "/google-calendar" ||
     p.startsWith("/google-calendar/") ||
+    p === "/meeting-management" ||
+    p.startsWith("/meeting-management/") ||
     p === "/admin-panel" ||
     p.startsWith("/admin-panel/") ||
     p === "/booking-token" ||

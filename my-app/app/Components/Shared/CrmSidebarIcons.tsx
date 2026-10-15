@@ -285,6 +285,17 @@ export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
           <rect x="8" y="12" width="3" height="3" rx="0.6" fill="currentColor" />
         </svg>
       );
+    case "meeting":
+      return (
+        <svg {...baseProps}>
+          <rect x="3.5" y="5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth={SW} />
+          <path d="M8 3.6V6.2" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+          <path d="M16 3.6V6.2" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+          <path d="M3.5 9.2H20.5" stroke="currentColor" strokeWidth={SW} />
+          <circle cx="12" cy="14.2" r="1.7" stroke="currentColor" strokeWidth={SW} />
+          <path d="M9 17.6C9.55 16.55 10.65 16 12 16C13.35 16 14.45 16.55 15 17.6" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+        </svg>
+      );
     case "palette":
       return (
         <svg {...baseProps}>
