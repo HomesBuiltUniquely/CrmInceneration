@@ -888,6 +888,48 @@ export async function getLeadFloorPlanMeta(
   return parseLeadFloorPlanState(data, leadType, id);
 }
 
+type FloorPlanCarrier = {
+  floorPlan: string;
+  floorPlanPublicLink?: string;
+  floorPlanViewPath?: string;
+  floorPlanOpenPath?: string;
+};
+
+function floorPlanCarrierHasFile(lead: FloorPlanCarrier): boolean {
+  return Boolean(
+    lead.floorPlan?.trim() ||
+      lead.floorPlanPublicLink?.trim() ||
+      lead.floorPlanViewPath?.trim(),
+  );
+}
+
+/**
+ * Lead-detail JSON often has no floor-plan record. A later PUT would then send those
+ * fields empty and delete the file. Copy the floor-plan API onto the lead first.
+ * An empty lead plus a 404 stays empty, so an intentional remove still clears.
+ */
+export async function leadPreservingServerFloorPlan<T extends FloorPlanCarrier>(
+  leadType: CrmLeadType,
+  id: string,
+  lead: T,
+): Promise<T> {
+  if (floorPlanCarrierHasFile(lead)) return lead;
+  try {
+    const meta = await getLeadFloorPlanMeta(leadType, id);
+    if (!meta) return lead;
+    if (!meta.s3Key.trim() && !meta.publicLink.trim() && !meta.viewPath.trim()) return lead;
+    return {
+      ...lead,
+      floorPlan: meta.s3Key || lead.floorPlan,
+      floorPlanPublicLink: meta.publicLink || lead.floorPlanPublicLink,
+      floorPlanViewPath: meta.viewPath || lead.floorPlanViewPath,
+      floorPlanOpenPath: meta.openPath || lead.floorPlanOpenPath,
+    };
+  } catch {
+    return lead;
+  }
+}
+
 /** `POST /api/crm/lead/{leadType}/{id}/floor-plan` → S3 upload on CRM backend. */
 export async function uploadLeadFloorPlan(
   leadType: CrmLeadType,

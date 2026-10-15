@@ -11,6 +11,7 @@ import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
 import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
 import {
   validateConfigurationScopeForMeeting,
+  configurationScopeValidationSummary,
   type ConfigurationScopeValidationIssue,
 } from "@/lib/configuration-scope-validation";
 import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
@@ -73,7 +74,13 @@ import {
   type ClosureProbability,
   type ConfigurationScopeFrontendPrefs,
 } from "@/lib/configuration-scope-frontend-prefs";
-import { getLeadDetail, getLeadFloorPlanMeta, putLeadDetail, uploadLeadFloorPlan } from "@/lib/lead-details-client";
+import {
+  getLeadDetail,
+  getLeadFloorPlanMeta,
+  leadPreservingServerFloorPlan,
+  putLeadDetail,
+  uploadLeadFloorPlan,
+} from "@/lib/lead-details-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { LeadQuoteOption } from "@/lib/crm-quote-links";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -409,6 +416,14 @@ export default function NewConfigurationScopePage({
         setFloorPlanPublicLink(state.publicLink ?? "");
         setFloorPlanViewPath(state.viewPath);
         setFloorPlanOpenPath(state.openPath);
+        notifyConfigurationScopeUpdated({
+          leadType: validLeadType,
+          leadId,
+          floorPlan: state.s3Key,
+          floorPlanPublicLink: state.publicLink ?? "",
+          floorPlanViewPath: state.viewPath,
+          floorPlanOpenPath: state.openPath,
+        });
         notifySuccess("Floor plan uploaded.");
       } catch (e) {
         notifyError(e instanceof Error ? e.message : "Floor plan upload failed.");
@@ -474,12 +489,12 @@ export default function NewConfigurationScopePage({
       const writeOnce = async (): Promise<Record<string, unknown>> => {
         const latest = await getLeadDetail(validLeadType, leadId);
         const snapshot = detailJsonToLead(latest, validLeadType);
-        const leadForSave = {
+        const leadForSave = await leadPreservingServerFloorPlan(validLeadType, leadId, {
           ...snapshot,
           configuration: nextConfiguration || snapshot.configuration,
           propertyLocation: nextPropertyName || snapshot.propertyLocation,
           bookingType: nextBookingType || snapshot.bookingType,
-        };
+        });
         const body = mergeLeadIntoDetail(latest, leadForSave);
         if (nextConfiguration) {
           applyConfigurationToDetailPayload(validLeadType, body, nextConfiguration);
@@ -684,7 +699,7 @@ export default function NewConfigurationScopePage({
   );
 
   const saveAestheticNotes = useCallback(
-    async (force = false): Promise<boolean> => {
+    async (force = false, quiet = false): Promise<boolean> => {
       if (!validLeadType) return false;
       if (aestheticNotesSaveInFlightRef.current) {
         let waited = 0;
@@ -709,7 +724,9 @@ export default function NewConfigurationScopePage({
         setReferencesUpdatedAt(data.updatedAt ?? null);
         return true;
       } catch (e) {
-        notifyError(e instanceof Error ? e.message : "Unable to save aesthetic notes.");
+        if (!quiet) {
+          notifyError(e instanceof Error ? e.message : "Unable to save aesthetic notes.");
+        }
         return false;
       } finally {
         aestheticNotesSaveInFlightRef.current = false;
@@ -822,7 +839,8 @@ export default function NewConfigurationScopePage({
       bookingType,
       hasFloorPlan: hasFloorPlanUploaded,
     });
-    if (issues.length > 0) {
+    const returningToMeeting = Boolean(onSavedAndClose);
+    if (issues.length > 0 && !returningToMeeting) {
       setShowMissingFieldHints(true);
       notifyError(
         issues[0]?.message ?? "A few details still need a moment of your care.",
@@ -832,6 +850,13 @@ export default function NewConfigurationScopePage({
         block: "start",
       });
       return;
+    }
+    const pendingScopeWarning =
+      issues.length > 0
+        ? `${configurationScopeValidationSummary(issues)} You can still schedule this meeting.`
+        : "";
+    if (pendingScopeWarning) {
+      setShowMissingFieldHints(true);
     }
     setFinalizing(true);
     try {
@@ -849,14 +874,14 @@ export default function NewConfigurationScopePage({
       ).trim();
 
       const requirementsOk = await saveRequirements(coherentRequirements);
-      const notesOk = await saveAestheticNotes(true);
+      const notesOk = await saveAestheticNotes(false, true);
       const leadRowOk = await persistLeadRowFromScope({
         configuration: nextConfiguration,
         propertyName: nextPropertyName,
         bookingType: nextBookingType,
       });
       if (!leadRowOk) return;
-      if (!requirementsOk || !notesOk) return;
+      if (!requirementsOk) return;
 
       writeConfigurationScopeFrontendPrefs(validLeadType, leadId, frontendPrefs);
       notifyConfigurationScopeUpdated({
@@ -896,11 +921,24 @@ export default function NewConfigurationScopePage({
 
       // Meeting gate: reopen Schedule Hub Meeting immediately on save (no celebration delay).
       if (onSavedAndClose) {
-        notifySuccess("Configuration scope saved.");
+        if (pendingScopeWarning) {
+          notifyError(pendingScopeWarning);
+        } else if (!notesOk) {
+          notifyError(
+            "Aesthetic notes could not be saved. Configuration scope is saved, and you can schedule the meeting.",
+          );
+        } else {
+          notifySuccess("Configuration scope saved.");
+        }
         onSavedAndClose();
         return;
       }
 
+      if (!notesOk) {
+        notifyError(
+          "Aesthetic notes could not be saved. The rest of Configuration Scope was saved.",
+        );
+      }
       setShowFinalizeCelebration(true);
     } finally {
       setFinalizing(false);

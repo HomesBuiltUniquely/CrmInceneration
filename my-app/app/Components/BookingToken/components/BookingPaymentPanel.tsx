@@ -364,14 +364,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
         const lockedId = (activeDeal.quoteId ?? "").trim();
+        const lockedMatches = lockedId
+          ? merged.filter((option) => option.quoteId === lockedId || option.id === lockedId)
+          : [];
         const locked =
-          lockedId
-            ? merged.find((option) => option.quoteId === lockedId || option.id === lockedId) ?? null
+          lockedMatches.find((option) => option.isLatest) ??
+          lockedMatches[lockedMatches.length - 1] ??
+          (lockedId
+            ? null
             : merged.find(
                 (option) =>
                   option.amount != null &&
                   Math.round(option.amount) === Math.round(activeDeal.dealValueAmount),
-              ) ?? null;
+              ) ?? null);
         const defaultSelection =
           locked?.id ?? merged.find((option) => option.isLatest)?.id ?? merged[0]?.id ?? "";
         setSelectedQuoteId(defaultSelection);

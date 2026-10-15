@@ -16,6 +16,11 @@ type Props = {
   padClassName?: string;
   /** When false, skip the pad wrapper and render children directly. */
   withPad?: boolean;
+  /**
+   * `fade` hides the bar and softens the edges.
+   * `bar` shows a thin scrollbar only while the content overflows.
+   */
+  scrollbar?: "fade" | "bar";
 } & Omit<HTMLAttributes<HTMLDivElement>, "children" | "className">;
 
 /**
@@ -27,6 +32,7 @@ export default function SoftScroll({
   className = "",
   padClassName = "",
   withPad = true,
+  scrollbar = "fade",
   ...rest
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -63,7 +69,9 @@ export default function SoftScroll({
   return (
     <div
       ref={ref}
-      className={`sp-scroll-fade${overflows ? " sp-scroll-fade--active" : ""} ${className}`.trim()}
+      className={`sp-scroll-fade${overflows ? " sp-scroll-fade--active" : ""}${
+        scrollbar === "bar" ? " sp-scroll-soft" : ""
+      } ${className}`.trim()}
       data-overflow={overflows ? "true" : "false"}
       {...rest}
     >

@@ -15,6 +15,7 @@ import {
   putPresalesMilestoneDetail,
   putHubScheduleDates,
   getLeadFloorPlanMeta,
+  leadPreservingServerFloorPlan,
   removeLeadFloorPlan,
   uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
@@ -2967,8 +2968,36 @@ export default function LeadDetailsApiClient({
         if (detail.bookingType?.trim()) {
           next.bookingType = detail.bookingType.trim();
         }
+        if (detail.floorPlan?.trim()) next.floorPlan = detail.floorPlan.trim();
+        if (detail.floorPlanPublicLink?.trim()) {
+          next.floorPlanPublicLink = detail.floorPlanPublicLink.trim();
+        }
+        if (detail.floorPlanViewPath?.trim()) {
+          next.floorPlanViewPath = detail.floorPlanViewPath.trim();
+        }
+        if (detail.floorPlanOpenPath?.trim()) {
+          next.floorPlanOpenPath = detail.floorPlanOpenPath.trim();
+        }
         return next;
       });
+      if (detail.floorPlan?.trim() || detail.floorPlanPublicLink?.trim()) {
+        setBaseDetail((prev) => ({
+          ...prev,
+          ...(detail.floorPlan?.trim()
+            ? {
+                floorPlan: detail.floorPlan.trim(),
+                floorPlanS3Key: detail.floorPlan.trim(),
+                floorPlanUrl: detail.floorPlan.trim(),
+              }
+            : {}),
+          ...(detail.floorPlanPublicLink?.trim()
+            ? {
+                floorPlanPublicLink: detail.floorPlanPublicLink.trim(),
+                publicUrl: detail.floorPlanPublicLink.trim(),
+              }
+            : {}),
+        }));
+      }
     };
     window.addEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
     return () => window.removeEventListener(CONFIGURATION_SCOPE_UPDATED_EVENT, onScopeUpdated);
@@ -3351,19 +3380,23 @@ export default function LeadDetailsApiClient({
             apptBody.slotId = args.meetingAppointment.slotId;
           }
 
-          // Meeting Rescheduled → update same Hub appointment (PUT). Others → create (POST).
+          // Reschedule keeps the same Hub appointment. Other bookings create one.
           let appt: CreateAppointmentResponse;
-          if (isMeetingRescheduledSubstage(persistedSubstage)) {
-            const existing = await findLatestAppointmentForLead(leadIdNum, {
-              designerName:
-                lead.designerName || args.meetingAppointment.designerName,
-            });
-            if (existing?.id != null) {
-              appt = await updateAppointment(existing.id, apptBody, {
+          const explicitRescheduleId = args.rescheduleAppointmentId;
+          if (explicitRescheduleId != null || isMeetingRescheduledSubstage(persistedSubstage)) {
+            const existingId =
+              explicitRescheduleId ??
+              (
+                await findLatestAppointmentForLead(leadIdNum, {
+                  designerName:
+                    lead.designerName || args.meetingAppointment.designerName,
+                })
+              )?.id;
+            if (existingId != null) {
+              appt = await updateAppointment(existingId, apptBody, {
                 rescheduleReason: args.note?.trim() || undefined,
               });
             } else {
-              // No prior meeting found — fall back to create so the flow still completes.
               appt = await createAppointment(apptBody);
             }
           } else {
@@ -3500,7 +3533,7 @@ export default function LeadDetailsApiClient({
           await redirectToStrictSalesClosure(lead.stageBlock);
           return;
         }
-        const leadForSave: Lead = {
+        const leadForSave = await leadPreservingServerFloorPlan(lt, leadId, {
           ...lead,
           meetingDate,
           followUpDate,
@@ -3516,7 +3549,7 @@ export default function LeadDetailsApiClient({
           lostReason: args.lostReason?.trim()
             ? args.lostReason.trim()
             : lead.lostReason,
-        };
+        });
         const body = mergeLeadIntoDetail(baseDetail, leadForSave);
         if (noFollowUpNeeded) {
           body.followUpDate = null;

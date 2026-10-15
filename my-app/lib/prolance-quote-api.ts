@@ -158,16 +158,36 @@ function sumOptionRowTotals(rows: QuoteOptionRow[]): number | null {
   return hasComponents ? componentTotal : null;
 }
 
+/** Hub category / flat / extra discounts. The quotation page subtracts these from the list price. */
+function hubCustomerDiscount(row: Record<string, unknown>): number {
+  return (
+    (parseNum(row.hubCategoryDiscountAmount) ?? 0) +
+    (parseNum(row.hubFlatDiscountAmount) ?? 0) +
+    (parseNum(row.hubAdditionalDiscountAmount) ?? 0)
+  );
+}
+
+/**
+ * Customer estimated total, matching the quotation page ("inclusive of all taxes").
+ * `finalTotalPrice` is before Hub discounts. Example: 41,89,279 − 11,63,084 = 30,26,195.
+ */
 export function extractProlanceQuoteTotalAmount(data: unknown): number | null {
   const row = asRecord(data);
-  const direct =
-    parseNum(row.totalPayableAmount) ??
+  const listPrice =
     parseNum(row.finalTotalPrice) ??
     parseNum(row.finalPrice) ??
+    parseNum(row.totalPrice);
+  if (listPrice !== null && listPrice > 0) {
+    const discount = hubCustomerDiscount(row);
+    if (discount > 0 && discount < listPrice) return listPrice - discount;
+    return listPrice;
+  }
+
+  const direct =
+    parseNum(row.totalPayableAmount) ??
     parseNum(row.interiorProjectAmount) ??
     parseNum(row.projectAmount) ??
-    parseNum(row.subTotal) ??
-    parseNum(row.totalPrice);
+    parseNum(row.subTotal);
   if (direct !== null) return direct;
 
   const quoteOptionsData = Array.isArray(row.quoteOptionsData)
@@ -249,7 +269,8 @@ export async function buildLeadQuoteOptionsFromProlance(
   const revisions = await fetchProlanceQuoteRevisions(anchorQuoteId);
   if (revisions.length === 0) return [];
 
-  // API can return the same quoteId more than once; keep one row per id.
+  // One card per quote id, same as the booking/token pay-button picker.
+  // Saves of the same quote repeat the id; only a new quote id is a new version.
   const uniqueByQuoteId = new Map<number, ProlanceQuoteRevision>();
   for (const revision of revisions) {
     const existing = uniqueByQuoteId.get(revision.quoteId);
@@ -268,21 +289,22 @@ export async function buildLeadQuoteOptionsFromProlance(
   }
 
   const chronological = [...uniqueByQuoteId.values()].sort(
-    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.quoteId - b.quoteId,
   );
 
-  const shareRows = await Promise.all(
-    chronological.map(async (revision) => {
+  const shareByQuoteId = new Map<number, Record<string, unknown>>();
+  await Promise.all(
+    [...new Set(chronological.map((revision) => revision.quoteId))].map(async (quoteId) => {
       try {
-        return await fetchProlanceQuoteShare(revision.quoteId);
+        shareByQuoteId.set(quoteId, await fetchProlanceQuoteShare(quoteId));
       } catch {
-        return {};
+        shareByQuoteId.set(quoteId, {});
       }
     }),
   );
 
   return chronological.map((revision, index) => {
-    const share = shareRows[index] ?? {};
+    const share = shareByQuoteId.get(revision.quoteId) ?? {};
     const versionNumber = index + 1;
     const isLatest = index === chronological.length - 1;
     const amount = extractProlanceQuoteTotalAmount(share);

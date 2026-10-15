@@ -42,6 +42,34 @@
   padding-bottom: 10px;
 }
 
+/* Thin bar, only visible once `.sp-scroll-soft` is overflowing. */
+.sp-scroll-soft {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.9) transparent;
+}
+
+.sp-scroll-soft::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.sp-scroll-soft::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sp-scroll-soft::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.9);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.sp-scroll-soft.sp-scroll-fade--active {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
 .sp-ease {
   transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }
