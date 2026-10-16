@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { meetingBoardStats, type MeetingRecord } from "@/lib/meeting-management-data";
+import { meetingBoardStats, sortMeetingsForList, type MeetingRecord } from "@/lib/meeting-management-data";
 import { meetingFallsInRange, resolveDatePreset } from "@/lib/meeting-date-range";
 import type { FilterDraft } from "./FilterModal";
 import { KpiCard } from "./KpiCard";
@@ -50,7 +50,7 @@ export function MeetingsPage({
       ? resolveDatePreset(filters.preset, new Date(), { from: filters.dateFrom, to: filters.dateTo })
       : null;
     const needle = filters.q.trim().toLowerCase();
-    return source.filter((row) => {
+    return sortMeetingsForList(source.filter((row) => {
       if (!filters.quoteSent && !matchesTab(row, filters.tab)) return false;
       if (!filters.quoteSent && filters.overdue && !row.needsOutcome) return false;
       if (!filters.quoteSent && filters.designerIds.length && !filters.designerIds.includes(row.assignee)) return false;
@@ -60,7 +60,7 @@ export function MeetingsPage({
       if (!needle) return true;
       const hay = `${row.customer} ${row.leadId ?? ""} ${row.assignee} ${row.phone} ${row.salesName ?? ""}`.toLowerCase();
       return hay.includes(needle);
-    });
+    }));
   }, [filters, meetings, quoteSentMeetings]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / filters.pageSize));
