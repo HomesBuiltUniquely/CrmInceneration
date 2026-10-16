@@ -375,7 +375,8 @@ function DetailBody({ row }: { row: MeetingRecord }) {
       <Detail label="Google sync" value={row.googleSyncStatus || "—"} />
       <Detail label="Sync note" value={row.googleSyncMessage || "—"} />
       <Detail label="Quote" value={row.quoteSent ? "Quote sent" : "Quote not sent"} />
-      <Detail label={row.quoteSent ? "Quote value" : "Budget value"} value={formatMeetingValue(row.value)} />
+      <Detail label="Lead budget" value={formatMeetingValue(row.budget)} />
+      <Detail label="Lead quote" value={formatMeetingValue(row.quoteValue)} />
       {row.needsOutcome ? (
         <div className="rounded-xl bg-[#FEF3C7] px-3 py-2 text-[12px] font-semibold text-[#92400E] sm:col-span-2">
           Meeting time has passed. This lead is still Meeting Scheduled in Experience & Design, not Meeting Successful.

@@ -36,6 +36,10 @@ export type MeetingRecord = {
   status: MeetingStatus;
   /** Whole rupees. Quotation total when a quote exists, otherwise the lead budget. */
   value: number;
+  /** Lead budget in whole rupees. Stays the budget even after a quote exists. */
+  budget: number;
+  /** Lead quote in whole rupees. Zero when this lead has no quote yet. */
+  quoteValue: number;
   valueSource?: "quotation" | "budget" | "";
   /** Calendar day the meeting sits on, `YYYY-MM-DD`. */
   date: string;
@@ -481,6 +485,8 @@ const FEATURED: MeetingRecord[] = FEATURED_DRAFTS.map((row) => {
     startMin: meta.startMin,
     dayOffset: meta.dayOffset,
     whenLabel: meta.dayOffset < 0 ? formatMeetingWhen(meta.dayOffset, meta.startMin) : row.whenLabel,
+    budget: row.value,
+    quoteValue: 0,
   } as MeetingRecord;
 });
 
@@ -578,6 +584,8 @@ function pushBucket(list: MeetingRecord[], bucket: MeetingBucket, count: number,
       locationTone: locationTone(location),
       status: STATUS_FOR_BUCKET[bucket],
       value: 180000 + ((id * 13711) % 2200000),
+      budget: 180000 + ((id * 13711) % 2200000),
+      quoteValue: 0,
     });
   }
 }

@@ -7,7 +7,7 @@ import { Pagination } from "./Pagination";
 import { TableSkeleton } from "./TableSkeleton";
 import type { PageSize } from "./useMeetingFilters";
 
-const HEADERS = ["No.", "Customer", "Assigned to", "Meeting", "Date & time", "Status", "Lead value", "Actions"];
+const HEADERS = ["No.", "Customer", "Status", "Assigned to", "Meeting", "Date & time", "Lead budget", "Lead quote", "Actions"];
 
 export function MeetingsTable({
   rows,
@@ -52,14 +52,15 @@ export function MeetingsTable({
       <div className="py-1">
         <table className="w-full table-fixed border-separate border-spacing-0 text-left">
           <colgroup>
-            <col className="w-[6%]" />
-            <col className="w-[18%]" />
-            <col className="w-[13%]" />
-            <col className="w-[15%]" />
-            <col className="w-[13%]" />
+            <col className="w-[5%]" />
+            <col className="w-[16%]" />
+            <col className="w-[11%]" />
             <col className="w-[12%]" />
+            <col className="w-[12%]" />
+            <col className="w-[12%]" />
+            <col className="w-[11%]" />
+            <col className="w-[11%]" />
             <col className="w-[10%]" />
-            <col className="w-[13%]" />
           </colgroup>
           <caption className="sr-only">Meetings</caption>
           <thead>
@@ -76,7 +77,7 @@ export function MeetingsTable({
               <TableSkeleton />
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={9}>
                   <EmptyState onClear={onClear} />
                 </td>
               </tr>

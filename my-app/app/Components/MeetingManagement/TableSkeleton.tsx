@@ -6,7 +6,7 @@ export function TableSkeleton({ rows = 8 }: { rows?: number }) {
       <style>{`@keyframes meeting-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}`}</style>
       {Array.from({ length: rows }, (_, index) => (
         <tr key={index} aria-hidden>
-          {Array.from({ length: 8 }, (_, cell) => (
+          {Array.from({ length: 9 }, (_, cell) => (
             <td key={cell} className="px-3 py-3">
               <span
                 className="block h-4 rounded-md motion-reduce:animate-none"

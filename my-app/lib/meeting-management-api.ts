@@ -310,7 +310,7 @@ function toRecord(
   endAt.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
   const timePassed = endAt.getTime() < Date.now();
   const stillBooked = milestoneSubStage === "Meeting Scheduled" || milestoneSubStage === "Meeting Rescheduled";
-  const needsOutcome = timePassed && stillBooked && experienceOrDesign && milestoneSubStage !== "Meeting Successful";
+  const needsOutcome = timePassed && stillBooked && experienceOrDesign;
   let status = statusFrom(row, when.date, when.startMin, endMin);
   if (milestoneSubStage === "Meeting Cancelled" || milestoneSubStage === "Meeting Cancelled/Paused") {
     status = "CANCELLED";
@@ -344,6 +344,8 @@ function toRecord(
     locationTone: code ? locationTone(code) : "blue",
     status,
     value,
+    budget,
+    quoteValue: quotation > 0 ? quotation : 0,
     valueSource,
     date: when.date,
     startMin: when.startMin,

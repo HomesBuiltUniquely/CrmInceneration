@@ -67,6 +67,15 @@ export function MeetingRow({
           </span>
         </div>
       </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2">
+        <span
+          className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
+          style={{ background: status.bg, color: status.text }}
+        >
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.dot }} />
+          {status.label}
+        </span>
+      </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-semibold text-[#0F172A]">{row.assignee || "—"}</td>
       <td className="border-b border-[#E3E8EE] px-3 py-2">
         <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#0F172A]">
@@ -78,16 +87,8 @@ export function MeetingRow({
         <span className={`block text-[13px] font-bold ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
         <span className="block text-[12px] font-normal text-[#5B6778]">{clock(row.startMin)}</span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
-        <span
-          className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
-          style={{ background: status.bg, color: status.text }}
-        >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.dot }} />
-          {status.label}
-        </span>
-      </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-bold text-[#0F172A]">{formatMeetingValue(row.value)}</td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-bold text-[#0F172A]">{formatMeetingValue(row.budget)}</td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-bold text-[#0F172A]">{formatMeetingValue(row.quoteValue)}</td>
       <td className="border-b border-[#E3E8EE] px-3 py-2">
         <div className="flex items-center gap-1.5">
           <motion.button
