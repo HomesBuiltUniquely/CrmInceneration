@@ -6,6 +6,7 @@ import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/l
 import {
   isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
+  isMeetingRescheduledSubstage,
   isMeetingScheduleSubstage,
   meetingSchedulePanelTitle,
   pipelineSubStageLabel,
@@ -57,7 +58,7 @@ import { isIvrInboundLead } from "@/lib/ivr-lead-source";
 import { crmPipelineRoleParam, isPresalesRole } from "@/lib/roleUtils";
 import { isLostCategory, isWonCategory } from "@/lib/crm-pipeline";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { getConfigurationScopeRequirements, createDefaultRequirements, withCoherentPropertyNameFields } from "@/lib/configuration-scope-client";
+import { getConfigurationScopeRequirements, withCoherentPropertyNameFields } from "@/lib/configuration-scope-client";
 import {
   CONFIGURATION_SCOPE_UPDATED_EVENT,
   notifyOpenConfigurationScope,
@@ -72,7 +73,7 @@ import {
 } from "@/lib/configuration-scope-validation";
 import { REQUIRED_FIELD_HINTS } from "@/lib/required-field-hints";
 import type { CrmLeadType } from "@/lib/leads-filter";
-import { getLeadDetail } from "@/lib/lead-details-client";
+import { getLeadDetail, getLeadFloorPlanMeta } from "@/lib/lead-details-client";
 import { detailJsonToLead } from "@/lib/lead-detail-mapper";
 
 function isValidEmail(value: string): boolean {
@@ -216,6 +217,8 @@ export type CompleteTaskApiPayload = {
   };
   /** Hub appointment ids to cancel (DELETE) before lead save — used when multiple meetings exist. */
   cancelAppointmentIds?: number[];
+  /** Existing Hub appointment to update when the user chose Reschedule. */
+  rescheduleAppointmentId?: number;
 };
 
 export default function CompleteTaskModal({
@@ -322,6 +325,19 @@ export default function CompleteTaskModal({
   const minNextCallDate = getTodayStartDateTimeLocal();
   /** Sticky until Complete Task closes so open-reset remounts still reopen Schedule Hub Meeting. */
   const resumeMeetingSessionRef = useRef<{ meetingFeedback?: string } | null>(null);
+  /** Latest Connection-field check. The resume effect runs before this render's consts exist. */
+  const missingConnectionScheduleMessageRef = useRef<(feedbackLabel?: string) => string | null>(
+    () => null,
+  );
+  /** Set after Configuration Scope is submitted from this meeting, so later checks only warn. */
+  const scopeSubmittedForScheduleRef = useRef(false);
+  /** Set after an existing meeting is cancelled in this session, so the new booking only warns. */
+  const scheduleAfterCancelRef = useRef(false);
+  const openScheduleAfterChecksRef = useRef<(feedbackValue: string) => Promise<void>>(
+    async () => {},
+  );
+  const [scheduleScopeWarning, setScheduleScopeWarning] = useState("");
+  const [rescheduleAppointmentId, setRescheduleAppointmentId] = useState<number | null>(null);
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -358,6 +374,10 @@ export default function CompleteTaskModal({
     if (!open) {
       wasOpenRef.current = false;
       resumeMeetingSessionRef.current = null;
+      scopeSubmittedForScheduleRef.current = false;
+      scheduleAfterCancelRef.current = false;
+      setRescheduleAppointmentId(null);
+      setScheduleScopeWarning("");
       setGatePopupMessage("");
       return;
     }
@@ -385,7 +405,7 @@ export default function CompleteTaskModal({
     setNote("");
     setFeedbackMappings([]);
     setShowErrors(false);
-    setHubMeetingOpen(Boolean(pendingResume));
+    setHubMeetingOpen(false);
     setHubMeetingBusy(false);
     setHubMeetingError("");
     setConfigScopeGateBusy(false);
@@ -467,11 +487,10 @@ export default function CompleteTaskModal({
           ? meetingFeedback.trim()
           : "Meeting Scheduled";
       resumeMeetingSessionRef.current = { meetingFeedback: nextFeedback };
+      scopeSubmittedForScheduleRef.current = true;
       setFeedback(nextFeedback);
-      setHubMeetingOpen(true);
-      setHubMeetingError("");
-      setApiError("");
       onResumeMeetingConsumed?.();
+      void openScheduleAfterChecksRef.current(nextFeedback);
     };
 
     if (resumeMeetingSchedule) {
@@ -931,6 +950,32 @@ export default function CompleteTaskModal({
     });
   }, [lead, status, path, cancelMode]);
 
+  missingConnectionScheduleMessageRef.current = (feedbackLabel?: string) => {
+    const selected = feedbackLabel
+      ? feedbackOptions.find((option) => option.label === feedbackLabel)
+      : undefined;
+    const gateOn = requiresLeadPropertyGateForCompleteTask({
+      currentMilestoneStage: lead.stageBlock?.milestoneStage,
+      currentMilestoneSubStage: lead.stageBlock?.milestoneSubStage,
+      currentMilestoneStageCategory: lead.stageBlock?.milestoneStageCategory,
+      currentStatus: lead.status,
+      newMilestoneStage: selected?.stage || status,
+      newStageCategory: selected?.stageCategory || path,
+      cancelMode,
+    });
+    if (presalesMode || !gateOn) return null;
+    const missing = missingLeadPropertyGateFields(
+      resolveModalGateFields(lead, {
+        budget: modalBudget,
+        propertyNotes: modalPropertyNotes,
+        configuration: modalConfiguration,
+        bookingType: modalBookingType,
+      }),
+    );
+    if (missing.length === 0) return null;
+    return `Please fill ${missing.join(", ")} below before scheduling.`;
+  };
+
   const emailMissingForMeeting = scheduleMode && !isValidEmail(lead.email);
 
   const resolvedConfigLeadType = useMemo((): CrmLeadType | null => {
@@ -940,21 +985,60 @@ export default function CompleteTaskModal({
 
   const resolvedConfigLeadId = (leadId ?? lead.id ?? "").trim();
 
-  /** Returns true when ready to schedule; otherwise opens Configuration Scope with highlights. */
+  /**
+   * Hard Configuration Scope gate only for the first Meeting Scheduled.
+   * Reschedule, a booking after cancel, or a scope form already submitted this time only warns.
+   */
+  const isRepeatMeetingSchedule = (feedbackLabel?: string) => {
+    if (scopeSubmittedForScheduleRef.current || scheduleAfterCancelRef.current) return true;
+    if (rescheduleAppointmentId != null) return true;
+    const selected = feedbackLabel
+      ? feedbackOptions.find((option) => option.label === feedbackLabel)
+      : undefined;
+    const chosen = pipelineSubStageLabel(selected?.subStageName || feedbackLabel || "");
+    if (
+      isMeetingRescheduledSubstage(chosen) ||
+      isDesignRefinementSchedulingSubstage(chosen) ||
+      chosen === "Fix Appointment"
+    ) {
+      return true;
+    }
+    const current = pipelineSubStageLabel(
+      lead.stageBlock?.milestoneSubStage || lead.status || "",
+    );
+    if (
+      isMeetingCancelledSubstage(current) ||
+      isMeetingRescheduledSubstage(current) ||
+      isMeetingScheduleSubstage(current)
+    ) {
+      return true;
+    }
+    return Boolean(lead.meetingDate?.trim());
+  };
+
+  /** Returns true when the scheduler may open. First booking still opens Configuration Scope. */
   const ensureConfigScopeReadyForMeeting = async (options?: {
     setError?: (message: string) => void;
     meetingFeedback?: string;
   }): Promise<boolean> => {
+    const meetingFeedback =
+      options?.meetingFeedback?.trim() ||
+      (isMeetingScheduleSubstage(feedback) ? feedback : undefined);
+    const warnAndAllow = (message: string) => {
+      setScheduleScopeWarning(message);
+      return true;
+    };
+
     if (!resolvedConfigLeadType || !resolvedConfigLeadId) {
-      options?.setError?.(
-        "Unable to validate Configuration Scope for this lead. Open Configuration Scope and complete required fields.",
+      return warnAndAllow(
+        "Configuration Scope could not be checked. You can still schedule this meeting.",
       );
-      return false;
     }
 
     setConfigScopeGateBusy(true);
     try {
       let requirements;
+      let loadFailed = false;
       try {
         requirements = await getConfigurationScopeRequirements(
           resolvedConfigLeadType,
@@ -962,6 +1046,13 @@ export default function CompleteTaskModal({
         );
       } catch {
         requirements = null;
+        loadFailed = true;
+      }
+
+      if (loadFailed || !requirements) {
+        return warnAndAllow(
+          "Configuration Scope could not be loaded. You can still schedule this meeting.",
+        );
       }
 
       // BHK lives on the lead row (not configuration-scope). Re-fetch so a just-saved
@@ -969,7 +1060,7 @@ export default function CompleteTaskModal({
       let configuration =
         (modalConfiguration || lead.configuration || "").trim();
       let bookingType =
-        (modalBookingType || lead.bookingType || requirements?.bookingType || "").trim();
+        (modalBookingType || lead.bookingType || requirements.bookingType || "").trim();
       try {
         const detailJson = await getLeadDetail(
           resolvedConfigLeadType,
@@ -988,24 +1079,49 @@ export default function CompleteTaskModal({
         /* keep modal / lead values */
       }
 
-      const coherent = withCoherentPropertyNameFields(
-        requirements ?? createDefaultRequirements(),
-      );
+      const coherent = withCoherentPropertyNameFields(requirements);
+
+      let hasFloorPlan = hasLeadFloorPlan(lead);
+      try {
+        const floorPlanMeta = await getLeadFloorPlanMeta(
+          resolvedConfigLeadType,
+          resolvedConfigLeadId,
+        );
+        if (
+          floorPlanMeta &&
+          (floorPlanMeta.s3Key.trim() ||
+            floorPlanMeta.publicLink.trim() ||
+            floorPlanMeta.viewPath.trim())
+        ) {
+          hasFloorPlan = true;
+        }
+      } catch {
+        /* keep the floor plan already on the open lead */
+      }
 
       const issues = validateConfigurationScopeForMeeting({
         requirements: coherent,
         configuration,
         bookingType: bookingType || coherent.bookingType,
-        hasFloorPlan: hasLeadFloorPlan(lead),
+        hasFloorPlan,
       });
 
-      if (issues.length === 0) return true;
+      if (issues.length === 0) {
+        setScheduleScopeWarning("");
+        return true;
+      }
 
       const summary = configurationScopeValidationSummary(issues);
+      if (isRepeatMeetingSchedule(meetingFeedback)) {
+        return warnAndAllow(
+          summary
+            ? `${summary} You can still schedule this meeting.`
+            : "Some Configuration Scope details are still open. You can still schedule this meeting.",
+        );
+      }
+
+      setScheduleScopeWarning("");
       options?.setError?.(summary);
-      const meetingFeedback =
-        options?.meetingFeedback?.trim() ||
-        (isMeetingScheduleSubstage(feedback) ? feedback : undefined);
       notifyOpenConfigurationScope({
         leadType: resolvedConfigLeadType,
         leadId: resolvedConfigLeadId,
@@ -1026,7 +1142,8 @@ export default function CompleteTaskModal({
   };
 
   const openScheduleMeetingAfterConflictCheck = async (feedbackValue: string) => {
-    // Step 1: Validate Configuration Scope first
+    setRescheduleAppointmentId(null);
+    // Step 1: First booking still requires Configuration Scope. Later bookings only warn.
     const ready = await ensureConfigScopeReadyForMeeting({
       setError: (message) => setApiError(message),
       meetingFeedback: feedbackValue,
@@ -1036,64 +1153,88 @@ export default function CompleteTaskModal({
       return;
     }
 
+    const gateMessage = missingConnectionScheduleMessageRef.current(feedbackValue);
+    if (gateMessage) {
+      setHubMeetingOpen(false);
+      setShowErrors(true);
+      setApiError(gateMessage);
+      return;
+    }
+
     // Step 2: Check for existing upcoming meetings for this lead
     const effectiveLeadId = (leadId ?? lead.id ?? "").trim();
     if (effectiveLeadId) {
       try {
         const upcoming = await fetchUpcomingAppointmentsForLead(effectiveLeadId);
         if (upcoming.length > 0) {
-          // Show conflict dialog — let user decide
           pendingScheduleFeedbackRef.current = feedbackValue;
           setConflictMeetings(upcoming);
           setConflictDialogOpen(true);
+          setHubMeetingOpen(false);
           return;
         }
       } catch {
-        // Network error — silently proceed to schedule
+        setScheduleScopeWarning(
+          (current) =>
+            current ||
+            "Existing meetings could not be checked. You can still schedule this meeting.",
+        );
       }
     }
 
-    // No conflict: open the schedule hub meeting modal directly
     setHubMeetingOpen(true);
     setHubMeetingError("");
     setApiError("");
   };
+  openScheduleAfterChecksRef.current = openScheduleMeetingAfterConflictCheck;
 
   const handleConflictChoice = async (choice: MeetingConflictChoice) => {
     setConflictDialogOpen(false);
     const fb = pendingScheduleFeedbackRef.current || feedback;
 
     if (choice.action === "reschedule") {
-      // Update feedback to a "Reschedule" substage if available; keep current otherwise
-      // The ScheduleHubMeetingModal's PUT path (updateAppointment) will be used via the
-      // appointment ID stored in cancelAppointmentIds for now.
-      // We set the existing appointment id so the backend can handle it as a reschedule.
-      setSelectedCancelIds([]); // Not cancelling, just rescheduling
+      const rescheduleOption = feedbackOptions.find(
+        (option) =>
+          isMeetingRescheduledSubstage(option.subStageName) ||
+          isMeetingRescheduledSubstage(option.label),
+      );
+      setRescheduleAppointmentId(choice.appointmentId);
+      setFeedback(rescheduleOption?.label || fb);
       setHubMeetingOpen(true);
       setHubMeetingError("");
       setApiError("");
-    } else if (choice.action === "cancel_and_new") {
-      // Cancel the existing meeting first, then open the schedule modal
+      return;
+    }
+
+    if (choice.action === "cancel_and_new") {
       setConflictBusy(true);
       try {
         await deleteAppointment(choice.appointmentId);
-      } catch {
-        // Even on error, still open the schedule modal (cancel may have failed partially)
+      } catch (error) {
+        setHubMeetingOpen(false);
+        setApiError(
+          error instanceof Error
+            ? error.message
+            : "Could not cancel the existing meeting. A new meeting was not opened.",
+        );
+        return;
       } finally {
         setConflictBusy(false);
       }
+      scheduleAfterCancelRef.current = true;
+      setRescheduleAppointmentId(null);
+      setFeedback(fb);
       setHubMeetingOpen(true);
       setHubMeetingError("");
       setApiError("");
-    } else {
-      // create_anyway: open directly
-      setHubMeetingOpen(true);
-      setHubMeetingError("");
-      setApiError("");
+      return;
     }
 
-    // Ensure feedback is set correctly
-    if (fb) setFeedback(fb);
+    setRescheduleAppointmentId(null);
+    setFeedback(fb);
+    setHubMeetingOpen(true);
+    setHubMeetingError("");
+    setApiError("");
   };
 
   const isRenovationFeedbackOption = (option: FeedbackOption | undefined): boolean =>
@@ -1170,9 +1311,11 @@ export default function CompleteTaskModal({
       );
 
       if (needsLeadPropertyGate && effectivelyMissingFields.length > 0) {
-        setHubMeetingError(
-          `Please fill ${effectivelyMissingFields.join(", ")} in Complete Task before scheduling.`,
-        );
+        const gateMessage = `Please fill ${effectivelyMissingFields.join(", ")} below before scheduling.`;
+        setShowErrors(true);
+        setApiError(gateMessage);
+        setHubMeetingError(gateMessage);
+        setHubMeetingOpen(false);
         return;
       }
     }
@@ -1211,6 +1354,7 @@ export default function CompleteTaskModal({
           endTime: payload.endTime,
           meetingType: payload.meetingType,
         },
+        rescheduleAppointmentId: rescheduleAppointmentId ?? undefined,
       });
       setHubMeetingOpen(false);
       onClose();
@@ -1786,7 +1930,7 @@ export default function CompleteTaskModal({
               ) : null}
 
               {/* Conditional Property Fields (Budget, Property Notes, Configuration) */}
-              {presalesMode || scheduleMode || cancelMode || !needsLeadPropertyGate ? null : (
+              {presalesMode || cancelMode || !needsLeadPropertyGate ? null : (
                 <div className="rounded-[14px] border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3.5 space-y-3 animate-fade-in">
                   <div className="flex items-center gap-2">
                     <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/10 text-blue-500">
@@ -1884,20 +2028,17 @@ export default function CompleteTaskModal({
                   <p className="text-[11px] text-[var(--crm-text-muted)]">
                     Schedule the Hub meeting in the popup. Notes, designer, meeting type, and a 90-minute slot are configured there.
                   </p>
+                  {scheduleScopeWarning ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+                      {scheduleScopeWarning}
+                    </p>
+                  ) : null}
                   <Button
                     type="button"
                     variant="success"
-                    disabled={configScopeGateBusy}
+                    disabled={configScopeGateBusy || conflictBusy}
                     onClick={() => {
-                      void (async () => {
-                        const ready = await ensureConfigScopeReadyForMeeting({
-                          setError: (message) => setHubMeetingError(message),
-                          meetingFeedback: feedback,
-                        });
-                        if (!ready) return;
-                        setHubMeetingOpen(true);
-                        setHubMeetingError("");
-                      })();
+                      void openScheduleMeetingAfterConflictCheck(feedback);
                     }}
                   >
                     {configScopeGateBusy
@@ -2157,6 +2298,7 @@ export default function CompleteTaskModal({
         onConfirm={handleHubMeetingConfirm}
         busy={hubMeetingBusy}
         error={hubMeetingError}
+        notice={scheduleScopeWarning}
         leadCustomerName={lead.name}
         leadDisplayId={lead.customerId || lead.leadId || lead.id}
         status={status}

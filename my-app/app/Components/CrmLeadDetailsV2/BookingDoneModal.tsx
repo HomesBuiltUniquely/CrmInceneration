@@ -20,6 +20,8 @@ import {
   refreshQuoteOptionDetails,
 } from "@/lib/lead-quote-options";
 import { publishLeadQuoteSelection, readLeadQuoteSelection } from "@/lib/lead-quote-selection";
+import SoftScroll from "@/app/Components/BookingToken/components/SendPayment/SoftScroll";
+import "@/app/Components/BookingToken/components/SendPayment/send-payment-motion.css";
 import PaymentProofUploadSection from "@/app/Components/CrmLeadDetailsV2/PaymentProofUploadSection";
 import BookingDateSection from "@/app/Components/CrmLeadDetailsV2/BookingDateSection";
 import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
@@ -302,13 +304,17 @@ export default function BookingDoneModal({
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
         const storedSelection = readLeadQuoteSelection(validLeadType, leadId);
-        const storedQuote = storedSelection
-          ? merged.find(
+        const storedMatches = storedSelection
+          ? merged.filter(
               (option) =>
                 option.id === storedSelection.quoteId ||
                 option.quoteId === storedSelection.quoteId,
-            ) ?? null
-          : null;
+            )
+          : [];
+        const storedQuote =
+          storedMatches.find((option) => option.isLatest) ??
+          storedMatches[storedMatches.length - 1] ??
+          null;
         const defaultSelection =
           storedQuote?.id ??
           merged.find((option) => option.isLatest)?.id ??
@@ -1076,7 +1082,12 @@ function QuotationSection({
 
       {loadState === "ready" && revisionOptions.length > 0 ? (
         <div className="mt-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <SoftScroll
+            scrollbar="bar"
+            className="max-h-[min(320px,42vh)] pr-1"
+            padClassName="grid gap-3 sm:grid-cols-2"
+            aria-label="Quote versions"
+          >
             {revisionOptions.map((option) => {
               const selected = option.id === selectedQuoteId;
               const quoteUrl = resolveQuoteVerifyUrl(option, hubLeadId);
@@ -1127,7 +1138,7 @@ function QuotationSection({
                 </div>
               );
             })}
-          </div>
+          </SoftScroll>
 
           {selectedQuote ? (
             <div className="rounded-lg border border-[#bbf7d0] bg-[#ecfdf5] px-4 py-3">

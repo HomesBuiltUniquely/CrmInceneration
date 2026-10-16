@@ -27,6 +27,11 @@ export type ConfigurationScopeUpdatedDetail = {
   configuration?: string;
   propertyName?: string;
   bookingType?: string;
+  /** Floor plan uploaded inside Configuration Scope. The lead page does not see that local upload on its own. */
+  floorPlan?: string;
+  floorPlanPublicLink?: string;
+  floorPlanViewPath?: string;
+  floorPlanOpenPath?: string;
 };
 
 /** Notify lead detail UI (e.g. data completeness meter) after scope requirements change. */

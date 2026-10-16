@@ -23,6 +23,7 @@ const HEADER_SWITCHER_PATHS = [
   "/incentives",
   "/Insights",
   "/google-calendar",
+  "/meeting-management",
   "/schedule-hub-meeting",
 ];
 

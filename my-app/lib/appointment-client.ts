@@ -36,6 +36,8 @@ export type CreateAppointmentBody = {
   startTime?: string;
   endTime?: string;
   meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
+  meetingLabel?: string;
+  source?: "CRM" | "DESIGN_MODULE";
   description: string;
   leadType: string;
   leadId: number;
@@ -380,17 +382,19 @@ export async function fetchDesignerAppointments(designerName: string): Promise<u
 
 function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, unknown> {
   const designerEmail = body.designerEmail?.trim();
-  if (!designerEmail) {
+  if (!designerEmail && body.source !== "DESIGN_MODULE") {
     throw new Error("designerEmail is required (from Design Module /api/designers).");
   }
   const payload: Record<string, unknown> = {
     designerName: body.designerName,
-    designerEmail,
     description: body.description,
     leadType: body.leadType,
     leadId: body.leadId,
   };
+  if (designerEmail) payload.designerEmail = designerEmail;
   if (body.meetingType) payload.meetingType = body.meetingType;
+  if (body.meetingLabel?.trim()) payload.meetingLabel = body.meetingLabel.trim();
+  if (body.source) payload.source = body.source;
   if (body.startTime && body.endTime) {
     payload.startTime = body.startTime;
     payload.endTime = body.endTime;
@@ -444,7 +448,8 @@ export async function updateAppointment(
   body: CreateAppointmentBody,
   options: { rescheduleReason?: string } = {},
 ): Promise<CreateAppointmentResponse> {
-  const designerEmail = await resolveDesignModuleDesignerEmail(body.designerName);
+  const designerEmail =
+    body.designerEmail?.trim() || (await resolveDesignModuleDesignerEmail(body.designerName));
   const payload = buildAppointmentPayload({ ...body, designerEmail });
   if (options.rescheduleReason?.trim()) {
     payload.rescheduleReason = options.rescheduleReason.trim();

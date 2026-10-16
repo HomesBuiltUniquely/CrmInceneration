@@ -99,6 +99,7 @@ import {
   type DealLevelTone,
 } from "@/lib/booking-token-listing-type";
 import {
+  ClosePaymentChoiceModal,
   SendPaymentBody,
   SendPaymentModal,
   validateSendPaymentForm,
@@ -363,14 +364,19 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
         const lockedId = (activeDeal.quoteId ?? "").trim();
+        const lockedMatches = lockedId
+          ? merged.filter((option) => option.quoteId === lockedId || option.id === lockedId)
+          : [];
         const locked =
-          lockedId
-            ? merged.find((option) => option.quoteId === lockedId || option.id === lockedId) ?? null
+          lockedMatches.find((option) => option.isLatest) ??
+          lockedMatches[lockedMatches.length - 1] ??
+          (lockedId
+            ? null
             : merged.find(
                 (option) =>
                   option.amount != null &&
                   Math.round(option.amount) === Math.round(activeDeal.dealValueAmount),
-              ) ?? null;
+              ) ?? null);
         const defaultSelection =
           locked?.id ?? merged.find((option) => option.isLatest)?.id ?? merged[0]?.id ?? "";
         setSelectedQuoteId(defaultSelection);
@@ -452,15 +458,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
 
   useLayoutEffect(() => {
     if (!open || !panelRef.current) return;
+    // Pay modal is fixed-size — do not re-center when proofs upload (jumped UI + broke × hit target)
+    if (mode === "pay") return;
     const rect = panelRef.current.getBoundingClientRect();
-    const maxPayH = (window.visualViewport?.height ?? window.innerHeight) - 80;
-    const height = mode === "pay" ? Math.min(rect.height, maxPayH) : rect.height;
-    setPanelPosition(
-      mode === "pay"
-        ? getCenteredPanelPosition(rect.width, height)
-        : getTopAlignedPanelPosition(rect.width, rect.height),
-    );
-  }, [open, mode, historyData, draftProofs.length, loading]);
+    setPanelPosition(getTopAlignedPanelPosition(rect.width, rect.height));
+  }, [open, mode, historyData, loading]);
 
   useEffect(() => {
     if (!open) return;
@@ -484,10 +486,23 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     if (draftProofs.length > 0) return true;
     if (notes.trim()) return true;
     if (offlineMethod) return true;
+    // Offline is only "dirty" when user switched away from default online
+    if (canUsePaymentLinks && channel === "offline") return true;
     const amount = parsePaymentAmountInput(amountInput);
-    if (amount != null && amount > 0 && amount !== Math.round(displayRemaining)) return true;
+    if (amount != null && amount > 0 && amount !== Math.round(displayRemaining)) {
+      return true;
+    }
     return false;
-  }, [amountInput, displayRemaining, draftProofs.length, mode, notes, offlineMethod]);
+  }, [
+    amountInput,
+    canUsePaymentLinks,
+    channel,
+    displayRemaining,
+    draftProofs.length,
+    mode,
+    notes,
+    offlineMethod,
+  ]);
 
   const closePanelNow = useCallback(() => {
     setDiscardConfirmOpen(false);
@@ -499,23 +514,57 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     window.setTimeout(() => onClose(), 280);
   }, [draftProofs, onClose]);
 
+  const clearFormAndClose = useCallback(() => {
+    for (const proof of draftProofs) {
+      URL.revokeObjectURL(proof.previewUrl);
+    }
+    setDraftProofs([]);
+    setNotes("");
+    setOfflineMethod("");
+    setFieldErrors({});
+    setError("");
+    setChannel(canUsePaymentLinks ? "online" : "offline");
+    setAmountInput(
+      deal && deal.remainingAmount > 0
+        ? formatPaymentAmountInput(deal.remainingAmount)
+        : "",
+    );
+    setDiscardConfirmOpen(false);
+    setPanelEntered(false);
+    window.setTimeout(() => onClose(), 280);
+  }, [canUsePaymentLinks, deal, draftProofs, onClose]);
+
   const handleClose = useCallback(() => {
-    if (submitting || linkBusy || rebindingQuote) return;
-    if (isPayFormDirty()) {
+    // Never trap the × behind linkBusy/rebinding — only block while a save is in flight
+    if (submitting) return;
+    if (discardConfirmOpen) return;
+    if (draftProofs.length > 0 || isPayFormDirty()) {
       setDiscardConfirmOpen(true);
       return;
     }
     closePanelNow();
-  }, [closePanelNow, isPayFormDirty, linkBusy, rebindingQuote, submitting]);
+  }, [
+    closePanelNow,
+    discardConfirmOpen,
+    draftProofs.length,
+    isPayFormDirty,
+    submitting,
+  ]);
 
   const handleDragStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!panelRef.current || event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button,input,textarea,label,a")) return;
+    const target = event.target as HTMLElement | null;
+    // Never capture pointer from interactive controls (especially close ×)
+    if (target?.closest("button,input,textarea,label,a,[role='button']")) return;
     const rect = panelRef.current.getBoundingClientRect();
     isDraggingRef.current = true;
     setIsDragging(true);
     dragOffsetRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* ignore — some browsers throw if capture fails */
+    }
     event.preventDefault();
   }, []);
 
@@ -737,6 +786,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     selectedQuoteId,
     summary,
   ]);
+
+  const handleCloseChoiceSave = useCallback(() => {
+    setDiscardConfirmOpen(false);
+    void handleSubmitPayment();
+  }, [handleSubmitPayment]);
 
   const applyAttempt = useCallback(
     (attempt: PaymentLinkAttempt | null | undefined) => {
@@ -1322,14 +1376,14 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
           onConfirm={() => void handleRemovePayment()}
         />
 
-        <AppConfirmModal
+        <ClosePaymentChoiceModal
           open={discardConfirmOpen}
-          title="Discard payment?"
-          message="You have unsaved payment details. Close anyway?"
-          confirmLabel="Discard"
-          danger
-          onClose={() => setDiscardConfirmOpen(false)}
-          onConfirm={closePanelNow}
+          submitting={submitting}
+          onKeepEditing={() => {
+            if (!submitting) setDiscardConfirmOpen(false);
+          }}
+          onSave={handleCloseChoiceSave}
+          onClear={clearFormAndClose}
         />
       </>
     );

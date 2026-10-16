@@ -69,6 +69,8 @@ export type ScheduleHubMeetingModalProps = {
   onConfirm: (payload: ScheduleHubMeetingConfirmPayload) => Promise<void>;
   busy?: boolean;
   error?: string;
+  /** Non-blocking note. Missing scope fields on a later booking still allow scheduling. */
+  notice?: string;
   leadCustomerName: string;
   leadDisplayId: string;
   status: string;
@@ -601,6 +603,7 @@ export default function ScheduleHubMeetingModal({
   onConfirm,
   busy = false,
   error = "",
+  notice = "",
   leadCustomerName,
   leadDisplayId,
   status: _status,
@@ -1404,6 +1407,11 @@ export default function ScheduleHubMeetingModal({
             />
           </div>
 
+          {notice && !displayError ? (
+            <p className="shrink-0 border-t border-amber-200 bg-amber-50 px-6 py-2.5 text-[13px] text-amber-900">
+              {notice}
+            </p>
+          ) : null}
           {displayError ? (
             <p
               className="shrink-0 border-t px-6 py-2.5 text-[13px]"

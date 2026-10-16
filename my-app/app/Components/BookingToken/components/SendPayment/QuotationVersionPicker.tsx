@@ -8,6 +8,7 @@ import {
 } from "@/lib/crm-quote-links";
 import { formatCrmDateTime } from "@/lib/date-time-format";
 import type { QuoteLoadState } from "../BookingQuoteVersionPicker";
+import SoftScroll from "./SoftScroll";
 
 type Props = {
   loadState: QuoteLoadState;
@@ -42,7 +43,7 @@ function matchesDealQuote(option: LeadQuoteOption, dealQuoteId?: string | null):
   return option.quoteId === locked || option.id === locked;
 }
 
-/** Compact quotation picker — no inner scroll; titles stay bold dark for scan. */
+/** Compact quotation picker — soft-fade invisible scroll when many versions. */
 export default function QuotationVersionPicker({
   loadState,
   error,
@@ -61,8 +62,8 @@ export default function QuotationVersionPicker({
     latestOption != null && !matchesDealQuote(latestOption, dealQuoteId);
 
   return (
-    <section className="shrink-0">
-      <div className="flex items-center justify-between gap-2">
+    <section className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-2">
         <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#0F172A]">
           Quotation version
         </p>
@@ -74,24 +75,25 @@ export default function QuotationVersionPicker({
       </div>
 
       {loadState === "loading" ? (
-        <p className="mt-1.5 text-[12px] text-[#5B6778]">Loading quotations…</p>
+        <p className="mt-1.5 shrink-0 text-[12px] text-[#5B6778]">Loading quotations…</p>
       ) : null}
       {loadState === "error" ? (
-        <p className="mt-1.5 rounded-[12px] border border-[#fecaca] bg-[#fef2f2] px-2.5 py-1.5 text-[12px] text-[#b91c1c]">
+        <p className="mt-1.5 shrink-0 rounded-[12px] border border-[#fecaca] bg-[#fef2f2] px-2.5 py-1.5 text-[12px] text-[#b91c1c]">
           {error}
         </p>
       ) : null}
       {loadState === "empty" ? (
-        <p className="mt-1.5 rounded-[12px] border border-[#E3E8EE] bg-white px-2.5 py-1.5 text-[12px] text-[#5B6778]">
+        <p className="mt-1.5 shrink-0 rounded-[12px] border border-[#E3E8EE] bg-white px-2.5 py-1.5 text-[12px] text-[#5B6778]">
           No quotation found for this lead yet.
         </p>
       ) : null}
 
       {loadState === "ready" && revisionOptions.length > 0 ? (
-        <div
+        <SoftScroll
           role="radiogroup"
           aria-label="Quotation version"
-          className="sp-stagger mt-1.5 space-y-1.5"
+          className="sp-stagger mt-1.5 max-h-[min(220px,32vh)] min-h-0 md:max-h-[min(200px,28vh)]"
+          padClassName="space-y-1.5"
         >
           {revisionOptions.map((option, index) => {
             const selected = option.id === selectedQuoteId;
@@ -176,11 +178,15 @@ export default function QuotationVersionPicker({
               </button>
             );
           })}
-        </div>
+        </SoftScroll>
       ) : null}
 
       {fieldError ? (
-        <p className="mt-1.5 text-[11px] text-[#b91c1c]" role="alert" aria-live="polite">
+        <p
+          className="mt-1.5 shrink-0 text-[11px] text-[#b91c1c]"
+          role="alert"
+          aria-live="polite"
+        >
           {fieldError}
         </p>
       ) : null}

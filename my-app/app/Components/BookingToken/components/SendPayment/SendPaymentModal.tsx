@@ -167,16 +167,17 @@ export default function SendPaymentModal({
         } inset-0 h-[100dvh] max-h-[100dvh] w-full rounded-none md:inset-auto md:h-[min(640px,calc(100dvh-80px))] md:max-h-[calc(100dvh-80px)] md:w-[min(1120px,calc(100vw-48px))] md:rounded-[24px]`}
         style={positioned ? { left: position.x, top: position.y } : undefined}
       >
-        <header
-          className={`flex shrink-0 items-center justify-between border-b border-[#E3E8EE] px-4 py-2 select-none ${
-            onDragStart ? "touch-none md:cursor-grab" : ""
-          } ${isDragging ? "md:cursor-grabbing" : ""}`}
-          onPointerDown={onDragStart}
-          onPointerMove={onDragMove}
-          onPointerUp={onDragEnd}
-          onPointerCancel={onDragEnd}
-        >
-          <div className="flex min-w-0 items-center gap-2.5">
+        <header className="flex shrink-0 items-center gap-2 border-b border-[#E3E8EE] px-4 py-2">
+          {/* Drag handle only — close button is a sibling so pointer-capture never eats × clicks */}
+          <div
+            className={`flex min-w-0 flex-1 items-center gap-2.5 select-none ${
+              onDragStart ? "touch-none md:cursor-grab" : ""
+            } ${isDragging ? "md:cursor-grabbing" : ""}`}
+            onPointerDown={onDragStart}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragEnd}
+          >
             <span
               className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#E7F6EF] text-[15px] font-bold text-[#047857]"
               aria-hidden
@@ -196,8 +197,18 @@ export default function SendPaymentModal({
           </div>
           <button
             type="button"
-            onClick={onClose}
-            className="sp-icon-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#E3E8EE] bg-white text-[16px] leading-none text-[#5B6778] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40"
+            onPointerDown={(event) => {
+              // Fire close on pointerdown: parent drag preventDefault can suppress click
+              event.preventDefault();
+              event.stopPropagation();
+              onClose();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onClose();
+            }}
+            className="sp-icon-btn relative z-20 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#E3E8EE] bg-white text-[18px] leading-none text-[#5B6778] hover:border-[#CBD3DD] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#047857]/40"
             aria-label="Close"
           >
             ×

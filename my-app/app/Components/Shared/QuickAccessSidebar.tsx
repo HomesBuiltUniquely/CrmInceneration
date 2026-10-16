@@ -13,6 +13,7 @@ import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import {
   canAccessBookingTokenDashboard,
   canAccessCrmInsights,
+  canAccessMeetingManagement,
   isAdminRole,
 } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
@@ -186,6 +187,7 @@ export default function QuickAccessSidebar({
           if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
           if (item.id === "crm-booking-token") return canAccessBookingTokenDashboard(currentRole || profileRole);
           if (item.id === "crm-insights") return canAccessCrmInsights(currentRole || profileRole);
+          if (item.id === "crm-meeting-management") return canAccessMeetingManagement(currentRole || profileRole);
           return true;
         }),
       }))

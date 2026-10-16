@@ -14,6 +14,7 @@ import OfflineMethodSelector from "./OfflineMethodSelector";
 import AmountInput from "./AmountInput";
 import ProofUploader, { type DraftProof } from "./ProofUploader";
 import type { SendPaymentFieldErrors } from "./schema";
+import SoftScroll from "./SoftScroll";
 
 type Props = {
   totalAmount: number;
@@ -94,8 +95,8 @@ function NotesField({
         value={notes}
         onChange={(event) => onNotesChange(event.target.value)}
         disabled={disabled}
-        rows={3}
-        className="mt-2 h-[84px] w-full resize-none rounded-[14px] border border-[#CBD3DD] bg-white px-3 py-2.5 text-[13px] text-[#0F172A] outline-none focus:border-[#047857] focus:ring-2 focus:ring-[#047857]/25 disabled:opacity-60"
+        rows={2}
+        className="mt-1.5 h-[64px] w-full resize-none rounded-[14px] border border-[#CBD3DD] bg-white px-3 py-2 text-[13px] text-[#0F172A] outline-none focus:border-[#047857] focus:ring-2 focus:ring-[#047857]/25 disabled:opacity-60"
         placeholder="UPI ref, bank transfer note…"
       />
     </div>
@@ -295,7 +296,7 @@ export default function SendPaymentBody({
       onPreviewProof={onPreviewProof}
     />
   ) : (
-    <div className="flex min-h-[140px] flex-1 flex-col items-center justify-center rounded-2xl border border-dashed border-[#E3E8EE] bg-[#F7F9FA] px-4 text-center">
+    <div className="rounded-2xl border border-dashed border-[#E3E8EE] bg-[#F7F9FA] px-4 py-4 text-center">
       <p className="text-[13px] font-semibold text-[#0F172A]">Proof not required</p>
       <p className="mt-1 text-[12px] text-[#5B6778]">
         Online payments use a payment link — no screenshot needed.
@@ -330,28 +331,27 @@ export default function SendPaymentBody({
         </div>
       ) : null}
 
-      {/* Mobile (&lt;768): stacked sheet; only page scrolls; Save sticky */}
+      {/* Mobile (&lt;768): soft-fade only when content overflows; Save sticky */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:hidden">
-        <div
-          className={`min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 ${
-            showPayForm ? "pb-28" : "pb-4"
-          }`}
+        <SoftScroll
+          className={`min-h-0 flex-1 basis-0 px-4 py-4 ${showPayForm ? "pb-28" : "pb-4"}`}
+          padClassName="space-y-4"
         >
           {historyDetailOpen ? (
             <div className="min-h-0">{middleTopSlot}</div>
           ) : (
             <>
               {quotePicker}
-              {historyList}
+              <div className="flex min-h-[200px] flex-col">{historyList}</div>
               {middleTopSlot}
               {typeSelector}
               {methodSelector}
               {amountField}
               {notesField}
-              <div className="min-h-[180px]">{proofField}</div>
+              {proofField}
             </>
           )}
-        </div>
+        </SoftScroll>
         {showPayForm ? (
           <div className="sticky bottom-0 z-10 border-t border-[#E3E8EE] bg-white px-4 py-3 shadow-[0_-8px_24px_-16px_rgba(15,23,42,0.25)]">
             {footer}
@@ -359,27 +359,28 @@ export default function SendPaymentBody({
         ) : null}
       </div>
 
-      {/* Desktop: 3 columns — quote stays slim; history takes remaining height */}
-      <div className="hidden min-h-0 flex-1 overflow-hidden md:grid md:grid-cols-[340px_minmax(0,1fr)_340px]">
+      {/* Desktop / laptop: soft-fade only when that column actually overflows */}
+      <div className="hidden min-h-0 flex-1 overflow-hidden md:grid md:grid-cols-[minmax(260px,300px)_minmax(0,1fr)_minmax(260px,300px)] lg:grid-cols-[340px_minmax(0,1fr)_340px]">
         <aside className="flex min-h-0 flex-col overflow-hidden border-r border-[#E3E8EE] bg-[#F7F9FA] px-3 py-3">
           <div className="shrink-0">{quotePicker}</div>
-          <div className="mt-2 flex min-h-[240px] flex-1 flex-col overflow-hidden border-t border-[#0F172A]/15 pt-2.5">
+          <div className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden border-t border-[#0F172A]/15 pt-2.5">
             {historyList}
           </div>
         </aside>
 
-        <div className="flex min-h-0 flex-col gap-4 overflow-hidden px-4 py-4">
+        <div className="flex min-h-0 flex-col overflow-hidden px-4 py-4">
           {historyDetailOpen ? (
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-              {middleTopSlot}
-            </div>
+            <SoftScroll className="min-h-0 flex-1 basis-0">{middleTopSlot}</SoftScroll>
           ) : (
-            <div className="sp-stagger flex min-h-0 flex-col gap-4">
+            <SoftScroll
+              className="min-h-0 flex-1 basis-0"
+              padClassName="sp-stagger flex flex-col gap-4"
+            >
               {middleTopSlot}
               {typeSelector}
               {methodSelector}
               {amountField}
-            </div>
+            </SoftScroll>
           )}
         </div>
 
@@ -393,9 +394,17 @@ export default function SendPaymentBody({
             </div>
           ) : (
             <>
-              <div className="shrink-0">{notesField}</div>
-              <div className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">{proofField}</div>
-              <div className="mt-3">{footer}</div>
+              {/* Notes + proof soft-scroll together; Save stays pinned */}
+              <SoftScroll
+                className="min-h-0 flex-1 basis-0"
+                padClassName="space-y-3 pb-1"
+              >
+                {notesField}
+                {proofField}
+              </SoftScroll>
+              <div className="mt-3 shrink-0 border-t border-[#E3E8EE] pt-3">
+                {footer}
+              </div>
             </>
           )}
         </aside>

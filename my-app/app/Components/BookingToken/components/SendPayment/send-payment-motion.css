@@ -1,5 +1,75 @@
 /* Send Payment — Apple/iOS-like motion */
 
+/**
+ * Soft-edge invisible scroll — no scrollbar chrome.
+ * Fade mask only when `.sp-scroll-fade--active` (content actually overflows).
+ */
+.sp-scroll-fade {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/legacy Edge */
+}
+
+.sp-scroll-fade::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Soft fade only when scroll is needed (many quotes / history / tall pay form) */
+.sp-scroll-fade--active {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 14px),
+    transparent 100%
+  );
+}
+
+.sp-scroll-fade-pad {
+  padding-bottom: 10px;
+}
+
+/* Thin bar, only visible once `.sp-scroll-soft` is overflowing. */
+.sp-scroll-soft {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.9) transparent;
+}
+
+.sp-scroll-soft::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+
+.sp-scroll-soft::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sp-scroll-soft::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.9);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.sp-scroll-soft.sp-scroll-fade--active {
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+
 .sp-ease {
   transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }

@@ -8,6 +8,7 @@ import {
   isEasebuzzPayment,
 } from "@/lib/booking-payment-display";
 import { formatFormSubmittedAt } from "@/lib/booking-token-display-format";
+import SoftScroll from "./SoftScroll";
 
 export type HistoryFilter = "all" | "online" | "offline";
 
@@ -77,7 +78,7 @@ export default function PaymentHistoryList({
         </div>
       ) : null}
 
-      <div className="mt-1.5 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5">
+      <SoftScroll className="mt-1.5 min-h-0 flex-1 basis-0" withPad={false}>
         {loading ? (
           <p className="py-3 text-[13px] text-[#5B6778]">Loading history…</p>
         ) : history.length === 0 ? (
@@ -85,7 +86,7 @@ export default function PaymentHistoryList({
             {paymentCount === 0 ? "No payments recorded yet." : "No payments in this filter."}
           </p>
         ) : (
-          <ul className="sp-stagger space-y-1.5 pb-1">
+          <ul className="sp-stagger sp-scroll-fade-pad space-y-1.5">
             {history.map((entry) => {
               const selected = entry.id === selectedEntryId;
               const source = formatPaymentSource(entry.source);
@@ -127,7 +128,7 @@ export default function PaymentHistoryList({
             })}
           </ul>
         )}
-      </div>
+      </SoftScroll>
     </section>
   );
 }
