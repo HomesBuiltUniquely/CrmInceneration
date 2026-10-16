@@ -18,6 +18,7 @@ import {
   meetingIso,
   meetingLevelLabel,
   meetingOffset,
+  sortMeetingsForList,
   type AvatarTone,
   type LocationTone,
   type MeetingBucket,
@@ -287,7 +288,10 @@ function toRecord(
   const appointmentSource = sourceLabel(sourceCode);
   const meetingLabel = readString(row, "meetingLabel", "meeting_label", "designMilestone", "design_milestone");
   const meetingLevel = meetingLevelLabel(meetingLabel, sourceCode);
-  const scheduledAt = formatStamp(readString(row, "createdAt", "CreatedAt", "created_at"));
+  const scheduledAtRaw = readString(row, "createdAt", "CreatedAt", "created_at");
+  const updatedAtRaw = readString(row, "updatedAt", "UpdatedAt", "updated_at", "rescheduledAt");
+  const scheduledAtMs = Math.max(Date.parse(scheduledAtRaw) || 0, Date.parse(updatedAtRaw) || 0);
+  const scheduledAt = formatStamp(scheduledAtRaw);
   const designerLabel = assignee || "Designer";
   const scheduledBy =
     sourceCode === "DESIGN_MODULE"
@@ -362,6 +366,7 @@ function toRecord(
     salesName,
     salesEmail,
     scheduledAt,
+    scheduledAtMs: scheduledAtMs > 0 ? scheduledAtMs : undefined,
     scheduledBy,
     googleSyncStatus: readString(row, "googleSyncStatus", "googleSync", "syncStatus") || "—",
     googleSyncMessage: readString(row, "googleSyncMessage", "google_sync_message"),
@@ -381,9 +386,7 @@ function buildBoard(
 ): MeetingRecord[] {
   return rows
     .map((row, index) => toRecord(row, index, leads, quotes))
-    .filter((row): row is MeetingRecord => row !== null)
-    .sort((a, b) => b.date.localeCompare(a.date) || b.startMin - a.startMin)
-    .map((row, index) => ({ ...row, order: index + 1 }));
+    .filter((row): row is MeetingRecord => row !== null);
 }
 
 function cancelledLeadRecord(lead: ApiLead, index: number, quotes: Map<string, number>): MeetingRecord | null {
@@ -423,7 +426,7 @@ export function assembleMeetingBoard(
     })
     .map((lead, index) => cancelledLeadRecord(lead, index, quotes))
     .filter((row): row is MeetingRecord => row !== null && !seen.has(String(row.leadId ?? "")));
-  return [...meetings, ...extras].map((row, index) => ({ ...row, order: index + 1 }));
+  return sortMeetingsForList([...meetings, ...extras]).map((row, index) => ({ ...row, order: index + 1 }));
 }
 
 /**
@@ -483,7 +486,7 @@ export function quoteSentLeadRows(
       rows.push({ ...created, quoteSent: true, appointmentId: undefined, status });
     }
   });
-  return rows.map((row, index) => ({ ...row, order: index + 1 }));
+  return sortMeetingsForList(rows).map((row, index) => ({ ...row, order: index + 1 }));
 }
 
 export type MeetingBoardPayload = {

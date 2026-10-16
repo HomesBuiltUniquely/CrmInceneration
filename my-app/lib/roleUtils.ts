@@ -20,9 +20,10 @@ export function isSuperAdminRole(role: string): boolean {
   return normalizeRole(role) === "SUPER_ADMIN";
 }
 
-/** Meeting Management — Super Admin only. */
+/** Meeting Management — Super Admin and Sales Admin. */
 export function canAccessMeetingManagement(role: string): boolean {
-  return isSuperAdminRole(role);
+  const r = normalizeRole(role);
+  return r === "SUPER_ADMIN" || r === "SALES_ADMIN";
 }
 
 /** Easebuzz payment-link / online payment — available to all roles. */

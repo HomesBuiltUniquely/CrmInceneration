@@ -65,6 +65,8 @@ export type MeetingRecord = {
   salesName?: string;
   salesEmail?: string;
   scheduledAt?: string;
+  /** When this meeting was booked or last rescheduled, as a timestamp. */
+  scheduledAtMs?: number;
   scheduledBy?: string;
   googleSyncStatus?: string;
   googleSyncMessage?: string;
@@ -627,6 +629,61 @@ export function meetingLevelLabel(raw: string, sourceCode?: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+const ACTIVE_MEETING_STATUS = new Set<MeetingStatus>(["SCHEDULED", "IN PROGRESS", "RESCHEDULED"]);
+
+function meetingListKey(row: MeetingRecord): string {
+  return `${row.appointmentId ?? row.id}:${row.leadId ?? ""}`;
+}
+
+/** 0 today, 1 tomorrow, 2 later days, 3 past days. */
+function meetingDateBucket(row: MeetingRecord): number {
+  if (row.dayOffset === 0) return 0;
+  if (row.dayOffset === 1) return 1;
+  if (row.dayOffset > 1) return 2;
+  return 3;
+}
+
+/**
+ * Meeting list order:
+ * 1. The meeting booked most recently
+ * 2. Today
+ * 3. Tomorrow
+ * 4. Day after tomorrow, then each later date
+ * Past meetings follow, nearest day first.
+ */
+export function sortMeetingsForList(rows: MeetingRecord[]): MeetingRecord[] {
+  let latest: MeetingRecord | null = null;
+  for (const row of rows) {
+    if (!ACTIVE_MEETING_STATUS.has(row.status)) continue;
+    if (!latest) {
+      latest = row;
+      continue;
+    }
+    const rowMs = row.scheduledAtMs ?? 0;
+    const latestMs = latest.scheduledAtMs ?? 0;
+    if (rowMs !== latestMs) {
+      if (rowMs > latestMs) latest = row;
+      continue;
+    }
+    const rowId = row.appointmentId ?? row.id;
+    const latestId = latest.appointmentId ?? latest.id;
+    if (rowId > latestId) latest = row;
+  }
+  const latestKey = latest && (latest.scheduledAtMs ?? 0) > 0 ? meetingListKey(latest) : "";
+
+  return [...rows].sort((a, b) => {
+    const pinA = latestKey && meetingListKey(a) === latestKey ? 0 : 1;
+    const pinB = latestKey && meetingListKey(b) === latestKey ? 0 : 1;
+    if (pinA !== pinB) return pinA - pinB;
+    const bucket = meetingDateBucket(a) - meetingDateBucket(b);
+    if (bucket !== 0) return bucket;
+    if (a.dayOffset < 0 && b.dayOffset < 0) {
+      return b.date.localeCompare(a.date) || b.startMin - a.startMin;
+    }
+    return a.date.localeCompare(b.date) || a.startMin - b.startMin;
+  });
 }
 
 export function formatMeetingValue(value: number): string {

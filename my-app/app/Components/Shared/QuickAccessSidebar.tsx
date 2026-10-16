@@ -322,7 +322,7 @@ export default function QuickAccessSidebar({
         {/* Header / Logo — ORIGINAL DESIGN */}
         <div
           className={cn(
-            "border-b border-[var(--crm-border)] transition-all ease-[cubic-bezier(0.32,0.72,0,1)]",
+            "shrink-0 border-b border-[var(--crm-border)] transition-all ease-[cubic-bezier(0.32,0.72,0,1)]",
             isCollapsed ? "px-1 py-2" : "px-3 py-2.5",
           )}
           style={{ transitionDuration: `${EXPAND_MS}ms` }}
@@ -386,8 +386,8 @@ export default function QuickAccessSidebar({
         {/* Nav items — ORIGINAL DESIGN */}
         <div
           className={cn(
-            "flex-1 overflow-y-auto bg-[var(--crm-app-bg)] py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-            isCollapsed ? "px-1.5" : "px-2.5 pt-2",
+            "min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-[var(--crm-app-bg)] py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            isCollapsed ? "px-1.5" : "px-2.5",
           )}
           style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
         >
@@ -395,8 +395,8 @@ export default function QuickAccessSidebar({
             {moduleMode && activeModuleSection ? (
               <>
                 {!isCollapsed ? (
-                  <div className="mb-2 px-1 pb-2">
-                    <div className="flex w-full items-center gap-2.5 rounded-xl border border-black/10 bg-white/70 px-2.5 py-2 text-left shadow-[0_2px_10px_rgba(0,0,0,0.12)] backdrop-blur-[6px]">
+                  <div className="mb-1 px-1 pb-1">
+                    <div className="flex w-full items-center gap-2.5 rounded-xl border border-black/10 bg-white/70 px-2.5 py-1.5 text-left shadow-[0_2px_10px_rgba(0,0,0,0.12)] backdrop-blur-[6px]">
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center text-black/70">
                         <ClassicSidebarIcon name="grid" className="h-[18px] w-[18px]" />
                       </span>
@@ -417,7 +417,7 @@ export default function QuickAccessSidebar({
                   </div>
                 )}
 
-                <div className={cn("space-y-0.5", !isCollapsed && "px-1")}>
+                <div className={cn("space-y-0", !isCollapsed && "px-1")}>
                   {activeModuleSection.items.map((item) => {
                     const isActive = item.id === activeSubItemId;
                     return (
@@ -434,7 +434,7 @@ export default function QuickAccessSidebar({
                           title={isCollapsed ? item.label : undefined}
                           className={cn(
                             "group relative flex w-full items-center gap-3 rounded-xl text-left transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]",
-                            isCollapsed ? "justify-center px-0 py-1.5" : "min-h-[2.25rem] px-2.5 py-1.5",
+                            isCollapsed ? "justify-center px-0 py-1" : "min-h-8 px-2 py-1",
                             isActive
                               ? "bg-[linear-gradient(135deg,#dbe9ff_0%,#cddfff_100%)] text-[#274690] ring-1 ring-[#c4d8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]"
                               : "text-[#374151] hover:bg-[#eef2f7] hover:shadow-[0_6px_14px_rgba(15,23,42,0.06)]",
@@ -445,7 +445,7 @@ export default function QuickAccessSidebar({
                           ) : null}
                           <div
                             className={cn(
-                              "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-300",
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-300",
                               isActive ? "bg-white/45 text-[#4b74d8]" : "bg-transparent text-black group-hover:text-[#111827]",
                             )}
                           >
@@ -517,7 +517,7 @@ export default function QuickAccessSidebar({
                     </div>
 
                     {!isCollapsed && isOpen && section.items.length > 0 ? (
-                      <div className="space-y-1 px-2">
+                      <div className="space-y-0 px-1">
                         {section.items.map((item) => {
                           const isActive = item.id === activeSubItemId;
                           return (
@@ -526,14 +526,14 @@ export default function QuickAccessSidebar({
                               type="button"
                               onClick={() => handleSubItemClick(item)}
                               className={cn(
-                                "group relative flex w-full min-h-[2.2rem] items-center gap-3 rounded-xl px-2.5 py-1.5 text-left transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5",
+                                "group relative flex w-full min-h-8 items-center gap-2.5 rounded-xl px-2 py-1 text-left transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:-translate-y-0.5",
                                 isActive
                                   ? "bg-[linear-gradient(135deg,#dbe9ff_0%,#cddfff_100%)] text-[#274690] ring-1 ring-[#c4d8ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]"
                                   : "text-[#374151] hover:bg-[#eef2f7] hover:shadow-[0_6px_14px_rgba(15,23,42,0.06)]",
                               )}
                             >
                               {isActive ? <span aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-[#5b8def]" /> : null}
-                              <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors duration-300", isActive ? "bg-white/45 text-[#4b74d8]" : "bg-transparent text-[#4b5563] group-hover:text-[#111827]")}>
+                              <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-300", isActive ? "bg-white/45 text-[#4b74d8]" : "bg-transparent text-[#4b5563] group-hover:text-[#111827]")}>
                                 <ClassicSidebarIcon name={item.icon} className="h-5 w-5" />
                               </div>
                               <div className="min-w-0 flex-1 pr-5">
@@ -554,8 +554,8 @@ export default function QuickAccessSidebar({
         {/* Footer — ORIGINAL DESIGN */}
         <div
           className={cn(
-            "border-t border-[var(--crm-border)]",
-            isCollapsed ? "px-1 py-2" : "px-3 py-2",
+            "shrink-0 border-t border-[var(--crm-border)]",
+            isCollapsed ? "px-1 py-1.5" : "px-3 py-1.5",
           )}
           style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
         >
