@@ -20,10 +20,10 @@ export function isSuperAdminRole(role: string): boolean {
   return normalizeRole(role) === "SUPER_ADMIN";
 }
 
-/** Meeting Management — Super Admin and Sales Admin. */
+/** Meeting Management — admin sees all, a manager sees their team, an executive sees their own. */
 export function canAccessMeetingManagement(role: string): boolean {
   const r = normalizeRole(role);
-  return r === "SUPER_ADMIN" || r === "SALES_ADMIN";
+  return isAdminRole(r) || r === "SALES_ADMIN" || r === "SALES_MANAGER" || r === "SALES_EXECUTIVE";
 }
 
 /** Easebuzz payment-link / online payment — available to all roles. */

@@ -1,9 +1,8 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import { format } from "date-fns";
 import { formatMeetingValue, type MeetingRecord, type MeetingStatus } from "@/lib/meeting-management-data";
-import { focusRing, hoverLift } from "./motion";
+import { focusRing } from "./motion";
 import { RowActionsMenu } from "./RowActionsMenu";
 
 const AVATAR: Record<MeetingRecord["avatarTone"], string> = {
@@ -14,6 +13,18 @@ const AVATAR: Record<MeetingRecord["avatarTone"], string> = {
   rose: "bg-[#FEF3F2] text-[#B42318]",
 };
 
+function StatusChip({ tone }: { tone: { bg: string; text: string; dot: string; label: string } }) {
+  return (
+    <span
+      className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
+      style={{ background: tone.bg, color: tone.text }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />
+      {tone.label}
+    </span>
+  );
+}
+
 const STATUS: Record<MeetingStatus, { bg: string; text: string; dot: string; label: string }> = {
   SCHEDULED: { bg: "#E0ECFF", text: "#1E40AF", dot: "#1D4ED8", label: "Scheduled" },
   "IN PROGRESS": { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In progress" },
@@ -22,21 +33,27 @@ const STATUS: Record<MeetingStatus, { bg: string; text: string; dot: string; lab
   CANCELLED: { bg: "#FEF3F2", text: "#B42318", dot: "#B42318", label: "Cancelled" },
 };
 
+const PROGRESS_CHIP: Record<NonNullable<MeetingRecord["progress"]>, { bg: string; text: string; dot: string; label: string }> = {
+  SCHEDULED: { bg: "#E0ECFF", text: "#1E40AF", dot: "#1D4ED8", label: "Scheduled" },
+  IN_PROGRESS: { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In progress" },
+  MEETING_SUCCESSFUL: { bg: "#F0FDF4", text: "#14532D", dot: "#15803D", label: "Meeting successful" },
+};
+
 export function MeetingRow({
   row,
   sequence,
+  now,
   onView,
   onReschedule,
-  onCancel,
 }: {
   row: MeetingRecord;
   sequence: number;
+  now: number;
   onView: () => void;
   onReschedule: () => void;
-  onCancel: () => void;
 }) {
-  const reduce = useReducedMotion();
-  const status = STATUS[row.status];
+  const progress = PROGRESS_CHIP[row.progress ?? "SCHEDULED"];
+  const delay = row.quoteDelayed === true;
   const dateLabel = row.dayOffset === 0 ? "Today" : row.dayOffset === 1 ? "Tomorrow" : format(new Date(`${row.date}T00:00:00`), "d MMM yyyy");
   const dateGreen = row.dayOffset === 0 || row.dayOffset === 1;
   return (
@@ -51,59 +68,57 @@ export function MeetingRow({
       }}
       className={`meeting-row group relative z-0 cursor-pointer outline-none hover:z-10 focus-visible:z-10 ${focusRing}`}
     >
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-[#F4F6F8] px-1.5 text-[12px] font-bold text-[#334155]">
           {sequence}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <div className="flex items-center gap-2">
           <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${AVATAR[row.avatarTone]}`}>
             {row.initials}
           </span>
           <span className="min-w-0">
-            <span className="block truncate text-[14px] font-bold text-[#0F172A]">{row.customer}</span>
-            <span className="block truncate text-[13px] font-normal text-[#5B6778]">{row.phone || "—"}</span>
+            <span className="block truncate text-[14px] font-bold leading-tight text-[#0F172A]">{row.customer}</span>
+            <span className="block truncate text-[13px] font-normal leading-tight text-[#5B6778]">{row.phone || "—"}</span>
           </span>
         </div>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
-        <span
-          className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
-          style={{ background: status.bg, color: status.text }}
-        >
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: status.dot }} />
-          {status.label}
-        </span>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <StatusChip tone={progress} />
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-semibold text-[#0F172A]">{row.assignee || "—"}</td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#0F172A]">
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-semibold text-[#0F172A]">
+        <span className="block truncate">{row.assignedSalesName?.trim() || "—"}</span>
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-semibold text-[#0F172A]">
           <MeetingTypeIcon type={row.meetingType} />
           {row.meetingType || "—"}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
-        <span className={`block text-[13px] font-bold ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
-        <span className="block text-[12px] font-normal text-[#5B6778]">{clock(row.startMin)}</span>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <span className={`block whitespace-nowrap text-[13px] font-bold leading-tight ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
+        <span className="block whitespace-nowrap text-[12px] font-normal leading-tight text-[#5B6778]">{clock(row.startMin)}</span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-bold text-[#0F172A]">{formatMeetingValue(row.budget)}</td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2 text-[13px] font-bold text-[#0F172A]">{formatMeetingValue(row.quoteValue)}</td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          <motion.button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              onReschedule();
-            }}
-            className={`inline-flex h-8 items-center rounded-lg border border-[#8FD3B5] bg-[#F3FBF7] px-2.5 text-[12px] font-semibold text-[#065F46] hover:border-[#065F46] hover:bg-[#E7F8EE] ${focusRing}`}
-            {...hoverLift(reduce)}
-          >
-            Reschedule
-          </motion.button>
-          <RowActionsMenu customer={row.customer} onView={onView} onCancel={onCancel} />
-        </div>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-bold tabular-nums text-[#0F172A]">{formatMeetingValue(row.budget)}</td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        {row.quoteValue > 0 ? (
+          <span className="inline-flex h-7 items-center text-[13px] font-bold tabular-nums text-[#0F172A]">{formatMeetingValue(row.quoteValue)}</span>
+        ) : (
+          <span className="inline-flex h-7 items-center rounded-full bg-[#F4F6F8] px-2.5 text-[12px] font-semibold text-[#94A3B8]">No quote</span>
+        )}
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        {delay ? (
+          <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full bg-[#FEF3F2] px-2.5 text-[12px] font-bold text-[#B42318]">
+            Delayed
+          </span>
+        ) : (
+          <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full bg-[#F0FDF4] px-2.5 text-[12px] font-semibold text-[#15803D]">On time</span>
+        )}
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <RowActionsMenu customer={row.customer} onView={onView} onReschedule={onReschedule} />
       </td>
     </tr>
   );

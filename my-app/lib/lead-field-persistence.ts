@@ -21,7 +21,23 @@ export function isBhkLikeConfigurationValue(raw: string): boolean {
   const v = raw.trim().toLowerCase();
   if (!v || isLeadBookingTypeValue(v)) return false;
   if (BHK_OPTION_SET.has(v)) return true;
-  return /\bbhk\b/.test(v) || v.includes("villa");
+  return /\bbhk\b/.test(v) || /^\d+bhk\b/.test(v.replace(/\s+/g, "")) || v.includes("villa");
+}
+
+/**
+ * Hub sometimes stores `3BHK` or `3 bhk` while the form options are `3 BHK`.
+ * Map those back to the dropdown value so a successful save still matches.
+ */
+export function canonicalBhkConfiguration(raw: string): string {
+  const trimmed = raw.trim().replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  const compact = trimmed.toLowerCase().replace(/\s+/g, "");
+  for (const option of CONFIGURATION_OPTIONS) {
+    if (option.toLowerCase().replace(/\s+/g, "") === compact) return option;
+  }
+  const digits = compact.match(/^(\d+)bhk$/);
+  if (digits) return `${digits[1]} BHK`;
+  return trimmed;
 }
 
 /** Which lead-table column stores CRM UI `configuration` (BHK). */
@@ -60,7 +76,7 @@ export function applyConfigurationToDetailPayload(
   body: Record<string, unknown>,
   configuration: string,
 ): void {
-  const cfg = configuration.trim();
+  const cfg = canonicalBhkConfiguration(configuration);
   clearConfigurationAliases(body);
   body.configuration = cfg;
 
@@ -124,7 +140,7 @@ export function applyWalkinLeadFieldsToDetailPayload(
   },
 ): void {
   if (opts.configuration !== undefined) {
-    const cfg = opts.configuration.trim();
+    const cfg = canonicalBhkConfiguration(opts.configuration);
     body.propertyType = cfg;
     body.property_type = cfg;
     body.configuration = cfg;

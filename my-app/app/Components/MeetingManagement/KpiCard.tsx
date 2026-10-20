@@ -30,20 +30,22 @@ export function KpiCard({
 }) {
   const reduce = useReducedMotion();
   const shown = useCountUp(value, ready, Boolean(reduce));
-  const className = `flex w-full items-center gap-3 rounded-2xl border bg-white px-3.5 py-2.5 text-left shadow-[0_1px_3px_rgba(15,23,42,0.06)] ${
-    active ? "border-[#15803D] ring-2 ring-[#15803D]" : "border-[#E3E8EE]"
-  } ${onClick ? "cursor-pointer" : ""}`;
+  const className = `flex w-full items-center gap-2.5 rounded-xl border bg-white px-3 py-2 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${
+    active ? "border-[#15803D] ring-2 ring-[#15803D]" : "border-[#E6EAF0]"
+  } ${onClick ? "cursor-pointer transition-shadow hover:shadow-[0_4px_12px_rgba(15,23,42,0.06)]" : ""}`;
   const body = (
     <>
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>{icon}</span>
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>{icon}</span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-[12px] font-semibold text-[#334155]">{label}</p>
-          <span className={`inline-flex h-6 shrink-0 items-center rounded-full px-2 text-[11px] font-semibold ${chipClass}`}>{chip}</span>
+          <p className="truncate text-[11px] font-semibold text-[#5F6675]">{label}</p>
+          {chip ? (
+            <span className={`inline-flex h-5 shrink-0 items-center rounded-full px-1.5 text-[10px] font-semibold ${chipClass}`}>{chip}</span>
+          ) : null}
         </div>
-        <div className="mt-0.5 flex items-baseline gap-2">
-          <p className="text-[26px] font-bold leading-none tracking-[-0.03em] text-[#0F172A]">{numberFormat.format(shown)}</p>
-          <p className="truncate text-[12px] font-normal text-[#5B6778]">{hint}</p>
+        <div className="mt-0.5 flex items-baseline gap-1.5">
+          <p className="text-[20px] font-bold leading-none tracking-[-0.03em] text-[#14171F]">{numberFormat.format(shown)}</p>
+          <p className="truncate text-[11px] font-normal text-[#5B6778]">{hint}</p>
         </div>
       </div>
     </>

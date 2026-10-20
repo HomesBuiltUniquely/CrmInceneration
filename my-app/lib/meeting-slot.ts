@@ -12,8 +12,13 @@ export type SlotMeeting = {
   phone?: string;
   meetingType?: string;
   designer?: string;
+  /** Sales executive the lead is assigned to in CRM. */
+  sales?: string;
   value?: number;
   status?: string;
+  budget?: number;
+  quoteValue?: number;
+  ec?: string;
 };
 
 export type DayHourGroups<T> = Record<string, Record<number, T[]>>;

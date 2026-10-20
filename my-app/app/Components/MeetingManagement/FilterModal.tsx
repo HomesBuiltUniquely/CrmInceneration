@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Popover from "@radix-ui/react-popover";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -20,7 +20,7 @@ export type FilterOption = { id: string; label: string };
 
 export type FilterDraft = Pick<
   MeetingFilterState,
-  "designerIds" | "salesIds" | "branchIds" | "labels" | "preset" | "dateFrom" | "dateTo"
+  "designerIds" | "salesIds" | "branchIds" | "labels" | "progress" | "preset" | "dateFrom" | "dateTo"
 >;
 
 const LABEL_OPTIONS = ["Showroom Visit", "Virtual Meeting", "Site Visit"];
@@ -227,9 +227,21 @@ export function FilterModal({
               <motion.button
                 type="button"
                 className={`group relative text-[14px] font-semibold text-[#334155] ${focusRing}`}
-                onClick={() =>
-                  setDraft({ designerIds: [], salesIds: [], branchIds: [], labels: [], preset: "", dateFrom: "", dateTo: "" })
-                }
+                onClick={() => {
+                  const cleared: FilterDraft = {
+                    designerIds: [],
+                    salesIds: [],
+                    branchIds: [],
+                    labels: [],
+                    progress: [],
+                    preset: "",
+                    dateFrom: "",
+                    dateTo: "",
+                  };
+                  setDraft(cleared);
+                  onApply(cleared);
+                  onClose();
+                }}
                 whileHover="hover"
                 initial="rest"
               >
@@ -269,12 +281,14 @@ export function DateRangePresets({
   dateTo,
   summary,
   onChange,
+  compact = false,
 }: {
   preset: DatePresetId | "";
   dateFrom: string;
   dateTo: string;
   summary: string;
   onChange: (patch: Pick<FilterDraft, "preset" | "dateFrom" | "dateTo">) => void;
+  compact?: boolean;
 }) {
   const reduce = useReducedMotion();
   const custom = preset === "custom";
@@ -286,17 +300,19 @@ export function DateRangePresets({
 
   return (
     <section>
-      <h3 className="text-[13px] font-bold text-[#334155]">Date range</h3>
+      {compact ? null : <h3 className="text-[13px] font-bold text-[#334155]">Date range</h3>}
       <motion.p
         key={summary}
         initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
         animate={reduce ? { opacity: 1 } : { opacity: 1, scale: [1, 1.03, 1] }}
         transition={{ duration: 0.22, ease: EASE }}
-        className="mt-3 inline-flex min-h-9 items-center rounded-full bg-[#F0FDF4] px-3 text-[13px] font-semibold text-[#14532D]"
+        className={`inline-flex items-center rounded-full bg-[#F0FDF4] font-semibold text-[#14532D] ${
+          compact ? "min-h-7 px-2.5 text-[12px]" : "mt-3 min-h-9 px-3 text-[13px]"
+        }`}
       >
         {summary}
       </motion.p>
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${compact ? "mt-2 gap-1.5" : "mt-3 gap-2"}`}>
         {DATE_PRESET_CARDS.map((card) => {
           const active = preset === card.id;
           return (
@@ -308,17 +324,21 @@ export function DateRangePresets({
                 onChange({ preset: card.id, dateFrom: card.id === "custom" ? dateFrom : "", dateTo: card.id === "custom" ? dateTo : "" });
                 if (card.id === "custom") setPickerOpen(true);
               }}
-              className={`relative min-h-[72px] rounded-xl border px-3 py-2 text-left ${focusRing} ${
-                active ? "border-2 border-[#22C55E] bg-[#F0FDF4] shadow-[0_6px_14px_rgba(34,197,94,0.25)]" : "border-[#E3E8EE] bg-white hover:border-[#86EFAC]"
+              className={`relative rounded-xl border text-left ${focusRing} ${
+                compact ? "min-h-[52px] px-2.5 py-1.5" : "min-h-[72px] px-3 py-2"
+              } ${
+                active ? "border border-[#22C55E] bg-[#F0FDF4] shadow-[0_4px_10px_rgba(34,197,94,0.18)]" : "border-[#E3E8EE] bg-white hover:border-[#86EFAC]"
               }`}
-              {...(reduce ? {} : { whileHover: { y: -2 }, transition: { duration: 0.18, ease: EASE } })}
+              {...(reduce || compact ? {} : { whileHover: { y: -2 }, transition: { duration: 0.18, ease: EASE } })}
             >
-              <span className="block text-[14px] font-bold text-[#0F172A]">{card.title}</span>
-              <span className="mt-0.5 block text-[12px] font-normal text-[#5B6778]">{card.detail}</span>
+              <span className={`block font-bold text-[#0F172A] ${compact ? "text-[12px]" : "text-[14px]"}`}>{card.title}</span>
+              <span className={`mt-0.5 block font-normal text-[#5B6778] ${compact ? "text-[10px] leading-tight" : "text-[12px]"}`}>
+                {card.detail}
+              </span>
               <AnimatePresence>
                 {active ? (
                   <motion.span
-                    className="absolute right-2 top-2 text-[#15803D]"
+                    className={`absolute text-[#15803D] ${compact ? "right-1.5 top-1.5" : "right-2 top-2"}`}
                     initial={reduce ? { opacity: 0 } : { scale: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -334,9 +354,9 @@ export function DateRangePresets({
       </div>
       <Popover.Root open={custom && pickerOpen} onOpenChange={setPickerOpen}>
         <Popover.Anchor asChild>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <DateField label="From" value={dateFrom} disabled={!custom} onOpen={() => setPickerOpen(true)} />
-            <DateField label="To" value={dateTo} disabled={!custom} onOpen={() => setPickerOpen(true)} />
+          <div className={`grid grid-cols-2 ${compact ? "mt-2 gap-2" : "mt-4 gap-3"}`}>
+            <DateField compact={compact} label="From" value={dateFrom} disabled={!custom} onOpen={() => setPickerOpen(true)} />
+            <DateField compact={compact} label="To" value={dateTo} disabled={!custom} onOpen={() => setPickerOpen(true)} />
           </div>
         </Popover.Anchor>
         <Popover.Portal>
@@ -374,14 +394,16 @@ function DateField({
   value,
   disabled,
   onOpen,
+  compact = false,
 }: {
   label: string;
   value: string;
   disabled: boolean;
   onOpen: () => void;
+  compact?: boolean;
 }) {
   return (
-    <label className="block text-[13px] font-semibold text-[#334155]">
+    <label className={`block font-semibold text-[#334155] ${compact ? "text-[12px]" : "text-[13px]"}`}>
       {label}
       <input
         readOnly
@@ -391,7 +413,9 @@ function DateField({
           if (!disabled) onOpen();
         }}
         placeholder="YYYY-MM-DD"
-        className={`mt-1 h-11 w-full rounded-xl border px-3 text-[14px] font-semibold transition duration-200 ${focusRing} ${
+        className={`mt-1 w-full border font-semibold transition duration-200 ${focusRing} ${
+          compact ? "h-8 rounded-lg px-2.5 text-[12px]" : "h-11 rounded-xl px-3 text-[14px]"
+        } ${
           disabled
             ? "cursor-not-allowed border-[#E3E8EE] bg-[#F4F6F8] text-[#5B6778] opacity-70"
             : "cursor-pointer border-[#86EFAC] bg-white text-[#0F172A] opacity-100"
@@ -408,6 +432,7 @@ export function MultiSelectChips({
   options,
   selected,
   onChange,
+  compact = false,
 }: {
   label: string;
   placeholder: string;
@@ -415,13 +440,139 @@ export function MultiSelectChips({
   options: FilterOption[];
   selected: string[];
   onChange: (ids: string[]) => void;
+  compact?: boolean;
 }) {
   const reduce = useReducedMotion();
   const [query, setQuery] = useState("");
   const [openList, setOpenList] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const needle = query.trim().toLowerCase();
   const visible = options.filter((option) => option.label.toLowerCase().includes(needle));
-  const showList = openList || needle.length > 0;
+  const summary =
+    selected.length === 0
+      ? emptyLabel
+      : selected.length === 1
+        ? (options.find((item) => item.id === selected[0])?.label ?? selected[0])
+        : `${selected.length} selected`;
+
+  useEffect(() => {
+    if (selected.length === 0) setQuery("");
+  }, [selected.length]);
+
+  useEffect(() => {
+    if (!openList) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpenList(false);
+        setQuery("");
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenList(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openList]);
+
+  const toggle = (id: string) => {
+    onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
+  };
+
+  if (compact) {
+    return (
+      <div ref={rootRef} className="relative">
+        <p className="text-[12px] font-semibold text-[#334155]">{label}</p>
+        <button
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded={openList}
+          onClick={() => setOpenList((current) => !current)}
+          className={`mt-1 flex h-8 w-full items-center justify-between gap-2 rounded-lg border border-[#E3E8EE] bg-white px-2.5 text-left text-[13px] font-semibold ${focusRing} ${
+            selected.length ? "text-[#0F172A]" : "text-[#64748B]"
+          }`}
+        >
+          <span className="truncate">{summary}</span>
+          <svg viewBox="0 0 20 20" className={`h-3.5 w-3.5 shrink-0 text-[#64748B] transition ${openList ? "rotate-180" : ""}`} fill="none" aria-hidden>
+            <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {selected.length ? (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {selected.map((id) => {
+              const option = options.find((item) => item.id === id);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-label={`Remove ${option?.label ?? id}`}
+                  onClick={() => onChange(selected.filter((item) => item !== id))}
+                  className={`inline-flex h-6 items-center gap-1 rounded-full border border-[#86EFAC] bg-[#F0FDF4] px-2 text-[11px] font-semibold text-[#14532D] ${focusRing}`}
+                >
+                  {option?.label ?? id}
+                  <span aria-hidden>×</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {openList ? (
+          <div className="mt-1.5 overflow-hidden rounded-lg border border-[#E3E8EE] bg-white shadow-[0_4px_12px_rgba(15,23,42,0.08)]">
+            <div className="border-b border-[#E3E8EE] p-1.5">
+              <input
+                autoFocus
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={placeholder}
+                className={`h-7 w-full rounded-md border border-[#E3E8EE] px-2 text-[12px] font-semibold text-[#0F172A] outline-none placeholder:font-normal placeholder:text-[#94A3B8] focus:border-[#22C55E] ${focusRing}`}
+              />
+            </div>
+            <ul role="listbox" aria-multiselectable className="max-h-36 overflow-auto py-0.5">
+              {visible.length === 0 ? (
+                <li className="px-2.5 py-2 text-[12px] text-[#64748B]">No matches</li>
+              ) : (
+                visible.map((option) => {
+                  const on = selected.includes(option.id);
+                  return (
+                    <li key={option.id} role="option" aria-selected={on}>
+                      <button
+                        type="button"
+                        onClick={() => toggle(option.id)}
+                        className={`flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[12px] font-semibold ${focusRing} ${
+                          on ? "bg-[#F0FDF4] text-[#14532D]" : "text-[#0F172A] hover:bg-[#F8FAFC]"
+                        }`}
+                      >
+                        <span
+                          className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${
+                            on ? "border-[#22C55E] bg-[#22C55E] text-white" : "border-[#CBD5E1] bg-white"
+                          }`}
+                          aria-hidden
+                        >
+                          {on ? (
+                            <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none">
+                              <path d="M2.5 6.2L4.8 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                            </svg>
+                          ) : null}
+                        </span>
+                        <span className="truncate">{option.label}</span>
+                      </button>
+                    </li>
+                  );
+                })
+              )}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div>
       <label className="block text-[13px] font-semibold text-[#334155]">
@@ -461,7 +612,7 @@ export function MultiSelectChips({
           </motion.div>
         ) : null}
       </AnimatePresence>
-      {showList ? (
+      {openList || needle.length > 0 ? (
         <ul className="mt-2 max-h-36 overflow-auto rounded-xl border border-[#E3E8EE]">
           {visible.length === 0 ? (
             <li className="px-3 py-2 text-[13px] font-normal text-[#5B6778]">No matches</li>
@@ -474,7 +625,7 @@ export function MultiSelectChips({
                     type="button"
                     aria-pressed={on}
                     onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => onChange(on ? selected.filter((id) => id !== option.id) : [...selected, option.id])}
+                    onClick={() => toggle(option.id)}
                     className={`flex min-h-11 w-full items-center px-3 text-left text-[14px] font-semibold ${focusRing} ${
                       on ? "bg-[#F0FDF4] text-[#14532D]" : "text-[#0F172A] hover:bg-[#F7F9FA]"
                     }`}

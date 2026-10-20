@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { forwardRef, useEffect, useState, type ButtonHTMLAttributes } from "react";
 
 import { formatMeetingValue } from "@/lib/meeting-management-data";
 import {
@@ -12,26 +12,28 @@ import {
 } from "@/lib/meeting-slot";
 import { cn } from "@/lib/cn";
 import { focusRing } from "../motion";
+import { MeetingDetailsPopover } from "./MeetingDetailsPopover";
 import { SlotCell } from "./SlotCell";
 
 export function HourWeekGrid({
   days,
   todayKey,
+  monthDate,
   hours,
   events,
   loading,
   highlightId,
-  onOpen,
   onCreate,
   onReschedule,
 }: {
   days: Date[];
   todayKey: string;
+  /** Month the week belongs to. Days outside it are tinted so the month change is visible. */
+  monthDate: Date;
   hours: number[];
   events: SlotMeeting[];
   loading?: boolean;
   highlightId?: string;
-  onOpen: (meeting: SlotMeeting) => void;
   onCreate: (date: string, minutes: number) => void;
   onReschedule?: (meeting: SlotMeeting) => void;
 }) {
@@ -61,10 +63,11 @@ export function HourWeekGrid({
         {days.map((day) => {
           const key = isoDay(day);
           const active = key === todayKey;
+          const otherMonth = day.getFullYear() !== monthDate.getFullYear() || day.getMonth() !== monthDate.getMonth();
           const count = events.filter((event) => event.date === key).length;
           return (
-            <div key={key} className={cn("border-b border-[#f1f5f9] px-2 py-2 text-center", active && "bg-[#F0FDF4]")}>
-              <div className={cn("text-[10px] font-bold tracking-[0.14em]", active ? "text-[#15803D]" : "text-[#94a3b8]")}>
+            <div key={key} className={cn("border-b border-[#f1f5f9] px-2 py-2 text-center", active ? "bg-[#F0FDF4]" : otherMonth && "bg-[#EEF3FB]")}>
+              <div className={cn("text-[10px] font-bold tracking-[0.14em]", active ? "text-[#15803D]" : otherMonth ? "text-[#1B3FA8]" : "text-[#94a3b8]")}>
                 {active ? "TODAY" : day.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase()}
               </div>
               {active ? (
@@ -72,7 +75,7 @@ export function HourWeekGrid({
                   {day.getDate()}
                 </div>
               ) : (
-                <div className="text-[13px] font-bold text-[#334155]">
+                <div className={cn("text-[13px] font-bold", otherMonth ? "text-[#1B3FA8]" : "text-[#334155]")}>
                   {day.getDate()} {day.toLocaleDateString("en-US", { month: "short" })}
                 </div>
               )}
@@ -84,7 +87,7 @@ export function HourWeekGrid({
           );
         })}
         {shownHours.map((hour) => (
-          <HourRow key={hour} hour={hour} days={days} todayKey={todayKey} nowMin={shownHours.includes(nowHour) ? nowMin : null} grouped={grouped} loading={loading} highlightId={highlightId} onOpen={onOpen} onCreate={onCreate} onReschedule={onReschedule} />
+          <HourRow key={hour} hour={hour} days={days} todayKey={todayKey} monthDate={monthDate} nowMin={shownHours.includes(nowHour) ? nowMin : null} grouped={grouped} loading={loading} highlightId={highlightId} onCreate={onCreate} onReschedule={onReschedule} />
         ))}
       </div>
     </div>
@@ -95,22 +98,22 @@ function HourRow({
   hour,
   days,
   todayKey,
+  monthDate,
   nowMin,
   grouped,
   loading,
   highlightId,
-  onOpen,
   onCreate,
   onReschedule,
 }: {
   hour: number;
   days: Date[];
   todayKey: string;
+  monthDate: Date;
   nowMin: number | null;
   grouped: ReturnType<typeof groupMeetingsByDayHour<SlotMeeting>>;
   loading?: boolean;
   highlightId?: string;
-  onOpen: (meeting: SlotMeeting) => void;
   onCreate: (date: string, minutes: number) => void;
   onReschedule?: (meeting: SlotMeeting) => void;
 }) {
@@ -122,6 +125,7 @@ function HourRow({
       {days.map((day) => {
         const key = isoDay(day);
         const meetings = grouped[key]?.[hour] ?? [];
+        const otherMonth = day.getFullYear() !== monthDate.getFullYear() || day.getMonth() !== monthDate.getMonth();
         return (
           <SlotCell
             key={`${key}-${hour}`}
@@ -130,14 +134,18 @@ function HourRow({
             heading={slotHeading(key, hour)}
             meetings={meetings}
             today={key === todayKey}
+            otherMonth={otherMonth}
             nowLabel={key === todayKey && nowMin != null && Math.floor(nowMin / 60) === hour ? formatSlotClock(nowMin) : undefined}
             nowOffset={key === todayKey && nowMin != null && Math.floor(nowMin / 60) === hour ? (nowMin % 60) / 60 : undefined}
             loading={loading}
             highlightId={highlightId}
             onCreate={onCreate}
             onReschedule={onReschedule}
-            onViewDetails={onOpen}
-            renderSingle={(meeting) => <StandardMeetingCard meeting={meeting} highlightId={highlightId} onOpen={onOpen} />}
+            renderSingle={(meeting) => (
+              <MeetingDetailsPopover meeting={meeting} onReschedule={onReschedule}>
+                <StandardMeetingCard meeting={meeting} highlightId={highlightId} />
+              </MeetingDetailsPopover>
+            )}
           />
         );
       })}
@@ -145,15 +153,8 @@ function HourRow({
   );
 }
 
-function StandardMeetingCard({
-  meeting,
-  highlightId,
-  onOpen,
-}: {
-  meeting: SlotMeeting;
-  highlightId?: string;
-  onOpen: (meeting: SlotMeeting) => void;
-}) {
+const StandardMeetingCard = forwardRef<HTMLButtonElement, { meeting: SlotMeeting; highlightId?: string } & ButtonHTMLAttributes<HTMLButtonElement>>(
+  function StandardMeetingCard({ meeting, highlightId, className, onDoubleClick, ...props }, ref) {
   const kind = meetingTypeKind(meeting.meetingType);
   const box =
     kind === "virtual"
@@ -168,13 +169,14 @@ function StandardMeetingCard({
   const value = Number.isFinite(meeting.value) && (meeting.value ?? 0) > 0 ? formatMeetingValue(meeting.value ?? 0) : "";
   return (
     <button
+      ref={ref}
       type="button"
-      onClick={(event) => {
+      {...props}
+      onDoubleClick={(event) => {
         event.stopPropagation();
-        onOpen(meeting);
+        onDoubleClick?.(event);
       }}
-      onDoubleClick={(event) => event.stopPropagation()}
-      className={cn("w-full overflow-hidden rounded-lg border px-1.5 py-1 text-left", box, highlightId === meeting.id && "slot-flash", focusRing)}
+      className={cn("w-full overflow-hidden rounded-lg border px-1.5 py-1 text-left", box, highlightId === meeting.id && "slot-flash", focusRing, className)}
     >
       <div className={cn("truncate text-[10px] font-bold leading-tight", time)}>{formatSlotClock(meeting.startMin)}</div>
       <div className="truncate text-[12px] font-bold leading-tight text-[#0f172a]">{name}</div>
@@ -182,7 +184,7 @@ function StandardMeetingCard({
       {value || designer ? <div className="mt-0.5 truncate text-[10px] font-semibold text-[#64748b]">{value || designer}</div> : null}
     </button>
   );
-}
+});
 
 function slotHeading(dayKey: string, hour: number): string {
   const [year, month, date] = dayKey.split("-").map(Number);

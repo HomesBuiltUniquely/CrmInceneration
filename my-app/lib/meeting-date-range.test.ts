@@ -4,6 +4,13 @@ import { formatRangeLabel, meetingFallsInRange, resolveDatePreset, toDateKey } f
 
 const today = new Date(2026, 9, 14);
 
+test("today is the same start and end day", () => {
+  const range = resolveDatePreset("today", today);
+  assert.ok(range);
+  assert.equal(toDateKey(range.from), "2026-10-14");
+  assert.equal(toDateKey(range.to), "2026-10-14");
+});
+
 test("this month is the current calendar month", () => {
   const range = resolveDatePreset("this-month", today);
   assert.ok(range);

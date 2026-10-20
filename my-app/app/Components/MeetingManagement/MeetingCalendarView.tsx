@@ -5,13 +5,15 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/cn";
 import {
   formatMeetingValue,
+  isQuoteDelayed,
   meetingBoardStats,
   MEETING_TYPES,
   type MeetingRecord,
 } from "@/lib/meeting-management-data";
 import { KpiCard } from "./KpiCard";
 import { HourWeekGrid } from "./slot/HourWeekGrid";
-import { EASE, fadeUp, focusRing, hoverLift } from "./motion";
+import { MeetingDetailsPopover } from "./slot/MeetingDetailsPopover";
+import { EASE, fadeUp, focusRing } from "./motion";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
 const ALERTS_HIDE_KEY = "hub-meetings-alerts-hide-until";
@@ -30,8 +32,12 @@ type CalEvent = {
   channel: Exclude<Channel, "all">;
   location: string;
   designer: string;
+  sales: string;
   meetingType: string;
   value: number;
+  budget: number;
+  quoteValue: number;
+  ec: string;
   badge?: string;
   badgeClass?: string;
   tone: "blue" | "green" | "violet" | "rose" | "teal";
@@ -68,14 +74,14 @@ function channelOf(type: string): CalEvent["channel"] {
 function toCard(row: MeetingRecord): CalEvent {
   const channel = row.meetingType === "—" ? "showroom" : channelOf(row.meetingType);
   const tone: CalEvent["tone"] =
-    row.status === "CANCELLED" ? "rose" : channel === "meet" ? "green" : channel === "site" ? "violet" : "blue";
+    row.meetingStatus === "CANCELLED" ? "rose" : channel === "meet" ? "green" : channel === "site" ? "violet" : "blue";
   const badge =
-    row.status === "CANCELLED"
+    row.meetingStatus === "CANCELLED"
       ? "CANCELLED"
-      : row.status === "COMPLETED"
-        ? "COMPLETED"
-        : row.status === "RESCHEDULED"
-          ? "RESCHEDULED"
+      : row.meetingStatus === "RESCHEDULED"
+        ? "RESCHEDULED"
+        : row.status === "COMPLETED"
+          ? "COMPLETED"
           : row.status === "IN PROGRESS"
             ? "IN PROGRESS"
             : "SCHEDULED";
@@ -90,15 +96,19 @@ function toCard(row: MeetingRecord): CalEvent {
     channel,
     location: row.meetingType,
     designer: row.assignee,
+    sales: row.assignedSalesName?.trim() ?? "",
     meetingType: row.meetingType,
     value: row.value,
+    budget: row.budget,
+    quoteValue: row.quoteValue,
+    ec: ecLabel(row.branch),
     badge,
     badgeClass: BADGE_CLASS[badge] ?? BADGE_CLASS.SCHEDULED,
     tone,
     quote: row.quoteNo,
     scheduleNote: row.quoteNo ? `${row.assignee} • Quote ${row.quoteNo}` : row.assignee,
     phone: row.phone?.trim() ?? "",
-    status: row.status,
+    status: row.status === "IN PROGRESS" ? "In progress" : row.status === "COMPLETED" ? "Completed" : "Scheduled",
   };
 }
 
@@ -165,19 +175,25 @@ function IconCalendar() {
 export default function MeetingCalendarView({
   onShowTable,
   onShowQuoteSent,
+  onShowQuoteDelayed,
+  onShowMeetingSuccessful,
   meetings,
-  quoteSentCount = 0,
+  quoteSentMeetings = [],
   loading,
   loadError,
   onReload,
+  onRescheduleMeeting,
 }: {
   onShowTable: () => void;
   onShowQuoteSent: () => void;
+  onShowQuoteDelayed: () => void;
+  onShowMeetingSuccessful: () => void;
   meetings: MeetingRecord[];
-  quoteSentCount?: number;
+  quoteSentMeetings?: MeetingRecord[];
   loading?: boolean;
   loadError?: string;
   onReload?: () => void;
+  onRescheduleMeeting?: (meetingId: string) => void;
 }) {
   const today = useMemo(() => {
     const now = new Date();
@@ -187,22 +203,33 @@ export default function MeetingCalendarView({
   const [anchor, setAnchor] = useState<Date>(() => new Date());
   const [slideDir, setSlideDir] = useState(1);
   const [channel, setChannel] = useState<Channel>("all");
-  const [designer, setDesigner] = useState("all");
-  const [meetingType, setMeetingType] = useState("all");
   const [query, setQuery] = useState("");
   const events = useMemo(() => meetings.map(toCard), [meetings]);
-  const stats = useMemo(() => meetingBoardStats(meetings), [meetings]);
+  const monthKey = `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, "0")}`;
+  const viewingCurrentMonth = anchor.getFullYear() === today.getFullYear() && anchor.getMonth() === today.getMonth();
+  const monthLabel = anchor.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  const monthTitle = anchor.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  const monthMeetings = useMemo(
+    () => meetings.filter((row) => row.date.startsWith(monthKey)),
+    [meetings, monthKey],
+  );
+  const stats = useMemo(() => meetingBoardStats(monthMeetings), [monthMeetings]);
+  const quoteDelayedCount = useMemo(() => monthMeetings.filter((row) => isQuoteDelayed(row)).length, [monthMeetings]);
+  const monthQuoteSent = useMemo(
+    () => (quoteSentMeetings ?? []).filter((row) => row.date.startsWith(monthKey)).length,
+    [monthKey, quoteSentMeetings],
+  );
+  const monthEvents = useMemo(() => events.filter((event) => event.date.startsWith(monthKey)), [events, monthKey]);
   const channelCounts = useMemo(
     () => ({
-      all: events.length,
-      showroom: events.filter((event) => event.meetingType === "Showroom Visit").length,
-      meet: events.filter((event) => event.meetingType === "Virtual Meeting").length,
-      site: events.filter((event) => event.meetingType === "Site Visit").length,
+      all: monthEvents.length,
+      showroom: monthEvents.filter((event) => event.meetingType === "Showroom Visit").length,
+      meet: monthEvents.filter((event) => event.meetingType === "Virtual Meeting").length,
+      site: monthEvents.filter((event) => event.meetingType === "Site Visit").length,
     }),
-    [events],
+    [monthEvents],
   );
   const reduce = useReducedMotion();
-  const [filterOpen, setFilterOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [draftDate, setDraftDate] = useState("2026-10-13");
   const [draftTime, setDraftTime] = useState("09:00");
@@ -214,8 +241,6 @@ export default function MeetingCalendarView({
   const [draftDesigner, setDraftDesigner] = useState("");
   const [draftType, setDraftType] = useState(TYPES[0]);
   const [draftLocation, setDraftLocation] = useState<CalEvent["channel"]>("showroom");
-  const [detail, setDetail] = useState<CalEvent | null>(null);
-  const [started, setStarted] = useState(false);
   const [alertsOn, setAlertsOn] = useState(true);
   const [notice, setNotice] = useState("");
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -233,12 +258,10 @@ export default function MeetingCalendarView({
       if (channel === "showroom" && event.meetingType !== "Showroom Visit") return false;
       if (channel === "meet" && event.meetingType !== "Virtual Meeting") return false;
       if (channel === "site" && event.meetingType !== "Site Visit") return false;
-      if (designer !== "all" && event.designer !== designer) return false;
-      if (meetingType !== "all" && event.meetingType !== meetingType) return false;
       if (!needle) return true;
       return `${event.customer} ${event.quote ?? ""} ${event.designer} ${event.line}`.toLowerCase().includes(needle);
     });
-  }, [channel, designer, events, meetingType, query]);
+  }, [channel, events, query]);
 
   const shift = (dir: number) => {
     setSlideDir(dir);
@@ -247,6 +270,19 @@ export default function MeetingCalendarView({
       if (span === "day") return addDays(current, dir);
       return addDays(current, dir * 7);
     });
+  };
+
+  const stepMonth = (dir: number) => {
+    setSlideDir(dir);
+    setAnchor((current) => new Date(current.getFullYear(), current.getMonth() + dir, 1));
+  };
+
+  const requestReschedule = (meeting: { id: string; date: string; startMin: number }) => {
+    if (onRescheduleMeeting) {
+      onRescheduleMeeting(meeting.id);
+      return;
+    }
+    openSchedule(meeting.date, clockInput(meeting.startMin));
   };
 
   const openSchedule = (date: string, time: string) => {
@@ -282,12 +318,15 @@ export default function MeetingCalendarView({
     const n = new Date(nowTick);
     return n.getHours() * 60 + n.getMinutes();
   })();
-  const nextUp = events
-    .filter((event) => event.badge !== "CANCELLED" && event.badge !== "COMPLETED")
-    .filter((event) => event.date > iso(today) || (event.date === iso(today) && event.startMin >= nowMin))
+  const openEvents = events.filter((event) => event.badge !== "CANCELLED" && event.badge !== "COMPLETED");
+  const running = openEvents
+    .filter((event) => event.date === iso(today) && event.startMin <= nowMin && nowMin < event.startMin + Math.max(event.duration, 1))
+    .sort((a, b) => a.startMin - b.startMin)[0];
+  const nextUp = openEvents
+    .filter((event) => event.id !== running?.id)
+    .filter((event) => event.date > iso(today) || (event.date === iso(today) && event.startMin > nowMin))
     .sort((a, b) => a.date.localeCompare(b.date) || a.startMin - b.startMin)[0];
-  const liveToday = nextUp && nextUp.date === iso(today) ? nextUp : null;
-  const startsIn = liveToday ? Math.max(0, liveToday.startMin - nowMin) : null;
+  const liveToday = running ?? (nextUp && nextUp.date === iso(today) ? nextUp : null);
   const remainingToday = todayEvents.filter(
     (event) => event.badge !== "CANCELLED" && event.badge !== "COMPLETED" && event.startMin >= nowMin,
   );
@@ -320,77 +359,50 @@ export default function MeetingCalendarView({
 
   return (
     <div className="w-full font-[family-name:var(--font-manrope)] text-[#0F172A]">
-      <motion.header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between" {...fadeUp(reduce, 8)}>
+      <motion.header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between" {...fadeUp(reduce, 8)}>
         <div>
-          <h1 className="text-[32px] font-bold leading-tight tracking-[-0.03em]">Meetings</h1>
-          <p className="mt-1 text-[15px] font-normal text-[#5B6778]">Track, reschedule and follow up on every customer meeting.</p>
+          <h1 className="text-[26px] font-bold leading-none tracking-[-0.03em]">Meetings</h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <p className="text-[13px] font-normal text-[#5B6778]">Track, reschedule and follow up on every customer meeting.</p>
+            <span
+              title={viewingCurrentMonth ? "These numbers are for the current month" : "These numbers follow the month on the calendar"}
+              className={`inline-flex h-5 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${
+                viewingCurrentMonth ? "bg-[#E8F1FF] text-[#1B3FA8]" : "bg-[#F1F5F9] text-[#334155]"
+              }`}
+            >
+              <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
+                <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+                <path d="M2.5 6.5h11M5.5 2.5v2M10.5 2.5v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              </svg>
+              {monthLabel}
+            </span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative inline-flex h-8 items-center rounded-lg bg-[#E8ECF0] p-0.5" role="group" aria-label="Meetings view">
-            <button type="button" onClick={onShowTable} className={`relative inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-[12px] font-semibold text-[#334155] ${focusRing}`}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="inline-flex items-center rounded-2xl border border-[#E6EAF0] bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+          <div className="relative inline-flex h-8 items-center rounded-xl bg-[#F3F5F8] p-0.5" role="group" aria-label="Meetings view">
+            <button type="button" onClick={onShowTable} className={`relative inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-[#5F6675] transition-colors hover:text-[#14171F] ${focusRing}`}>
               <IconTable />
               List
             </button>
-            <button type="button" className={`relative inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-[12px] font-semibold text-[#0F172A] ${focusRing}`}>
-              <motion.span layoutId="meeting-view-pill" className="absolute inset-0 rounded-md bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08)]" transition={reduce ? { duration: 0 } : { duration: 0.22, ease: EASE }} />
-              <span className="relative inline-flex items-center gap-1">
+            <button type="button" className={`relative inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-[#0B6B45] ${focusRing}`}>
+              <motion.span layoutId="meeting-view-pill" className="absolute inset-0 rounded-lg bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08)]" transition={reduce ? { duration: 0 } : { duration: 0.22, ease: EASE }} />
+              <span className="relative inline-flex items-center gap-1.5">
                 <IconCalendar />
                 Calendar
               </span>
             </button>
           </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setFilterOpen((open) => !open)}
-              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-bold ${focusRing} ${
-                filterOpen || designer !== "all" || meetingType !== "all"
-                  ? "border-[#1D4ED8] bg-[#EFF6FF] text-[#1E40AF]"
-                  : "border-[#CBD5E1] bg-white text-[#0F172A]"
-              }`}
-            >
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" aria-hidden>
-                <path d="M4 6H20L14 12.5V18L10 16.2V12.5L4 6Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-              </svg>
-              Filter
-              {designer !== "all" || meetingType !== "all" ? (
-                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#22C55E] px-1 text-[10px] font-bold text-[#052E16]">
-                  {(designer !== "all" ? 1 : 0) + (meetingType !== "all" ? 1 : 0)}
-                </span>
-              ) : null}
-            </button>
-            {filterOpen ? (
-              <div className="absolute right-0 z-30 mt-2 w-56 rounded-2xl border border-[#e2e8f0] bg-white p-3 shadow-xl">
-                <label className="block text-[10px] font-bold tracking-[0.12em] text-[#94a3b8]">DESIGNER</label>
-                <select value={designer} onChange={(e) => setDesigner(e.target.value)} className="mt-1 w-full rounded-lg border border-[#e2e8f0] px-2 py-1.5 text-xs font-semibold">
-                  <option value="all">All designers</option>
-                  {designers.map((name) => <option key={name}>{name}</option>)}
-                </select>
-                <label className="mt-3 block text-[10px] font-bold tracking-[0.12em] text-[#94a3b8]">TYPE</label>
-                <select value={meetingType} onChange={(e) => setMeetingType(e.target.value)} className="mt-1 w-full rounded-lg border border-[#e2e8f0] px-2 py-1.5 text-xs font-semibold">
-                  <option value="all">All meeting types</option>
-                  {TYPES.map((type) => <option key={type}>{type}</option>)}
-                </select>
-              </div>
-            ) : null}
           </div>
-          <motion.button
-            type="button"
-            onClick={() => openSchedule(iso(anchor), "10:00")}
-            className={`group inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#22C55E] px-3 text-[12px] font-bold text-[#052E16] ${focusRing}`}
-            {...hoverLift(reduce)}
-          >
-            <PlusIcon />
-            Schedule meeting
-          </motion.button>
         </div>
       </motion.header>
 
-      <section className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-2.5" aria-label="Meeting totals">
+      <section className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2" aria-label="Meeting totals">
         <KpiCard ready={!loading} label="Scheduled" value={stats.scheduled} hint="Upcoming meetings" chip={`${numberFormat.format(stats.today)} today`} chipClass="bg-[#E0ECFF] text-[#1E40AF]" iconClass="bg-[#E0ECFF] text-[#1D4ED8]" icon={<CalIcon />} />
-        <KpiCard ready={!loading} label="Meetings done" value={stats.meetingsDone} hint="Experience & design" chip="Successful" chipClass="bg-[#F0FDF4] text-[#14532D]" iconClass="bg-[#F0FDF4] text-[#15803D]" icon={<CheckIcon />} />
+        <KpiCard ready={!loading} label="Meeting successful" value={stats.meetingSuccessful} hint="Successful meetings" chip="Yes" chipClass="bg-[#E0ECFF] text-[#1E40AF]" iconClass="bg-[#E0ECFF] text-[#1D4ED8]" icon={<CheckIcon />} onClick={onShowMeetingSuccessful} />
         <KpiCard ready={!loading} label="Cancelled" value={stats.cancelled} hint="Cancelled meetings" chip={`${stats.cancelledPct}%`} chipClass="bg-[#FEF3C7] text-[#92400E]" iconClass="bg-[#FEF3F2] text-[#B42318]" icon={<XIcon />} />
-        <KpiCard ready={!loading} label="Quotes sent" value={quoteSentCount} hint="Sales Admin leads" chip="Won + lost" chipClass="bg-[#F0FDF4] text-[#15803D]" iconClass="bg-[#F0FDF4] text-[#15803D]" icon={<DocIcon />} onClick={onShowQuoteSent} />
+        <KpiCard ready={!loading} label="Quotes sent" value={monthQuoteSent} hint="Sales Admin leads" chip="Won + lost" chipClass="bg-[#F0FDF4] text-[#15803D]" iconClass="bg-[#F0FDF4] text-[#15803D]" icon={<DocIcon />} onClick={onShowQuoteSent} />
+        <KpiCard ready={!loading} label="Quote delayed" value={quoteDelayedCount} hint="After meeting successful" chip="Over 4 hours" chipClass="bg-[#FEF3F2] text-[#B42318]" iconClass="bg-[#FEF3F2] text-[#B42318]" icon={<DelayIcon />} onClick={onShowQuoteDelayed} />
       </section>
 
       {loading ? <p className="mt-3 text-[13px] font-semibold text-[#5B6778]">Loading meetings…</p> : null}
@@ -399,8 +411,17 @@ export default function MeetingCalendarView({
 
       <div className="mt-4 grid items-stretch gap-4 max-[1100px]:grid-cols-1 min-[1101px]:grid-cols-[minmax(0,1fr)_320px]">
         <motion.div className="flex h-full min-w-0 flex-col rounded-[18px] border border-[#E3E8EE] bg-white p-4 shadow-[0_1px_3px_rgba(15,23,42,0.06)]" {...fadeUp(reduce, 8, 0.08)}>
-          <div className="mb-2 flex items-center gap-2">
-            <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[#E3E8EE] bg-white px-2.5">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <div className="inline-flex h-8 shrink-0 items-center rounded-xl bg-[#F3F5F8] p-0.5" aria-label="Visible month">
+              <button type="button" onClick={() => stepMonth(-1)} aria-label="Previous month" className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-[16px] font-semibold text-[#334155] hover:bg-white ${focusRing}`}>
+                ‹
+              </button>
+              <span className="min-w-[128px] px-1 text-center text-[12px] font-semibold text-[#14171F]">{monthTitle}</span>
+              <button type="button" onClick={() => stepMonth(1)} aria-label="Next month" className={`inline-flex h-7 w-7 items-center justify-center rounded-lg text-[16px] font-semibold text-[#334155] hover:bg-white ${focusRing}`}>
+                ›
+              </button>
+            </div>
+            <label className="flex h-8 min-w-[180px] flex-1 items-center gap-2 rounded-lg border border-[#E3E8EE] bg-white px-2.5 focus-within:border-[#334155] focus-within:ring-2 focus-within:ring-[#334155]/15">
               <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0 text-[#94a3b8]" fill="none" aria-hidden>
                 <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.8" />
                 <path d="M16 16.5L20 20.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -416,6 +437,7 @@ export default function MeetingCalendarView({
               type="button"
               onClick={() => {
                 setSlideDir(anchor.getTime() <= today.getTime() ? 1 : -1);
+                setSpan("week");
                 setAnchor(new Date(today));
               }}
               className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[#B6E6C6] bg-[#F0FDF4] px-2.5 text-[12px] font-semibold text-[#14532D]"
@@ -427,15 +449,15 @@ export default function MeetingCalendarView({
               </svg>
               Today
             </button>
-            <div className="flex h-8 shrink-0 items-center rounded-lg bg-[#E8ECF0] p-0.5" role="group" aria-label="Calendar span">
+            <div className="flex h-8 shrink-0 items-center rounded-xl bg-[#F3F5F8] p-0.5" role="group" aria-label="Calendar span">
               {(["day", "week", "month"] as Span[]).map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setSpan(item)}
                   className={cn(
-                    "h-7 rounded-md px-2.5 text-[12px] font-semibold capitalize",
-                    span === item ? "bg-white text-[#0F172A] shadow-[0_1px_2px_rgba(15,23,42,0.08)]" : "text-[#64748b]",
+                    "h-7 rounded-lg px-2.5 text-[12px] font-semibold capitalize transition-colors",
+                    span === item ? "bg-white text-[#0B6B45] shadow-[0_1px_2px_rgba(15,23,42,0.08)]" : "text-[#5F6675] hover:text-[#14171F]",
                   )}
                 >
                   {item}
@@ -493,22 +515,18 @@ export default function MeetingCalendarView({
                         setAnchor(date);
                         setSpan("day");
                       }}
+                      onReschedule={(meeting) => requestReschedule(meeting)}
                     />
                   ) : (
                     <HourWeekGrid
                       days={days}
                       todayKey={iso(today)}
                       hours={HOURS}
+                      monthDate={anchor}
                       events={visible}
                       loading={loading}
-                      onOpen={(meeting) => setDetail(meeting as CalEvent)}
                       onCreate={(date, minutes) => openSchedule(date, `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`)}
-                      onReschedule={(meeting) =>
-                        openSchedule(
-                          meeting.date,
-                          `${String(Math.floor(meeting.startMin / 60)).padStart(2, "0")}:${String(meeting.startMin % 60).padStart(2, "0")}`,
-                        )
-                      }
+                      onReschedule={(meeting) => requestReschedule(meeting)}
                     />
                   )}
                 </motion.div>
@@ -529,64 +547,36 @@ export default function MeetingCalendarView({
         </motion.div>
 
         <aside className="flex h-full flex-col gap-4">
-          <article className="rounded-[20px] bg-[#0F172A] p-5 text-white shadow-[0_1px_3px_rgba(15,23,42,0.06)]">
-            <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1.5 text-[12px] font-bold text-[#86EFAC]">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-60" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#22C55E]" />
-                </span>
-                {started ? "LIVE NOW" : "LIVE NEXT UP"}
-              </span>
-              <span className="rounded-full bg-[#14532D] px-2 py-0.5 text-[11px] font-bold text-[#86EFAC]">
-                {started
-                  ? "IN ROOM"
-                  : liveToday && startsIn != null
-                    ? `STARTS IN ${startsIn} MINS`
-                    : nextUp
-                      ? "NEXT"
-                      : "NONE"}
-              </span>
-            </div>
-            <h2 className="mt-3 text-[26px] font-bold leading-tight tracking-[-0.02em]">
-              {(liveToday ?? nextUp)?.customer ?? "No upcoming meeting"}
-            </h2>
-            <p className="mt-1 text-[13px] font-semibold text-[#CBD5E1]">
-              {liveToday || nextUp
-                ? [((liveToday ?? nextUp)!).meetingType, ((liveToday ?? nextUp)!).designer].filter(Boolean).join(" · ")
-                : "Nothing scheduled ahead of now."}
-            </p>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[13px] font-semibold">
-              <span>Type: {(liveToday ?? nextUp)?.meetingType || "—"}</span>
-              <span>
-                Lead:{" "}
-                {(liveToday ?? nextUp)?.value && (liveToday ?? nextUp)!.value > 0
-                  ? formatMeetingValue((liveToday ?? nextUp)!.value)
-                  : "—"}
-              </span>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <motion.button
-                type="button"
-                disabled={!liveToday && !nextUp}
-                onClick={() => {
-                  setStarted(true);
-                  setNotice("Marked started on this screen. The server record stays as booked.");
-                }}
-                className={`rounded-xl bg-[#22C55E] py-2.5 text-[13px] font-bold text-[#052E16] disabled:opacity-40 ${focusRing}`}
-                {...hoverLift(reduce)}
-              >
-                Open room
-              </motion.button>
-              <button
-                type="button"
-                disabled={!liveToday && !nextUp}
-                onClick={() => setDetail(liveToday ?? nextUp ?? null)}
-                className={`rounded-xl border border-white/25 py-2.5 text-[13px] font-bold text-white disabled:opacity-40 ${focusRing}`}
-              >
-                Client dossier
-              </button>
-            </div>
+          <article className="overflow-hidden rounded-[20px] bg-[linear-gradient(165deg,#0C1424_0%,#111C33_48%,#0B1220_100%)] p-4 text-white shadow-[0_12px_28px_rgba(15,23,42,0.16)] ring-1 ring-white/10">
+            {running || nextUp ? (
+              <div className="flex flex-col gap-3">
+                {running ? (
+                  <SpotlightRow
+                    kind="live"
+                    event={running}
+                    why={liveWhy(running, nowMin)}
+                    chip={nowMin - running.startMin < 1 ? "Just started" : `${nowMin - running.startMin} min in`}
+                    onReschedule={(meeting) => requestReschedule(meeting)}
+                  />
+                ) : null}
+                {running && nextUp ? <div className="h-px bg-white/10" /> : null}
+                {nextUp ? (
+                  <SpotlightRow
+                    kind="next"
+                    event={nextUp}
+                    why={nextWhy(nextUp, iso(today), nowMin)}
+                    chip={nextChip(nextUp, iso(today), nowMin)}
+                    onReschedule={(meeting) => requestReschedule(meeting)}
+                  />
+                ) : null}
+              </div>
+            ) : (
+              <div>
+                <p className="text-[12px] font-bold tracking-[0.04em] text-[#94A3B8]">QUIET</p>
+                <h2 className="mt-2 text-[20px] font-bold tracking-[-0.02em]">No meeting on the clock</h2>
+                <p className="mt-1 text-[13px] text-[#94A3B8]">Nothing is running, and nothing is booked ahead of now.</p>
+              </div>
+            )}
           </article>
 
           <article className="rounded-[18px] border border-[#E3E8EE] bg-white p-4 shadow-[0_1px_3px_rgba(15,23,42,0.06)]">
@@ -613,9 +603,9 @@ export default function MeetingCalendarView({
                   const isNext = event.id === liveToday?.id;
                   return (
                     <li key={event.id} className="h-[60px]">
+                      <MeetingDetailsPopover meeting={event} onReschedule={(meeting) => requestReschedule(meeting)}>
                       <button
                         type="button"
-                        onClick={() => setDetail(event)}
                         className={cn(
                           "flex h-full w-full items-center justify-between gap-2 rounded-xl px-2 text-left transition-colors duration-150 hover:bg-[#F5FAF8]",
                           isNext && "bg-[#F0FDF4]",
@@ -630,6 +620,7 @@ export default function MeetingCalendarView({
                         </span>
                         <TypeTag type={event.meetingType} />
                       </button>
+                      </MeetingDetailsPopover>
                     </li>
                   );
                 })
@@ -735,26 +726,6 @@ export default function MeetingCalendarView({
         </div>
       ) : null}
 
-      {detail ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setDetail(null)}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3">
-              <h3 className="text-base font-extrabold text-[#0f172a]">{detail.customer}</h3>
-              <button type="button" onClick={() => setDetail(null)} className="text-[11px] font-bold text-[#94a3b8]">CLOSE</button>
-            </div>
-            <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-              <Info label="When" value={`${detail.date} · ${formatClock(detail.startMin)}`} />
-              <Info label="Type" value={detail.meetingType} />
-              <Info label="Designer" value={detail.designer} />
-              {detail.phone?.trim() ? <Info label="Phone" value={detail.phone} /> : null}
-              {detail.status ? <Info label="Status" value={detail.status} /> : null}
-              <Info label="Location" value={detail.location} />
-              <Info label="Value" value={formatMeetingValue(detail.value)} />
-              <Info label="Note" value={detail.line} />
-            </dl>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -764,11 +735,13 @@ function MonthGrid({
   events,
   today,
   onPick,
+  onReschedule,
 }: {
   anchor: Date;
   events: CalEvent[];
   today: Date;
   onPick: (date: Date) => void;
+  onReschedule: (meeting: CalEvent) => void;
 }) {
   const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const lead = (first.getDay() + 6) % 7;
@@ -786,31 +759,38 @@ function MonthGrid({
           const key = iso(day);
           const items = events.filter((event) => event.date === key);
           return (
-            <button
+            <div
               key={key}
-              type="button"
-              onClick={() => onPick(day)}
               className={cn(
                 "min-h-[88px] border-b border-r border-[#f8fafc] p-2 text-left",
                 sameDay(day, today) && "bg-[#F0FDF4] ring-1 ring-inset ring-[#22C55E]",
               )}
             >
-              <span
+              <button
+                type="button"
+                onClick={() => onPick(day)}
                 className={cn(
                   "inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-[12px] font-bold",
                   sameDay(day, today) ? "bg-[#22C55E] text-[#052E16]" : inMonth ? "text-[#334155]" : "text-[#cbd5e1]",
                 )}
               >
                 {day.getDate()}
-              </span>
+              </button>
               <div className="mt-1 space-y-1">
                 {items.slice(0, 2).map((event) => (
-                  <div key={event.id} className="truncate rounded-md bg-[#f8fafc] px-1 py-0.5 text-[10px] font-bold text-[#334155]">
-                    {formatClock(event.startMin).replace(/^0/, "")} {event.customer}
-                  </div>
+                  <MeetingDetailsPopover key={event.id} meeting={event} onReschedule={onReschedule}>
+                    <button type="button" className="block w-full truncate rounded-md bg-[#F4F6F8] px-1 py-0.5 text-left text-[10px] font-semibold text-[#334155] hover:bg-[#E8EEF6]">
+                      {formatClock(event.startMin).replace(/^0/, "")} {event.customer}
+                    </button>
+                  </MeetingDetailsPopover>
                 ))}
+                {items.length > 2 ? (
+                  <button type="button" onClick={() => onPick(day)} className="px-1 text-[10px] font-semibold text-[#64748B]">
+                    +{items.length - 2} more
+                  </button>
+                ) : null}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -859,14 +839,6 @@ function Legend({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 transition-transform duration-150 group-hover:rotate-90" fill="none" aria-hidden>
-      <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function CalIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden>
@@ -886,6 +858,14 @@ function XIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden>
       <path d="M7 7l10 10M17 7L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+function DelayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden>
+      <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M12 8v4.5l3 2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
@@ -941,11 +921,91 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   return <label className="text-[11px] font-bold text-[#64748b]">{label}{children}</label>;
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function liveWhy(event: CalEvent, nowMin: number): string {
+  const elapsed = Math.max(0, nowMin - event.startMin);
+  const until = formatClock(event.startMin + event.duration);
+  if (elapsed < 1) return `This meeting just started and is still inside its slot until ${until}.`;
+  return `This meeting is running. It started ${elapsed} min ago and stays booked until ${until}.`;
+}
+
+function nextWhy(event: CalEvent, todayIso: string, nowMin: number): string {
+  const at = formatClock(event.startMin);
+  if (event.date === todayIso) {
+    const mins = Math.max(0, event.startMin - nowMin);
+    if (mins <= 1) return `This is the next meeting, and it starts at ${at}.`;
+    return `This is the next meeting still ahead. It starts in ${mins} min, at ${at}.`;
+  }
+  const when = parseIso(event.date).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return `Nothing else is left today. The next meeting is ${when} at ${at}.`;
+}
+
+function nextChip(event: CalEvent, todayIso: string, nowMin: number): string {
+  if (event.date !== todayIso) return parseIso(event.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const mins = Math.max(0, event.startMin - nowMin);
+  if (mins < 60) return `In ${mins} min`;
+  return formatClock(event.startMin);
+}
+
+function SpotlightRow({
+  kind,
+  event,
+  why,
+  chip,
+  onReschedule,
+}: {
+  kind: "live" | "next";
+  event: CalEvent;
+  why: string;
+  chip: string;
+  onReschedule: (meeting: { date: string; startMin: number }) => void;
+}) {
+  const live = kind === "live";
+  const lead = event.value > 0 ? formatMeetingValue(event.value) : "";
+  const meta = [event.meetingType, event.designer].filter(Boolean).join(" · ");
   return (
-    <div>
-      <dt className="text-[10px] font-bold tracking-[0.12em] text-[#94a3b8]">{label.toUpperCase()}</dt>
-      <dd className="mt-0.5 font-semibold text-[#0f172a]">{value}</dd>
-    </div>
+    <MeetingDetailsPopover meeting={event} onReschedule={onReschedule}>
+      <button type="button" className={`w-full rounded-xl text-left ${focusRing}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold tracking-[0.06em] ${live ? "text-[#86EFAC]" : "text-[#93C5FD]"}`}>
+            {live ? (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#22C55E] opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#22C55E]" />
+              </span>
+            ) : (
+              <span className="h-1.5 w-1.5 rounded-full bg-[#60A5FA]" />
+            )}
+            {live ? "LIVE NOW" : "NEXT"}
+          </span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${live ? "bg-[#14532D] text-[#86EFAC]" : "bg-white/10 text-[#DBEAFE]"}`}>
+            {chip}
+          </span>
+        </div>
+        <p className={`mt-2 font-bold leading-tight tracking-[-0.02em] ${live ? "text-[22px]" : "text-[18px]"}`}>{event.customer}</p>
+        {meta ? <p className="mt-0.5 truncate text-[12px] font-semibold text-[#CBD5E1]">{meta}</p> : null}
+        <p className={`mt-1.5 text-[12px] leading-snug ${live ? "text-[#86EFAC]" : "text-[#BFDBFE]"}`}>{why}</p>
+        <div className="mt-2 flex items-center justify-between gap-2 text-[12px] font-semibold text-[#E2E8F0]">
+          <span>
+            {formatClock(event.startMin)}
+            {event.duration > 0 ? ` – ${formatClock(event.startMin + event.duration)}` : ""}
+          </span>
+          {lead ? <span>Lead {lead}</span> : null}
+        </div>
+      </button>
+    </MeetingDetailsPopover>
   );
+}
+
+function clockInput(startMin: number): string {
+  return `${String(Math.floor(startMin / 60)).padStart(2, "0")}:${String(startMin % 60).padStart(2, "0")}`;
+}
+
+function ecLabel(branch?: string): string {
+  const raw = (branch ?? "").trim();
+  if (!raw) return "";
+  const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  if (key === "HBR" || key.startsWith("HBR")) return "HBR";
+  if (key.includes("JP") && key.includes("NAGAR")) return "JP Nagar";
+  if (key.includes("SARJAPUR")) return "Sarjapur";
+  return raw.replace(/_/g, " ");
 }

@@ -3,6 +3,7 @@ import {
   fetchDesignersForHubMeeting,
   fetchMyAppointments,
 } from "@/lib/appointment-client";
+import { CRM_LOGIN_USERNAME_KEY, CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { parseBudgetLabelToInr, resolveAnchorQuoteId } from "@/lib/insights-lead-investment";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
@@ -100,11 +101,21 @@ function leadIdFrom(row: Record<string, unknown>): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function statusFrom(row: Record<string, unknown>, date: string, startMin: number, endMin: number): MeetingStatus {
-  const raw = readString(row, "status", "appointmentStatus", "meetingStatus").toUpperCase();
-  if (raw.includes("CANCEL")) return "CANCELLED";
-  if (raw.includes("RESCHEDULE")) return "RESCHEDULED";
-  if (readString(row, "rescheduleReason", "reschedule_reason")) return "RESCHEDULED";
+function boardProgress(row: Record<string, unknown>): MeetingRecord["progress"] | undefined {
+  const raw = readString(row, "progress").toUpperCase().replace(/[\s-]+/g, "_");
+  if (raw === "SCHEDULED" || raw === "IN_PROGRESS" || raw === "MEETING_SUCCESSFUL") return raw;
+  return undefined;
+}
+
+function boardMeetingStatus(row: Record<string, unknown>): "SCHEDULED" | "RESCHEDULED" | "CANCELLED" {
+  const raw = readString(row, "meetingStatus", "meeting_status").toUpperCase();
+  if (raw === "RESCHEDULED" || raw.includes("RESCHEDULE")) return "RESCHEDULED";
+  if (raw === "CANCELLED" || raw.includes("CANCEL")) return "CANCELLED";
+  return "SCHEDULED";
+}
+
+/** Clock only: before the slot, during it, or after it has ended. */
+function slotProgress(date: string, startMin: number, endMin: number): MeetingStatus {
   const offset = meetingOffset(date);
   if (offset < 0) return "COMPLETED";
   if (offset > 0) return "SCHEDULED";
@@ -113,6 +124,14 @@ function statusFrom(row: Record<string, unknown>, date: string, startMin: number
   if (nowMin >= endMin) return "COMPLETED";
   if (nowMin >= startMin) return "IN PROGRESS";
   return "SCHEDULED";
+}
+
+function statusFrom(row: Record<string, unknown>, date: string, startMin: number, endMin: number): MeetingStatus {
+  const raw = readString(row, "status", "appointmentStatus").toUpperCase();
+  if (raw.includes("CANCEL")) return "CANCELLED";
+  if (raw.includes("RESCHEDULE")) return "RESCHEDULED";
+  if (readString(row, "rescheduleReason", "reschedule_reason")) return "RESCHEDULED";
+  return slotProgress(date, startMin, endMin);
 }
 
 function bucketFor(status: MeetingStatus, offset: number): MeetingBucket {
@@ -283,6 +302,7 @@ function toRecord(
   const assignee = readString(row, "designerName", "DesignerName", "designer_name");
   const designerEmail = readString(row, "designerEmail", "designer_email");
   const salesName = readString(row, "salesUserName", "salesName", "sales_user_name", "createdByName");
+  const assignedSalesName = readString(row, "assignedSalesName", "assigned_sales_name");
   const salesEmail = readString(row, "salesEmail", "salesUserEmail", "sales_user_email", "createdByEmail");
   const sourceCode = sourceCodeOf(readString(row, "source", "Source"));
   const appointmentSource = sourceLabel(sourceCode);
@@ -364,6 +384,7 @@ function toRecord(
     appointmentSource,
     sourceCode,
     salesName,
+    assignedSalesName,
     salesEmail,
     scheduledAt,
     scheduledAtMs: scheduledAtMs > 0 ? scheduledAtMs : undefined,
@@ -489,14 +510,223 @@ export function quoteSentLeadRows(
   return sortMeetingsForList(rows).map((row, index) => ({ ...row, order: index + 1 }));
 }
 
+export type MeetingProgress = "SCHEDULED" | "IN_PROGRESS" | "MEETING_SUCCESSFUL";
+
+export type MeetingBoardQuery = {
+  from?: string;
+  to?: string;
+  designerNames?: string[];
+  salesNames?: string[];
+  branches?: string[];
+  progress?: MeetingProgress[];
+  page?: number;
+  pageSize?: number;
+};
+
 export type MeetingBoardPayload = {
   meetings: MeetingRecord[];
   quoteSentMeetings: MeetingRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
-/** The meeting page calls this one route. Joins happen on the server. */
-export async function loadMeetingBoard(): Promise<MeetingBoardPayload> {
-  const res = await fetch("/api/crm/meeting-management", {
+function readFlag(row: Record<string, unknown>, ...keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    const value = row[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+    if (typeof value === "string") {
+      const text = value.trim().toLowerCase();
+      if (text === "true" || text === "yes" || text === "1") return true;
+      if (text === "false" || text === "no" || text === "0") return false;
+    }
+  }
+  return undefined;
+}
+
+function wholeRupees(row: Record<string, unknown>, ...keys: string[]): number {
+  const amount = readNumber(row, ...keys);
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount);
+}
+
+function asRecordList(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object");
+}
+
+function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boolean): MeetingRecord | null {
+  const startRaw = readString(row, "startTime", "StartTime", "start_time");
+  const sentRaw = readString(row, "quoteSentAt", "quote_sent_at");
+  const when = parseWhen(startRaw) ?? (quoteLead ? parseWhen(sentRaw) : null);
+  if (!when && !quoteLead) return null;
+  const date = when?.date ?? "";
+  const startMin = when?.startMin ?? 0;
+  const end = parseWhen(readString(row, "endTime", "EndTime", "end_time"));
+  const durationMin = end && when && end.date === when.date && end.startMin > when.startMin ? end.startMin - when.startMin : 90;
+  const leadId = leadIdFrom(row);
+  const rawType = readString(row, "meetingType", "MeetingType", "meeting_type");
+  const code = rawType ? meetingTypeCode(rawType) : undefined;
+  const typeLabel = rawType && code ? meetingTypeDisplay(code) : quoteLead ? "—" : "—";
+  const customer = customerFrom(row) || (leadId != null ? `Lead ${leadId}` : "Lead");
+  const assignee = readString(row, "designerName", "DesignerName", "designer_name");
+  const salesName = readString(row, "salesName", "salesUserName", "sales_name");
+  const assignedSalesName = readString(row, "assignedSalesName", "assigned_sales_name");
+  const sourceRaw = readString(row, "source", "Source");
+  const sourceCode = sourceRaw ? sourceCodeOf(sourceRaw) : "CRM";
+  const meetingLabel = readString(row, "meetingLabel", "meeting_label");
+  const createdAtRaw = readString(row, "createdAt", "CreatedAt", "created_at");
+  const updatedAtRaw = readString(row, "updatedAt", "UpdatedAt", "updated_at");
+  const scheduledAtMs = Math.max(Date.parse(updatedAtRaw) || 0, Date.parse(createdAtRaw) || 0, Date.parse(sentRaw) || 0);
+  const quoteId = readString(row, "quoteId", "quote_id");
+  const quoteAmount = wholeRupees(row, "quoteAmount", "quote_amount");
+  const budget = wholeRupees(row, "budget");
+  const quoteGenerated = readFlag(row, "quoteGenerated", "quote_generated") === true;
+  const quoteFollow = readFlag(row, "quoteFollow", "quote_follow") === true;
+  const quoteLink = quoteGenerated ? readString(row, "quoteLink", "quote_link") : "";
+  const quoteSent = quoteFollow || readFlag(row, "quoteSent", "quote_sent") === true || quoteLead;
+  const meetingSuccessful = quoteLead ? undefined : readFlag(row, "meetingSuccessful", "meeting_successful");
+  const meetingSuccessfulAt = readString(row, "meetingSuccessfulAt", "meeting_successful_at");
+  const apiProgress = boardProgress(row);
+  const quoteDelayed = readFlag(row, "quoteDelayed", "quote_delayed") === true;
+  const meetingStatus = quoteLead ? undefined : boardMeetingStatus(row);
+  const cancelledAtRaw = meetingStatus === "CANCELLED" ? readString(row, "cancelledAt", "cancelled_at") : "";
+  const offset = date ? meetingOffset(date) : 0;
+  const endMin = startMin + durationMin;
+  const endAt = date && !quoteLead ? new Date(`${date}T00:00:00`) : null;
+  if (endAt) endAt.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
+  const startAt = date && !quoteLead ? new Date(`${date}T00:00:00`) : null;
+  if (startAt) startAt.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
+  const timePassed = Boolean(endAt && endAt.getTime() < Date.now());
+  const meetingStarted = Boolean(startAt && startAt.getTime() < Date.now());
+  let status: MeetingStatus = "SCHEDULED";
+  if (!quoteLead && when) status = slotProgress(date, startMin, endMin);
+  const progress = quoteLead
+    ? undefined
+    : apiProgress
+      ?? (meetingStatus === "CANCELLED"
+        ? "SCHEDULED"
+        : meetingSuccessful === true
+          ? "MEETING_SUCCESSFUL"
+          : meetingStarted
+            ? "IN_PROGRESS"
+            : "SCHEDULED");
+  const needsOutcome = !quoteLead && timePassed && meetingSuccessful === false && meetingStatus !== "CANCELLED";
+  const appointmentId = readNumber(row, "appointmentId", "id", "Id");
+  const value = quoteAmount > 0 ? quoteAmount : budget;
+  return {
+    id: appointmentId ?? leadId ?? index + 1,
+    order: index + 1,
+    customer,
+    initials: initialsOf(customer),
+    avatarTone: AVATAR_TONES[index % AVATAR_TONES.length]!,
+    intent: "WARM",
+    quoteNo: quoteId,
+    quoteCode: "",
+    phone: readString(row, "phone", "phoneNumber", "mobile"),
+    customerEmail: readString(row, "email", "customerEmail", "customer_email"),
+    assignee: assignee || "Unassigned",
+    assigneeRole: "",
+    designerEmail: readString(row, "designerEmail", "designer_email"),
+    meetingType: typeLabel,
+    meetingTypeCode: code,
+    meetingLabel: meetingLabel || (sourceCode === "CRM" && !quoteLead ? "quote_meeting" : ""),
+    meetingLevel: quoteLead && !meetingLabel ? "—" : meetingLevelLabel(meetingLabel, sourceCode),
+    whenLabel: when ? formatMeetingWhen(offset, startMin) : "—",
+    whenNote: "",
+    bucket: bucketFor(status, offset),
+    dayOffset: offset,
+    location: typeLabel,
+    locationTone: code ? locationTone(code) : "blue",
+    status,
+    progress,
+    meetingStatus,
+    cancelledAt: cancelledAtRaw ? formatStamp(cancelledAtRaw) : undefined,
+    value,
+    budget,
+    quoteValue: quoteAmount,
+    valueSource: quoteAmount > 0 ? "quotation" : budget > 0 ? "budget" : "",
+    date,
+    startMin,
+    durationMin: when ? durationMin : undefined,
+    appointmentId: quoteLead ? undefined : appointmentId,
+    leadId,
+    leadType: leadTypeLabel(readString(row, "leadType", "LeadType", "lead_type")),
+    leadTypeCode: leadTypeCodeOf(readString(row, "leadType", "LeadType", "lead_type")),
+    appointmentSource: sourceRaw ? sourceLabel(sourceCode) : quoteLead ? "—" : "CRM",
+    sourceCode,
+    salesName,
+    assignedSalesName,
+    salesEmail: readString(row, "salesEmail", "sales_email"),
+    branch: readString(row, "branch", "designerBranch", "designer_branch", "salesBranch", "sales_branch", "experienceCenter", "experience_center", "ec") || undefined,
+    scheduledAt: formatStamp(createdAtRaw || sentRaw),
+    scheduledAtMs: scheduledAtMs > 0 ? scheduledAtMs : undefined,
+    scheduledBy: salesName
+      ? `${salesName} scheduled this in CRM for ${customer}`
+      : assignee
+        ? `${assignee} scheduled this with ${customer}`
+        : "—",
+    quoteSent,
+    quoteGenerated,
+    quoteLink,
+    quoteFollow,
+    quoteSentAt: formatStamp(sentRaw),
+    meetingSuccessful,
+    meetingSuccessfulAt: meetingSuccessfulAt || undefined,
+    quoteDelayed,
+    needsOutcome,
+  };
+}
+
+/** Map `GET /v1/meetings/board` into the meeting table. */
+export function recordsFromMeetingsBoard(
+  meetings: unknown,
+  quoteSentLeads: unknown,
+): MeetingBoardPayload {
+  const mapRow = (row: Record<string, unknown>, index: number, quoteLead: boolean): MeetingRecord | null => {
+    try {
+      return mapBoardRow(row, index, quoteLead);
+    } catch (error) {
+      console.error("[meetings/board] skipped a row", error instanceof Error ? error.message : error);
+      return null;
+    }
+  };
+  const meetingRows = asRecordList(meetings)
+    .map((row, index) => mapRow(row, index, false))
+    .filter((row): row is MeetingRecord => row !== null);
+  const quoteRows = asRecordList(quoteSentLeads)
+    .map((row, index) => mapRow(row, index, true))
+    .filter((row): row is MeetingRecord => row !== null);
+  return {
+    meetings: sortMeetingsForList(meetingRows).map((row, index) => ({ ...row, order: index + 1 })),
+    quoteSentMeetings: sortMeetingsForList(quoteRows).map((row, index) => ({ ...row, order: index + 1 })),
+    total: meetingRows.length,
+    page: 1,
+    pageSize: meetingRows.length,
+  };
+}
+
+/** The meeting page calls this one route. Joins and filters happen on the server. */
+export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<MeetingBoardPayload> {
+  const params = new URLSearchParams();
+  if (typeof window !== "undefined") {
+    const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY)?.trim() ?? "";
+    const username = window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim() ?? "";
+    if (role) params.set("role", role);
+    if (username) params.set("username", username);
+  }
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
+  for (const name of query.designerNames ?? []) params.append("designerName", name);
+  for (const name of query.salesNames ?? []) params.append("salesName", name);
+  for (const branch of query.branches ?? []) params.append("branch", branch);
+  for (const progress of query.progress ?? []) params.append("progress", progress);
+  if (query.page) params.set("page", String(query.page));
+  if (query.pageSize) params.set("pageSize", String(query.pageSize));
+  const search = params.toString();
+  const res = await fetch(`/api/crm/meeting-management${search ? `?${search}` : ""}`, {
     cache: "no-store",
     credentials: "include",
     headers: getCrmAuthHeaders({ Accept: "application/json" }),
@@ -504,11 +734,78 @@ export async function loadMeetingBoard(): Promise<MeetingBoardPayload> {
   const json = (await res.json().catch(() => ({}))) as {
     meetings?: MeetingRecord[];
     quoteSentMeetings?: MeetingRecord[];
+    total?: number;
+    page?: number;
+    pageSize?: number;
     error?: string;
   };
   if (!res.ok) throw new Error(json.error || "Could not load meetings.");
+  const meetings = Array.isArray(json.meetings) ? json.meetings : [];
   return {
-    meetings: Array.isArray(json.meetings) ? json.meetings : [],
+    meetings,
     quoteSentMeetings: Array.isArray(json.quoteSentMeetings) ? json.quoteSentMeetings : [],
+    total: typeof json.total === "number" ? json.total : meetings.length,
+    page: typeof json.page === "number" ? json.page : query.page ?? 1,
+    pageSize: typeof json.pageSize === "number" ? json.pageSize : query.pageSize ?? meetings.length,
   };
+}
+
+export type MeetingActivityAction = "SCHEDULED" | "RESCHEDULED" | "CANCELLED";
+
+export type MeetingActivity = {
+  activityId: number;
+  action: MeetingActivityAction | string;
+  actionLabel: string;
+  performedBy: string;
+  performedByName: string;
+  performedById?: number;
+  performedAt: string;
+  meetingAt: string;
+  previousMeetingAt: string;
+  designerName: string;
+  previousDesignerName: string;
+  meetingType: string;
+  customerName: string;
+  details: string;
+};
+
+function activityText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Newest-first meeting rows: scheduled, rescheduled, cancelled. */
+export async function loadMeetingActivityHistory(leadId: number, leadType: string): Promise<MeetingActivity[]> {
+  const params = new URLSearchParams({
+    leadId: String(leadId),
+    leadType: leadType.trim(),
+  });
+  const res = await fetch(`/api/crm/meeting-management/activity-history?${params}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: getCrmAuthHeaders({ Accept: "application/json" }),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    activities?: unknown[];
+    error?: string;
+  };
+  if (!res.ok) throw new Error(json.error || "Could not load activity history.");
+  const rows = Array.isArray(json.activities) ? json.activities : [];
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .map((row) => ({
+      activityId: Number(row.activityId) || 0,
+      action: activityText(row.action).toUpperCase() || "SCHEDULED",
+      actionLabel: activityText(row.actionLabel),
+      performedBy: activityText(row.performedBy),
+      performedByName: activityText(row.performedByName),
+      performedById: Number.isFinite(Number(row.performedById)) ? Number(row.performedById) : undefined,
+      performedAt: activityText(row.performedAt),
+      meetingAt: activityText(row.meetingAt),
+      previousMeetingAt: activityText(row.previousMeetingAt),
+      designerName: activityText(row.designerName),
+      previousDesignerName: activityText(row.previousDesignerName),
+      meetingType: activityText(row.meetingType),
+      customerName: activityText(row.customerName),
+      details: activityText(row.details),
+    }));
 }
