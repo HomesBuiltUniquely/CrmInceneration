@@ -741,7 +741,7 @@ function MonthGrid({
   events: CalEvent[];
   today: Date;
   onPick: (date: Date) => void;
-  onReschedule: (meeting: CalEvent) => void;
+  onReschedule: (meeting: { id: string; date: string; startMin: number }) => void;
 }) {
   const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const lead = (first.getDay() + 6) % 7;
