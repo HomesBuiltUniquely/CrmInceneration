@@ -34,6 +34,15 @@ export type MeetingRecord = {
   location: string;
   locationTone: LocationTone;
   status: MeetingStatus;
+  /**
+   * From the board. Scheduled before the meeting time, In progress after it starts
+   * until the user marks it successful, then Meeting successful.
+   */
+  progress?: "SCHEDULED" | "IN_PROGRESS" | "MEETING_SUCCESSFUL";
+  /** Board `meetingStatus` for this appointment: scheduled, rescheduled, or cancelled. */
+  meetingStatus?: "SCHEDULED" | "RESCHEDULED" | "CANCELLED";
+  /** Set when `meetingStatus` is CANCELLED. */
+  cancelledAt?: string;
   /** Whole rupees. Quotation total when a quote exists, otherwise the lead budget. */
   value: number;
   /** Lead budget in whole rupees. Stays the budget even after a quote exists. */
@@ -62,8 +71,13 @@ export type MeetingRecord = {
   sourceCode?: "CRM" | "DESIGN_MODULE";
   /** Lead type code sent back on reschedule, such as formlead. */
   leadTypeCode?: string;
+  /** Person who scheduled this meeting. */
   salesName?: string;
+  /** Sales executive the lead is assigned to. Empty when the lead has no assignee. */
+  assignedSalesName?: string;
   salesEmail?: string;
+  /** Experience Centre / branch where the meeting happens (`Appointment.branch`). */
+  branch?: string;
   scheduledAt?: string;
   /** When this meeting was booked or last rescheduled, as a timestamp. */
   scheduledAtMs?: number;
@@ -73,11 +87,23 @@ export type MeetingRecord = {
   googleHtmlLink?: string;
   /** True when the lead's quote was sent to the customer. */
   quoteSent?: boolean;
+  /** A quote exists for this lead. Stays false until one does. */
+  quoteGenerated?: boolean;
+  /** Opens the quote. Filled only when `quoteGenerated` is true. */
+  quoteLink?: string;
+  /** True after that quote was sent to the customer. */
+  quoteFollow?: boolean;
   quoteSentAt?: string;
   milestoneStage?: string;
   milestoneSubStage?: string;
-  /** Meeting time has passed and Experience & Design is still Meeting Scheduled. */
+  /** Meeting time has passed and the board says this meeting was not successful. */
   needsOutcome?: boolean;
+  /** From `GET /v1/meetings/board`. Absent on quote-sent leads that have no meeting. */
+  meetingSuccessful?: boolean;
+  /** When Meeting successful was first saved. The 4-hour quote clock starts here. */
+  meetingSuccessfulAt?: string;
+  /** Board result. True only after Meeting successful, quote still unsent, and 4 hours have passed. */
+  quoteDelayed?: boolean;
 };
 
 /** Start of the real local day. Offsets and “today” follow the clock, not a fixed sample date. */
@@ -656,7 +682,7 @@ function meetingDateBucket(row: MeetingRecord): number {
 export function sortMeetingsForList(rows: MeetingRecord[]): MeetingRecord[] {
   let latest: MeetingRecord | null = null;
   for (const row of rows) {
-    if (!ACTIVE_MEETING_STATUS.has(row.status)) continue;
+    if (row.meetingStatus === "CANCELLED" || !ACTIVE_MEETING_STATUS.has(row.status)) continue;
     if (!latest) {
       latest = row;
       continue;
@@ -691,21 +717,41 @@ export function formatMeetingValue(value: number): string {
   return formatInr(value);
 }
 
+/** End of the booked slot. A meeting counts as done once this time has passed. */
+export function meetingSlotEndMs(row: MeetingRecord): number | null {
+  if (!row.date || row.meetingStatus === "CANCELLED" || row.status === "CANCELLED") return null;
+  const [year, month, day] = row.date.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const end = new Date(year, month - 1, day, 0, 0, 0, 0);
+  end.setMinutes(row.startMin + (row.durationMin && row.durationMin > 0 ? row.durationMin : 90));
+  const ms = end.getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Board `quoteDelayed`. The 4-hour clock is applied on the server. */
+export function isQuoteDelayed(row: MeetingRecord): boolean {
+  return row.quoteDelayed === true;
+}
+
 export function meetingBoardStats(rows: MeetingRecord[]) {
   const now = new Date();
   const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const total = rows.length;
   const scheduled = rows.filter(
-    (row) => row.status === "SCHEDULED" || row.status === "IN PROGRESS" || row.status === "RESCHEDULED",
+    (row) => row.meetingStatus !== "CANCELLED" && (row.status === "SCHEDULED" || row.status === "IN PROGRESS"),
   ).length;
-  const today = rows.filter((row) => row.dayOffset === 0 && row.status !== "CANCELLED").length;
+  const today = rows.filter((row) => row.dayOffset === 0 && row.meetingStatus !== "CANCELLED").length;
   const completedMonth = rows.filter(
     (row) => row.status === "COMPLETED" && row.date.startsWith(monthPrefix),
   ).length;
   const completed = rows.filter((row) => row.status === "COMPLETED").length;
   const cancelled = rows.filter((row) => row.status === "CANCELLED").length;
   const quoted = rows.filter((row) => row.quoteSent).length;
-  const meetingsDone = rows.filter((row) => row.milestoneSubStage === "Meeting Successful").length;
+  const meetingsDone = rows.filter((row) => {
+    const endedAt = meetingSlotEndMs(row);
+    return endedAt != null && endedAt <= now.getTime();
+  }).length;
+  const meetingSuccessful = rows.filter((row) => row.meetingSuccessful === true).length;
   const stillScheduled = rows.filter((row) => row.needsOutcome).length;
   const pct = (count: number) => (total > 0 ? Math.round((count / total) * 1000) / 10 : 0);
   return {
@@ -719,6 +765,7 @@ export function meetingBoardStats(rows: MeetingRecord[]) {
     quotedPct: pct(quoted),
     quoteSent: quoted,
     meetingsDone,
+    meetingSuccessful,
     stillScheduled,
   };
 }

@@ -28,17 +28,22 @@ export function MeetingDetailsPopover({
   const name = blankToEmpty(meeting.customer);
   const phone = blankToEmpty(meeting.phone);
   const designer = blankToEmpty(meeting.designer);
+  const sales = blankToEmpty(meeting.sales);
   const type = meetingTypeKind(meeting.meetingType) === "unset" ? "" : blankToEmpty(meeting.meetingType);
-  const status = knownSlotStatus(meeting.status);
-  const value = Number.isFinite(meeting.value) && (meeting.value ?? 0) > 0 ? formatMeetingValue(meeting.value ?? 0) : "";
+  const progress = progressLabel(meeting.status);
+  const ec = blankToEmpty(meeting.ec);
+  const budget = Number.isFinite(meeting.budget) ? formatMeetingValue(meeting.budget ?? 0) : "";
+  const quote = Number.isFinite(meeting.quoteValue) && (meeting.quoteValue ?? 0) > 0 ? formatMeetingValue(meeting.quoteValue ?? 0) : "";
   return (
     <Popover.Root>
       <Popover.Trigger asChild>{children}</Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
           align="start"
-          sideOffset={6}
-          className="slot-pop z-[80] w-[244px] rounded-2xl border border-[#E3E8EE] bg-white p-3 font-[family-name:var(--font-manrope)] shadow-[0_12px_32px_rgba(15,23,42,0.16)]"
+          side="right"
+          sideOffset={8}
+          collisionPadding={16}
+          className="slot-pop z-[200] w-[244px] rounded-2xl border border-[#E3E8EE] bg-white p-3 font-[family-name:var(--font-manrope)] shadow-[0_12px_32px_rgba(15,23,42,0.16)]"
           style={{ transformOrigin: "var(--radix-popover-content-transform-origin)" }}
         >
           <p className="text-[14px] font-bold text-[#0F172A]">{name}</p>
@@ -52,18 +57,24 @@ export function MeetingDetailsPopover({
               </div>
             ) : null}
             {designer ? <Detail label="Designer" value={designer} /> : null}
-            {value ? <Detail label="Value" value={value} /> : null}
-            {status ? (
+            <Detail label="Sales" value={sales || "—"} />
+            {progress ? (
               <div className="flex items-center justify-between gap-2">
-                <dt className="font-normal text-[#5B6778]">Status</dt>
+                <dt className="font-normal text-[#5B6778]">Progress</dt>
                 <dd className="inline-flex items-center gap-1 font-semibold text-[#0F172A]">
-                  <StatusIcon status={status} />
-                  {status === "IN PROGRESS" ? "In progress" : status === "COMPLETED" ? "Completed" : "Scheduled"}
+                  {knownSlotStatus(meeting.status) ? <StatusIcon status={knownSlotStatus(meeting.status)!} /> : null}
+                  {progress}
                 </dd>
               </div>
             ) : null}
+            <Detail
+              label="EC"
+              value={ec ? <span className="inline-flex h-5 items-center rounded-full bg-[#FDECEC] px-2 text-[11px] font-semibold text-[#9B1C1C]">{ec}</span> : "—"}
+            />
+            {budget ? <Detail label="Budget" value={budget} /> : null}
+            {quote ? <Detail label="Quote" value={quote} /> : null}
           </dl>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className={`mt-3 grid gap-2 ${onViewDetails ? "grid-cols-2" : "grid-cols-1"}`}>
             <button
               type="button"
               className={`h-11 rounded-xl border border-[#E3E8EE] text-[13px] font-semibold text-[#0F172A] ${focusRing}`}
@@ -71,13 +82,15 @@ export function MeetingDetailsPopover({
             >
               Reschedule
             </button>
-            <button
-              type="button"
-              className={`h-11 rounded-xl bg-[#22C55E] text-[13px] font-bold text-[#052E16] ${focusRing}`}
-              onClick={() => onViewDetails?.(meeting)}
-            >
-              View details
-            </button>
+            {onViewDetails ? (
+              <button
+                type="button"
+                className={`h-11 rounded-xl bg-[#22C55E] text-[13px] font-bold text-[#052E16] ${focusRing}`}
+                onClick={() => onViewDetails(meeting)}
+              >
+                View details
+              </button>
+            ) : null}
           </div>
         </Popover.Content>
       </Popover.Portal>
@@ -85,11 +98,19 @@ export function MeetingDetailsPopover({
   );
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function progressLabel(status: string | undefined): string {
+  const known = knownSlotStatus(status);
+  if (known === "IN PROGRESS") return "In progress";
+  if (known === "COMPLETED") return "Completed";
+  if (known === "SCHEDULED") return "Scheduled";
+  return blankToEmpty(status);
+}
+
+function Detail({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <dt className="font-normal text-[#5B6778]">{label}</dt>
-      <dd className="truncate font-semibold text-[#0F172A]">{value}</dd>
+      <dt className="shrink-0 font-normal text-[#5B6778]">{label}</dt>
+      <dd className="min-w-0 truncate text-right font-semibold text-[#0F172A]">{value}</dd>
     </div>
   );
 }

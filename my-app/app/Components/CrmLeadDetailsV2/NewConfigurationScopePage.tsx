@@ -49,7 +49,7 @@ import {
 import { seedPropertyNameFromLead } from "@/lib/lead-discovery-field-sync";
 import { syncCrmLeadToDesignModule } from "@/lib/design-module-phase-sync";
 import { detailJsonToLead, mergeLeadIntoDetail, pickConfigurationFromDetail } from "@/lib/lead-detail-mapper";
-import { applyConfigurationToDetailPayload } from "@/lib/lead-field-persistence";
+import { applyConfigurationToDetailPayload, canonicalBhkConfiguration } from "@/lib/lead-field-persistence";
 import { bookingTypeDisplay, resolveLeadDisplayIdentifier } from "@/lib/lead-detail-v2-display";
 import { resolveBudgetLuxuryFocus } from "@/lib/lead-budget-display";
 import {
@@ -469,10 +469,9 @@ export default function NewConfigurationScopePage({
         waited += 80;
       }
 
-      const nextConfiguration = (
-        leadConfigurationRef.current.trim() ||
-        opts.configuration.trim()
-      ).trim();
+      const nextConfiguration = canonicalBhkConfiguration(
+        leadConfigurationRef.current.trim() || opts.configuration.trim(),
+      );
       const nextPropertyName = opts.propertyName.trim();
       const nextBookingType = (
         opts.bookingType.trim() ||
@@ -480,10 +479,13 @@ export default function NewConfigurationScopePage({
       ).trim();
       if (!nextConfiguration && !nextPropertyName && !nextBookingType) return true;
 
-      const configurationStuck = (detail: Record<string, unknown>): boolean => {
+      const configurationSaved = (detail: Record<string, unknown>): boolean => {
         if (!nextConfiguration) return true;
         const saved = pickConfigurationFromDetail(detail, validLeadType).trim();
-        return saved.toLowerCase() === nextConfiguration.toLowerCase();
+        return (
+          canonicalBhkConfiguration(saved).toLowerCase() ===
+          canonicalBhkConfiguration(nextConfiguration).toLowerCase()
+        );
       };
 
       const writeOnce = async (): Promise<Record<string, unknown>> => {
@@ -504,16 +506,20 @@ export default function NewConfigurationScopePage({
 
       leadRowSaveInFlightRef.current = true;
       try {
-        await writeOnce();
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        let updated = await getLeadDetail(validLeadType, leadId);
-        if (nextConfiguration && !configurationStuck(updated)) {
-          await writeOnce();
+        let updated = await writeOnce();
+        if (nextConfiguration && !configurationSaved(updated)) {
           await new Promise((resolve) => setTimeout(resolve, 150));
           updated = await getLeadDetail(validLeadType, leadId);
         }
+        if (nextConfiguration && !configurationSaved(updated)) {
+          updated = await writeOnce();
+          if (!configurationSaved(updated)) {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            updated = await getLeadDetail(validLeadType, leadId);
+          }
+        }
         setBaseDetail(updated);
-        if (nextConfiguration && !configurationStuck(updated)) {
+        if (nextConfiguration && !configurationSaved(updated)) {
           notifyError("BHK type did not save. Please try once more.");
           return false;
         }

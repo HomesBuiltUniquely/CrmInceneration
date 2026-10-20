@@ -1,40 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { formatRangeLabel, resolveDatePreset } from "@/lib/meeting-date-range";
-import { DateRangePresets, MultiSelectChips, type FilterDraft, type FilterOption } from "./FilterModal";
+import InsightsDateFilterPopover from "@/app/Components/Insights/InsightsDateFilterPopover";
+import InsightsDropdownFilter from "@/app/Components/Insights/InsightsDropdownFilter";
+import {
+  DEFAULT_BOOKING_DATE_FILTER,
+  DEFAULT_INSIGHTS_DATE_FILTER,
+  type BookingDateFilterState,
+  type BookingDatePresetId,
+} from "@/lib/booking-token-date-filter";
+import type { DatePresetId } from "@/lib/meeting-date-range";
+import type { FilterDraft, FilterOption } from "./FilterModal";
 import { focusRing } from "./motion";
 
 export function MeetingHeaderMenus({
   value,
   designers,
   sales,
-  peopleCount,
-  dateCount,
+  branches = [],
   onApply,
 }: {
   value: FilterDraft;
   designers: FilterOption[];
   sales: FilterOption[];
-  peopleCount: number;
-  dateCount: number;
+  branches?: FilterOption[];
   onApply: (draft: FilterDraft) => void;
 }) {
-  const [menu, setMenu] = useState<"filter" | "date" | null>(null);
-  const [draft, setDraft] = useState<FilterDraft>(value);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menu) setDraft(value);
-  }, [menu, value]);
+  const [menu, setMenu] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menu) return;
     const onPointer = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setMenu(null);
+      if (!filterRef.current?.contains(event.target as Node)) setMenu(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
+      if (event.key === "Escape") setMenu(false);
     };
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
@@ -44,77 +45,161 @@ export function MeetingHeaderMenus({
     };
   }, [menu]);
 
-  const range = draft.preset
-    ? resolveDatePreset(draft.preset, new Date(), { from: draft.dateFrom, to: draft.dateTo })
-    : null;
-
-  const apply = () => {
-    onApply(draft);
-    setMenu(null);
+  const update = (partial: Partial<FilterDraft>) => {
+    onApply({ ...value, ...partial });
   };
 
+  const resetFilters = () => {
+    onApply({
+      ...value,
+      designerIds: [],
+      salesIds: [],
+      branchIds: [],
+      labels: [],
+      progress: [],
+    });
+  };
+
+  const filterActive =
+    value.designerIds.length > 0 ||
+    value.salesIds.length > 0 ||
+    value.branchIds.length > 0 ||
+    value.labels.length > 0 ||
+    (value.progress?.length ?? 0) > 0;
+  const filterCount =
+    (value.designerIds.length ? 1 : 0) +
+    (value.salesIds.length ? 1 : 0) +
+    (value.branchIds.length ? 1 : 0) +
+    (value.labels.length ? 1 : 0) +
+    ((value.progress?.length ?? 0) > 0 ? 1 : 0);
+  const designerOptions = [
+    { value: "", label: "All designers" },
+    ...designers.map((item) => ({ value: item.id, label: item.label })),
+  ];
+  const salesOptions = [
+    { value: "", label: "All sales" },
+    ...sales.map((item) => ({ value: item.id, label: item.label })),
+  ];
+  const branchOptions = [
+    { value: "", label: "All ECs" },
+    ...branches.map((item) => ({ value: item.id, label: item.label })),
+  ];
+
   return (
-    <div ref={rootRef} className="relative flex items-center gap-2">
-      <MenuButton label="Filter" count={peopleCount} open={menu === "filter"} onClick={() => setMenu(menu === "filter" ? null : "filter")} icon={<FilterIcon />} />
-      <MenuButton label="Date range" count={dateCount} open={menu === "date"} onClick={() => setMenu(menu === "date" ? null : "date")} icon={<CalendarIcon />} />
+    <div className="relative z-30 flex flex-wrap items-center gap-0.5">
+      <div ref={filterRef} className="relative">
+      <MenuButton
+        label="Filter"
+        count={filterCount}
+        open={menu}
+        onClick={() => setMenu((open) => !open)}
+        icon={<FilterIcon />}
+      />
 
-      {menu === "filter" ? (
-        <div role="dialog" aria-label="Filter meetings" className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-[#E3E8EE] bg-white shadow-[0_12px_32px_rgba(15,23,42,0.12)]">
-          <div className="max-h-[70vh] space-y-4 overflow-y-auto px-4 py-4">
-            <MultiSelectChips
-              label="Designers"
-              placeholder="Search designers"
-              emptyLabel="All designers"
-              options={designers}
-              selected={draft.designerIds}
-              onChange={(designerIds) => setDraft((current) => ({ ...current, designerIds }))}
-            />
-            <MultiSelectChips
-              label="Sales"
-              placeholder="All sales team"
-              emptyLabel="All sales team"
-              options={sales}
-              selected={draft.salesIds}
-              onChange={(salesIds) => setDraft((current) => ({ ...current, salesIds }))}
-            />
-            <label className="block text-[13px] font-semibold text-[#334155]">
-              Branch
-              <select
-                value={draft.branchIds[0] ?? ""}
-                onChange={(event) => setDraft((current) => ({ ...current, branchIds: event.target.value ? [event.target.value] : [] }))}
-                className={`mt-1 h-11 w-full rounded-xl border border-[#E3E8EE] bg-white px-3 text-[14px] font-semibold text-[#0F172A] ${focusRing}`}
-              >
-                <option value="">All branches</option>
-              </select>
-            </label>
-            <LabelChips labels={draft.labels} onChange={(labels) => setDraft((current) => ({ ...current, labels }))} />
+      {menu ? (
+        <div
+          role="dialog"
+          aria-label="Filter meetings"
+          className="absolute right-0 top-[calc(100%+6px)] z-50 w-[min(280px,calc(100vw-2rem))] overflow-visible rounded-lg border border-[#E3E8EE] bg-white shadow-[0_10px_28px_rgba(15,23,42,0.12)]"
+        >
+          <div className="flex items-center justify-between border-b border-[#E3E8EE] px-2.5 py-1">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-[#64748B]">Filters</span>
+            <ResetIconButton label="Reset filters" disabled={!filterActive} onClick={resetFilters} />
           </div>
-          <MenuFooter
-            onReset={() => setDraft({ ...draft, designerIds: [], salesIds: [], branchIds: [], labels: [] })}
-            onApply={apply}
-          />
+          <div className="space-y-2 px-2.5 py-2">
+            <FilterField label="Designer">
+              <InsightsDropdownFilter
+                fullWidth
+                matchWidth
+                compact
+                placeholder="All designers"
+                ariaLabel="Designer"
+                icon="users"
+                value={value.designerIds[0] ?? ""}
+                onChange={(id) => update({ designerIds: id ? [id] : [] })}
+                options={designerOptions}
+              />
+            </FilterField>
+            <FilterField label="Sales">
+              <InsightsDropdownFilter
+                fullWidth
+                matchWidth
+                compact
+                placeholder="All sales"
+                ariaLabel="Sales"
+                icon="users"
+                value={value.salesIds[0] ?? ""}
+                onChange={(id) => update({ salesIds: id ? [id] : [] })}
+                options={salesOptions}
+              />
+            </FilterField>
+            <FilterField label="EC / Branch">
+              <InsightsDropdownFilter
+                fullWidth
+                matchWidth
+                compact
+                placeholder="All ECs"
+                ariaLabel="EC / Branch"
+                icon="location"
+                value={value.branchIds[0] ?? ""}
+                onChange={(id) => update({ branchIds: id ? [id] : [] })}
+                options={branchOptions}
+              />
+            </FilterField>
+          </div>
         </div>
       ) : null}
-
-      {menu === "date" ? (
-        <div role="dialog" aria-label="Calendar range" className="absolute right-0 top-[calc(100%+8px)] z-50 w-[min(460px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-[#E3E8EE] bg-white shadow-[0_12px_32px_rgba(15,23,42,0.12)]">
-          <div className="max-h-[70vh] overflow-y-auto px-4 py-4">
-            <DateRangePresets
-              preset={draft.preset}
-              dateFrom={draft.dateFrom}
-              dateTo={draft.dateTo}
-              summary={formatRangeLabel(range)}
-              onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
-            />
-          </div>
-          <MenuFooter
-            onReset={() => setDraft({ ...draft, preset: "", dateFrom: "", dateTo: "" })}
-            onApply={apply}
-          />
-        </div>
-      ) : null}
+      </div>
+      <InsightsDateFilterPopover
+        align="end"
+        appearance="toolbar"
+        idleLabel="Date range"
+        subtitle="Meetings by start date"
+        defaultFilter={DEFAULT_INSIGHTS_DATE_FILTER}
+        value={toBookingDate(value)}
+        onChange={(next) => update(fromBookingDate(next))}
+      />
     </div>
   );
+}
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold text-[#334155]">{label}</p>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
+}
+
+const BOOKING_TO_MEETING: Record<Exclude<BookingDatePresetId, "all" | "custom">, DatePresetId> = {
+  currentMonth: "this-month",
+  "3months": "last-3-months",
+  "6months": "last-6-months",
+  "1year": "last-1-year",
+  previousMonth: "previous-month",
+};
+
+function toBookingDate(value: FilterDraft): BookingDateFilterState {
+  if (value.preset === "all") return DEFAULT_BOOKING_DATE_FILTER;
+  if (value.preset === "custom" || value.preset === "today") {
+    return { preset: "custom", customFrom: value.dateFrom, customTo: value.dateTo };
+  }
+  if (!value.preset || value.preset === "this-month") return DEFAULT_INSIGHTS_DATE_FILTER;
+  if (value.preset === "last-3-months") return { preset: "3months", customFrom: "", customTo: "" };
+  if (value.preset === "last-6-months") return { preset: "6months", customFrom: "", customTo: "" };
+  if (value.preset === "last-1-year") return { preset: "1year", customFrom: "", customTo: "" };
+  if (value.preset === "previous-month") return { preset: "previousMonth", customFrom: "", customTo: "" };
+  return DEFAULT_BOOKING_DATE_FILTER;
+}
+
+function fromBookingDate(next: BookingDateFilterState): Pick<FilterDraft, "preset" | "dateFrom" | "dateTo"> {
+  if (next.preset === "all") return { preset: "all", dateFrom: "", dateTo: "" };
+  if (next.preset === "currentMonth") return { preset: "", dateFrom: "", dateTo: "" };
+  if (next.preset === "custom") {
+    return { preset: "custom", dateFrom: next.customFrom, dateTo: next.customTo };
+  }
+  return { preset: BOOKING_TO_MEETING[next.preset], dateFrom: "", dateTo: "" };
 }
 
 function MenuButton({
@@ -137,10 +222,10 @@ function MenuButton({
       aria-expanded={open}
       aria-haspopup="dialog"
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-bold tracking-wide ${focusRing} ${
+      className={`inline-flex h-8 items-center gap-1.5 rounded-xl px-2.5 text-[12px] font-semibold tracking-wide transition-colors ${focusRing} ${
         active
-          ? "border-[#1D4ED8] bg-[#EFF6FF] text-[#1E40AF] shadow-[0_0_0_1px_rgba(29,78,216,0.12)]"
-          : "border-[#CBD5E1] bg-white text-[#0F172A] hover:border-[#94A3B8] hover:bg-[#F8FAFC]"
+          ? "bg-[#E8F1FF] text-[#1B3FA8]"
+          : "text-[#334155] hover:bg-[#F4F6F8]"
       }`}
     >
       <span className={`inline-flex items-center ${active ? "text-[#1D4ED8]" : "text-[#475569]"}`}>{icon}</span>
@@ -154,46 +239,28 @@ function MenuButton({
   );
 }
 
-function MenuFooter({ onReset, onApply }: { onReset: () => void; onApply: () => void }) {
+function ResetIconButton({
+  label,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between border-t border-[#E3E8EE] px-4 py-3">
-      <button type="button" onClick={onReset} className={`text-[13px] font-semibold text-[#334155] underline-offset-4 hover:underline ${focusRing}`}>
-        Reset
-      </button>
-      <button type="button" onClick={onApply} className={`inline-flex h-10 items-center rounded-xl bg-[#22C55E] px-4 text-[14px] font-bold text-[#052E16] ${focusRing}`}>
-        Apply
-      </button>
-    </div>
-  );
-}
-
-const LABELS = ["Showroom Visit", "Virtual Meeting", "Site Visit"];
-
-function LabelChips({ labels, onChange }: { labels: string[]; onChange: (labels: string[]) => void }) {
-  return (
-    <div>
-      <p className="text-[13px] font-semibold text-[#334155]">Meeting label</p>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {LABELS.map((label) => {
-          const selected = labels.some((item) => item.toLowerCase() === label.toLowerCase());
-          return (
-            <button
-              key={label}
-              type="button"
-              aria-pressed={selected}
-              onClick={() =>
-                onChange(selected ? labels.filter((item) => item.toLowerCase() !== label.toLowerCase()) : [...labels, label])
-              }
-              className={`inline-flex h-10 items-center rounded-full border px-3 text-[13px] font-semibold ${focusRing} ${
-                selected ? "border-2 border-[#22C55E] bg-[#F0FDF4] text-[#14532D]" : "border-[#E3E8EE] bg-white text-[#334155]"
-              }`}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-md text-[#64748B] transition ${focusRing} ${
+        disabled ? "cursor-not-allowed opacity-35" : "hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+      }`}
+    >
+      <ResetIcon />
+    </button>
   );
 }
 
@@ -205,11 +272,16 @@ function FilterIcon() {
   );
 }
 
-function CalendarIcon() {
+function ResetIcon() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
-      <rect x="4" y="5" width="16" height="15" rx="2" stroke="currentColor" strokeWidth="1.7" />
-      <path d="M8 3.5v3M16 3.5v3M4 9.5h16" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path
+        d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

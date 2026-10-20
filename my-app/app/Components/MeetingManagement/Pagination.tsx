@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
-import { EASE, focusRing } from "./motion";
+import { focusRing } from "./motion";
 import type { PageSize } from "./useMeetingFilters";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
@@ -28,19 +28,19 @@ export function Pagination({
   const reduce = useReducedMotion();
   const items = pageItems(page, pageCount);
   return (
-    <div className="flex flex-col gap-3 border-t border-[#E3E8EE] px-4 py-3 md:flex-row md:items-center md:justify-between md:px-5">
-      <p className="text-[13px] font-semibold text-[#5B6778]" aria-live="polite">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E3E8EE] px-4 py-2 md:px-5">
+      <p className="text-[12px] font-medium text-[#64748B]" aria-live="polite">
         {total === 0
           ? "Showing 0 meetings"
-          : `Showing ${numberFormat.format(rangeStart)}–${numberFormat.format(rangeEnd)} of ${numberFormat.format(total)} meetings`}
+          : `Showing ${numberFormat.format(rangeStart)}–${numberFormat.format(rangeEnd)} of ${numberFormat.format(total)}`}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#334155]">
+      <div className="flex flex-wrap items-center gap-1">
+        <label className="mr-1 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#475569]">
           Rows
           <select
             value={pageSize}
             onChange={(event) => onPageSize(Number(event.target.value) as PageSize)}
-            className={`h-11 rounded-xl border border-[#E3E8EE] bg-white px-2 text-[14px] font-semibold text-[#0F172A] ${focusRing}`}
+            className={`h-8 rounded-lg border border-[#E3E8EE] bg-white px-1.5 text-[12px] font-semibold text-[#0F172A] transition hover:border-[#94A3B8] ${focusRing}`}
           >
             <option value={10}>10</option>
             <option value={25}>25</option>
@@ -52,7 +52,7 @@ export function Pagination({
         </PageButton>
         {items.map((item, index) =>
           item === "…" ? (
-            <span key={`gap-${index}`} className="px-1 text-[14px] font-semibold text-[#5B6778]">
+            <span key={`gap-${index}`} className="px-0.5 text-[12px] font-semibold text-[#94A3B8]">
               …
             </span>
           ) : (
@@ -61,15 +61,15 @@ export function Pagination({
               type="button"
               aria-current={item === page ? "page" : undefined}
               onClick={() => onPage(item)}
-              className={`relative inline-flex h-11 min-w-11 items-center justify-center rounded-xl px-2 text-[14px] font-bold ${focusRing} ${
-                item === page ? "text-[#052E16]" : "text-[#334155] hover:-translate-y-px"
+              className={`relative inline-flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-[12px] font-bold transition-colors ${focusRing} ${
+                item === page ? "text-[#052E16]" : "text-[#334155] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
               }`}
             >
               {item === page ? (
                 <motion.span
                   layoutId="meeting-page-pill"
-                  className="absolute inset-0 rounded-xl bg-[#22C55E]"
-                  transition={reduce ? { duration: 0 } : { duration: 0.22, ease: EASE }}
+                  className="absolute inset-0 rounded-lg bg-[#22C55E]"
+                  transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 32 }}
                 />
               ) : null}
               <span className="relative">{item}</span>
@@ -101,7 +101,7 @@ function PageButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-11 items-center rounded-xl border border-[#E3E8EE] bg-white px-3 text-[14px] font-semibold text-[#334155] hover:-translate-y-px disabled:translate-y-0 disabled:opacity-40 ${focusRing}`}
+      className={`inline-flex h-8 items-center rounded-lg border border-[#E3E8EE] bg-white px-2.5 text-[12px] font-semibold text-[#334155] transition hover:border-[#94A3B8] hover:bg-[#F8FAFC] disabled:hover:border-[#E3E8EE] disabled:hover:bg-white disabled:opacity-40 ${focusRing}`}
     >
       {children}
     </button>

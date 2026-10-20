@@ -9,14 +9,15 @@ import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessMeetingManagement } from "@/lib/roleUtils";
-import { deleteAppointment, updateAppointment } from "@/lib/appointment-client";
-import { buildHubMeetingDateTimeIso } from "@/lib/hub-meeting-schedule";
+import { updateAppointment } from "@/lib/appointment-client";
 import { loadMeetingBoard } from "@/lib/meeting-management-api";
-import { formatMeetingValue, formatMeetingWhen, meetingOffset, type MeetingRecord } from "@/lib/meeting-management-data";
+import { meetingIso, startOfMeetingBoardToday, type MeetingRecord } from "@/lib/meeting-management-data";
+import ScheduleHubMeetingModal, { type ScheduleHubMeetingConfirmPayload } from "../CrmLeadDetails/ScheduleHubMeetingModal";
 import MeetingCalendarView from "./MeetingCalendarView";
+import { MeetingDetailsModal } from "./MeetingDetailsModal";
 import { MeetingDialog } from "./MeetingDialog";
 import { MeetingsPage } from "./MeetingsPage";
-import { focusRing } from "./motion";
+import { EASE, focusRing, hoverLift } from "./motion";
 
 type Toast = { id: number; message: string; tone: "ok" | "error" };
 
@@ -53,15 +54,19 @@ export default function MeetingManagementClient() {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState<MeetingRecord | null>(null);
-  const [rescheduleTarget, setRescheduleTarget] = useState<MeetingRecord | null>(null);
-  const [rescheduleDate, setRescheduleDate] = useState("");
-  const [rescheduleTime, setRescheduleTime] = useState("");
-  const [rescheduleNote, setRescheduleNote] = useState("");
-  const [cancelTarget, setCancelTarget] = useState<MeetingRecord | null>(null);
-  const [cancelReason, setCancelReason] = useState("");
+  const [confirmTarget, setConfirmTarget] = useState<MeetingRecord | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<MeetingRecord | null>(null);
+  const [scheduleError, setScheduleError] = useState("");
+  const [celebrateName, setCelebrateName] = useState("");
   const [board, setBoard] = useState<"table" | "calendar">("table");
   const [viewDir, setViewDir] = useState(1);
   const [toast, setToast] = useState<Toast | null>(null);
+
+  useEffect(() => {
+    if (!celebrateName) return;
+    const timer = window.setTimeout(() => setCelebrateName(""), 2800);
+    return () => window.clearTimeout(timer);
+  }, [celebrateName]);
 
   useEffect(() => {
     const next = normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
@@ -96,6 +101,47 @@ export default function MeetingManagementClient() {
     else {
       sp.set("quoteSent", "1");
       sp.delete("tab");
+      sp.delete("meetingSuccessful");
+      sp.delete("quoteDelayed");
+      sp.delete("page");
+    }
+    const qs = sp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    if (board !== "table") {
+      setViewDir(-1);
+      setBoard("table");
+    }
+  };
+
+  const showQuoteDelayed = () => {
+    const sp = new URLSearchParams(window.location.search);
+    const on = sp.get("quoteDelayed") === "1";
+    if (board === "table" && on) sp.delete("quoteDelayed");
+    else {
+      sp.set("quoteDelayed", "1");
+      sp.delete("tab");
+      sp.delete("quoteSent");
+      sp.delete("meetingSuccessful");
+      sp.delete("page");
+    }
+    const qs = sp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    if (board !== "table") {
+      setViewDir(-1);
+      setBoard("table");
+    }
+  };
+
+  const showMeetingSuccessful = () => {
+    const sp = new URLSearchParams(window.location.search);
+    const on = sp.get("meetingSuccessful") === "1";
+    if (board === "table" && on) sp.delete("meetingSuccessful");
+    else {
+      sp.set("meetingSuccessful", "1");
+      sp.delete("tab");
+      sp.delete("quoteSent");
+      sp.delete("quoteDelayed");
+      sp.delete("page");
     }
     const qs = sp.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
@@ -128,64 +174,44 @@ export default function MeetingManagementClient() {
     void refreshMeetings();
   }, [ready, role]);
 
-  const notify = (message: string, tone: Toast["tone"]) => setToast({ id: Date.now(), message, tone });
-
-  const saveReschedule = async () => {
-    if (!rescheduleTarget || !rescheduleDate || !rescheduleTime || saving) return;
-    if (!rescheduleTarget.appointmentId || !rescheduleTarget.leadId || !rescheduleTarget.leadTypeCode) {
-      notify("This row is not linked to a server appointment, so it was left unchanged.", "error");
-      return;
-    }
-    const [year, month, day] = rescheduleDate.split("-").map(Number);
-    const [hourRaw, minute] = rescheduleTime.split(":");
-    const hour = Number(hourRaw);
-    const dateIso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const startMin = hour * 60 + Number(minute);
-    const duration = rescheduleTarget.durationMin ?? 90;
-    setSaving(true);
-    try {
-      await updateAppointment(
-        rescheduleTarget.appointmentId,
-        {
-          designerName: rescheduleTarget.assignee,
-          ...(rescheduleTarget.designerEmail ? { designerEmail: rescheduleTarget.designerEmail } : {}),
-          description: `Meeting with ${rescheduleTarget.customer} - Lead ID: ${rescheduleTarget.leadId}`,
-          leadType: rescheduleTarget.leadTypeCode,
-          leadId: rescheduleTarget.leadId,
-          ...(rescheduleTarget.sourceCode ? { source: rescheduleTarget.sourceCode } : {}),
-          ...(rescheduleTarget.meetingLabel ? { meetingLabel: rescheduleTarget.meetingLabel } : {}),
-          ...(rescheduleTarget.meetingTypeCode ? { meetingType: rescheduleTarget.meetingTypeCode } : {}),
-          startTime: buildHubMeetingDateTimeIso(dateIso, startMin),
-          endTime: buildHubMeetingDateTimeIso(dateIso, startMin + duration),
-        },
-        { rescheduleReason: rescheduleNote.trim() || "Client requested a new slot" },
-      );
-      setRescheduleTarget(null);
-      notify(`Meeting rescheduled to ${formatMeetingWhen(meetingOffset(dateIso), startMin)}.`, "ok");
-      await refreshMeetings();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "Could not reschedule this meeting.", "error");
-    } finally {
-      setSaving(false);
-    }
+  const beginReschedule = (row: MeetingRecord) => {
+    setScheduleError("");
+    setConfirmTarget(row);
   };
 
-  const confirmCancel = async () => {
-    if (!cancelTarget || saving) return;
-    if (!cancelTarget.appointmentId) {
-      notify("This row is not linked to a server appointment, so it was left unchanged.", "error");
-      return;
+  const saveReschedule = async (payload: ScheduleHubMeetingConfirmPayload) => {
+    const target = scheduleTarget;
+    if (!target || saving) return;
+    if (!target.appointmentId || !target.leadId || !target.leadTypeCode) {
+      throw new Error("This meeting is not linked to a server appointment, so it was left unchanged.");
     }
     setSaving(true);
+    setScheduleError("");
     try {
-      await deleteAppointment(cancelTarget.appointmentId);
-      const reason = cancelReason.trim();
-      setCancelTarget(null);
-      setDetail(null);
-      notify(reason ? `Meeting cancelled. ${reason}` : "Meeting cancelled.", "ok");
+      await updateAppointment(
+        target.appointmentId,
+        {
+          designerName: payload.designerName,
+          ...(payload.designerEmail ? { designerEmail: payload.designerEmail } : {}),
+          description: `Meeting with ${target.customer} - Lead ID: ${target.leadId}`,
+          leadType: target.leadTypeCode,
+          leadId: target.leadId,
+          ...(target.sourceCode ? { source: target.sourceCode } : {}),
+          ...(target.meetingLabel ? { meetingLabel: target.meetingLabel } : {}),
+          meetingType: payload.meetingType,
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+        },
+        { rescheduleReason: payload.notes.trim() || "Client requested a new slot" },
+      );
+      const name = target.customer;
+      setScheduleTarget(null);
+      setCelebrateName(name);
       await refreshMeetings();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Could not cancel this meeting.", "error");
+      const message = error instanceof Error ? error.message : "Could not reschedule this meeting.";
+      setScheduleError(message);
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       setSaving(false);
     }
@@ -224,12 +250,18 @@ export default function MeetingManagementClient() {
                   >
                     <MeetingCalendarView
                       meetings={meetings}
-                      quoteSentCount={quoteSentMeetings.length}
                       loading={loading}
                       loadError={loadError}
                       onReload={() => void refreshMeetings()}
+                      quoteSentMeetings={quoteSentMeetings}
                       onShowTable={showTable}
                       onShowQuoteSent={showQuoteSent}
+                      onShowQuoteDelayed={showQuoteDelayed}
+                      onShowMeetingSuccessful={showMeetingSuccessful}
+                      onRescheduleMeeting={(meetingId) => {
+                        const row = meetings.find((item) => String(item.id) === meetingId);
+                        if (row) beginReschedule(row);
+                      }}
                     />
                   </motion.div>
                 ) : (
@@ -250,18 +282,11 @@ export default function MeetingManagementClient() {
                         loadError={loadError}
                         onShowCalendar={showCalendar}
                         onShowQuoteSent={showQuoteSent}
+                        onShowQuoteDelayed={showQuoteDelayed}
+                        onShowMeetingSuccessful={showMeetingSuccessful}
                         onView={setDetail}
-                    onReschedule={(row) => {
-                      setRescheduleTarget(row);
-                      setRescheduleDate(row.date);
-                      setRescheduleTime(minutesToTime(row.startMin));
-                      setRescheduleNote("Client requested a new slot");
-                    }}
-                    onCancel={(row) => {
-                      setCancelTarget(row);
-                      setCancelReason("");
-                    }}
-                    onRetry={() => void refreshMeetings()}
+                        onReschedule={beginReschedule}
+                        onRetry={() => void refreshMeetings()}
                   />
                     </Suspense>
                   </motion.div>
@@ -270,53 +295,87 @@ export default function MeetingManagementClient() {
             </main>
           ) : (
             <div className="flex min-h-[50vh] items-center justify-center text-sm font-semibold text-[#5B6778]">
-              {ready ? "Meeting Management is available to Super Admin only." : "Loading…"}
+              {ready ? "Meeting Management is available to sales and admin roles." : "Loading…"}
             </div>
           )}
         </SlimScrollArea>
       </div>
 
-      <MeetingDialog open={Boolean(detail)} title="Meeting details" onClose={() => setDetail(null)}>
-        {detail ? <DetailBody row={detail} /> : null}
+      <MeetingDetailsModal row={detail} onClose={() => setDetail(null)} />
+
+      <MeetingDialog open={Boolean(confirmTarget)} title="Reschedule this meeting?" onClose={() => setConfirmTarget(null)}>
+        {confirmTarget ? (
+          <div>
+            <p className="text-[13px] leading-snug text-[#5B6778]">This time is already booked. Reschedule only if the customer wants a new slot.</p>
+            <motion.div
+              className="mt-3 rounded-xl border border-[#E6EAF0] bg-[#F8FAFC] px-3 py-2.5"
+              initial={reduce ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22, ease: EASE }}
+            >
+              <p className="truncate text-[15px] font-bold leading-tight text-[#14171F]">{confirmTarget.customer}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <span className="inline-flex h-6 items-center rounded-full bg-white px-2 text-[11px] font-semibold text-[#334155] ring-1 ring-[#E6EAF0]">
+                  {confirmTarget.meetingType || "Meeting"}
+                </span>
+                <span className="inline-flex h-6 items-center rounded-full bg-[#E7F8EE] px-2 text-[11px] font-semibold text-[#047857]">
+                  {confirmTarget.whenLabel}
+                </span>
+                {confirmTarget.assignee ? (
+                  <span className="inline-flex h-6 max-w-full items-center truncate rounded-full bg-white px-2 text-[11px] font-semibold text-[#5B6778] ring-1 ring-[#E6EAF0]">
+                    {confirmTarget.assignee}
+                  </span>
+                ) : null}
+              </div>
+            </motion.div>
+            <div className="mt-3 flex justify-end gap-2">
+              <motion.button
+                type="button"
+                onClick={() => setConfirmTarget(null)}
+                className={`inline-flex h-9 items-center rounded-lg border border-[#E6EAF0] bg-white px-3 text-[13px] font-semibold text-[#334155] transition-colors hover:border-[#CBD5E1] hover:bg-[#F8FAFC] ${focusRing}`}
+                {...hoverLift(reduce)}
+              >
+                Keep this time
+              </motion.button>
+              <motion.button
+                type="button"
+                onClick={() => {
+                  const next = confirmTarget;
+                  setConfirmTarget(null);
+                  setScheduleError("");
+                  setScheduleTarget(next);
+                }}
+                className={`inline-flex h-9 items-center rounded-lg bg-[#22C55E] px-3 text-[13px] font-bold text-[#052E16] transition-colors hover:bg-[#16A34A] ${focusRing}`}
+                {...hoverLift(reduce)}
+              >
+                Yes, reschedule
+              </motion.button>
+            </div>
+          </div>
+        ) : null}
       </MeetingDialog>
 
-      <MeetingDialog open={Boolean(rescheduleTarget)} title={rescheduleTarget ? `Reschedule ${rescheduleTarget.customer}` : "Reschedule"} onClose={() => setRescheduleTarget(null)}>
-        <div className="grid gap-3">
-          <label className="text-[13px] font-semibold text-[#334155]">
-            Date
-            <input type="date" value={rescheduleDate} onChange={(event) => setRescheduleDate(event.target.value)} className={`mt-1 h-11 w-full rounded-xl border border-[#E3E8EE] px-3 text-[14px] font-semibold ${focusRing}`} />
-          </label>
-          <label className="text-[13px] font-semibold text-[#334155]">
-            Time
-            <input type="time" value={rescheduleTime} onChange={(event) => setRescheduleTime(event.target.value)} className={`mt-1 h-11 w-full rounded-xl border border-[#E3E8EE] px-3 text-[14px] font-semibold ${focusRing}`} />
-          </label>
-          <label className="text-[13px] font-semibold text-[#334155]">
-            Note
-            <input value={rescheduleNote} onChange={(event) => setRescheduleNote(event.target.value)} className={`mt-1 h-11 w-full rounded-xl border border-[#E3E8EE] px-3 text-[14px] font-semibold ${focusRing}`} />
-          </label>
-          <button type="button" disabled={!rescheduleDate || !rescheduleTime || saving} onClick={() => void saveReschedule()} className={`mt-1 h-[52px] rounded-xl bg-[#22C55E] text-[15px] font-bold text-[#052E16] disabled:opacity-40 ${focusRing}`}>
-            {saving ? "Saving…" : "Save reschedule"}
-          </button>
-        </div>
-      </MeetingDialog>
+      <ScheduleHubMeetingModal
+        open={Boolean(scheduleTarget)}
+        onClose={() => {
+          setScheduleTarget(null);
+          setScheduleError("");
+        }}
+        onConfirm={saveReschedule}
+        busy={saving}
+        error={scheduleError}
+        leadCustomerName={scheduleTarget?.customer ?? ""}
+        leadDisplayId={scheduleTarget?.leadId ? String(scheduleTarget.leadId) : scheduleTarget?.quoteNo || ""}
+        status="Scheduled"
+        path="Meetings"
+        feedback="Reschedule"
+        hubMeetingPanelTitle={scheduleTarget ? `Reschedule ${scheduleTarget.customer}` : "Reschedule meeting"}
+        initialNote="Client requested a new slot"
+        minDate={meetingIso(startOfMeetingBoardToday())}
+        scheduleInstruction={<p>Pick the new date and time. This updates the meeting that is already booked.</p>}
+      />
 
-      <MeetingDialog open={Boolean(cancelTarget)} title="Cancel this meeting?" onClose={() => setCancelTarget(null)}>
-        <p className="text-[14px] font-normal text-[#334155]">
-          {cancelTarget ? `${cancelTarget.customer} · ${cancelTarget.meetingType} · ${cancelTarget.whenLabel}` : ""}
-        </p>
-        <label className="mt-3 block text-[13px] font-semibold text-[#334155]">
-          Reason (optional)
-          <textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows={3} className={`mt-1 w-full rounded-xl border border-[#E3E8EE] px-3 py-2 text-[14px] font-normal ${focusRing}`} />
-        </label>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={() => setCancelTarget(null)} className={`inline-flex h-11 items-center rounded-xl border border-[#E3E8EE] px-4 text-[14px] font-semibold text-[#334155] ${focusRing}`}>
-            Keep meeting
-          </button>
-          <button type="button" disabled={saving} onClick={() => void confirmCancel()} className={`inline-flex h-11 items-center rounded-xl bg-[#FEF3F2] px-4 text-[14px] font-bold text-[#B42318] disabled:opacity-40 ${focusRing}`}>
-            Cancel meeting
-          </button>
-        </div>
-      </MeetingDialog>
+      <RescheduleCelebration name={celebrateName} />
 
       <AnimatePresence>
         {toast ? (
@@ -344,58 +403,52 @@ export default function MeetingManagementClient() {
   );
 }
 
-function minutesToTime(startMin: number) {
-  const hour = Math.floor(startMin / 60);
-  const minute = startMin % 60;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function DetailBody({ row }: { row: MeetingRecord }) {
+function RescheduleCelebration({ name }: { name: string }) {
+  const reduce = useReducedMotion();
   return (
-    <dl className="grid max-h-[70vh] grid-cols-1 gap-3 overflow-y-auto text-sm sm:grid-cols-2">
-      <Detail label="Client" value={row.customer} />
-      <Detail label="Customer email" value={row.customerEmail || "—"} />
-      <Detail label="Phone" value={row.phone || "—"} />
-      <Detail label="Lead type" value={row.leadType || "—"} />
-      <Detail label="Source" value={row.appointmentSource || "CRM"} />
-      <Detail label="Meeting type" value={row.meetingType} />
-      <Detail label="Meeting level" value={row.meetingLevel || "—"} />
-      <Detail label="Sales" value={row.salesName || "—"} />
-      <Detail label="Sales email" value={row.salesEmail || "—"} />
-      <Detail label="Designer" value={row.assignee || "—"} />
-      <Detail label="Designer email" value={row.designerEmail || "—"} />
-      <div className="sm:col-span-2">
-        <Detail label="Scheduled by" value={row.scheduledBy || "—"} />
-      </div>
-      <Detail label="Scheduled on" value={row.scheduledAt || "—"} />
-      <Detail label="When" value={row.whenLabel} />
-      <Detail label="Status" value={row.status} />
-      <Detail label="Milestone" value={row.milestoneStage || "—"} />
-      <Detail label="Substage" value={row.milestoneSubStage || "—"} />
-      <Detail label="Google sync" value={row.googleSyncStatus || "—"} />
-      <Detail label="Sync note" value={row.googleSyncMessage || "—"} />
-      <Detail label="Quote" value={row.quoteSent ? "Quote sent" : "Quote not sent"} />
-      <Detail label="Lead budget" value={formatMeetingValue(row.budget)} />
-      <Detail label="Lead quote" value={formatMeetingValue(row.quoteValue)} />
-      {row.needsOutcome ? (
-        <div className="rounded-xl bg-[#FEF3C7] px-3 py-2 text-[12px] font-semibold text-[#92400E] sm:col-span-2">
-          Meeting time has passed. This lead is still Meeting Scheduled in Experience & Design, not Meeting Successful.
-        </div>
+    <AnimatePresence>
+      {name ? (
+        <motion.div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-[#0F172A]/45 px-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          role="status"
+        >
+          {!reduce
+            ? ["#22C55E", "#FACC15", "#38BDF8", "#F472B6", "#A78BFA", "#FB923C"].map((color, index) => (
+                <motion.span
+                  key={color}
+                  className="absolute h-2.5 w-2.5 rounded-full"
+                  style={{ background: color, left: `${18 + index * 12}%`, top: "42%" }}
+                  initial={{ y: 0, opacity: 1, scale: 0.6 }}
+                  animate={{ y: -140 - index * 12, x: (index % 2 === 0 ? -1 : 1) * (24 + index * 8), opacity: 0, scale: 1 }}
+                  transition={{ duration: 1.1, ease: "easeOut", delay: index * 0.04 }}
+                />
+              ))
+            : null}
+          <motion.div
+            className="relative w-[min(420px,calc(100vw-32px))] rounded-[22px] bg-white px-6 py-7 text-center shadow-[0_20px_50px_rgba(15,23,42,0.2)]"
+            initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.86, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
+            transition={{ type: "spring", stiffness: 320, damping: 22 }}
+          >
+            <motion.span
+              className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#DCFCE7] text-[#15803D]"
+              initial={reduce ? undefined : { scale: 0.4, rotate: -12 }}
+              animate={{ scale: 1, rotate: 0 }}
+              transition={{ type: "spring", stiffness: 260, damping: 14 }}
+            >
+              <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" aria-hidden>
+                <path d="M5 12.5 9.2 17 19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </motion.span>
+            <p className="mt-4 text-[20px] font-bold tracking-[-0.02em] text-[#0F172A]">Rescheduled successfully</p>
+            <p className="mt-1 text-[15px] font-semibold text-[#047857]">{name}</p>
+          </motion.div>
+        </motion.div>
       ) : null}
-      {row.googleHtmlLink ? (
-        <a href={row.googleHtmlLink} target="_blank" rel="noreferrer" className="text-[13px] font-bold text-[#1D4ED8] sm:col-span-2">
-          Open Google Calendar event
-        </a>
-      ) : null}
-    </dl>
-  );
-}
-
-function Detail({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[11px] font-semibold text-[#5B6778]">{label}</dt>
-      <dd className="mt-0.5 font-semibold text-[#0F172A]">{value}</dd>
-    </div>
+    </AnimatePresence>
   );
 }

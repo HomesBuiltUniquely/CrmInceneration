@@ -23,6 +23,12 @@ type Props = {
   variant?: "full" | "rangeOnly";
   /** Button label when no range selected (`rangeOnly`). */
   emptyLabel?: string;
+  /** `end` opens the menu toward the left, for a trigger on the right edge. */
+  align?: "start" | "end";
+  /** Button text when the value is the default, so the default month is not shown as a chosen filter. */
+  idleLabel?: string;
+  /** `toolbar` matches a slim header bar (no border until a range is chosen). */
+  appearance?: "default" | "toolbar";
   /**
    * Reset target for “All Time” / Clear on Insights (`full`).
    * Default `all` for Booking Token; Insights passes `DEFAULT_INSIGHTS_DATE_FILTER`
@@ -66,6 +72,9 @@ export default function InsightsDateFilterPopover({
   variant = "full",
   emptyLabel = "Select dates",
   defaultFilter = DEFAULT_BOOKING_DATE_FILTER,
+  align = "start",
+  idleLabel,
+  appearance = "default",
 }: Props) {
   const rangeOnly = variant === "rangeOnly";
   const [open, setOpen] = useState(false);
@@ -295,6 +304,7 @@ export default function InsightsDateFilterPopover({
       if (value.customFrom) return `${ymdToDdMmYyyy(value.customFrom)} → …`;
       return emptyLabel;
     }
+    if (!active && idleLabel) return idleLabel;
     return bookingDateFilterSummary(value);
   })();
 
@@ -303,14 +313,15 @@ export default function InsightsDateFilterPopover({
   const rangeHint =
     draft.customFrom && !draft.customTo ? "Pick end date" : "Start → end";
 
+  const side = align === "end" ? "right-0" : "left-0";
   const panelPositionClass =
     placement === "above"
-      ? "bottom-full left-0 mb-1.5 origin-bottom"
-      : "top-full left-0 mt-1.5 origin-top";
+      ? `bottom-full ${side} mb-1.5 ${align === "end" ? "origin-bottom-right" : "origin-bottom"}`
+      : `top-full ${side} mt-1.5 ${align === "end" ? "origin-top-right" : "origin-top"}`;
 
   const panelWidth = rangeOnly
     ? "w-[min(248px,calc(100vw-1.5rem))]"
-    : "w-[min(300px,calc(100vw-2rem))]";
+    : "w-[min(320px,calc(100vw-1.5rem))]";
 
   return (
     <div
@@ -326,20 +337,32 @@ export default function InsightsDateFilterPopover({
         }}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-55 ${
-          fullWidth ? "w-full" : ""
-        } ${
+        className={`group inline-flex items-center justify-between transition-all focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-55 ${
+          appearance === "toolbar"
+            ? "h-8 gap-1.5 rounded-xl px-2.5 text-[12px] font-semibold focus:ring-2 focus:ring-[#334155]/15"
+            : "h-10 gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs focus:ring-2 focus:ring-indigo-500/20"
+        } ${fullWidth ? "w-full" : ""} ${
           disabled
             ? "border-gray-200 bg-gray-50 text-gray-500"
-            : active
-              ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
-              : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+            : appearance === "toolbar"
+              ? active
+                ? "bg-[#E8F1FF] text-[#1B3FA8]"
+                : "text-[#334155] hover:bg-[#F4F6F8]"
+              : active
+                ? "border-indigo-500 bg-indigo-50/80 text-indigo-900 shadow-indigo-100"
+                : "border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
         }`}
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
           <svg
-            className={`h-4 w-4 shrink-0 transition-colors ${
-              active ? "text-indigo-600" : "text-gray-400 group-hover:text-gray-600"
+            className={`h-3.5 w-3.5 shrink-0 transition-colors ${
+              appearance === "toolbar"
+                ? active
+                  ? "text-[#1B3FA8]"
+                  : "text-[#64748B] group-hover:text-[#334155]"
+                : active
+                  ? "text-indigo-600"
+                  : "text-gray-400 group-hover:text-gray-600"
             }`}
             fill="none"
             viewBox="0 0 24 24"
@@ -359,8 +382,14 @@ export default function InsightsDateFilterPopover({
           </span>
         </span>
         <svg
-          className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform duration-200 ${
-            open ? "rotate-180 text-indigo-600" : ""
+          className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${
+            appearance === "toolbar"
+              ? open
+                ? "rotate-180 text-[#1B3FA8]"
+                : "text-[#94A3B8]"
+              : open
+                ? "rotate-180 text-indigo-600"
+                : "text-gray-400"
           }`}
           fill="none"
           viewBox="0 0 24 24"
@@ -407,33 +436,35 @@ export default function InsightsDateFilterPopover({
 
           <div className={rangeOnly ? "p-2" : "p-3"}>
             {!rangeOnly ? (
-              <div className="mb-2 grid grid-cols-2 gap-1 sm:grid-cols-3">
+              <div className="mb-2 grid grid-cols-2 gap-1.5">
                 <button
                   type="button"
                   onClick={handleAllTime}
-                  className={`rounded-md px-2 py-1 text-left transition-all ${
+                  className={`min-w-0 rounded-md px-2 py-1.5 text-left transition-all ${
                     draft.preset === "all"
                       ? "bg-indigo-600 font-semibold text-white"
                       : "bg-gray-50 text-gray-700 hover:bg-gray-100"
                   }`}
                 >
-                  <p className="text-[10px] font-medium">All Time</p>
+                  <p className="whitespace-normal text-[11px] font-medium leading-tight">All Time</p>
                 </button>
 
-                {BOOKING_DATE_PRESETS.filter((p) => p.id !== "currentMonth").map((p) => {
+                {BOOKING_DATE_PRESETS.filter((p) =>
+                  defaultFilter.preset === "currentMonth" ? p.id !== "currentMonth" : true,
+                ).map((p) => {
                   const selected = draft.preset === p.id;
                   return (
                     <button
                       key={p.id}
                       type="button"
                       onClick={() => selectPreset(p.id)}
-                      className={`rounded-md px-2 py-1 text-left transition-all ${
+                      className={`min-w-0 rounded-md px-2 py-1.5 text-left transition-all ${
                         selected
                           ? "bg-indigo-600 font-semibold text-white"
                           : "bg-gray-50 text-gray-700 hover:bg-gray-100"
                       }`}
                     >
-                      <p className="text-[10px] font-medium">{p.label}</p>
+                      <p className="whitespace-normal text-[11px] font-medium leading-tight">{p.label}</p>
                     </button>
                   );
                 })}

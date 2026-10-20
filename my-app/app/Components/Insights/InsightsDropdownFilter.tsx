@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type DropdownOption = {
   value: string;
@@ -19,6 +19,10 @@ type Props = {
   disabled?: boolean;
   /** Stretch trigger to container width (filter grids). */
   fullWidth?: boolean;
+  /** Menu matches the trigger width instead of a fixed 320px. */
+  matchWidth?: boolean;
+  /** Shorter trigger. The menu stays the trigger width and flips upward when space below is tight. */
+  compact?: boolean;
   /** Treat these values as inactive/default (no indigo highlight). Defaults: empty + "all". */
   defaultValues?: string[];
 };
@@ -32,15 +36,27 @@ export default function InsightsDropdownFilter({
   ariaLabel,
   disabled = false,
   fullWidth = false,
+  matchWidth = false,
+  compact = false,
   defaultValues,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [placement, setPlacement] = useState<"below" | "above">("below");
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) setSearch("");
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !compact) return;
+    const node = rootRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    setPlacement(spaceBelow < 220 && rect.top > spaceBelow ? "above" : "below");
+  }, [open, compact]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -99,9 +115,9 @@ export default function InsightsDropdownFilter({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={ariaLabel || placeholder}
-        className={`group inline-flex h-10 items-center justify-between gap-2.5 rounded-xl border px-3.5 text-xs font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-55 ${
-          fullWidth ? "w-full" : ""
-        } ${
+        className={`group inline-flex items-center justify-between border font-semibold shadow-xs transition-all focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-55 ${
+          compact ? "h-8 gap-2 rounded-lg px-2.5 text-[12px]" : "h-10 gap-2.5 rounded-xl px-3.5 text-xs"
+        } ${fullWidth || compact ? "w-full" : ""} ${
           disabled
             ? "border-gray-200 bg-gray-50 text-gray-500"
             : !isDefaultSelected
@@ -169,7 +185,11 @@ export default function InsightsDropdownFilter({
       {open && !disabled ? (
         <div
           role="listbox"
-          className="absolute left-0 z-50 mt-2 w-[min(320px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 animate-in fade-in-50 zoom-in-95 duration-150"
+          className={`absolute left-0 z-50 overflow-hidden border border-gray-100 bg-white shadow-2xl ring-1 ring-black/5 ${
+            compact
+              ? `w-full rounded-lg ${placement === "above" ? "bottom-full mb-1" : "top-full mt-1"}`
+              : `mt-2 rounded-2xl ${matchWidth ? "w-full" : "w-[min(320px,calc(100vw-2rem))]"}`
+          }`}
         >
           {/* Search Box */}
           {options.length > 5 ? (
@@ -209,7 +229,7 @@ export default function InsightsDropdownFilter({
           ) : null}
 
           {/* Options List */}
-          <div className="max-h-64 overflow-y-auto p-1.5 scrollbar-thin">
+          <div className={`overflow-y-auto scrollbar-thin ${compact ? "max-h-40 p-1" : "max-h-64 p-1.5"}`}>
             {filteredOptions.length === 0 ? (
               <div className="p-4 text-center text-xs text-gray-400">No options match "{search}"</div>
             ) : categories.length > 0 ? (

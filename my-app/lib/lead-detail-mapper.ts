@@ -18,6 +18,7 @@ import {
 } from "@/lib/lead-schedule-payload";
 import {
   applyConfigurationToDetailPayload,
+  canonicalBhkConfiguration,
   applyPropertyNotesToDetailPayload,
   applyWalkinLeadFieldsToDetailPayload,
   configurationDbColumnForLeadType,
@@ -356,7 +357,7 @@ export function pickConfigurationFromDetail(
       if (!trimmed) continue;
       if (isBudgetLikeConfiguration(trimmed)) continue;
       if (isLeadBookingTypeValue(trimmed)) continue;
-      return trimmed;
+      return canonicalBhkConfiguration(trimmed);
     }
     return "";
   };
@@ -365,18 +366,18 @@ export function pickConfigurationFromDetail(
     for (const value of values) {
       const trimmed = value.trim();
       if (isBhkLikeConfigurationValue(trimmed) && !isBudgetLikeConfiguration(trimmed)) {
-        return trimmed;
+        return canonicalBhkConfiguration(trimmed);
       }
     }
     return "";
   };
 
-  /** Canonical Hub field is `configuration`. Prefer a BHK-shaped value there. */
+  /**
+   * Lead-type column is the value we persist (glead/mlead/website → interiorSetup,
+   * add/quikr/ivr/walk-in → propertyType, others → configuration).
+   * A leftover `configuration` string must not hide a newer column value.
+   */
   const flatConfiguration = pickStr(detail, "configuration");
-  const bhkFromCanonical = firstBhkLike(flatConfiguration);
-  if (bhkFromCanonical) return bhkFromCanonical;
-
-  /** Lead-type primary column for configuration (BHK). Never treat booking Type as BHK. */
   const configCol = configurationDbColumnForLeadType(leadType);
   let fromColumn = "";
   switch (configCol) {
@@ -395,9 +396,11 @@ export function pickConfigurationFromDetail(
   }
   const bhkFromColumn = firstBhkLike(fromColumn);
   if (bhkFromColumn) return bhkFromColumn;
+  const bhkFromCanonical = firstBhkLike(flatConfiguration);
+  if (bhkFromCanonical) return bhkFromCanonical;
+
   const columnValue = firstValidConfiguration(fromColumn);
   if (columnValue) return columnValue;
-
   const flatAlias = firstValidConfiguration(flatConfiguration);
   if (flatAlias) return flatAlias;
 

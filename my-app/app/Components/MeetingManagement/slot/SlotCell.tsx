@@ -14,6 +14,7 @@ export function SlotCell({
   heading,
   meetings,
   today,
+  otherMonth,
   nowLabel,
   nowOffset,
   loading,
@@ -28,6 +29,8 @@ export function SlotCell({
   heading: string;
   meetings: SlotMeeting[];
   today?: boolean;
+  /** Day belongs to the month beside the one this week is showing. */
+  otherMonth?: boolean;
   /** 0–1 position inside this hour. Set only on today's current hour. */
   nowOffset?: number;
   nowLabel?: string;
@@ -46,7 +49,7 @@ export function SlotCell({
       layout
       transition={{ duration: reduce ? 0.12 : 0.22, ease: SLOT_EASE }}
       className="relative min-h-[52px] border-b border-l border-[#F1F5F9] p-1"
-              style={{ minHeight: HOUR_MIN_PX, background: today ? "#F0FDF4" : undefined }}
+              style={{ minHeight: HOUR_MIN_PX, background: today ? "#F0FDF4" : otherMonth ? "#EEF3FB" : undefined }}
       onDoubleClick={() => onCreate(dayKey, hour * 60)}
     >
       {loading ? (

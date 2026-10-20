@@ -1,6 +1,8 @@
 import { endOfMonth, format, isValid, parseISO, startOfMonth, subDays, subMonths } from "date-fns";
 
 export const DATE_PRESET_IDS = [
+  "all",
+  "today",
   "this-month",
   "last-3-months",
   "last-6-months",
@@ -14,6 +16,7 @@ export type DatePresetId = (typeof DATE_PRESET_IDS)[number];
 export type DateRange = { from: Date; to: Date };
 
 export const DATE_PRESET_CARDS: Array<{ id: DatePresetId; title: string; detail: string }> = [
+  { id: "today", title: "Today", detail: "Meetings that start today" },
   { id: "this-month", title: "This month", detail: "Current calendar month (auto-resets)" },
   { id: "last-3-months", title: "Last 3 months", detail: "Rolling 90 days" },
   { id: "last-6-months", title: "Last 6 months", detail: "Rolling 6 months" },
@@ -42,6 +45,10 @@ export function resolveDatePreset(
 ): DateRange | null {
   const day = dayOnly(today);
   switch (preset) {
+    case "all":
+      return null;
+    case "today":
+      return { from: day, to: day };
     case "this-month":
       return { from: dayOnly(startOfMonth(day)), to: dayOnly(endOfMonth(day)) };
     case "last-3-months":
