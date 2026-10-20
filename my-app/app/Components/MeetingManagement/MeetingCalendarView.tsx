@@ -957,7 +957,7 @@ function SpotlightRow({
   event: CalEvent;
   why: string;
   chip: string;
-  onReschedule: (meeting: { date: string; startMin: number }) => void;
+  onReschedule: (meeting: { id: string; date: string; startMin: number }) => void;
 }) {
   const live = kind === "live";
   const lead = event.value > 0 ? formatMeetingValue(event.value) : "";
