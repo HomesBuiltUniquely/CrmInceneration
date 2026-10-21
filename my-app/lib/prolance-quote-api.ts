@@ -582,28 +582,29 @@ export async function fetchProlanceQuoteRevisions(
     throw new Error(message);
   }
   const versions = Array.isArray(parsed.versions) ? parsed.versions : [];
-  return versions
-    .map((row) => {
-      const item = asRecord(row);
-      const qid = parseNum(item.quoteId);
-      const createdAt =
-        typeof item.createdAt === "string" ? item.createdAt.trim() : "";
-      if (qid === null || qid < 1) return null;
-      const createdBy = pickStr(item, "createdBy", "createdByName", "created_by");
-      const changeSummary =
-        typeof item.changeSummary === "string" ? item.changeSummary.trim() : "";
-      const versionNumber = parseNum(item.versionNumber ?? item.version);
-      return {
-        quoteId: Math.trunc(qid),
-        createdAt: createdAt || new Date().toISOString(),
-        createdBy: createdBy || undefined,
-        changeSummary: changeSummary || undefined,
-        versionNumber:
-          versionNumber != null && versionNumber > 0 ? Math.trunc(versionNumber) : undefined,
-        source: item,
-      };
-    })
-    .filter((row): row is ProlanceQuoteRevision => row !== null);
+  const revisions: ProlanceQuoteRevision[] = [];
+  for (const row of versions) {
+    const item = asRecord(row);
+    const qid = parseNum(item.quoteId);
+    if (qid === null || qid < 1) continue;
+    const createdAt = typeof item.createdAt === "string" ? item.createdAt.trim() : "";
+    const createdBy = pickStr(item, "createdBy", "createdByName", "created_by");
+    const changeSummary =
+      typeof item.changeSummary === "string" ? item.changeSummary.trim() : "";
+    const versionNumber = parseNum(item.versionNumber ?? item.version);
+    const revision: ProlanceQuoteRevision = {
+      quoteId: Math.trunc(qid),
+      createdAt: createdAt || new Date().toISOString(),
+      source: item,
+    };
+    if (createdBy) revision.createdBy = createdBy;
+    if (changeSummary) revision.changeSummary = changeSummary;
+    if (versionNumber != null && versionNumber > 0) {
+      revision.versionNumber = Math.trunc(versionNumber);
+    }
+    revisions.push(revision);
+  }
+  return revisions;
 }
 
 export async function fetchProlanceQuoteShare(
