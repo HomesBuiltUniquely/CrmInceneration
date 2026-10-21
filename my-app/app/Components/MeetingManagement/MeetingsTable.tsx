@@ -50,20 +50,24 @@ export function MeetingsTable({
         .meeting-row:hover, .meeting-row:focus-visible { filter: drop-shadow(0 8px 12px rgba(15,23,42,0.12)); }
         .meeting-row:hover td:first-child, .meeting-row:focus-visible td:first-child { border-radius: 12px 0 0 12px; }
         .meeting-row:hover td:last-child, .meeting-row:focus-visible td:last-child { border-radius: 0 12px 12px 0; }
+        .meetings-table th:first-child,
+        .meetings-table td:first-child { padding-right: 4px; }
+        .meetings-table th:nth-child(2),
+        .meetings-table td:nth-child(2) { padding-left: 4px; }
       `}</style>
       <div className="overflow-x-auto py-1">
-        <table className="w-full min-w-[1080px] table-fixed border-separate border-spacing-0 text-left">
+        <table className="meetings-table w-full min-w-[1080px] table-fixed border-separate border-spacing-0 text-left">
           <colgroup>
-            <col className="w-[52px]" />
-            <col />
-            <col className="w-[128px]" />
-            <col className="w-[140px]" />
-            <col className="w-[150px]" />
-            <col className="w-[112px]" />
-            <col className="w-[112px]" />
-            <col className="w-[118px]" />
-            <col className="w-[104px]" />
-            <col className="w-[100px]" />
+            <col className="w-[4%]" />
+            <col className="w-[15%]" />
+            <col className="w-[11%]" />
+            <col className="w-[12%]" />
+            <col className="w-[13%]" />
+            <col className="w-[11%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[8%]" />
+            <col className="w-[6%]" />
           </colgroup>
           <caption className="sr-only">Meetings</caption>
           <thead>

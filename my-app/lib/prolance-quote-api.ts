@@ -158,28 +158,380 @@ function sumOptionRowTotals(rows: QuoteOptionRow[]): number | null {
   return hasComponents ? componentTotal : null;
 }
 
-/** Hub category / flat / extra discounts. The quotation page subtracts these from the list price. */
-function hubCustomerDiscount(row: Record<string, unknown>): number {
-  return (
-    (parseNum(row.hubCategoryDiscountAmount) ?? 0) +
-    (parseNum(row.hubFlatDiscountAmount) ?? 0) +
-    (parseNum(row.hubAdditionalDiscountAmount) ?? 0)
+type CategoryPctKey = "woodwork" | "accessories" | "constructionHw" | "services";
+
+export type QuoteDiscountMeta = {
+  hubCategoryDiscountPct: Record<CategoryPctKey, number>;
+  hubCategoryDiscountAmount: number;
+  hubAdditionalDiscountAmount: number;
+};
+
+const CATEGORY_PCT_KEYS: CategoryPctKey[] = [
+  "woodwork",
+  "accessories",
+  "constructionHw",
+  "services",
+];
+
+/** Same categories the quotation page rounds and subtracts. Construction hardware is excluded. */
+const EDITABLE_DISCOUNT_CATEGORIES: Array<{
+  key: Exclude<CategoryPctKey, "constructionHw">;
+  priceKeys: string[];
+  roomPrice: (room: Record<string, unknown>) => number;
+}> = [
+  {
+    key: "woodwork",
+    priceKeys: ["woodWorkPrice"],
+    roomPrice: (room) =>
+      parseNum(room.woodWorkPrice) ??
+      (parseNum(room.unitsPrice) ?? 0) + (parseNum(room.loftsPrice) ?? 0),
+  },
+  {
+    key: "accessories",
+    priceKeys: ["accessoriesPrice"],
+    roomPrice: (room) => parseNum(room.accessoriesPrice) ?? 0,
+  },
+  {
+    key: "services",
+    priceKeys: ["servicesPrice"],
+    roomPrice: (room) => parseNum(room.servicesPrice) ?? 0,
+  },
+];
+
+function asDiscountRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === "[object Object]") return null;
+    try {
+      return asDiscountRecord(JSON.parse(trimmed));
+    } catch {
+      return null;
+    }
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function readPctMap(value: unknown): Partial<Record<CategoryPctKey, number>> | null {
+  const record = asDiscountRecord(value);
+  if (!record) return null;
+  const out: Partial<Record<CategoryPctKey, number>> = {};
+  for (const key of CATEGORY_PCT_KEYS) {
+    const amount = parseNum(record[key]);
+    if (amount != null) out[key] = amount;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function quoteRoomRows(row: Record<string, unknown>): Record<string, unknown>[] {
+  const details = Array.isArray(row.optionDetails) ? row.optionDetails : [];
+  const options = Array.isArray(row.quoteOptionsData) ? row.quoteOptionsData : [];
+  const source = details.length >= options.length ? details : options;
+  return source.map((item) => asRecord(item));
+}
+
+function categoryListPrice(
+  row: Record<string, unknown>,
+  priceKeys: string[],
+  roomPrice: (room: Record<string, unknown>) => number,
+): number {
+  for (const key of priceKeys) {
+    const amount = parseNum(row[key]);
+    if (amount != null && amount > 0) return amount;
+  }
+  return quoteRoomRows(row).reduce((sum, room) => sum + roomPrice(room), 0);
+}
+
+/** Per-category Math.round, matching the quotation page discount breakdown. */
+function editableCategoryDiscount(row: Record<string, unknown>): number {
+  const pct = readPctMap(row.hubCategoryDiscountPct);
+  if (!pct) return 0;
+  return EDITABLE_DISCOUNT_CATEGORIES.reduce((sum, category) => {
+    const rate = pct[category.key] ?? 0;
+    const price = categoryListPrice(row, category.priceKeys, category.roomPrice);
+    if (!(rate > 0) || !(price > 0)) return sum;
+    return sum + Math.round((price * rate) / 100);
+  }, 0);
+}
+
+function quoteHasHubDiscount(row: Record<string, unknown>): boolean {
+  if ((parseNum(row.hubCategoryDiscountAmount) ?? 0) > 0) return true;
+  if ((parseNum(row.hubAdditionalDiscountAmount) ?? 0) > 0) return true;
+  if ((parseNum(row.hubFlatDiscountAmount) ?? 0) > 0) return true;
+  const pct = readPctMap(row.hubCategoryDiscountPct);
+  return Boolean(pct && Object.values(pct).some((rate) => (rate ?? 0) > 0));
+}
+
+/**
+ * Discount subtracted from the list price.
+ * Uses the larger of the saved rupee discount and the rounded category percentages.
+ */
+function customerDiscountAmount(row: Record<string, unknown>): number {
+  const category = parseNum(row.hubCategoryDiscountAmount);
+  const additional = Math.max(0, parseNum(row.hubAdditionalDiscountAmount) ?? 0);
+  const flat = Math.max(0, parseNum(row.hubFlatDiscountAmount) ?? 0);
+  const stored =
+    category != null || additional > 0 ? Math.max(0, (category ?? 0) + additional) : 0;
+  return Math.max(stored, editableCategoryDiscount(row)) + flat;
+}
+
+function preDiscountRoomTotal(row: Record<string, unknown>): number {
+  return quoteRoomRows(row).reduce((sum, room) => {
+    const amount = parseNum(room.totalPrice) ?? parseNum(room.totalPriceOld);
+    return amount != null && amount > 0 ? sum + amount : sum;
+  }, 0);
+}
+
+/** List price before Hub discount, including snapshot payloads that omit `finalTotalPrice`. */
+function quoteListPrice(row: Record<string, unknown>): number | null {
+  const direct =
+    parseNum(row.finalTotalPrice) ??
+    parseNum(row.finalPrice) ??
+    parseNum(row.totalPrice);
+  if (direct != null && direct > 0) return direct;
+
+  const rooms = preDiscountRoomTotal(row);
+  if (rooms > 0) return rooms;
+
+  const composed = [
+    categoryListPrice(row, ["woodWorkPrice"], (room) => parseNum(room.woodWorkPrice) ?? 0),
+    categoryListPrice(row, ["accessoriesPrice"], (room) => parseNum(room.accessoriesPrice) ?? 0),
+    categoryListPrice(
+      row,
+      ["consHardwarePrice", "hardwarePrice"],
+      (room) => parseNum(room.consHardwarePrice) ?? parseNum(room.hardwarePrice) ?? 0,
+    ),
+    categoryListPrice(row, ["servicesPrice"], (room) => parseNum(room.servicesPrice) ?? 0),
+    categoryListPrice(
+      row,
+      ["worktopsPrice", "worktopPrice"],
+      (room) => parseNum(room.worktopsPrice) ?? parseNum(room.worktopPrice) ?? 0,
+    ),
+    categoryListPrice(row, ["appliancesPrice"], (room) => parseNum(room.appliancesPrice) ?? 0),
+    categoryListPrice(row, ["decorPrice"], (room) => parseNum(room.decorPrice) ?? 0),
+  ].reduce((sum, amount) => sum + amount, 0);
+  return composed > 0 ? composed : null;
+}
+
+function parsePctChange(summary: string, label: string): number | undefined {
+  const match = summary.match(new RegExp(`${label}:\\s*[\\d.]+%\\s*->\\s*([\\d.]+)%`, "i"));
+  if (!match) return undefined;
+  const amount = Number(match[1]);
+  return Number.isFinite(amount) ? amount : undefined;
+}
+
+function parseAmountChange(summary: string, label: string): number | undefined {
+  const match = summary.match(new RegExp(`${label}:[^;]*->\\s*₹\\s*([\\d,]+)`, "i"));
+  if (!match) return undefined;
+  const amount = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(amount) ? Math.round(amount) : undefined;
+}
+
+/**
+ * Designer discounts are often saved only on quote revisions, not on the share payload.
+ * Replay those revisions the same way the quotation page does.
+ */
+export function discountMetaFromQuoteRevisions(
+  versions: unknown[],
+  quoteId?: string | number,
+): QuoteDiscountMeta | null {
+  const wanted = parseNum(quoteId);
+  const all = versions.map((version) => asRecord(version));
+  const matching =
+    wanted != null && wanted > 0
+      ? all.filter((version) => {
+          const id = parseNum(version.quoteId);
+          return id == null || id === wanted;
+        })
+      : all;
+  const rows = matching.length > 0 ? matching : all;
+
+  const pct: Record<CategoryPctKey, number> = {
+    woodwork: 0,
+    accessories: 0,
+    constructionHw: 0,
+    services: 0,
+  };
+  let categoryAmount = 0;
+  let additionalAmount = 0;
+  let seen = false;
+
+  for (const version of rows) {
+    const snapshot =
+      asDiscountRecord(version.discountSnapshot) ??
+      asDiscountRecord(version.discount_snapshot) ??
+      asDiscountRecord(version.updatedValues) ??
+      asDiscountRecord(version.updated_values);
+    if (snapshot) {
+      const snapPct = asDiscountRecord(snapshot.hubCategoryDiscountPct) ?? snapshot;
+      for (const key of CATEGORY_PCT_KEYS) {
+        if (snapPct[key] == null || snapPct[key] === "") continue;
+        const rate = parseNum(snapPct[key]);
+        if (rate != null) pct[key] = rate;
+      }
+      if (snapshot.hubCategoryDiscountAmount != null || snapshot.amount != null) {
+        categoryAmount = Math.round(
+          parseNum(snapshot.hubCategoryDiscountAmount) ?? parseNum(snapshot.amount) ?? 0,
+        );
+      }
+      if (snapshot.hubAdditionalDiscountAmount != null || snapshot.additionalDiscount != null) {
+        additionalAmount = Math.round(
+          parseNum(snapshot.hubAdditionalDiscountAmount) ??
+            parseNum(snapshot.additionalDiscount) ??
+            0,
+        );
+      }
+      seen = true;
+    }
+
+    const summary =
+      typeof version.changeSummary === "string" ? version.changeSummary.trim() : "";
+    if (!summary || /^no changes$/i.test(summary)) continue;
+
+    const woodwork = parsePctChange(summary, "Woodwork");
+    const accessories = parsePctChange(summary, "Accessories");
+    const constructionHw = parsePctChange(summary, "Construction Hardware");
+    const services = parsePctChange(summary, "Services");
+    const category = parseAmountChange(summary, "Category discount amount");
+    const additional = parseAmountChange(summary, "Additional discount");
+    if (woodwork != null) pct.woodwork = woodwork;
+    if (accessories != null) pct.accessories = accessories;
+    if (constructionHw != null) pct.constructionHw = constructionHw;
+    if (services != null) pct.services = services;
+    if (category != null) categoryAmount = category;
+    if (additional != null) additionalAmount = additional;
+    seen = true;
+  }
+
+  if (!seen) return null;
+  const meta: QuoteDiscountMeta = {
+    hubCategoryDiscountPct: pct,
+    hubCategoryDiscountAmount: categoryAmount,
+    hubAdditionalDiscountAmount: additionalAmount,
+  };
+  return quoteHasHubDiscount(meta) ? meta : null;
+}
+
+async function fetchHubDiscountMeta(quoteId: string): Promise<Record<string, unknown> | null> {
+  const res = await fetch(
+    `/api/prolance/quotes/hub-discount/${encodeURIComponent(quoteId)}`,
+    { cache: "no-store" },
   );
+  if (!res.ok) return null;
+  const text = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    return null;
+  }
+  const discount = asRecord(parsed.discount);
+  return Object.keys(discount).length > 0 ? discount : null;
+}
+
+async function fetchRevisionDiscountMeta(quoteId: string): Promise<QuoteDiscountMeta | null> {
+  const res = await fetch(
+    `/api/prolance/quotes/revisions/${encodeURIComponent(quoteId)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  const text = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    return null;
+  }
+  const versions = Array.isArray(parsed.versions) ? parsed.versions : [];
+  return discountMetaFromQuoteRevisions(versions, quoteId);
+}
+
+/**
+ * Put the quotation-page discount onto a share response.
+ * The share API keeps the list price; designer discounts live on hub-discount or revisions.
+ */
+export function mergeCustomerDiscountIntoShareResponse(
+  payload: unknown,
+  hubDiscountBody: unknown,
+  revisionsBody: unknown,
+): unknown {
+  const root = asRecord(payload);
+  const nested = root.data;
+  const quote =
+    nested && typeof nested === "object" && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : root;
+  if (quoteHasHubDiscount(quote)) return payload;
+
+  let next = quote;
+  const hubDiscount = asRecord(asRecord(hubDiscountBody).discount);
+  if (Object.keys(hubDiscount).length > 0 && quoteHasHubDiscount(hubDiscount)) {
+    next = { ...quote, ...hubDiscount };
+  } else {
+    const versions = Array.isArray(asRecord(revisionsBody).versions)
+      ? (asRecord(revisionsBody).versions as unknown[])
+      : [];
+    const meta = discountMetaFromQuoteRevisions(
+      versions,
+      parseNum(quote.quoteID) ?? parseNum(quote.quoteId) ?? undefined,
+    );
+    if (meta) next = { ...quote, ...meta };
+  }
+
+  if (next === quote) return payload;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return { ...root, data: next };
+  }
+  return next;
+}
+
+/** Attach the quotation-page discount when the share payload still has the list price. */
+async function withCustomerDiscount(
+  quoteId: string,
+  data: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (quoteHasHubDiscount(data)) return data;
+  try {
+    const hubDiscount = await fetchHubDiscountMeta(quoteId);
+    if (hubDiscount && quoteHasHubDiscount(hubDiscount)) {
+      return { ...data, ...hubDiscount };
+    }
+  } catch {
+    /* revisions below */
+  }
+  try {
+    const revisionDiscount = await fetchRevisionDiscountMeta(quoteId);
+    if (revisionDiscount) return { ...data, ...revisionDiscount };
+  } catch {
+    /* keep list price */
+  }
+  return data;
 }
 
 /**
  * Customer estimated total, matching the quotation page ("inclusive of all taxes").
- * `finalTotalPrice` is before Hub discounts. Example: 41,89,279 − 11,63,084 = 30,26,195.
+ * `finalTotalPrice` is the list price. Designer discounts saved later live on
+ * hub-discount or quote revisions, and are subtracted here.
+ * Example: 7,56,829 − 2,50,025 = 5,06,804.
  */
 export function extractProlanceQuoteTotalAmount(data: unknown): number | null {
   const row = asRecord(data);
-  const listPrice =
-    parseNum(row.finalTotalPrice) ??
-    parseNum(row.finalPrice) ??
-    parseNum(row.totalPrice);
+  const listPrice = quoteListPrice(row);
   if (listPrice !== null && listPrice > 0) {
-    const discount = hubCustomerDiscount(row);
-    if (discount > 0 && discount < listPrice) return listPrice - discount;
+    const discount = customerDiscountAmount(row);
+    if (discount > 0 && discount < listPrice) {
+      const rooms = preDiscountRoomTotal(row);
+      if (rooms > 0) {
+        const alreadyDiscounted =
+          Math.abs(listPrice - (rooms - discount)) <= Math.max(500, discount * 0.08);
+        const isListPrice = Math.abs(listPrice - rooms) <= Math.max(500, rooms * 0.02);
+        if (alreadyDiscounted && !isListPrice) return listPrice;
+      }
+      return Math.max(0, listPrice - discount);
+    }
     return listPrice;
   }
 
@@ -259,7 +611,7 @@ export async function fetchProlanceQuoteShare(
       `Failed to load quote details (${res.status})`;
     throw new Error(message);
   }
-  return asRecord(parsed.data);
+  return withCustomerDiscount(id, asRecord(parsed.data));
 }
 
 export async function buildLeadQuoteOptionsFromProlance(
