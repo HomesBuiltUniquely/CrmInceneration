@@ -7,6 +7,8 @@ export type LeadQuoteOption = {
   internalQuoteUrl: string;
   createdAt?: string;
   createdBy?: string;
+  /** Discount or other save note from the design-module revision. */
+  summary?: string;
   amount?: number | null;
   configuration?: string;
   isLatest?: boolean;

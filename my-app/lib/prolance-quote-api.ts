@@ -4,6 +4,11 @@ import { buildDesignQuotePageUrl, formatQuoteAmount } from "@/lib/crm-quote-link
 export type ProlanceQuoteRevision = {
   quoteId: number;
   createdAt: string;
+  createdBy?: string;
+  changeSummary?: string;
+  versionNumber?: number;
+  /** Original revision row, used to replay the discount at this save. */
+  source: Record<string, unknown>;
 };
 
 export type ProlanceQuoteShareResponse = {
@@ -584,7 +589,19 @@ export async function fetchProlanceQuoteRevisions(
       const createdAt =
         typeof item.createdAt === "string" ? item.createdAt.trim() : "";
       if (qid === null || qid < 1) return null;
-      return { quoteId: Math.trunc(qid), createdAt: createdAt || new Date().toISOString() };
+      const createdBy = pickStr(item, "createdBy", "createdByName", "created_by");
+      const changeSummary =
+        typeof item.changeSummary === "string" ? item.changeSummary.trim() : "";
+      const versionNumber = parseNum(item.versionNumber ?? item.version);
+      return {
+        quoteId: Math.trunc(qid),
+        createdAt: createdAt || new Date().toISOString(),
+        createdBy: createdBy || undefined,
+        changeSummary: changeSummary || undefined,
+        versionNumber:
+          versionNumber != null && versionNumber > 0 ? Math.trunc(versionNumber) : undefined,
+        source: item,
+      };
     })
     .filter((row): row is ProlanceQuoteRevision => row !== null);
 }
@@ -614,6 +631,21 @@ export async function fetchProlanceQuoteShare(
   return withCustomerDiscount(id, asRecord(parsed.data));
 }
 
+const HUB_DISCOUNT_KEYS = [
+  "hubCategoryDiscountPct",
+  "hubCategoryDiscountAmount",
+  "hubAdditionalDiscountAmount",
+  "hubFlatDiscountAmount",
+  "hubFlatDiscountPct",
+] as const;
+
+/** List-price share, so each discount save can be priced on its own. */
+function shareWithoutHubDiscount(share: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...share };
+  for (const key of HUB_DISCOUNT_KEYS) delete next[key];
+  return next;
+}
+
 export async function buildLeadQuoteOptionsFromProlance(
   anchorQuoteId: string | number,
   hubLeadId = "",
@@ -621,27 +653,13 @@ export async function buildLeadQuoteOptionsFromProlance(
   const revisions = await fetchProlanceQuoteRevisions(anchorQuoteId);
   if (revisions.length === 0) return [];
 
-  // One card per quote id, same as the booking/token pay-button picker.
-  // Saves of the same quote repeat the id; only a new quote id is a new version.
-  const uniqueByQuoteId = new Map<number, ProlanceQuoteRevision>();
-  for (const revision of revisions) {
-    const existing = uniqueByQuoteId.get(revision.quoteId);
-    if (!existing) {
-      uniqueByQuoteId.set(revision.quoteId, revision);
-      continue;
-    }
-    const existingTs = Date.parse(existing.createdAt);
-    const nextTs = Date.parse(revision.createdAt);
-    if (
-      Number.isFinite(nextTs) &&
-      (!Number.isFinite(existingTs) || nextTs >= existingTs)
-    ) {
-      uniqueByQuoteId.set(revision.quoteId, revision);
-    }
-  }
-
-  const chronological = [...uniqueByQuoteId.values()].sort(
-    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.quoteId - b.quoteId,
+  // Keep every design-module save, including discount edits of the same quote id.
+  // A brand-new quote id is still a separate quote. Payment keeps using quoteId.
+  const chronological = [...revisions].sort(
+    (a, b) =>
+      Date.parse(a.createdAt) - Date.parse(b.createdAt) ||
+      (a.versionNumber ?? 0) - (b.versionNumber ?? 0) ||
+      a.quoteId - b.quoteId,
   );
 
   const shareByQuoteId = new Map<number, Record<string, unknown>>();
@@ -655,11 +673,24 @@ export async function buildLeadQuoteOptionsFromProlance(
     }),
   );
 
+  const byQuoteId = new Map<number, ProlanceQuoteRevision[]>();
+  for (const revision of chronological) {
+    const group = byQuoteId.get(revision.quoteId) ?? [];
+    group.push(revision);
+    byQuoteId.set(revision.quoteId, group);
+  }
+
   return chronological.map((revision, index) => {
-    const share = shareByQuoteId.get(revision.quoteId) ?? {};
+    const share = shareWithoutHubDiscount(shareByQuoteId.get(revision.quoteId) ?? {});
+    const quoteHistory = byQuoteId.get(revision.quoteId) ?? [revision];
+    const historyIndex = Math.max(0, quoteHistory.indexOf(revision));
+    const discount = discountMetaFromQuoteRevisions(
+      quoteHistory.slice(0, historyIndex + 1).map((item) => item.source),
+      revision.quoteId,
+    );
     const versionNumber = index + 1;
     const isLatest = index === chronological.length - 1;
-    const amount = extractProlanceQuoteTotalAmount(share);
+    const amount = extractProlanceQuoteTotalAmount(discount ? { ...share, ...discount } : share);
     const configuration = extractProlanceQuoteConfiguration(share);
     const createdAt =
       revision.createdAt ||
@@ -671,7 +702,7 @@ export async function buildLeadQuoteOptionsFromProlance(
       hubLeadId,
     });
     return {
-      id: quoteId,
+      id: `${quoteId}-v${versionNumber}`,
       quoteId,
       version: versionNumber,
       label: isLatest
@@ -680,6 +711,8 @@ export async function buildLeadQuoteOptionsFromProlance(
       customerQuoteUrl,
       internalQuoteUrl,
       createdAt,
+      createdBy: revision.createdBy,
+      summary: revision.changeSummary,
       amount,
       configuration: configuration || undefined,
       isLatest,
