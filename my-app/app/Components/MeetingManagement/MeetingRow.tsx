@@ -68,12 +68,12 @@ export function MeetingRow({
       }}
       className={`meeting-row group relative z-0 cursor-pointer outline-none hover:z-10 focus-visible:z-10 ${focusRing}`}
     >
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+      <td className="border-b border-[#E3E8EE] py-2.5 pl-4 pr-1 align-middle">
         <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-[#F4F6F8] px-1.5 text-[12px] font-bold text-[#334155]">
           {sequence}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+      <td className="border-b border-[#E3E8EE] py-2.5 pl-1 pr-3 align-middle">
         <div className="flex items-center gap-2">
           <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${AVATAR[row.avatarTone]}`}>
             {row.initials}
