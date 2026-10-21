@@ -144,6 +144,9 @@ export default function BookingQuoteVersionPicker({
                   {option.quoteId ? (
                     <p className="mt-0.5 text-[11px] text-[#64748b]">ID {option.quoteId}</p>
                   ) : null}
+                  {option.summary ? (
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-[#475569]">{option.summary}</p>
+                  ) : null}
                   <p className="mt-2 text-[16px] font-bold text-[#0f172a]">
                     {formatQuoteAmount(option.amount)}
                   </p>

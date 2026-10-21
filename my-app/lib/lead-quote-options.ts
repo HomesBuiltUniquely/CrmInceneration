@@ -156,8 +156,10 @@ export async function refreshQuoteOptionDetails(
   if (!quoteId) return option;
   try {
     const share = await fetchProlanceQuoteShare(quoteId);
-    const amount = extractProlanceQuoteTotalAmount(share);
     const configuration = extractProlanceQuoteConfiguration(share);
+    // Older discount saves keep the amount from that save. Only the current
+    // version follows the live quotation total.
+    const amount = option.isLatest === false ? option.amount : extractProlanceQuoteTotalAmount(share);
     return {
       ...option,
       amount: amount ?? option.amount,

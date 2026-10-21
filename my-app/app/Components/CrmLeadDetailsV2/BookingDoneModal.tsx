@@ -1048,20 +1048,36 @@ function QuotationSection({
   const revisionOptions = sortQuotesForRevisionDisplay(options);
 
   return (
-    <section className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
-      <div className="flex items-start gap-2">
+    <section className="mt-4 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-3">
+      <style>{`
+        @keyframes quote-rev-in {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .quote-rev-card {
+          animation: quote-rev-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+          transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease, border-color 200ms ease, background-color 200ms ease;
+        }
+        .quote-rev-card:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .quote-rev-card { animation: none; }
+          .quote-rev-card:hover { transform: none; }
+        }
+      `}</style>
+      <div className="flex items-center gap-2">
         <span
-          className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#ecfdf5] text-[15px] text-[#047857]"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-[#ecfdf5] text-[13px] text-[#047857]"
           aria-hidden
         >
           🕒
         </span>
-        <div>
-          <p className="text-[15px] font-bold text-[#0f172a]">Revision History</p>
-          <p className="mt-1 text-[13px] text-[#64748b]">
-            Click a version to select it for booking. Use{" "}
-            <span className="font-semibold text-[#334155]">Open quotation</span> to view the quote in a
-            new tab.
+        <div className="min-w-0">
+          <p className="text-[14px] font-bold text-[#0f172a]">Revision History</p>
+          <p className="text-[12px] text-[#64748b]">
+            Select a version for booking. Open the quote in a new tab.
           </p>
         </div>
       </div>
@@ -1081,16 +1097,22 @@ function QuotationSection({
       ) : null}
 
       {loadState === "ready" && revisionOptions.length > 0 ? (
-        <div className="mt-4 space-y-4">
+        <div className="mt-3 space-y-2.5">
           <SoftScroll
             scrollbar="bar"
-            className="max-h-[min(320px,42vh)] pr-1"
-            padClassName="grid gap-3 sm:grid-cols-2"
+            className="max-h-[min(300px,40vh)] pr-1"
+            padClassName="grid gap-2 sm:grid-cols-2"
             aria-label="Quote versions"
           >
-            {revisionOptions.map((option) => {
+            {revisionOptions.map((option, index) => {
               const selected = option.id === selectedQuoteId;
               const quoteUrl = resolveQuoteVerifyUrl(option, hubLeadId);
+              const author = option.createdBy?.replace(/^(created by|by)[:\s]*/i, "").trim();
+              const meta = [
+                formatQuoteCreatedAt(option.createdAt),
+                option.quoteId ? `ID ${option.quoteId}` : "",
+                author || "",
+              ].filter(Boolean);
               return (
                 <div
                   key={option.id}
@@ -1103,34 +1125,37 @@ function QuotationSection({
                       onSelectQuote(option.id);
                     }
                   }}
-                  className={`block cursor-pointer rounded-xl border px-4 py-3 text-left transition ${
+                  style={{ animationDelay: `${Math.min(index, 8) * 45}ms` }}
+                  className={`quote-rev-card block cursor-pointer rounded-xl border px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-[#16a34a]/40 ${
                     selected
-                      ? "border-[#86efac] bg-[#ecfdf5] shadow-[inset_4px_0_0_#16a34a]"
-                      : "border-[#e2e8f0] bg-white hover:border-[#cbd5e1] hover:bg-white"
+                      ? "border-[#86efac] bg-[#ecfdf5] shadow-[inset_3px_0_0_#16a34a]"
+                      : "border-[#e2e8f0] bg-white hover:border-[#86efac] hover:bg-[#f7fdf9]"
                   }`}
                 >
-                  <p className="text-[15px] font-bold text-[#0f172a]">{option.label}</p>
-                  <p className="mt-2 text-[12px] text-[#64748b]">
-                    Created on {formatQuoteCreatedAt(option.createdAt)}
-                  </p>
-                  {option.quoteId ? (
-                    <p className="mt-1 text-[12px] text-[#64748b]">ID {option.quoteId}</p>
-                  ) : null}
-                  {option.createdBy ? (
-                    <p className="mt-1 text-[12px] font-medium text-[#475569]">
-                      Created by {option.createdBy.replace(/^(created by|by)[:\s]*/i, "")}
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 truncate text-[13px] font-bold text-[#0f172a]">
+                      {option.label.replace(/\s*\(Current\)\s*/i, "")}
+                      {option.isLatest ? (
+                        <span className="ml-1.5 inline-flex translate-y-[-1px] rounded-full bg-[#dcfce7] px-1.5 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wide text-[#15803d]">
+                          Current
+                        </span>
+                      ) : null}
                     </p>
+                    <p className="shrink-0 text-[14px] font-bold tabular-nums text-[#047857]">
+                      {formatQuoteAmount(option.amount)}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-[#64748b]">{meta.join(" · ")}</p>
+                  {option.summary ? (
+                    <p className="mt-1 line-clamp-1 text-[11px] leading-snug text-[#334155]">{option.summary}</p>
                   ) : null}
-                  <p className="mt-3 text-[18px] font-bold text-[#0f172a]">
-                    {formatQuoteAmount(option.amount)}
-                  </p>
                   {quoteUrl ? (
                     <a
                       href={quoteUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(event) => event.stopPropagation()}
-                      className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-[#047857] hover:underline"
+                      className="mt-1 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide text-[#047857] transition hover:text-[#065f46] hover:underline"
                     >
                       Open quotation →
                     </a>
@@ -1141,12 +1166,12 @@ function QuotationSection({
           </SoftScroll>
 
           {selectedQuote ? (
-            <div className="rounded-lg border border-[#bbf7d0] bg-[#ecfdf5] px-4 py-3">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-[#bbf7d0] bg-[#ecfdf5] px-3 py-2">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#047857]">
                 Selected for booking
               </p>
-              <p className="mt-1 text-[14px] font-semibold text-[#065f46]">
-                {selectedQuote.label}
+              <p className="truncate text-[13px] font-semibold text-[#065f46]">
+                {selectedQuote.label.replace(/\s*\(Current\)\s*/i, "")}
                 {" · "}
                 {amountRefreshing ? "Loading amount…" : formatQuoteAmount(selectedQuote.amount)}
               </p>
@@ -1165,7 +1190,6 @@ function formatQuoteCreatedAt(value?: string): string {
   return parsed.toLocaleString("en-IN", {
     day: "numeric",
     month: "short",
-    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
     hour12: true,
