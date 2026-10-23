@@ -79,6 +79,7 @@ import {
   findAllAppointmentsForLead,
   findLatestAppointmentForLead,
   markAppointmentMeetingSuccessful,
+  resolveDesignModuleDesignerEmail,
   updateAppointment,
   type CreateAppointmentBody,
   type CreateAppointmentResponse,
@@ -3358,6 +3359,7 @@ export default function LeadDetailsApiClient({
           ? ""
           : (args.nextCallDateLocal.trim() || lead.followUpDate);
         let meetingDate = lead.meetingDate;
+        let meetingUpdateWarning = "";
         let designerName = lead.designerName;
         let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
 
@@ -3545,15 +3547,39 @@ export default function LeadDetailsApiClient({
               meetingType === "SITE_VISIT"
                 ? meetingType
                 : undefined;
-            await markAppointmentMeetingSuccessful(existing.id, {
-              designerName: existing.designerName || lead.designerName,
-              meetingType: knownType,
-              startTime: existing.startTime,
-              endTime: existing.endTime,
-              leadType: existing.leadType || crmLeadTypeToApiLabel(lt),
-              leadId: existing.leadId ?? leadIdNum,
-              description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
-            });
+            const designerForEmail = (existing.designerName || lead.designerName || "").trim();
+            let designerEmail: string | undefined;
+            if (designerForEmail) {
+              try {
+                designerEmail = await resolveDesignModuleDesignerEmail(designerForEmail);
+              } catch {
+                designerEmail = undefined;
+              }
+            }
+            try {
+              await markAppointmentMeetingSuccessful(existing.id, {
+                designerName: designerForEmail || undefined,
+                designerEmail,
+                meetingType: knownType,
+                startTime: existing.startTime,
+                endTime: existing.endTime,
+                leadType: existing.leadType || crmLeadTypeToApiLabel(lt),
+                leadId: existing.leadId ?? leadIdNum,
+                description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
+              });
+            } catch (appointmentError) {
+              const message =
+                appointmentError instanceof Error ? appointmentError.message : "";
+              if (
+                isDesignerEmailMissingError(appointmentError) ||
+                /designerEmail/i.test(message)
+              ) {
+                meetingUpdateWarning =
+                  "Saved. Designer email is missing in Design Module, so the calendar meeting was not updated.";
+              } else {
+                throw appointmentError;
+              }
+            }
           }
         }
 
@@ -3685,6 +3711,8 @@ export default function LeadDetailsApiClient({
                 : `Assigned to ${exec}`,
             );
           }
+        } else if (meetingUpdateWarning) {
+          notifyInfo(meetingUpdateWarning, 6000);
         } else {
           notifySuccess("Saved");
         }
