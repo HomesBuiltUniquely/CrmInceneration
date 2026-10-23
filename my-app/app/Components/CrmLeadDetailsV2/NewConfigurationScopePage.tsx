@@ -11,7 +11,6 @@ import { CRM_USER_NAME_STORAGE_KEY } from "@/lib/auth/api";
 import { notifyConfigurationScopeUpdated } from "@/lib/configuration-scope-events";
 import {
   validateConfigurationScopeForMeeting,
-  configurationScopeValidationSummary,
   type ConfigurationScopeValidationIssue,
 } from "@/lib/configuration-scope-validation";
 import { BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS } from "@/lib/data";
@@ -82,7 +81,7 @@ import {
   uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import type { LeadQuoteOption } from "@/lib/crm-quote-links";
+import { findQuoteOptionForSelection, type LeadQuoteOption } from "@/lib/crm-quote-links";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
 type Props = {
@@ -845,8 +844,7 @@ export default function NewConfigurationScopePage({
       bookingType,
       hasFloorPlan: hasFloorPlanUploaded,
     });
-    const returningToMeeting = Boolean(onSavedAndClose);
-    if (issues.length > 0 && !returningToMeeting) {
+    if (issues.length > 0) {
       setShowMissingFieldHints(true);
       notifyError(
         issues[0]?.message ?? "A few details still need a moment of your care.",
@@ -856,13 +854,6 @@ export default function NewConfigurationScopePage({
         block: "start",
       });
       return;
-    }
-    const pendingScopeWarning =
-      issues.length > 0
-        ? `${configurationScopeValidationSummary(issues)} You can still schedule this meeting.`
-        : "";
-    if (pendingScopeWarning) {
-      setShowMissingFieldHints(true);
     }
     setFinalizing(true);
     try {
@@ -927,9 +918,7 @@ export default function NewConfigurationScopePage({
 
       // Meeting gate: reopen Schedule Hub Meeting immediately on save (no celebration delay).
       if (onSavedAndClose) {
-        if (pendingScopeWarning) {
-          notifyError(pendingScopeWarning);
-        } else if (!notesOk) {
+        if (!notesOk) {
           notifyError(
             "Aesthetic notes could not be saved. Configuration scope is saved, and you can schedule the meeting.",
           );
@@ -1023,13 +1012,8 @@ export default function NewConfigurationScopePage({
       let selectedInBooking = false;
 
       if (stored) {
-        quote =
-          options.find(
-            (option) =>
-              option.id === stored.quoteId ||
-              option.quoteId === stored.quoteId,
-          ) ?? null;
-        selectedInBooking = stored.selectedInBookingDone;
+        quote = findQuoteOptionForSelection(options, stored);
+        selectedInBooking = quote != null && stored.selectedInBookingDone;
       }
 
       if (!quote) {

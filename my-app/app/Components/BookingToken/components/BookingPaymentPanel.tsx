@@ -32,7 +32,9 @@ import {
   refreshQuoteOptionDetails,
 } from "@/lib/lead-quote-options";
 import {
+  findQuoteOptionForSelection,
   formatQuoteAmount,
+  quoteVersionMatchKey,
   resolveQuoteVerifyUrl,
   type LeadQuoteOption,
 } from "@/lib/crm-quote-links";
@@ -226,11 +228,18 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
     [quoteOptions, selectedQuoteId],
   );
   const dealQuoteId = (summary?.quoteId ?? deal?.quoteId ?? null)?.trim() || null;
+  const dealVersionLabel =
+    (summary?.quoteVersionLabel ?? deal?.quoteVersionLabel ?? "").trim() || null;
   const quoteSelectionDiffers =
     Boolean(selectedQuote) &&
     Boolean(summary) &&
     Boolean(deal) &&
-    !isDealLockedQuote(selectedQuote, dealQuoteId, summary?.quoteAmount ?? deal?.dealValueAmount);
+    !isDealLockedQuote(
+      selectedQuote,
+      dealQuoteId,
+      summary?.quoteAmount ?? deal?.dealValueAmount,
+      dealVersionLabel,
+    );
   const quotePreview =
     quoteSelectionDiffers && selectedQuote?.amount != null
       ? previewQuoteChange({
@@ -364,12 +373,11 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
         const lockedId = (activeDeal.quoteId ?? "").trim();
-        const lockedMatches = lockedId
-          ? merged.filter((option) => option.quoteId === lockedId || option.id === lockedId)
-          : [];
         const locked =
-          lockedMatches.find((option) => option.isLatest) ??
-          lockedMatches[lockedMatches.length - 1] ??
+          findQuoteOptionForSelection(merged, {
+            quoteId: lockedId,
+            label: activeDeal.quoteVersionLabel,
+          }) ??
           (lockedId
             ? null
             : merged.find(
@@ -1163,6 +1171,7 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
       selectedQuoteId={selectedQuoteId}
       selectedQuote={selectedQuote}
       dealQuoteId={dealQuoteId}
+      dealVersionLabel={dealVersionLabel}
       quoteAmountRefreshing={quoteAmountRefreshing}
       onSelectQuote={(id) => void handleSelectQuote(id)}
       historyLoading={loading}
@@ -1560,12 +1569,15 @@ function isDealLockedQuote(
   option: LeadQuoteOption | null,
   dealQuoteId: string | null,
   dealQuoteAmount?: number | null,
+  dealVersionLabel?: string | null,
 ): boolean {
   if (!option) return false;
-  const locked = dealQuoteId?.trim();
-  if (locked) {
-    return option.quoteId === locked || option.id === locked;
-  }
+  const locked = dealQuoteId?.trim() ?? "";
+  const sameQuote = !locked || option.quoteId === locked || option.id === locked;
+  if (!sameQuote) return false;
+  const labelKey = quoteVersionMatchKey(dealVersionLabel);
+  if (labelKey) return quoteVersionMatchKey(option.label) === labelKey;
+  if (locked) return true;
   if (option.amount == null || dealQuoteAmount == null || !Number.isFinite(dealQuoteAmount)) {
     return false;
   }

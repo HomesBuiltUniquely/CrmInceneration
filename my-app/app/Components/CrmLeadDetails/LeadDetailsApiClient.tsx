@@ -78,7 +78,9 @@ import {
   deleteAppointment,
   findAllAppointmentsForLead,
   findLatestAppointmentForLead,
+  markAppointmentMeetingSuccessful,
   updateAppointment,
+  type CreateAppointmentBody,
   type CreateAppointmentResponse,
   resolveAppointmentContextForLead,
 } from "@/lib/appointment-client";
@@ -94,6 +96,7 @@ import {
   isMeetingCancelledSubstage,
   isMeetingRescheduledSubstage,
   isMeetingScheduleSubstage,
+  isMeetingSuccessfulSubstage,
   normalizeMilestoneSubStageForApi,
 } from "@/lib/milestone-substage-map";
 import {
@@ -977,6 +980,7 @@ export default function LeadDetailsApiClient({
   } | null>(null);
   const [bookingDoneOpen, setBookingDoneOpen] = useState(false);
   const bookingDoneOpenRef = useRef(bookingDoneOpen);
+  const loadSeqRef = useRef(0);
   bookingDoneOpenRef.current = bookingDoneOpen;
   const [paymentLinkBlocksMarkAsWon, setPaymentLinkBlocksMarkAsWon] = useState(() =>
     doesPaymentLinkBlockMarkAsWon(leadTypeParam, leadId),
@@ -1063,6 +1067,7 @@ export default function LeadDetailsApiClient({
     }
     // Never hard-reload while Booking Done is open — that remounts the modal mid-send success.
     const quiet = Boolean(opts?.quiet) || bookingDoneOpenRef.current;
+    const seq = ++loadSeqRef.current;
     if (!quiet) {
       setLoading(true);
       setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
@@ -1071,6 +1076,7 @@ export default function LeadDetailsApiClient({
     try {
       const lt = leadTypeParam as CrmLeadType;
       let detailJson = await getLeadDetail(lt, leadId);
+      if (seq !== loadSeqRef.current) return;
       if (lt === "whatsapplead") {
         clearStoredPresalesMilestone(lt, leadId);
       } else if (usesPresalesMilestoneClientOverlay(lt)) {
@@ -1170,6 +1176,7 @@ export default function LeadDetailsApiClient({
         })
         .catch(() => loadCreatedTimeline(detailJson, []));
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(e instanceof Error ? e.message : "Could not load lead");
       setLead(emptyLead(leadId, leadTypeParam as CrmLeadType));
       setLoading(false);
@@ -3523,6 +3530,34 @@ export default function LeadDetailsApiClient({
         }
 
         if (
+          isMeetingSuccessfulSubstage(substageForSave) &&
+          !args.meetingAppointment &&
+          Number.isFinite(leadIdNum)
+        ) {
+          const existing = await findLatestAppointmentForLead(leadIdNum, {
+            designerName: lead.designerName,
+          });
+          if (existing?.id != null) {
+            const meetingType = existing.meetingType;
+            const knownType: CreateAppointmentBody["meetingType"] | undefined =
+              meetingType === "SHOWROOM_VISIT" ||
+              meetingType === "VIRTUAL_MEETING" ||
+              meetingType === "SITE_VISIT"
+                ? meetingType
+                : undefined;
+            await markAppointmentMeetingSuccessful(existing.id, {
+              designerName: existing.designerName || lead.designerName,
+              meetingType: knownType,
+              startTime: existing.startTime,
+              endTime: existing.endTime,
+              leadType: existing.leadType || crmLeadTypeToApiLabel(lt),
+              leadId: existing.leadId ?? leadIdNum,
+              description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
+            });
+          }
+        }
+
+        if (
           isMeetingScheduleSubstage(substageForSave) &&
           followUpDate.trim()
         ) {
@@ -3789,6 +3824,13 @@ export default function LeadDetailsApiClient({
         }
       >
         <p className="text-rose-600">{error}</p>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="mt-4 rounded-full bg-[#047857] px-4 py-2 text-[13px] font-semibold text-white"
+        >
+          Try again
+        </button>
       </main>
     );
   }

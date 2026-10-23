@@ -5082,9 +5082,9 @@ export default function LeadsDataSection({
       : currentRole === "PRESALES_MANAGER"
         ? "Your team — Presales Executives"
         : null;
-  // Admin / Super Admin only — Meta bulk/single delete mirrors Google (`bulk-delete-mleads`).
-  const canBulkDelete = currentRole === "SUPER_ADMIN" || currentRole === "ADMIN";
-  const showDeleteAll = currentRole === "ADMIN";
+  // Super Admin only. Admin no longer sees lead delete or Delete All.
+  const canBulkDelete = currentRole === "SUPER_ADMIN";
+  const showDeleteAll = false;
   const canDeleteAll = showDeleteAll;
   const deleteAllConfirmPhrase =
     leadType === "all"
@@ -5287,7 +5287,7 @@ export default function LeadsDataSection({
 
   const requestDeleteLeadRow = (row: LeadRowModel) => {
     if (!canBulkDelete) {
-      setError("Access denied. Only Admin/Super Admin can delete leads.");
+      setError("Access denied. Only Super Admin can delete leads.");
       return;
     }
     setDeleteRowCandidate(row);

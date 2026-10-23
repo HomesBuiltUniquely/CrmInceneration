@@ -442,6 +442,33 @@ export async function createAppointment(body: CreateAppointmentBody): Promise<Cr
   return parseAppointmentWriteResponse(res, text, body.designerName);
 }
 
+/** Mark the Hub appointment done. PUT /v1/Appointment/{id} with meetingProgress. */
+export async function markAppointmentMeetingSuccessful(
+  id: number | string,
+  existing: Partial<CreateAppointmentBody> = {},
+): Promise<void> {
+  const payload: Record<string, unknown> = { meetingProgress: "MEETING_SUCCESSFUL" };
+  if (existing.designerName?.trim()) payload.designerName = existing.designerName.trim();
+  if (existing.designerEmail?.trim()) payload.designerEmail = existing.designerEmail.trim();
+  if (existing.description?.trim()) payload.description = existing.description.trim();
+  if (existing.leadType?.trim()) payload.leadType = existing.leadType.trim();
+  if (existing.leadId != null && Number.isFinite(existing.leadId)) payload.leadId = existing.leadId;
+  if (existing.meetingType) payload.meetingType = existing.meetingType;
+  if (existing.startTime && existing.endTime) {
+    payload.startTime = existing.startTime;
+    payload.endTime = existing.endTime;
+  }
+  const res = await fetch(`/api/crm/appointment/${encodeURIComponent(String(id))}`, {
+    method: "PUT",
+    credentials: "include",
+    headers: authJson(),
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  await parseAppointmentWriteResponse(res, text);
+}
+
 /** Update existing appointment — PUT /v1/Appointment/{id} (true reschedule). */
 export async function updateAppointment(
   id: number | string,

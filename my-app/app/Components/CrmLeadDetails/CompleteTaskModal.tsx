@@ -988,6 +988,7 @@ export default function CompleteTaskModal({
   /**
    * Hard Configuration Scope gate only for the first Meeting Scheduled.
    * Reschedule, a booking after cancel, or a scope form already submitted this time only warns.
+   * A site-visit date or Fix Appointment is not a completed Meeting Scheduled.
    */
   const isRepeatMeetingSchedule = (feedbackLabel?: string) => {
     if (scopeSubmittedForScheduleRef.current || scheduleAfterCancelRef.current) return true;
@@ -996,24 +997,15 @@ export default function CompleteTaskModal({
       ? feedbackOptions.find((option) => option.label === feedbackLabel)
       : undefined;
     const chosen = pipelineSubStageLabel(selected?.subStageName || feedbackLabel || "");
-    if (
-      isMeetingRescheduledSubstage(chosen) ||
-      isDesignRefinementSchedulingSubstage(chosen) ||
-      chosen === "Fix Appointment"
-    ) {
-      return true;
-    }
+    if (chosen !== "Meeting Scheduled") return true;
     const current = pipelineSubStageLabel(
       lead.stageBlock?.milestoneSubStage || lead.status || "",
     );
-    if (
-      isMeetingCancelledSubstage(current) ||
+    return (
+      current === "Meeting Scheduled" ||
       isMeetingRescheduledSubstage(current) ||
-      isMeetingScheduleSubstage(current)
-    ) {
-      return true;
-    }
-    return Boolean(lead.meetingDate?.trim());
+      isMeetingCancelledSubstage(current)
+    );
   };
 
   /** Returns true when the scheduler may open. First booking still opens Configuration Scope. */
@@ -1030,9 +1022,15 @@ export default function CompleteTaskModal({
     };
 
     if (!resolvedConfigLeadType || !resolvedConfigLeadId) {
-      return warnAndAllow(
-        "Configuration Scope could not be checked. You can still schedule this meeting.",
+      if (isRepeatMeetingSchedule(meetingFeedback)) {
+        return warnAndAllow(
+          "Configuration Scope could not be checked. You can still schedule this meeting.",
+        );
+      }
+      options?.setError?.(
+        "Configuration Scope could not be checked. Complete it before scheduling this meeting.",
       );
+      return false;
     }
 
     setConfigScopeGateBusy(true);
@@ -1050,9 +1048,26 @@ export default function CompleteTaskModal({
       }
 
       if (loadFailed || !requirements) {
-        return warnAndAllow(
-          "Configuration Scope could not be loaded. You can still schedule this meeting.",
+        if (isRepeatMeetingSchedule(meetingFeedback)) {
+          return warnAndAllow(
+            "Configuration Scope could not be loaded. You can still schedule this meeting.",
+          );
+        }
+        options?.setError?.(
+          "Configuration Scope could not be loaded. Complete it before scheduling this meeting.",
         );
+        notifyOpenConfigurationScope({
+          leadType: resolvedConfigLeadType,
+          leadId: resolvedConfigLeadId,
+          highlightMissing: true,
+          reason: "meeting-scheduled",
+          meetingFeedback,
+        });
+        if (meetingFeedback && isMeetingScheduleSubstage(meetingFeedback)) {
+          setFeedback(meetingFeedback);
+        }
+        setHubMeetingOpen(false);
+        return false;
       }
 
       // BHK lives on the lead row (not configuration-scope). Re-fetch so a just-saved

@@ -270,6 +270,56 @@ export function buildDesignQuotePageUrl(
   return base;
 }
 
+/** "Version 2 (Current)" and "Version 2" are the same save. */
+export function quoteVersionMatchKey(label: string | null | undefined): string {
+  return (label ?? "").replace(/\s*\(current\)\s*/gi, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * Discount saves of one design-module quote share a quote id.
+ * Matching on that id alone always hits the first or latest row.
+ * Prefer the version row id, then the version label.
+ */
+export function findQuoteOptionForSelection(
+  options: LeadQuoteOption[],
+  selection: {
+    optionId?: string | null;
+    quoteId?: string | null;
+    label?: string | null;
+  },
+): LeadQuoteOption | null {
+  const optionId = selection.optionId?.trim() ?? "";
+  if (optionId) {
+    const byId = options.find((option) => option.id === optionId);
+    if (byId) return byId;
+  }
+
+  const labelKey = quoteVersionMatchKey(selection.label);
+  const quoteId = selection.quoteId?.trim() ?? "";
+  const sameQuote = (option: LeadQuoteOption) =>
+    !quoteId || option.quoteId === quoteId || option.id === quoteId;
+
+  if (labelKey) {
+    const byLabel = options.filter(
+      (option) => sameQuote(option) && quoteVersionMatchKey(option.label) === labelKey,
+    );
+    if (byLabel.length === 1) return byLabel[0];
+    if (byLabel.length > 1) {
+      return byLabel.find((option) => option.isLatest) ?? byLabel[byLabel.length - 1] ?? null;
+    }
+    return null;
+  }
+
+  if (quoteId) {
+    const matches = options.filter(
+      (option) => option.quoteId === quoteId || option.id === quoteId,
+    );
+    if (matches.length === 1) return matches[0];
+  }
+
+  return null;
+}
+
 export function resolveQuoteVerifyUrl(
   option: LeadQuoteOption,
   hubLeadId?: string,

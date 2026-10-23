@@ -231,10 +231,29 @@ function readPctMap(value: unknown): Partial<Record<CategoryPctKey, number>> | n
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function roomRowsHaveListPrice(rows: unknown[]): boolean {
+  return rows.some((item) => {
+    const room = asRecord(item);
+    const amount = parseNum(room.totalPrice) ?? parseNum(room.totalPriceOld);
+    return amount != null && amount > 0;
+  });
+}
+
 function quoteRoomRows(row: Record<string, unknown>): Record<string, unknown>[] {
   const details = Array.isArray(row.optionDetails) ? row.optionDetails : [];
   const options = Array.isArray(row.quoteOptionsData) ? row.quoteOptionsData : [];
-  const source = details.length >= options.length ? details : options;
+  const detailsPriced = roomRowsHaveListPrice(details);
+  const optionsPriced = roomRowsHaveListPrice(options);
+  // optionDetails is often the same length but omits totalPrice.
+  // The quotation list total lives on quoteOptionsData.
+  const source =
+    optionsPriced && !detailsPriced
+      ? options
+      : detailsPriced && !optionsPriced
+        ? details
+        : details.length >= options.length
+          ? details
+          : options;
   return source.map((item) => asRecord(item));
 }
 
@@ -272,15 +291,26 @@ function quoteHasHubDiscount(row: Record<string, unknown>): boolean {
 
 /**
  * Discount subtracted from the list price.
- * Uses the larger of the saved rupee discount and the rounded category percentages.
+ * Category percentages are rounded the same way as the quotation page.
+ * The saved rupee amount is kept when it is only a rupee or two off (rounding).
+ * A wider gap means that amount was copied from an older quote and is stale.
  */
 function customerDiscountAmount(row: Record<string, unknown>): number {
   const category = parseNum(row.hubCategoryDiscountAmount);
   const additional = Math.max(0, parseNum(row.hubAdditionalDiscountAmount) ?? 0);
   const flat = Math.max(0, parseNum(row.hubFlatDiscountAmount) ?? 0);
-  const stored =
-    category != null || additional > 0 ? Math.max(0, (category ?? 0) + additional) : 0;
-  return Math.max(stored, editableCategoryDiscount(row)) + flat;
+  const computed = editableCategoryDiscount(row);
+  const stored = category != null ? Math.max(0, Math.round(category)) : null;
+  let categoryDiscount = computed;
+  if (stored != null) {
+    if (computed <= 0) {
+      categoryDiscount = stored;
+    } else {
+      const drift = Math.abs(stored - computed);
+      categoryDiscount = drift <= 2 ? stored : computed;
+    }
+  }
+  return categoryDiscount + additional + flat;
 }
 
 function preDiscountRoomTotal(row: Record<string, unknown>): number {
@@ -584,8 +614,8 @@ export async function fetchProlanceQuoteRevisions(
   const versions = Array.isArray(parsed.versions) ? parsed.versions : [];
   const revisions: ProlanceQuoteRevision[] = [];
   for (const row of versions) {
-    const item = asRecord(row);
-    const qid = parseNum(item.quoteId);
+      const item = asRecord(row);
+      const qid = parseNum(item.quoteId);
     if (qid === null || qid < 1) continue;
     const createdAt = typeof item.createdAt === "string" ? item.createdAt.trim() : "";
     const createdBy = pickStr(item, "createdBy", "createdByName", "created_by");
@@ -682,16 +712,28 @@ export async function buildLeadQuoteOptionsFromProlance(
   }
 
   return chronological.map((revision, index) => {
-    const share = shareWithoutHubDiscount(shareByQuoteId.get(revision.quoteId) ?? {});
+    const shareFull = shareByQuoteId.get(revision.quoteId) ?? {};
+    const share = shareWithoutHubDiscount(shareFull);
     const quoteHistory = byQuoteId.get(revision.quoteId) ?? [revision];
     const historyIndex = Math.max(0, quoteHistory.indexOf(revision));
     const discount = discountMetaFromQuoteRevisions(
       quoteHistory.slice(0, historyIndex + 1).map((item) => item.source),
       revision.quoteId,
     );
-    const versionNumber = index + 1;
+    const versionNumber =
+      revision.versionNumber != null && revision.versionNumber > 0
+        ? revision.versionNumber
+        : index + 1;
     const isLatest = index === chronological.length - 1;
-    const amount = extractProlanceQuoteTotalAmount(discount ? { ...share, ...discount } : share);
+    const isLatestSaveOfQuote = historyIndex === quoteHistory.length - 1;
+    // A new quote's first row is often only "Quote generated". Its discount
+    // still lives on the share payload, not in that summary.
+    const priced = discount
+      ? { ...share, ...discount }
+      : isLatestSaveOfQuote
+        ? shareFull
+        : share;
+    const amount = extractProlanceQuoteTotalAmount(priced);
     const configuration = extractProlanceQuoteConfiguration(share);
     const createdAt =
       revision.createdAt ||
