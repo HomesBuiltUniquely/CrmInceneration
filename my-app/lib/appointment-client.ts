@@ -41,6 +41,9 @@ export type CreateAppointmentBody = {
   description: string;
   leadType: string;
   leadId: number;
+  /** New bookings are not done. The appointment column is required and has no database default. */
+  meetingSuccessful?: boolean;
+  meetingProgress?: "SCHEDULED" | "IN_PROGRESS" | "MEETING_ABANDONED" | "MEETING_SUCCESSFUL";
 };
 
 export type CreateAppointmentResponse = {
@@ -402,6 +405,8 @@ function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, un
     payload.date = body.date;
     payload.slotId = body.slotId;
   }
+  if (body.meetingSuccessful != null) payload.meetingSuccessful = body.meetingSuccessful;
+  if (body.meetingProgress) payload.meetingProgress = body.meetingProgress;
   return payload;
 }
 
@@ -435,7 +440,14 @@ export async function createAppointment(body: CreateAppointmentBody): Promise<Cr
     method: "POST",
     credentials: "include",
     headers: authJson(),
-    body: JSON.stringify(buildAppointmentPayload({ ...body, designerEmail })),
+    body: JSON.stringify(
+      buildAppointmentPayload({
+        ...body,
+        designerEmail,
+        meetingSuccessful: body.meetingSuccessful ?? false,
+        meetingProgress: body.meetingProgress ?? "SCHEDULED",
+      }),
+    ),
     cache: "no-store",
   });
   const text = await res.text();
@@ -447,7 +459,10 @@ export async function markAppointmentMeetingSuccessful(
   id: number | string,
   existing: Partial<CreateAppointmentBody> = {},
 ): Promise<void> {
-  const payload: Record<string, unknown> = { meetingProgress: "MEETING_SUCCESSFUL" };
+  const payload: Record<string, unknown> = {
+    meetingProgress: "MEETING_SUCCESSFUL",
+    meetingSuccessful: true,
+  };
   if (existing.designerName?.trim()) payload.designerName = existing.designerName.trim();
   if (existing.designerEmail?.trim()) payload.designerEmail = existing.designerEmail.trim();
   if (existing.description?.trim()) payload.description = existing.description.trim();
