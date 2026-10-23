@@ -10,7 +10,10 @@ import DesignerEmailMissingDialog from "@/app/Components/Appointment/DesignerEma
 import {
   buildHubMeetingDateTimeIso,
   formatHubTimeRange,
+  formatHubWindowLabel,
   HUB_MEETING_DURATION_MIN,
+  hubMeetingDurationMin,
+  hubMeetingEndMin,
   listHubMeetingStartOptions,
   minutesToHubTimeLabel,
 } from "@/lib/hub-meeting-schedule";
@@ -360,6 +363,7 @@ function SummaryPanel({
   appointmentDate,
   meetingDateParts,
   timeLabel,
+  durationMin,
   meetingTypeLabel,
   meetingTypeHint,
   designerName,
@@ -370,6 +374,7 @@ function SummaryPanel({
   appointmentDate: string;
   meetingDateParts: { day: string; weekday: string; monthYear: string } | null;
   timeLabel: string;
+  durationMin: number | null;
   meetingTypeLabel: string;
   meetingTypeHint: string;
   designerName: string;
@@ -436,7 +441,7 @@ function SummaryPanel({
         icon={<Icon name="clock" className="h-4 w-4" />}
         label="Time"
         value={timeLabel || "Not set"}
-        sub={timeLabel ? `${HUB_MEETING_DURATION_MIN} min · within hub hours` : "Choose in step 2"}
+        sub={timeLabel && durationMin != null ? `${durationMin} min · within hub hours` : "Choose in step 2"}
         valueClassName={timeLabel ? undefined : "text-amber-700"}
       />
       <InfoCard
@@ -590,7 +595,7 @@ function MeetingCalendar({
           Today
         </span>
         <span className="font-semibold">
-          Hub hours 11:00 AM – 7:00 PM · {HUB_MEETING_DURATION_MIN} min
+          Hub hours {formatHubWindowLabel()}
         </span>
       </div>
     </div>
@@ -647,8 +652,10 @@ export default function ScheduleHubMeetingModal({
   });
 
   const startOptions = useMemo(() => listHubMeetingStartOptions(), []);
+  const selectedDurationMin =
+    selectedStartMin !== null ? hubMeetingDurationMin(selectedStartMin) : null;
   const selectedEndMin =
-    selectedStartMin !== null ? selectedStartMin + HUB_MEETING_DURATION_MIN : null;
+    selectedStartMin !== null ? hubMeetingEndMin(selectedStartMin) : null;
   const meetingTypeOption = MEETING_TYPE_OPTIONS.find((o) => o.value === meetingType);
   const meetingTypeLabel = meetingTypeOption?.label ?? "";
   const meetingTypeHint = meetingTypeOption?.hint ?? "";
@@ -797,13 +804,13 @@ export default function ScheduleHubMeetingModal({
     const startTime = buildHubMeetingDateTimeIso(appointmentDate.trim(), selectedStartMin);
     const endTime = buildHubMeetingDateTimeIso(
       appointmentDate.trim(),
-      selectedStartMin + HUB_MEETING_DURATION_MIN,
+      hubMeetingEndMin(selectedStartMin),
     );
     void fetchAvailableDesignersForSlot({
       date: appointmentDate.trim(),
       startTime,
       endTime,
-      durationMinutes: HUB_MEETING_DURATION_MIN,
+      durationMinutes: hubMeetingDurationMin(selectedStartMin),
       meetingType: meetingType || undefined,
     })
       .then((data) => {
@@ -1088,7 +1095,7 @@ export default function ScheduleHubMeetingModal({
                             ? `${meetingDateParts.weekday}, ${meetingDateParts.day} ${meetingDateParts.monthYear}`
                             : "Select a date first"}
                           {" · "}
-                          {HUB_MEETING_DURATION_MIN} minutes
+                          Hub hours {formatHubWindowLabel()}
                           {dayLoading ? " · Checking day…" : ""}
                         </p>
                         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
@@ -1127,7 +1134,7 @@ export default function ScheduleHubMeetingModal({
                                   className="mt-0.5 text-[11px] font-medium"
                                   style={{ color: selected ? "rgba(255,255,255,0.85)" : C.muted }}
                                 >
-                                  → {minutesToHubTimeLabel(m + HUB_MEETING_DURATION_MIN)}
+                                  → {minutesToHubTimeLabel(hubMeetingEndMin(m))}
                                 </p>
                               </button>
                             );
@@ -1223,7 +1230,7 @@ export default function ScheduleHubMeetingModal({
                               No designers free for this slot
                             </p>
                             <p className="mt-1 text-[13px]" style={{ color: C.muted }}>
-                              Try another time — Hub window is 11:00 AM – 7:00 PM.
+                              Try another time — Hub window is {formatHubWindowLabel()}.
                             </p>
                             <Button
                               type="button"
@@ -1398,6 +1405,7 @@ export default function ScheduleHubMeetingModal({
               appointmentDate={appointmentDate}
               meetingDateParts={meetingDateParts}
               timeLabel={timeLabel}
+              durationMin={selectedDurationMin}
               meetingTypeLabel={meetingTypeLabel}
               meetingTypeHint={meetingTypeHint}
               designerName={designer?.name || ""}

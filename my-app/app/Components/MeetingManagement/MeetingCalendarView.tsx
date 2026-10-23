@@ -48,7 +48,7 @@ type CalEvent = {
   status?: string;
 };
 
-const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+const HOURS = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
 const HOUR_PX = 84;
 const START_MIN = 9 * 60;
 const TYPES = [...MEETING_TYPES];
