@@ -15,8 +15,9 @@ import { focusRing } from "./motion";
 
 const PROGRESS_TONE = {
   SCHEDULED: { label: "Scheduled", pill: "bg-[#E6EDFF] text-[#1B3FA8]", dot: "#1B3FA8" },
-  IN_PROGRESS: { label: "In progress", pill: "bg-[#FFF1D6] text-[#8A5300]", dot: "#8A5300" },
-  MEETING_SUCCESSFUL: { label: "Meeting successful", pill: "bg-[#E3F3EA] text-[#0B6B45]", dot: "#0B6B45" },
+  IN_PROGRESS: { label: "In Progress", pill: "bg-[#FFF1D6] text-[#8A5300]", dot: "#8A5300" },
+  MEETING_ABANDONED: { label: "Meeting Abandoned", pill: "bg-[#FDECEC] text-[#9B1C1C]", dot: "#9B1C1C" },
+  MEETING_SUCCESSFUL: { label: "Meeting Successful", pill: "bg-[#E3F3EA] text-[#0B6B45]", dot: "#0B6B45" },
 } as const;
 
 const STATUS_TONE = {
@@ -275,13 +276,20 @@ function StepMark({ state }: { state: "done" | "current" | "pending" }) {
 function journeySteps(row: MeetingRecord): Array<{ title: string; state: "done" | "current" | "pending"; detail?: string; tag?: string }> {
   const progress = row.progress ?? "SCHEDULED";
   const visitDone = progress === "IN_PROGRESS" || progress === "MEETING_SUCCESSFUL";
-  const successDone = row.meetingSuccessful === true;
+  const successDone = progress === "MEETING_SUCCESSFUL" || row.meetingSuccessful === true;
   const quoteDone = row.quoteGenerated === true;
   const followDone = row.quoteFollow === true || row.quoteSent === true;
   const doneFlags = [true, visitDone, successDone, quoteDone, followDone, false];
   const currentIndex = doneFlags.findIndex((done) => !done);
   const when = textOrDash(row.whenLabel);
-  const visitDetail = progress === "IN_PROGRESS" ? `In progress · ${when}` : progress === "MEETING_SUCCESSFUL" ? when : `Up next · ${when}`;
+  const visitDetail =
+    progress === "IN_PROGRESS"
+      ? `In Progress · ${when}`
+      : progress === "MEETING_ABANDONED"
+        ? `Meeting Abandoned · ${when}`
+        : progress === "MEETING_SUCCESSFUL"
+          ? when
+          : `Up next · ${when}`;
   const person = row.salesName || row.assignee || "";
   const scheduledDetail = [row.scheduledAt && row.scheduledAt !== "—" ? row.scheduledAt : "", person].filter(Boolean).join(" · ");
   const visitTitle = row.meetingType && row.meetingType !== "—" ? row.meetingType : "Showroom visit";

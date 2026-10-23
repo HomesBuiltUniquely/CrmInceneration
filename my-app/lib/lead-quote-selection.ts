@@ -5,7 +5,10 @@ export const LEAD_QUOTE_SELECTION_EVENT = "crm:lead-quote-selection-changed";
 const STORAGE_KEY = "crm:lead-quote-selection";
 
 export type LeadQuoteSelectionSnapshot = {
+  /** Design-module quote id. Several discount saves share this. */
   quoteId: string;
+  /** Version row id (`{quoteId}-v{n}`). This is the save the user picked. */
+  optionId?: string;
   label: string;
   amount: number | null;
   configuration?: string;
@@ -70,6 +73,7 @@ export function snapshotFromQuoteOption(
 ): LeadQuoteSelectionSnapshot {
   return {
     quoteId: quote.quoteId?.trim() || quote.id,
+    optionId: quote.id,
     label: quote.label,
     amount: quote.amount ?? null,
     configuration: quote.configuration?.trim() || undefined,

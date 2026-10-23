@@ -2,6 +2,7 @@
 
 import {
   formatQuoteAmount,
+  quoteVersionMatchKey,
   resolveQuoteVerifyUrl,
   sortQuotesForRevisionDisplay,
   type LeadQuoteOption,
@@ -20,6 +21,7 @@ type Props = {
   selectedQuote: LeadQuoteOption | null;
   /** Deal's currently locked quote — used to mark "current on deal". */
   dealQuoteId?: string | null;
+  dealVersionLabel?: string | null;
   amountRefreshing?: boolean;
   disabled?: boolean;
 };
@@ -38,10 +40,17 @@ function formatQuoteCreatedAt(value?: string): string {
   });
 }
 
-function matchesDealQuote(option: LeadQuoteOption, dealQuoteId?: string | null): boolean {
-  const locked = dealQuoteId?.trim();
-  if (!locked) return false;
-  return option.quoteId === locked || option.id === locked;
+function matchesDealQuote(
+  option: LeadQuoteOption,
+  dealQuoteId?: string | null,
+  dealVersionLabel?: string | null,
+): boolean {
+  const locked = dealQuoteId?.trim() ?? "";
+  const sameQuote = !locked || option.quoteId === locked || option.id === locked;
+  if (!sameQuote) return false;
+  const labelKey = quoteVersionMatchKey(dealVersionLabel);
+  if (labelKey) return quoteVersionMatchKey(option.label) === labelKey;
+  return Boolean(locked);
 }
 
 export default function BookingQuoteVersionPicker({
@@ -53,13 +62,14 @@ export default function BookingQuoteVersionPicker({
   onSelectQuote,
   selectedQuote,
   dealQuoteId,
+  dealVersionLabel,
   amountRefreshing = false,
   disabled = false,
 }: Props) {
   const revisionOptions = sortQuotesForRevisionDisplay(options);
   const latestOption = options.find((option) => option.isLatest) ?? null;
   const latestDiffersFromDeal =
-    latestOption != null && !matchesDealQuote(latestOption, dealQuoteId);
+    latestOption != null && !matchesDealQuote(latestOption, dealQuoteId, dealVersionLabel);
 
   return (
     <section className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-3">
@@ -99,7 +109,7 @@ export default function BookingQuoteVersionPicker({
             {revisionOptions.map((option, index) => {
               const selected = option.id === selectedQuoteId;
               const isLatest = Boolean(option.isLatest);
-              const onDeal = matchesDealQuote(option, dealQuoteId);
+              const onDeal = matchesDealQuote(option, dealQuoteId, dealVersionLabel);
               const quoteUrl = resolveQuoteVerifyUrl(option, hubLeadId);
               return (
                 <div

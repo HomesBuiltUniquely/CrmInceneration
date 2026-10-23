@@ -291,7 +291,14 @@ function matchesTab(row: MeetingRecord, tab: MeetingTab): boolean {
   if (tab === "cancelled") return row.meetingStatus === "CANCELLED";
   if (tab === "rescheduled") return row.meetingStatus === "RESCHEDULED";
   if (tab === "in-progress") return row.progress === "IN_PROGRESS" && row.meetingStatus !== "CANCELLED" && row.meetingStatus !== "RESCHEDULED";
-  if (tab === "scheduled") return (row.meetingStatus ?? "SCHEDULED") === "SCHEDULED" && row.progress !== "IN_PROGRESS" && row.progress !== "MEETING_SUCCESSFUL";
+  if (tab === "scheduled") {
+    return (
+      (row.meetingStatus ?? "SCHEDULED") === "SCHEDULED" &&
+      row.progress !== "IN_PROGRESS" &&
+      row.progress !== "MEETING_ABANDONED" &&
+      row.progress !== "MEETING_SUCCESSFUL"
+    );
+  }
   if (tab === "today") return row.dayOffset === 0 && row.meetingStatus !== "CANCELLED";
   if (tab === "upcoming") return row.dayOffset > 0 && row.status !== "COMPLETED" && row.meetingStatus !== "CANCELLED";
   return row.status === "COMPLETED" && row.meetingStatus !== "CANCELLED";

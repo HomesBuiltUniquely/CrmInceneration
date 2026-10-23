@@ -44,6 +44,16 @@ function isRateLimitMessage(text: string): boolean {
   );
 }
 
+/** Hub Meta (and other) detail calls often fail once, then succeed on the next request. */
+function isTransientLeadLoad(status: number, message: string): boolean {
+  if (status === 429 || status === 502 || status === 503 || status === 504 || status >= 500) {
+    return status !== 501;
+  }
+  if (isRateLimitMessage(message)) return true;
+  const t = message.trim().toLowerCase();
+  return t.includes("please try again") || t.includes("right now") || t.includes("try again");
+}
+
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -271,20 +281,15 @@ export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<
     });
     if (res.ok) return res.json() as Promise<Record<string, unknown>>;
     const parsed = await parseApiError(res);
-    const limiterHit =
-      res.status === 429 || res.status === 503 || isRateLimitMessage(parsed.message);
-    if (limiterHit && attempt < maxAttempts) {
-      await waitMs(400 * attempt);
+    const transient = isTransientLeadLoad(res.status, parsed.message);
+    if (transient && attempt < maxAttempts) {
+      await waitMs(450 * attempt);
       continue;
     }
-    const fallback = limiterHit
+    const fallback = isRateLimitMessage(parsed.message) || res.status === 429
       ? "Too many requests right now. Please retry in a few seconds."
       : `Failed to load lead details (${res.status})`;
-    if (limiterHit) {
-      lastError = new Error(fallback);
-    } else {
-      lastError = new Error(parsed.message || fallback);
-    }
+    lastError = new Error(parsed.message || fallback);
     break;
   }
   throw lastError ?? new Error("Failed to load lead details.");

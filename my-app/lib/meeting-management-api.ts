@@ -16,9 +16,13 @@ import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 import { salesInsightCountLeads } from "@/lib/sales-admin-insight-tiles";
 import {
   formatMeetingWhen,
+  indiaWallUtcMs,
+  meetingClockParts,
   meetingIso,
   meetingLevelLabel,
   meetingOffset,
+  MEETING_TIME_ZONE,
+  startOfMeetingBoardToday,
   sortMeetingsForList,
   type AvatarTone,
   type LocationTone,
@@ -79,9 +83,17 @@ function parseWhen(raw: string): { date: string; startMin: number } | null {
   if (!text) return null;
   const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})$/);
   if (dateOnly) return { date: dateOnly[1], startMin: 11 * 60 };
+  // No zone: Hub stores the India wall clock, e.g. 2026-10-22T14:00:00 is 2:00 PM.
+  const naive = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?$/);
+  if (naive) {
+    return { date: naive[1], startMin: Number(naive[2]) * 60 + Number(naive[3]) };
+  }
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return null;
-  return { date: meetingIso(parsed), startMin: parsed.getHours() * 60 + parsed.getMinutes() };
+  const parts = meetingClockParts(parsed);
+  const month = String(parts.month).padStart(2, "0");
+  const day = String(parts.day).padStart(2, "0");
+  return { date: `${parts.year}-${month}-${day}`, startMin: parts.hour * 60 + parts.minute };
 }
 
 function customerFrom(row: Record<string, unknown>): string {
@@ -102,8 +114,17 @@ function leadIdFrom(row: Record<string, unknown>): number | undefined {
 }
 
 function boardProgress(row: Record<string, unknown>): MeetingRecord["progress"] | undefined {
-  const raw = readString(row, "progress").toUpperCase().replace(/[\s-]+/g, "_");
-  if (raw === "SCHEDULED" || raw === "IN_PROGRESS" || raw === "MEETING_SUCCESSFUL") return raw;
+  const raw = readString(row, "meetingProgress", "meeting_progress", "progress")
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  if (
+    raw === "SCHEDULED" ||
+    raw === "IN_PROGRESS" ||
+    raw === "MEETING_ABANDONED" ||
+    raw === "MEETING_SUCCESSFUL"
+  ) {
+    return raw;
+  }
   return undefined;
 }
 
@@ -119,8 +140,8 @@ function slotProgress(date: string, startMin: number, endMin: number): MeetingSt
   const offset = meetingOffset(date);
   if (offset < 0) return "COMPLETED";
   if (offset > 0) return "SCHEDULED";
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const now = meetingClockParts(new Date());
+  const nowMin = now.hour * 60 + now.minute;
   if (nowMin >= endMin) return "COMPLETED";
   if (nowMin >= startMin) return "IN PROGRESS";
   return "SCHEDULED";
@@ -277,7 +298,11 @@ function formatStamp(raw: string): string {
   if (!raw.trim()) return "—";
   const parsed = Date.parse(raw);
   if (Number.isNaN(parsed)) return raw;
-  return new Date(parsed).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+  return new Date(parsed).toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: MEETING_TIME_ZONE,
+  });
 }
 
 function toRecord(
@@ -330,9 +355,7 @@ function toRecord(
   const experienceOrDesign = milestoneBlob.includes("experience") || milestoneBlob.includes("design");
   const offset = meetingOffset(when.date);
   const endMin = when.startMin + durationMin;
-  const endAt = new Date(when.date + "T00:00:00");
-  endAt.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
-  const timePassed = endAt.getTime() < Date.now();
+  const timePassed = indiaWallUtcMs(when.date, endMin) < Date.now();
   const stillBooked = milestoneSubStage === "Meeting Scheduled" || milestoneSubStage === "Meeting Rescheduled";
   const needsOutcome = timePassed && stillBooked && experienceOrDesign;
   let status = statusFrom(row, when.date, when.startMin, endMin);
@@ -412,7 +435,7 @@ function buildBoard(
 
 function cancelledLeadRecord(lead: ApiLead, index: number, quotes: Map<string, number>): MeetingRecord | null {
   const whenRaw = readString(lead as Record<string, unknown>, "meetingDate", "meeting_date");
-  const when = parseWhen(whenRaw) ?? { date: meetingIso(new Date()), startMin: 11 * 60 };
+  const when = parseWhen(whenRaw) ?? { date: meetingIso(startOfMeetingBoardToday()), startMin: 11 * 60 };
   const record = toRecord(
     {
       customerName: leadName(lead),
@@ -485,7 +508,7 @@ export function quoteSentLeadRows(
         customerName: leadName(lead),
         leadId: lead.id,
         leadType: lead.leadType,
-        startTime: when || meetingIso(new Date()),
+        startTime: when || meetingIso(startOfMeetingBoardToday()),
         description: "Quote sent",
       },
       index,
@@ -510,7 +533,7 @@ export function quoteSentLeadRows(
   return sortMeetingsForList(rows).map((row, index) => ({ ...row, order: index + 1 }));
 }
 
-export type MeetingProgress = "SCHEDULED" | "IN_PROGRESS" | "MEETING_SUCCESSFUL";
+export type MeetingProgress = "SCHEDULED" | "IN_PROGRESS" | "MEETING_ABANDONED" | "MEETING_SUCCESSFUL";
 
 export type MeetingBoardQuery = {
   from?: string;
@@ -565,7 +588,8 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
   const date = when?.date ?? "";
   const startMin = when?.startMin ?? 0;
   const end = parseWhen(readString(row, "endTime", "EndTime", "end_time"));
-  const durationMin = end && when && end.date === when.date && end.startMin > when.startMin ? end.startMin - when.startMin : 90;
+  const hasSlotEnd = Boolean(end && when && end.date === when.date && end.startMin > when.startMin);
+  const durationMin = hasSlotEnd && end && when ? end.startMin - when.startMin : 90;
   const leadId = leadIdFrom(row);
   const rawType = readString(row, "meetingType", "MeetingType", "meeting_type");
   const code = rawType ? meetingTypeCode(rawType) : undefined;
@@ -587,20 +611,22 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
   const quoteFollow = readFlag(row, "quoteFollow", "quote_follow") === true;
   const quoteLink = quoteGenerated ? readString(row, "quoteLink", "quote_link") : "";
   const quoteSent = quoteFollow || readFlag(row, "quoteSent", "quote_sent") === true || quoteLead;
-  const meetingSuccessful = quoteLead ? undefined : readFlag(row, "meetingSuccessful", "meeting_successful");
+  const flaggedSuccessful = quoteLead ? undefined : readFlag(row, "meetingSuccessful", "meeting_successful");
   const meetingSuccessfulAt = readString(row, "meetingSuccessfulAt", "meeting_successful_at");
   const apiProgress = boardProgress(row);
+  const meetingSuccessful = quoteLead
+    ? undefined
+    : apiProgress
+      ? apiProgress === "MEETING_SUCCESSFUL"
+      : flaggedSuccessful;
   const quoteDelayed = readFlag(row, "quoteDelayed", "quote_delayed") === true;
   const meetingStatus = quoteLead ? undefined : boardMeetingStatus(row);
   const cancelledAtRaw = meetingStatus === "CANCELLED" ? readString(row, "cancelledAt", "cancelled_at") : "";
   const offset = date ? meetingOffset(date) : 0;
   const endMin = startMin + durationMin;
-  const endAt = date && !quoteLead ? new Date(`${date}T00:00:00`) : null;
-  if (endAt) endAt.setHours(Math.floor(endMin / 60), endMin % 60, 0, 0);
-  const startAt = date && !quoteLead ? new Date(`${date}T00:00:00`) : null;
-  if (startAt) startAt.setHours(Math.floor(startMin / 60), startMin % 60, 0, 0);
-  const timePassed = Boolean(endAt && endAt.getTime() < Date.now());
-  const meetingStarted = Boolean(startAt && startAt.getTime() < Date.now());
+  const nowMs = Date.now();
+  const meetingStarted = Boolean(date && !quoteLead && indiaWallUtcMs(date, startMin) <= nowMs);
+  const slotEnded = Boolean(date && !quoteLead && hasSlotEnd && indiaWallUtcMs(date, endMin) < nowMs);
   let status: MeetingStatus = "SCHEDULED";
   if (!quoteLead && when) status = slotProgress(date, startMin, endMin);
   const progress = quoteLead
@@ -610,10 +636,13 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
         ? "SCHEDULED"
         : meetingSuccessful === true
           ? "MEETING_SUCCESSFUL"
-          : meetingStarted
-            ? "IN_PROGRESS"
-            : "SCHEDULED");
-  const needsOutcome = !quoteLead && timePassed && meetingSuccessful === false && meetingStatus !== "CANCELLED";
+          : !meetingStarted
+            ? "SCHEDULED"
+            : slotEnded
+              ? "MEETING_ABANDONED"
+              : "IN_PROGRESS");
+  const needsOutcome =
+    !quoteLead && meetingStatus !== "CANCELLED" && progress === "MEETING_ABANDONED";
   const appointmentId = readNumber(row, "appointmentId", "id", "Id");
   const value = quoteAmount > 0 ? quoteAmount : budget;
   return {

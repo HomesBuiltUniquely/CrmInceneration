@@ -2,6 +2,7 @@
 
 import {
   formatQuoteAmount,
+  quoteVersionMatchKey,
   resolveQuoteVerifyUrl,
   sortQuotesForRevisionDisplay,
   type LeadQuoteOption,
@@ -18,6 +19,7 @@ type Props = {
   selectedQuoteId: string;
   onSelectQuote: (id: string) => void;
   dealQuoteId?: string | null;
+  dealVersionLabel?: string | null;
   amountRefreshing?: boolean;
   disabled?: boolean;
   fieldError?: string;
@@ -37,10 +39,17 @@ function formatQuoteCreatedAt(value?: string): string {
   });
 }
 
-function matchesDealQuote(option: LeadQuoteOption, dealQuoteId?: string | null): boolean {
-  const locked = dealQuoteId?.trim();
-  if (!locked) return false;
-  return option.quoteId === locked || option.id === locked;
+function matchesDealQuote(
+  option: LeadQuoteOption,
+  dealQuoteId?: string | null,
+  dealVersionLabel?: string | null,
+): boolean {
+  const locked = dealQuoteId?.trim() ?? "";
+  const sameQuote = !locked || option.quoteId === locked || option.id === locked;
+  if (!sameQuote) return false;
+  const labelKey = quoteVersionMatchKey(dealVersionLabel);
+  if (labelKey) return quoteVersionMatchKey(option.label) === labelKey;
+  return Boolean(locked);
 }
 
 /** Compact quotation picker — soft-fade invisible scroll when many versions. */
@@ -52,6 +61,7 @@ export default function QuotationVersionPicker({
   selectedQuoteId,
   onSelectQuote,
   dealQuoteId,
+  dealVersionLabel,
   amountRefreshing = false,
   disabled = false,
   fieldError,
@@ -59,7 +69,7 @@ export default function QuotationVersionPicker({
   const revisionOptions = sortQuotesForRevisionDisplay(options);
   const latestOption = options.find((option) => option.isLatest) ?? null;
   const latestDiffersFromDeal =
-    latestOption != null && !matchesDealQuote(latestOption, dealQuoteId);
+    latestOption != null && !matchesDealQuote(latestOption, dealQuoteId, dealVersionLabel);
 
   return (
     <section className="flex min-h-0 flex-col">
@@ -98,7 +108,7 @@ export default function QuotationVersionPicker({
           {revisionOptions.map((option, index) => {
             const selected = option.id === selectedQuoteId;
             const isLatest = Boolean(option.isLatest);
-            const onDeal = matchesDealQuote(option, dealQuoteId);
+            const onDeal = matchesDealQuote(option, dealQuoteId, dealVersionLabel);
             const quoteUrl = resolveQuoteVerifyUrl(option, hubLeadId);
             const versionLabel =
               option.version != null ? `V${option.version}` : option.label;

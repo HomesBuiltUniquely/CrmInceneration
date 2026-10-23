@@ -4,6 +4,19 @@ import { detailsUrl, isCrmLeadType, leadDeletePaths, leadUpdatePutPaths } from "
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
+function shouldRetryLeadDetail(
+  status: number,
+  payload: Awaited<ReturnType<typeof readUpstreamPayload>>,
+): boolean {
+  if (status === 401 || status === 403 || status === 404) return false;
+  if (status === 429 || status >= 500) return true;
+  const message = [payload.json?.userMessage, payload.json?.error, payload.json?.message]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return message.includes("please try again") || message.includes("right now");
+}
+
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ leadType: string; id: string }> }
@@ -14,11 +27,32 @@ export async function GET(
       return NextResponse.json({ error: "Invalid leadType" }, { status: 400 });
     }
     const url = `${BASE_URL}${detailsUrl(leadType, id)}`;
-    const res = await fetch(url, {
-      headers: upstreamAuthHeaders(req),
-      cache: "no-store",
-    });
-    const payload = await readUpstreamPayload(res);
+    const headers = upstreamAuthHeaders(req);
+    let res: Response | null = null;
+    let payload: Awaited<ReturnType<typeof readUpstreamPayload>> | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        res = await fetch(url, { headers, cache: "no-store" });
+        payload = await readUpstreamPayload(res);
+      } catch (error) {
+        if (attempt === 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        continue;
+      }
+      // Meta detail often returns a one-off "try again" error. One quiet retry matches a second open.
+      if (res.ok || !shouldRetryLeadDetail(res.status, payload)) break;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    if (!res || !payload) {
+      return NextResponse.json(
+        {
+          success: false,
+          userMessage: "Unable to load lead details. Please try again.",
+          error: "Unable to load lead details. Please try again.",
+        },
+        { status: 500 },
+      );
+    }
     if (!res.ok) {
       return proxyJsonError(
         res.status,

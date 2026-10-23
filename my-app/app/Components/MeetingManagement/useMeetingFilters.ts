@@ -36,7 +36,7 @@ function splitList(value: string | null): string[] {
     .filter(Boolean);
 }
 
-const PROGRESS_VALUES: MeetingProgress[] = ["SCHEDULED", "IN_PROGRESS", "MEETING_SUCCESSFUL"];
+const PROGRESS_VALUES: MeetingProgress[] = ["SCHEDULED", "IN_PROGRESS", "MEETING_ABANDONED", "MEETING_SUCCESSFUL"];
 
 function isProgress(value: string): value is MeetingProgress {
   return (PROGRESS_VALUES as string[]).includes(value);

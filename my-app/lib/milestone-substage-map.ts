@@ -78,6 +78,11 @@ export function isMeetingRescheduledSubstage(subStageName: string): boolean {
   return pipelineSubStageLabel(subStageName) === "Meeting Rescheduled";
 }
 
+/** True when feedback is Meeting Successful — mark the Hub appointment done. */
+export function isMeetingSuccessfulSubstage(subStageName: string): boolean {
+  return pipelineSubStageLabel(subStageName) === "Meeting Successful";
+}
+
 export function isDesignRefinementSchedulingSubstage(subStageName: string): boolean {
   return pipelineSubStageLabel(subStageName) === DESIGN_REFINEMENT_REVISIT_SUBSTAGE;
 }

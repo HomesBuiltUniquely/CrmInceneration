@@ -28,6 +28,7 @@ type Props = {
   selectedQuoteId: string;
   selectedQuote: LeadQuoteOption | null;
   dealQuoteId?: string | null;
+  dealVersionLabel?: string | null;
   quoteAmountRefreshing?: boolean;
   onSelectQuote: (id: string) => void;
   historyLoading: boolean;
@@ -160,6 +161,7 @@ export default function SendPaymentBody({
   selectedQuoteId,
   selectedQuote,
   dealQuoteId,
+  dealVersionLabel,
   quoteAmountRefreshing,
   onSelectQuote,
   historyLoading,
@@ -225,6 +227,7 @@ export default function SendPaymentBody({
       selectedQuoteId={selectedQuoteId}
       onSelectQuote={onSelectQuote}
       dealQuoteId={dealQuoteId}
+      dealVersionLabel={dealVersionLabel}
       amountRefreshing={quoteAmountRefreshing}
       disabled={disabled}
       fieldError={fieldErrors?.versionId}

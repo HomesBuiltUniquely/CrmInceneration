@@ -35,8 +35,9 @@ const STATUS: Record<MeetingStatus, { bg: string; text: string; dot: string; lab
 
 const PROGRESS_CHIP: Record<NonNullable<MeetingRecord["progress"]>, { bg: string; text: string; dot: string; label: string }> = {
   SCHEDULED: { bg: "#E0ECFF", text: "#1E40AF", dot: "#1D4ED8", label: "Scheduled" },
-  IN_PROGRESS: { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In progress" },
-  MEETING_SUCCESSFUL: { bg: "#F0FDF4", text: "#14532D", dot: "#15803D", label: "Meeting successful" },
+  IN_PROGRESS: { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In Progress" },
+  MEETING_ABANDONED: { bg: "#FEF3F2", text: "#B42318", dot: "#B42318", label: "Meeting Abandoned" },
+  MEETING_SUCCESSFUL: { bg: "#F0FDF4", text: "#14532D", dot: "#15803D", label: "Meeting Successful" },
 };
 
 export function MeetingRow({

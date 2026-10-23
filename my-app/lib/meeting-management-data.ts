@@ -35,10 +35,10 @@ export type MeetingRecord = {
   locationTone: LocationTone;
   status: MeetingStatus;
   /**
-   * From the board. Scheduled before the meeting time, In progress after it starts
-   * until the user marks it successful, then Meeting successful.
+   * From the board. Scheduled before the slot, in progress only while the clock
+   * is inside the slot, abandoned after the end time until marked successful.
    */
-  progress?: "SCHEDULED" | "IN_PROGRESS" | "MEETING_SUCCESSFUL";
+  progress?: "SCHEDULED" | "IN_PROGRESS" | "MEETING_ABANDONED" | "MEETING_SUCCESSFUL";
   /** Board `meetingStatus` for this appointment: scheduled, rescheduled, or cancelled. */
   meetingStatus?: "SCHEDULED" | "RESCHEDULED" | "CANCELLED";
   /** Set when `meetingStatus` is CANCELLED. */
@@ -106,10 +106,53 @@ export type MeetingRecord = {
   quoteDelayed?: boolean;
 };
 
-/** Start of the real local day. Offsets and “today” follow the clock, not a fixed sample date. */
+/** Hub meetings are booked and shown in India, including when this runs on a UTC server. */
+export const MEETING_TIME_ZONE = "Asia/Kolkata";
+
+export type MeetingClockParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+};
+
+export function meetingClockParts(date: Date): MeetingClockParts {
+  const bag: Record<string, string> = {};
+  for (const part of new Intl.DateTimeFormat("en-GB", {
+    timeZone: MEETING_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date)) {
+    if (part.type !== "literal") bag[part.type] = part.value;
+  }
+  let hour = Number(bag.hour);
+  if (hour === 24) hour = 0;
+  return {
+    year: Number(bag.year),
+    month: Number(bag.month),
+    day: Number(bag.day),
+    hour,
+    minute: Number(bag.minute),
+  };
+}
+
+/** UTC millis for an India wall time. IST is UTC+5:30 and does not use daylight saving. */
+export function indiaWallUtcMs(dateIso: string, minutes: number): number {
+  const [year, month, day] = dateIso.split("-").map(Number);
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  return Date.UTC(year, (month || 1) - 1, day || 1, hour, minute) - (5 * 60 + 30) * 60 * 1000;
+}
+
+/** Start of today in India. Offsets and “today” follow that clock, not the server timezone. */
 export function startOfMeetingBoardToday(): Date {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const parts = meetingClockParts(new Date());
+  return new Date(parts.year, parts.month - 1, parts.day);
 }
 
 export function meetingIso(date: Date): string {

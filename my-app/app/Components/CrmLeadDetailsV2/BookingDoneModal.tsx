@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import {
+  findQuoteOptionForSelection,
   formatQuoteAmount,
   resolveQuoteVerifyUrl,
   sortQuotesForRevisionDisplay,
@@ -304,17 +305,9 @@ export default function BookingDoneModal({
         setHubLeadId(resolvedHubLeadId);
         setQuoteOptions(merged);
         const storedSelection = readLeadQuoteSelection(validLeadType, leadId);
-        const storedMatches = storedSelection
-          ? merged.filter(
-              (option) =>
-                option.id === storedSelection.quoteId ||
-                option.quoteId === storedSelection.quoteId,
-            )
-          : [];
-        const storedQuote =
-          storedMatches.find((option) => option.isLatest) ??
-          storedMatches[storedMatches.length - 1] ??
-          null;
+        const storedQuote = storedSelection
+          ? findQuoteOptionForSelection(merged, storedSelection)
+          : null;
         const defaultSelection =
           storedQuote?.id ??
           merged.find((option) => option.isLatest)?.id ??
