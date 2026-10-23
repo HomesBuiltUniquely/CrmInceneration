@@ -1,7 +1,21 @@
-export const HUB_MEETING_TIMELINE_START_MIN = 11 * 60;
-export const HUB_MEETING_TIMELINE_END_MIN = 19 * 60;
+/** Design Module hubWindow 10:00–20:00. 10:00 is a 60-minute slot; later starts are 90 minutes. */
+export const HUB_MEETING_TIMELINE_START_MIN = 10 * 60;
+export const HUB_MEETING_TIMELINE_END_MIN = 20 * 60;
+export const HUB_MEETING_EARLY_START_MIN = 10 * 60;
+export const HUB_MEETING_EARLY_DURATION_MIN = 60;
+export const HUB_MEETING_REGULAR_START_MIN = 11 * 60;
 export const HUB_MEETING_DURATION_MIN = 90;
 export const HUB_MEETING_SLOT_STEP_MIN = 30;
+
+export function hubMeetingDurationMin(startMin: number): number {
+  return startMin === HUB_MEETING_EARLY_START_MIN
+    ? HUB_MEETING_EARLY_DURATION_MIN
+    : HUB_MEETING_DURATION_MIN;
+}
+
+export function hubMeetingEndMin(startMin: number): number {
+  return startMin + hubMeetingDurationMin(startMin);
+}
 
 export type BookedTimelineBlock = {
   id: string;
@@ -23,10 +37,14 @@ export function formatHubTimeRange(startMin: number, endMin: number): string {
   return `${minutesToHubTimeLabel(startMin)} – ${minutesToHubTimeLabel(endMin)}`;
 }
 
+export function formatHubWindowLabel(): string {
+  return `${minutesToHubTimeLabel(HUB_MEETING_TIMELINE_START_MIN)} – ${minutesToHubTimeLabel(HUB_MEETING_TIMELINE_END_MIN)}`;
+}
+
 export function listHubMeetingStartOptions(): number[] {
-  const options: number[] = [];
+  const options = [HUB_MEETING_EARLY_START_MIN];
   for (
-    let m = HUB_MEETING_TIMELINE_START_MIN;
+    let m = HUB_MEETING_REGULAR_START_MIN;
     m + HUB_MEETING_DURATION_MIN <= HUB_MEETING_TIMELINE_END_MIN;
     m += HUB_MEETING_SLOT_STEP_MIN
   ) {
@@ -43,7 +61,7 @@ export function isHubMeetingStartAvailable(
   startMin: number,
   booked: BookedTimelineBlock[],
 ): boolean {
-  const endMin = startMin + HUB_MEETING_DURATION_MIN;
+  const endMin = hubMeetingEndMin(startMin);
   if (endMin > HUB_MEETING_TIMELINE_END_MIN) return false;
   return !booked.some((b) => rangesOverlap(startMin, endMin, b.startMin, b.endMin));
 }
