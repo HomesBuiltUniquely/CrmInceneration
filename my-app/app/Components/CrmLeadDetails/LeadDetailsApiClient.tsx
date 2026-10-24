@@ -14,6 +14,7 @@ import {
   putLeadDetail,
   putPresalesMilestoneDetail,
   putHubScheduleDates,
+  floorPlanFieldsFromState,
   getLeadFloorPlanMeta,
   leadPreservingServerFloorPlan,
   removeLeadFloorPlan,
@@ -1151,21 +1152,9 @@ export default function LeadDetailsApiClient({
         },
       );
       void getLeadFloorPlanMeta(lt, leadId).then((meta) => {
-        if (meta) {
-          setLead((prev) => ({
-            ...prev,
-            floorPlan: meta.s3Key,
-            floorPlanPublicLink: meta.publicLink || undefined,
-            floorPlanViewPath: meta.viewPath,
-            floorPlanOpenPath: meta.openPath,
-          }));
-          return;
-        }
         setLead((prev) => ({
           ...prev,
-          floorPlan: "",
-          floorPlanViewPath: undefined,
-          floorPlanOpenPath: undefined,
+          ...floorPlanFieldsFromState(meta),
         }));
       });
       setLoading(false);
@@ -1263,25 +1252,21 @@ export default function LeadDetailsApiClient({
   }, []);
 
   const handleFloorPlanUpload = useCallback(
-    async (file: File) => {
+    async (files: File[]) => {
       if (!validLeadType) return;
       setFloorPlanUploading(true);
       try {
-        const state = await uploadLeadFloorPlan(leadType, leadId, file);
-        patchLead({
-          floorPlan: state.s3Key,
-          floorPlanPublicLink: state.publicLink || undefined,
-          floorPlanViewPath: state.viewPath,
-          floorPlanOpenPath: state.openPath,
-        });
+        const state = await uploadLeadFloorPlan(leadType, leadId, files);
+        const fields = floorPlanFieldsFromState(state);
+        patchLead(fields);
         setBaseDetail((prev) => ({
           ...prev,
-          floorPlanUrl: state.s3Key,
-          floorPlanS3Key: state.s3Key,
-          ...(state.publicLink
+          floorPlanUrl: fields.floorPlan,
+          floorPlanS3Key: fields.floorPlan,
+          ...(fields.floorPlanPublicLink
             ? {
-                floorPlanPublicLink: state.publicLink,
-                publicUrl: state.publicLink,
+                floorPlanPublicLink: fields.floorPlanPublicLink,
+                publicUrl: fields.floorPlanPublicLink,
               }
             : {}),
         }));
@@ -1293,12 +1278,7 @@ export default function LeadDetailsApiClient({
   );
 
   const handleFloorPlanMissing = useCallback(() => {
-    patchLead({
-      floorPlan: "",
-      floorPlanPublicLink: undefined,
-      floorPlanViewPath: undefined,
-      floorPlanOpenPath: undefined,
-    });
+    patchLead(floorPlanFieldsFromState(null));
     setBaseDetail((prev) => {
       const next = { ...prev };
       next.floorPlanUrl = null;
@@ -1310,13 +1290,26 @@ export default function LeadDetailsApiClient({
     });
   }, [patchLead]);
 
-  const handleFloorPlanRemove = useCallback(async () => {
+  const handleFloorPlanRemove = useCallback(async (index?: number) => {
     if (!validLeadType) return;
     setFloorPlanRemoving(true);
     try {
-      await removeLeadFloorPlan(leadType, leadId, baseDetail, lead);
-      handleFloorPlanMissing();
-      notifySuccess("Floor plan removed");
+      await removeLeadFloorPlan(leadType, leadId, baseDetail, lead, index);
+      if (index == null) {
+        handleFloorPlanMissing();
+        notifySuccess("Floor plans removed");
+      } else {
+        const meta = await getLeadFloorPlanMeta(leadType, leadId);
+        const fields = floorPlanFieldsFromState(meta);
+        patchLead(fields);
+        setBaseDetail((prev) => ({
+          ...prev,
+          floorPlanUrl: fields.floorPlan || null,
+          floorPlanS3Key: fields.floorPlan || null,
+          floorPlanPublicLink: fields.floorPlanPublicLink ?? null,
+        }));
+        notifySuccess("Floor plan removed");
+      }
     } catch (e) {
       notifyError(e instanceof Error ? e.message : "Could not remove floor plan.");
     } finally {
@@ -1329,6 +1322,7 @@ export default function LeadDetailsApiClient({
     baseDetail,
     lead,
     handleFloorPlanMissing,
+    patchLead,
     notifySuccess,
     notifyError,
   ]);

@@ -2100,6 +2100,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
     onFloorPlanRemove,
     onFloorPlanMissing,
     floorPlanUploading,
+    floorPlanRemoving,
     meetingDateDisplay,
     designQaLink,
     apiDesignQaLink,
@@ -2261,15 +2262,18 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
             </div>
           </div>
           <FloorPlanUpload
-            hasFloorPlan={Boolean(lead.floorPlan?.trim())}
+            hasFloorPlan={Boolean(lead.floorPlan?.trim() || lead.floorPlans?.length)}
+            files={lead.floorPlans}
             viewHref={lead.floorPlanViewPath ?? ""}
             openHref={lead.floorPlanOpenPath ?? ""}
             canUpload={canInteract}
             compact
             hideHeader
             uploading={floorPlanUploading}
-            onFileSelect={(file) => void onFloorPlanUpload(file)}
-            onRemove={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
+            removing={floorPlanRemoving}
+            onFileSelect={(files) => void onFloorPlanUpload(files)}
+            onRemove={onFloorPlanRemove ? (index) => void onFloorPlanRemove(index) : undefined}
+            onRemoveAll={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
             onFloorPlanMissing={onFloorPlanMissing}
           />
         </div>

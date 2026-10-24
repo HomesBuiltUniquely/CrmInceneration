@@ -6,9 +6,11 @@ import {
   crmFloorPlanOpenProxyPath,
 } from "@/lib/crm-floor-plan-proxy";
 import {
+  floorPlanDisplayFileName,
   formatFloorPlanUploadError,
   normalizeFloorPlanS3Key,
   pickFloorPlanPublicLink,
+  type FloorPlanFileRef,
   type FloorPlanMetaResponse,
   type LeadFloorPlanState,
   validateFloorPlanFile,
@@ -850,26 +852,118 @@ export type FloorPlanUploadResponse = FloorPlanMetaResponse & {
   debugMessage?: string;
 };
 
+function proxyFloorPlanFilePath(
+  raw: string,
+  leadType: CrmLeadType,
+  id: string,
+  kind: "content" | "open",
+  index: number,
+): string {
+  const mapped = backendFloorPlanPathToProxy(raw, leadType, id);
+  const base =
+    mapped ??
+    (kind === "open"
+      ? crmFloorPlanOpenProxyPath(leadType, id)
+      : crmFloorPlanContentProxyPath(leadType, id));
+  if (/[?&]index=/.test(base)) return base;
+  const join = base.includes("?") ? "&" : "?";
+  return `${base}${join}index=${index}`;
+}
+
+function floorPlanFilesFromMeta(
+  data: FloorPlanMetaResponse,
+  leadType: CrmLeadType,
+  id: string,
+): FloorPlanFileRef[] {
+  if (!Array.isArray(data.floorPlans)) return [];
+  return data.floorPlans.flatMap((item, position) => {
+    if (!item || typeof item !== "object") return [];
+    const index = Number.isFinite(item.index) ? Number(item.index) : position;
+    const filename = item.filename?.trim() || `Floor plan ${index + 1}.pdf`;
+    const viewRaw = item.viewUrl?.trim() ?? "";
+    const openRaw = item.openUrl?.trim() || viewRaw;
+    return [
+      {
+        index,
+        filename,
+        viewPath: proxyFloorPlanFilePath(viewRaw, leadType, id, "content", index),
+        openPath: proxyFloorPlanFilePath(openRaw, leadType, id, "content", index),
+      },
+    ];
+  });
+}
+
 function parseLeadFloorPlanState(
   data: FloorPlanMetaResponse,
   leadType: CrmLeadType,
   id: string,
 ): LeadFloorPlanState | null {
-  if (data.hasFloorPlan === false) return null;
-
+  const listed = floorPlanFilesFromMeta(data, leadType, id);
   const s3Key = normalizeFloorPlanS3Key(
     String(data.floorPlanS3Key ?? data.floorPlanUrl ?? ""),
   );
-  if (data.hasFloorPlan !== true && !s3Key) return null;
+  const publicLink = pickFloorPlanPublicLink(data);
+
+  if (listed.length > 0) {
+    const first = listed[0]!;
+    return {
+      s3Key: s3Key || first.filename,
+      publicLink,
+      viewPath: first.viewPath,
+      openPath: first.openPath,
+      files: listed,
+    };
+  }
+
+  if (data.hasFloorPlan === false) return null;
+  if (data.hasFloorPlan !== true && !s3Key && !publicLink) return null;
+
   const viewPath =
     backendFloorPlanPathToProxy(String(data.viewUrl ?? ""), leadType, id) ??
     crmFloorPlanContentProxyPath(leadType, id);
   const openPath =
     backendFloorPlanPathToProxy(String(data.openUrl ?? ""), leadType, id) ??
     crmFloorPlanOpenProxyPath(leadType, id);
-  const publicLink = pickFloorPlanPublicLink(data);
+  const filename =
+    floorPlanDisplayFileName(s3Key, publicLink) || "Floor plan.pdf";
 
-  return { s3Key, viewPath, openPath, publicLink };
+  return {
+    s3Key,
+    viewPath,
+    openPath,
+    publicLink,
+    files: [
+      {
+        index: 0,
+        filename,
+        viewPath,
+        openPath,
+      },
+    ],
+  };
+}
+
+export function floorPlanFieldsFromState(state: LeadFloorPlanState | null): Pick<
+  Lead,
+  "floorPlan" | "floorPlanPublicLink" | "floorPlanViewPath" | "floorPlanOpenPath" | "floorPlans"
+> {
+  const first = state?.files[0];
+  if (!state || !first) {
+    return {
+      floorPlan: "",
+      floorPlanPublicLink: undefined,
+      floorPlanViewPath: undefined,
+      floorPlanOpenPath: undefined,
+      floorPlans: [],
+    };
+  }
+  return {
+    floorPlan: state.s3Key || first.filename,
+    floorPlanPublicLink: state.publicLink || undefined,
+    floorPlanViewPath: first.viewPath,
+    floorPlanOpenPath: first.openPath,
+    floorPlans: state.files,
+  };
 }
 
 /** `GET /api/crm/lead/{leadType}/{id}/floor-plan` — metadata (viewUrl/openUrl, not raw S3). */
@@ -935,17 +1029,24 @@ export async function leadPreservingServerFloorPlan<T extends FloorPlanCarrier>(
   }
 }
 
-/** `POST /api/crm/lead/{leadType}/{id}/floor-plan` → S3 upload on CRM backend. */
+/** `POST /api/crm/lead/{leadType}/{id}/floor-plan` → adds files. Does not replace the ones already saved. */
 export async function uploadLeadFloorPlan(
   leadType: CrmLeadType,
   id: string,
-  file: File,
+  fileOrFiles: File | File[],
 ): Promise<LeadFloorPlanState> {
-  const validationError = validateFloorPlanFile(file);
-  if (validationError) throw new Error(validationError);
+  const files = (Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles]).filter(
+    (file) => file instanceof File && file.size > 0,
+  );
+  if (files.length === 0) throw new Error("Choose a floor plan to upload.");
+  for (const file of files) {
+    const validationError = validateFloorPlanFile(file);
+    if (validationError) throw new Error(`${file.name}: ${validationError}`);
+  }
 
   const formData = new FormData();
-  formData.append("file", file);
+  if (files.length === 1) formData.append("file", files[0]!);
+  else for (const file of files) formData.append("files", file);
 
   const res = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
     method: "POST",
@@ -981,14 +1082,19 @@ export async function uploadLeadFloorPlan(
   return state;
 }
 
-/** Remove floor plan — tries DELETE; falls back to PUT with cleared fields. */
+/**
+ * Remove one floor plan with `index`, or every floor plan when `index` is omitted.
+ * A delete-all still falls back to a cleared lead PUT when the server has no DELETE.
+ */
 export async function removeLeadFloorPlan(
   leadType: CrmLeadType,
   id: string,
   baseDetail: Record<string, unknown>,
   lead: Lead,
+  index?: number,
 ): Promise<void> {
-  const delRes = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
+  const query = Number.isInteger(index) ? `?index=${index}` : "";
+  const delRes = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan${query}`, {
     method: "DELETE",
     credentials: "include",
     headers: getCrmAuthHeaders(),
@@ -996,6 +1102,10 @@ export async function removeLeadFloorPlan(
   });
 
   if (delRes.ok) return;
+
+  if (Number.isInteger(index)) {
+    throw await buildApiError(delRes, "Unable to remove floor plan. Please try again.");
+  }
 
   const methodNotAllowed =
     delRes.status === 405 ||

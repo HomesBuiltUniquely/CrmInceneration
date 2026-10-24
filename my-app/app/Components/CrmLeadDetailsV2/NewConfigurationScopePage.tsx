@@ -74,12 +74,15 @@ import {
   type ConfigurationScopeFrontendPrefs,
 } from "@/lib/configuration-scope-frontend-prefs";
 import {
+  floorPlanFieldsFromState,
   getLeadDetail,
   getLeadFloorPlanMeta,
   leadPreservingServerFloorPlan,
   putLeadDetail,
+  removeLeadFloorPlan,
   uploadLeadFloorPlan,
 } from "@/lib/lead-details-client";
+import type { FloorPlanFileRef } from "@/lib/floor-plan";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { findQuoteOptionForSelection, type LeadQuoteOption } from "@/lib/crm-quote-links";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -243,7 +246,9 @@ export default function NewConfigurationScopePage({
   const [floorPlanPublicLink, setFloorPlanPublicLink] = useState("");
   const [floorPlanViewPath, setFloorPlanViewPath] = useState("");
   const [floorPlanOpenPath, setFloorPlanOpenPath] = useState("");
+  const [floorPlans, setFloorPlans] = useState<FloorPlanFileRef[]>([]);
   const [floorPlanUploading, setFloorPlanUploading] = useState(false);
+  const [floorPlanRemoving, setFloorPlanRemoving] = useState(false);
   const [showMissingFieldHints, setShowMissingFieldHints] = useState(highlightMissing);
   const [showFinalizeCelebration, setShowFinalizeCelebration] = useState(false);
   const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(
@@ -310,17 +315,12 @@ export default function NewConfigurationScopePage({
 
         const meta = await getLeadFloorPlanMeta(validLeadType, leadId);
         if (cancelled) return;
-        if (meta) {
-          setFloorPlanS3Key(meta.s3Key);
-          setFloorPlanPublicLink(meta.publicLink ?? "");
-          setFloorPlanViewPath(meta.viewPath);
-          setFloorPlanOpenPath(meta.openPath);
-        } else {
-          setFloorPlanS3Key("");
-          setFloorPlanPublicLink("");
-          setFloorPlanViewPath("");
-          setFloorPlanOpenPath("");
-        }
+        const fields = floorPlanFieldsFromState(meta);
+        setFloorPlanS3Key(fields.floorPlan);
+        setFloorPlanPublicLink(fields.floorPlanPublicLink ?? "");
+        setFloorPlanViewPath(fields.floorPlanViewPath ?? "");
+        setFloorPlanOpenPath(fields.floorPlanOpenPath ?? "");
+        setFloorPlans(fields.floorPlans ?? []);
 
         let reqData: ConfigurationScopeRequirements;
         try {
@@ -405,25 +405,32 @@ export default function NewConfigurationScopePage({
     };
   }, [leadId, validLeadType]);
 
+  const applyFloorPlanFields = useCallback((state: Parameters<typeof floorPlanFieldsFromState>[0]) => {
+    const fields = floorPlanFieldsFromState(state);
+    setFloorPlanS3Key(fields.floorPlan);
+    setFloorPlanPublicLink(fields.floorPlanPublicLink ?? "");
+    setFloorPlanViewPath(fields.floorPlanViewPath ?? "");
+    setFloorPlanOpenPath(fields.floorPlanOpenPath ?? "");
+    setFloorPlans(fields.floorPlans ?? []);
+    return fields;
+  }, []);
+
   const handleFloorPlanUpload = useCallback(
-    async (file: File) => {
+    async (files: File[]) => {
       if (!validLeadType) return;
       setFloorPlanUploading(true);
       try {
-        const state = await uploadLeadFloorPlan(validLeadType, leadId, file);
-        setFloorPlanS3Key(state.s3Key);
-        setFloorPlanPublicLink(state.publicLink ?? "");
-        setFloorPlanViewPath(state.viewPath);
-        setFloorPlanOpenPath(state.openPath);
+        const state = await uploadLeadFloorPlan(validLeadType, leadId, files);
+        const fields = applyFloorPlanFields(state);
         notifyConfigurationScopeUpdated({
           leadType: validLeadType,
           leadId,
-          floorPlan: state.s3Key,
-          floorPlanPublicLink: state.publicLink ?? "",
-          floorPlanViewPath: state.viewPath,
-          floorPlanOpenPath: state.openPath,
+          floorPlan: fields.floorPlan,
+          floorPlanPublicLink: fields.floorPlanPublicLink ?? "",
+          floorPlanViewPath: fields.floorPlanViewPath ?? "",
+          floorPlanOpenPath: fields.floorPlanOpenPath ?? "",
         });
-        notifySuccess("Floor plan uploaded.");
+        notifySuccess(files.length > 1 ? `${files.length} floor plans added.` : "Floor plan added.");
       } catch (e) {
         notifyError(e instanceof Error ? e.message : "Floor plan upload failed.");
         throw e;
@@ -431,7 +438,40 @@ export default function NewConfigurationScopePage({
         setFloorPlanUploading(false);
       }
     },
-    [leadId, notifyError, notifySuccess, validLeadType],
+    [applyFloorPlanFields, leadId, notifyError, notifySuccess, validLeadType],
+  );
+
+  const handleFloorPlanRemove = useCallback(
+    async (index?: number) => {
+      if (!validLeadType) return;
+      setFloorPlanRemoving(true);
+      try {
+        const detail = baseDetail ?? {};
+        await removeLeadFloorPlan(
+          validLeadType,
+          leadId,
+          detail,
+          detailJsonToLead(detail, validLeadType),
+          index,
+        );
+        const meta = index == null ? null : await getLeadFloorPlanMeta(validLeadType, leadId);
+        const fields = applyFloorPlanFields(meta);
+        notifyConfigurationScopeUpdated({
+          leadType: validLeadType,
+          leadId,
+          floorPlan: fields.floorPlan,
+          floorPlanPublicLink: fields.floorPlanPublicLink ?? "",
+          floorPlanViewPath: fields.floorPlanViewPath ?? "",
+          floorPlanOpenPath: fields.floorPlanOpenPath ?? "",
+        });
+        notifySuccess(index == null ? "Floor plans removed." : "Floor plan removed.");
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Could not remove floor plan.");
+      } finally {
+        setFloorPlanRemoving(false);
+      }
+    },
+    [applyFloorPlanFields, baseDetail, leadId, notifyError, notifySuccess, validLeadType],
   );
 
   const patchRequirements = useCallback((patch: (prev: ConfigurationScopeRequirements) => ConfigurationScopeRequirements) => {
@@ -777,7 +817,10 @@ export default function NewConfigurationScopePage({
   }, []);
 
   const hasFloorPlanUploaded = Boolean(
-    floorPlanS3Key.trim() || floorPlanPublicLink.trim() || floorPlanViewPath.trim(),
+    floorPlans.length ||
+      floorPlanS3Key.trim() ||
+      floorPlanPublicLink.trim() ||
+      floorPlanViewPath.trim(),
   );
 
   const validationIssues = useMemo((): ConfigurationScopeValidationIssue[] => {
@@ -986,8 +1029,11 @@ export default function NewConfigurationScopePage({
     floorPlanPublicLink,
     floorPlanViewPath,
     floorPlanOpenPath,
+    floorPlans,
     floorPlanUploading,
+    floorPlanRemoving,
     onFloorPlanUpload: handleFloorPlanUpload,
+    onFloorPlanRemove: handleFloorPlanRemove,
     onFloorPlanError: notifyError,
   };
 
@@ -2052,8 +2098,11 @@ function RequirementScopeSection({
   floorPlanPublicLink,
   floorPlanViewPath,
   floorPlanOpenPath,
+  floorPlans,
   floorPlanUploading,
+  floorPlanRemoving,
   onFloorPlanUpload,
+  onFloorPlanRemove,
   onFloorPlanError,
   requirements,
   loading,
@@ -2068,8 +2117,11 @@ function RequirementScopeSection({
   floorPlanPublicLink: string;
   floorPlanViewPath: string;
   floorPlanOpenPath: string;
+  floorPlans: FloorPlanFileRef[];
   floorPlanUploading: boolean;
-  onFloorPlanUpload: (file: File) => void | Promise<void>;
+  floorPlanRemoving: boolean;
+  onFloorPlanUpload: (files: File[]) => void | Promise<void>;
+  onFloorPlanRemove: (index?: number) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
   requirements: ConfigurationScopeRequirements | null;
   loading: boolean;
@@ -2294,8 +2346,11 @@ function RequirementScopeSection({
             floorPlanPublicLink={floorPlanPublicLink}
             floorPlanViewPath={floorPlanViewPath}
             floorPlanOpenPath={floorPlanOpenPath}
+            floorPlans={floorPlans}
             floorPlanUploading={floorPlanUploading}
+            floorPlanRemoving={floorPlanRemoving}
             onFloorPlanUpload={onFloorPlanUpload}
+            onFloorPlanRemove={onFloorPlanRemove}
             onFloorPlanError={onFloorPlanError}
             floorPlanError={showFieldErrors ? fieldErrors?.floorPlan : undefined}
             miscAddOns={requirements?.miscAddOns ?? []}
@@ -2316,14 +2371,15 @@ function RequirementScopeSection({
 }
 
 function ScopeExtrasSection({
-  leadType,
-  leadId,
   floorPlanS3Key,
   floorPlanPublicLink,
   floorPlanViewPath,
   floorPlanOpenPath,
+  floorPlans,
   floorPlanUploading,
+  floorPlanRemoving,
   onFloorPlanUpload,
+  onFloorPlanRemove,
   onFloorPlanError,
   floorPlanError,
   miscAddOns,
@@ -2339,8 +2395,11 @@ function ScopeExtrasSection({
   floorPlanPublicLink: string;
   floorPlanViewPath: string;
   floorPlanOpenPath: string;
+  floorPlans: FloorPlanFileRef[];
   floorPlanUploading: boolean;
-  onFloorPlanUpload: (file: File) => void | Promise<void>;
+  floorPlanRemoving: boolean;
+  onFloorPlanUpload: (files: File[]) => void | Promise<void>;
+  onFloorPlanRemove: (index?: number) => void | Promise<void>;
   onFloorPlanError: (message: string) => void;
   floorPlanError?: string;
   miscAddOns: string[] | null | undefined;
@@ -2402,14 +2461,16 @@ function ScopeExtrasSection({
           </FormLabel>
           <div className="mt-1.5">
           <ConfigurationScopeFloorPlan
-            leadType={leadType}
-            leadId={leadId}
             floorPlanS3Key={floorPlanS3Key}
             floorPlanPublicLink={floorPlanPublicLink}
             floorPlanViewPath={floorPlanViewPath}
             floorPlanOpenPath={floorPlanOpenPath}
+            floorPlans={floorPlans}
             uploading={floorPlanUploading}
+            removing={floorPlanRemoving}
             onUpload={onFloorPlanUpload}
+            onRemove={(index) => onFloorPlanRemove(index)}
+            onRemoveAll={() => onFloorPlanRemove()}
             onError={onFloorPlanError}
           />
           </div>
