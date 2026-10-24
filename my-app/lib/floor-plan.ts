@@ -3,6 +3,9 @@ import type { CrmLeadType } from "@/lib/leads-filter";
 /** Max upload size per backend contract (10 MB). */
 export const FLOOR_PLAN_MAX_BYTES = 10 * 1024 * 1024;
 
+/** A lead can keep this many floor-plan files. A new upload is added, not swapped in. */
+export const FLOOR_PLAN_MAX_FILES = 10;
+
 export const FLOOR_PLAN_ACCEPT = ".pdf,.jpg,.jpeg,.png";
 
 const CRM_TO_FLOOR_PLAN: Record<CrmLeadType, string> = {
@@ -231,9 +234,18 @@ export function normalizeFloorPlanHref(raw: string): string {
   return t;
 }
 
+export type FloorPlanFileMeta = {
+  index?: number;
+  filename?: string | null;
+  viewUrl?: string | null;
+  openUrl?: string | null;
+};
+
 export type FloorPlanMetaResponse = {
   success?: boolean;
   hasFloorPlan?: boolean;
+  count?: number;
+  floorPlans?: FloorPlanFileMeta[] | null;
   floorPlanS3Key?: string | null;
   floorPlanUrl?: string | null;
   publicUrl?: string | null;
@@ -241,6 +253,16 @@ export type FloorPlanMetaResponse = {
   viewUrl?: string | null;
   openUrl?: string | null;
   error?: string;
+  userMessage?: string;
+  debugMessage?: string;
+};
+
+/** One saved floor plan, ready for the lead screen. `viewPath` opens that file. */
+export type FloorPlanFileRef = {
+  index: number;
+  filename: string;
+  viewPath: string;
+  openPath: string;
 };
 
 export type LeadFloorPlanState = {
@@ -249,7 +271,22 @@ export type LeadFloorPlanState = {
   publicLink: string;
   viewPath: string;
   openPath: string;
+  files: FloorPlanFileRef[];
 };
+
+export function floorPlanSlotsRemaining(currentCount: number): number {
+  if (!Number.isFinite(currentCount) || currentCount <= 0) return FLOOR_PLAN_MAX_FILES;
+  return Math.max(0, FLOOR_PLAN_MAX_FILES - currentCount);
+}
+
+export function floorPlanLimitMessage(currentCount: number, adding: number): string | null {
+  const remaining = floorPlanSlotsRemaining(currentCount);
+  if (adding <= remaining) return null;
+  if (remaining <= 0) {
+    return `This lead already has ${FLOOR_PLAN_MAX_FILES} floor plans. Remove one to add another.`;
+  }
+  return `This lead can keep ${FLOOR_PLAN_MAX_FILES} floor plans. You can add ${remaining} more.`;
+}
 
 const FLOOR_PLAN_ORIGINAL_NAME_PREFIX = "crm_floor_plan_original_name_";
 

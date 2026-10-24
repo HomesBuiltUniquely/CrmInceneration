@@ -32,8 +32,8 @@ export type LeadDetailV2ContextValue = {
   onOpenStageRollback: () => void;
   onCompleteTask: () => void;
   onMarkAsWon: () => void;
-  onFloorPlanUpload: (file: File) => void | Promise<void>;
-  onFloorPlanRemove?: () => void | Promise<void>;
+  onFloorPlanUpload: (files: File[]) => void | Promise<void>;
+  onFloorPlanRemove?: (index?: number) => void | Promise<void>;
   onFloorPlanMissing?: () => void;
   floorPlanUploading: boolean;
   floorPlanRemoving: boolean;

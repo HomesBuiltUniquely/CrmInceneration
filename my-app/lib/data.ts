@@ -1,3 +1,4 @@
+import type { FloorPlanFileRef } from "@/lib/floor-plan";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
 export type ActivityType =
@@ -74,6 +75,8 @@ export interface Lead {
   floorPlanPublicLink?: string;
   floorPlanViewPath?: string;
   floorPlanOpenPath?: string;
+  /** Every floor plan on this lead. Index 0 is the file that was already saved. */
+  floorPlans?: FloorPlanFileRef[];
   possessionDate: string;
   propertyLocation: string;
   budget: string;

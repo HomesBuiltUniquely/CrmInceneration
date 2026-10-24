@@ -76,10 +76,11 @@ type Props = {
   onLogCall?: () => void | Promise<void>;
   /** Optional activity hook for Design QA link copy tracking. */
   onDesignQaLinkCopied?: (link: string) => void | Promise<void>;
-  /** Upload floor plan file to S3 via CRM API (API-backed lead details only). */
-  onFloorPlanUpload?: (file: File) => void | Promise<void>;
+  /** Upload floor plan files. New files are added to the ones already saved. */
+  onFloorPlanUpload?: (files: File[]) => void | Promise<void>;
   onFloorPlanMissing?: () => void;
-  onFloorPlanRemove?: () => void | Promise<void>;
+  /** Remove one file by index, or every file when index is omitted. */
+  onFloorPlanRemove?: (index?: number) => void | Promise<void>;
   floorPlanUploading?: boolean;
   floorPlanRemoving?: boolean;
   /** API detail: Full Name read-only (WhatsApp / IVR presales one-time lock). */
@@ -552,6 +553,7 @@ export default function LeadInfoTab({
             <FloorPlanUpload
               hasFloorPlan={hasFloorPlan}
               floorPlanS3Key={floorPlanS3Key}
+              files={lead.floorPlans}
               publicLink={floorPlanPublicLink}
               viewHref={floorPlanViewHref}
               openHref={floorPlanOpenHref}
@@ -560,12 +562,13 @@ export default function LeadInfoTab({
               onError={(msg) => notifyError(msg)}
               onFloorPlanMissing={onFloorPlanMissing}
               onRemove={onFloorPlanRemove}
+              onRemoveAll={onFloorPlanRemove ? () => onFloorPlanRemove() : undefined}
               removing={floorPlanRemoving}
-              onFileSelect={async (file) => {
+              onFileSelect={async (files) => {
                 if (!onFloorPlanUpload) return;
                 try {
-                  await onFloorPlanUpload(file);
-                  notifySuccess("Floor plan uploaded");
+                  await onFloorPlanUpload(files);
+                  notifySuccess(files.length > 1 ? `${files.length} floor plans added` : "Floor plan added");
                 } catch (e) {
                   notifyError(
                     e instanceof Error ? e.message : "Floor plan upload failed.",

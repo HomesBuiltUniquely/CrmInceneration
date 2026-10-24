@@ -26,32 +26,56 @@ export function crmFloorPlanOpenProxyPath(leadType: CrmLeadType, id: string): st
   return `/api/crm/lead/${leadType}/${id}/floor-plan/open`;
 }
 
-/** Map backend `/v1/leads/{segment}/{id}/floor-plan/...` → Next CRM proxy path. */
+function splitFloorPlanPath(raw: string): { pathname: string; search: string } {
+  const t = raw.trim();
+  if (!t) return { pathname: "", search: "" };
+  if (t.startsWith("http://") || t.startsWith("https://")) {
+    try {
+      const url = new URL(t);
+      return { pathname: url.pathname, search: url.search };
+    } catch {
+      /* fall through */
+    }
+  }
+  const queryAt = t.indexOf("?");
+  if (queryAt < 0) return { pathname: t, search: "" };
+  return { pathname: t.slice(0, queryAt), search: t.slice(queryAt) };
+}
+
+/** Map backend `/v1/leads/{segment}/{id}/floor-plan/...?index=` → Next CRM proxy path. */
 export function backendFloorPlanPathToProxy(
   path: string,
   fallbackLeadType: CrmLeadType,
   fallbackId: string,
 ): string | null {
-  const t = path.trim();
-  if (!t) return null;
-  if (t.startsWith("/api/crm/")) return t;
+  const { pathname, search } = splitFloorPlanPath(path);
+  if (!pathname) return null;
+  if (pathname.startsWith("/api/crm/")) return `${pathname}${search}`;
 
-  const match = t.match(/\/v1\/leads\/([^/]+)\/(\d+)\/floor-plan\/(content|open)\/?$/i);
+  const match = pathname.match(/\/v1\/leads\/([^/]+)\/(\d+)\/floor-plan\/(content|open)\/?$/i);
   if (match) {
     const crmLt = SEGMENT_TO_CRM[match[1]!.toLowerCase()] ?? fallbackLeadType;
-    return `/api/crm/lead/${crmLt}/${match[2]}/floor-plan/${match[3]!.toLowerCase()}`;
+    return `/api/crm/lead/${crmLt}/${match[2]}/floor-plan/${match[3]!.toLowerCase()}${search}`;
   }
 
-  if (t.endsWith("/content")) return crmFloorPlanContentProxyPath(fallbackLeadType, fallbackId);
-  if (t.endsWith("/open")) return crmFloorPlanOpenProxyPath(fallbackLeadType, fallbackId);
+  if (pathname.endsWith("/content")) return `${crmFloorPlanContentProxyPath(fallbackLeadType, fallbackId)}${search}`;
+  if (pathname.endsWith("/open")) return `${crmFloorPlanOpenProxyPath(fallbackLeadType, fallbackId)}${search}`;
   return null;
 }
 
-function upstreamStreamUrl(leadType: string, id: string, suffix: "content" | "open"): string {
+function upstreamStreamUrl(
+  req: NextRequest,
+  leadType: string,
+  id: string,
+  suffix: "content" | "open",
+): string {
   const segment = crmLeadTypeToFloorPlanLeadType(
     leadType as Parameters<typeof crmLeadTypeToFloorPlanLeadType>[0],
   );
-  return `${BASE_URL}/v1/leads/${segment}/${id}/floor-plan/${suffix}`;
+  const url = new URL(`${BASE_URL}/v1/leads/${segment}/${id}/floor-plan/${suffix}`);
+  const index = req.nextUrl.searchParams.get("index");
+  if (index != null && index.trim() !== "") url.searchParams.set("index", index.trim());
+  return url.toString();
 }
 
 export async function proxyFloorPlanStream(
@@ -60,7 +84,7 @@ export async function proxyFloorPlanStream(
   id: string,
   suffix: "content" | "open",
 ): Promise<NextResponse> {
-  const res = await fetch(upstreamStreamUrl(leadType, id, suffix), {
+  const res = await fetch(upstreamStreamUrl(req, leadType, id, suffix), {
     headers: upstreamAuthHeaders(req),
     cache: "no-store",
   });

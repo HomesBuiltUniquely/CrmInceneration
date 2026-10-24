@@ -1,9 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
-import { crmLeadTypeToFloorPlanLeadType } from "@/lib/floor-plan";
+import { FLOOR_PLAN_MAX_FILES, crmLeadTypeToFloorPlanLeadType } from "@/lib/floor-plan";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
+
+function collectFloorPlanFiles(form: FormData): File[] {
+  const files: File[] = [];
+  for (const field of ["file", "files"] as const) {
+    for (const entry of form.getAll(field)) {
+      if (entry instanceof File && entry.size > 0) {
+        files.push(entry);
+      } else if (entry instanceof Blob && entry.size > 0) {
+        files.push(new File([entry], "floor-plan.pdf", { type: entry.type || "application/pdf" }));
+      }
+    }
+  }
+  return files;
+}
 
 function floorPlanUpstreamUrl(leadType: string, id: string): string {
   const segment = crmLeadTypeToFloorPlanLeadType(
@@ -59,16 +73,25 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Invalid leadType" }, { status: 400 });
     }
     const incoming = await req.formData();
-    const file = incoming.get("file");
-    if (!(file instanceof Blob) || file.size === 0) {
+    const files = collectFloorPlanFiles(incoming);
+    if (files.length === 0) {
       return NextResponse.json(
         { success: false, error: "Missing file" },
         { status: 400 },
       );
     }
+    if (files.length > FLOOR_PLAN_MAX_FILES) {
+      return NextResponse.json(
+        { success: false, error: `Up to ${FLOOR_PLAN_MAX_FILES} floor plans are allowed.` },
+        { status: 400 },
+      );
+    }
     const upstreamForm = new FormData();
-    const name = file instanceof File ? file.name : "floor-plan";
-    upstreamForm.append("file", file, name);
+    if (files.length === 1) {
+      upstreamForm.append("file", files[0]!, files[0]!.name);
+    } else {
+      for (const file of files) upstreamForm.append("files", file, file.name);
+    }
 
     const res = await fetch(floorPlanUpstreamUrl(leadType, id), {
       method: "POST",
@@ -109,7 +132,10 @@ export async function DELETE(
     if (!isCrmLeadType(leadType)) {
       return NextResponse.json({ success: false, error: "Invalid leadType" }, { status: 400 });
     }
-    const res = await fetch(floorPlanUpstreamUrl(leadType, id), {
+    const upstreamUrl = new URL(floorPlanUpstreamUrl(leadType, id));
+    const index = req.nextUrl.searchParams.get("index");
+    if (index != null && index.trim() !== "") upstreamUrl.searchParams.set("index", index.trim());
+    const res = await fetch(upstreamUrl, {
       method: "DELETE",
       headers: upstreamAuthHeaders(req),
       cache: "no-store",
