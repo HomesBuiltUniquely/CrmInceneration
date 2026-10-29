@@ -360,7 +360,7 @@ export default function QuickAccessSidebar({
             type="button"
             title="Hows ERP"
             className={cn(
-              "flex shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-transparent",
+              "flex shrink-0 items-center justify-center bg-transparent",
               isCollapsed ? "h-9 w-9" : "h-10 w-10",
             )}
             style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
