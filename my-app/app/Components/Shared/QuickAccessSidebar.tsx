@@ -319,68 +319,71 @@ export default function QuickAccessSidebar({
         )}
         style={{ transition: sidebarTransition, willChange: "width" }}
       >
-        {/* Header / Logo — ORIGINAL DESIGN */}
+        {/* Mobile drawer chrome */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--crm-border)] px-3 py-3 xl:hidden">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Image
+              src="/hows-mark.png"
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 object-contain"
+              priority
+            />
+            <div className="min-w-0">
+              <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--crm-text-muted)]">{appBadge}</div>
+              <div className="mt-0.5 truncate text-base font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">Hows ERP</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsMobileOpen(false)}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[var(--crm-border-strong)] bg-[var(--crm-surface-elevated)] text-[var(--crm-text-secondary)]"
+            aria-label="Close navigation"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+              <path d="M6 6L18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <path d="M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Desktop logo row — h-14 matches AppTopBar so top borders align */}
         <div
           className={cn(
-            "shrink-0 border-b border-[var(--crm-border)] transition-all ease-[cubic-bezier(0.32,0.72,0,1)]",
-            isCollapsed ? "px-1 py-2" : "px-3 py-2.5",
+            "hidden h-14 shrink-0 items-center border-b border-[var(--crm-border)] transition-all ease-[cubic-bezier(0.32,0.72,0,1)] xl:flex",
+            isCollapsed ? "justify-center px-1.5" : "justify-start gap-2.5 px-3",
           )}
           style={{ transitionDuration: `${EXPAND_MS}ms` }}
         >
-          <div className="mb-4 flex items-center justify-between xl:hidden">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--crm-text-muted)]">{appBadge}</div>
-              <div className="mt-1 text-lg font-bold tracking-[-0.04em] text-[var(--crm-text-primary)]">Navigation</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setIsMobileOpen(false)}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--crm-border-strong)] bg-[var(--crm-surface-elevated)] text-[var(--crm-text-secondary)]"
-              aria-label="Close navigation"
-            >
-              <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
-                <path d="M6 6L18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                <path d="M18 6L6 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              </svg>
-            </button>
-          </div>
-
-          <div
+          <button
+            type="button"
+            title="Hows ERP"
             className={cn(
-              "flex items-center",
-              isCollapsed ? "justify-center px-0 py-1" : "min-h-[68px] justify-start gap-0",
+              "flex shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-transparent",
+              isCollapsed ? "h-9 w-9" : "h-10 w-10",
             )}
             style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
+            aria-label="Hows ERP"
           >
-            <button
-              type="button"
-              title="Hows ERP"
+            <Image
+              src="/hows-mark.png"
+              alt="Hows ERP logo"
+              width={80}
+              height={80}
               className={cn(
-                "flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent",
-                isCollapsed ? "h-[42px] w-[42px]" : "h-[52px] w-[52px]",
+                "object-contain",
+                isCollapsed ? "h-9 w-9" : "h-10 w-10",
               )}
               style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
-              aria-label="Hows ERP"
-            >
-              <Image
-                src="/logo-final-02.png"
-                alt="Hows ERP logo"
-                width={260}
-                height={260}
-                className={cn(
-                  "object-contain",
-                  isCollapsed ? "h-[78px] w-[78px] scale-[1.5]" : "h-[168px] w-[168px] scale-[2.15]",
-                )}
-                style={{ transition: `all ${EXPAND_MS}ms ${SPRING}` }}
-                priority
-              />
-            </button>
-            {!isCollapsed ? (
-              <div className="ml-2 min-w-0 truncate text-[17px] font-bold leading-none tracking-[-0.02em] text-[var(--crm-text-primary)] [text-shadow:none]">
-                Hows ERP
-              </div>
-            ) : null}
-          </div>
+              priority
+            />
+          </button>
+          {!isCollapsed ? (
+            <div className="min-w-0 truncate text-[16px] font-bold leading-none tracking-[-0.02em] text-[var(--crm-text-primary)]">
+              Hows ERP
+            </div>
+          ) : null}
         </div>
 
         {/* Nav items — ORIGINAL DESIGN */}
