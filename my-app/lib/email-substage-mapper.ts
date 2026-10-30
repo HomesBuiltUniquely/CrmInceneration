@@ -121,6 +121,10 @@ export function resolveEmailSubstage(substage: string): EmailSubstage | null {
     return stripped as EmailSubstage;
   }
 
+  if (/^meeting rescheduled(?:\s+\d+)?$/i.test(stripped)) {
+    return "Meeting Rescheduled";
+  }
+
   const alias = EMAIL_SUBSTAGE_ALIASES[stripped.toLowerCase()];
   if (alias) return alias;
 

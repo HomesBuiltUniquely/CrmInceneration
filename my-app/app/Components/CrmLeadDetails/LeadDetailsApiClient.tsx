@@ -452,11 +452,13 @@ function buildExternalIntakeScheduleFromAppointment(args: {
   meetingDate: string;
   appt: CreateAppointmentResponse;
   designerName?: string;
+  rescheduleCount?: number;
 }): {
   appointmentDate: string;
   appointmentSlot: string;
   scheduleTimezone: string;
   designerName: string;
+  rescheduleCount?: number;
 } {
   const scheduleTimezone = EXTERNAL_INTAKE_DEFAULT_TZ;
   const appointmentDate =
@@ -476,7 +478,13 @@ function buildExternalIntakeScheduleFromAppointment(args: {
       scheduleTimezone,
     );
   const designerName = args.designerName?.trim() ?? "";
-  return { appointmentDate, appointmentSlot, scheduleTimezone, designerName };
+  const rescheduleCount =
+    typeof args.rescheduleCount === "number" && args.rescheduleCount > 0
+      ? args.rescheduleCount
+      : typeof args.appt.rescheduleCount === "number" && args.appt.rescheduleCount > 0
+        ? args.appt.rescheduleCount
+        : undefined;
+  return { appointmentDate, appointmentSlot, scheduleTimezone, designerName, rescheduleCount };
 }
 
 async function postExternalIntakeLead(args: {
@@ -495,6 +503,7 @@ async function postExternalIntakeLead(args: {
     appointmentSlot: string;
     scheduleTimezone: string;
     designerName?: string;
+    rescheduleCount?: number;
   };
 }): Promise<void> {
   const pickText = (value: unknown): string => {
@@ -671,6 +680,9 @@ async function postExternalIntakeLead(args: {
     if (scheduleTimezone) payload.scheduleTimezone = scheduleTimezone;
     const scheduleDesignerName = normalizeOptionalPersonField(designerName?.trim() || "");
     if (scheduleDesignerName) payload.designerName = scheduleDesignerName;
+    if (typeof args.schedule.rescheduleCount === "number" && args.schedule.rescheduleCount > 0) {
+      payload.rescheduleCount = args.schedule.rescheduleCount;
+    }
 
     const floorPlanPublicLink =
       args.lead.floorPlanPublicLink?.trim() ||
@@ -3349,6 +3361,7 @@ export default function LeadDetailsApiClient({
           milestoneStageCategory: args.milestoneStageCategory,
           milestoneSubStage:      args.feedback,
         });
+        const originalMeetingDateTime = lead.meetingDate || lead.followUpDate;
         let followUpDate = noFollowUpNeeded
           ? ""
           : (args.nextCallDateLocal.trim() || lead.followUpDate);
@@ -3356,6 +3369,7 @@ export default function LeadDetailsApiClient({
         let meetingUpdateWarning = "";
         let designerName = lead.designerName;
         let meetingType = args.meetingAppointment?.meetingType?.trim() ?? lead.meetingType;
+        let apptRescheduleCount: number | undefined;
 
         if (isCancelFlow && args.cancelAppointmentIds?.length) {
           for (const appointmentId of args.cancelAppointmentIds) {
@@ -3389,6 +3403,10 @@ export default function LeadDetailsApiClient({
             designerName: args.meetingAppointment.designerName,
             designerEmail: args.meetingAppointment.designerEmail,
             meetingType: args.meetingAppointment.meetingType,
+            virtualMeetingLink: args.meetingAppointment.virtualMeetingLink,
+            meetingLink: args.meetingAppointment.virtualMeetingLink,
+            salesName: lead.assignee?.trim() || undefined,
+            assignee: lead.assignee?.trim() || undefined,
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
@@ -3418,6 +3436,7 @@ export default function LeadDetailsApiClient({
               appt = await updateAppointment(existingId, apptBody, {
                 rescheduleReason: args.note?.trim() || undefined,
               });
+              apptRescheduleCount = appt?.rescheduleCount;
             } else {
               appt = await createAppointment(apptBody);
             }
@@ -3444,6 +3463,7 @@ export default function LeadDetailsApiClient({
             meetingDate: args.meetingAppointment.date,
             appt,
             designerName: args.meetingAppointment.designerName,
+            rescheduleCount: apptRescheduleCount,
           });
           void (async () => {
             try {
@@ -3734,11 +3754,34 @@ export default function LeadDetailsApiClient({
         }
         await refreshActivities();
 
-        const emailPayload = buildEmailRequest(leadForSave, persistedSubstage);
+        let finalRescheduleCount = apptRescheduleCount;
+        if (isMeetingRescheduledSubstage(persistedSubstage) && (!finalRescheduleCount || finalRescheduleCount <= 0)) {
+          const prevCount = (lead.activities || []).filter((a) => {
+            const t = String(a.rawActivityType || a.type || "").toUpperCase();
+            const d = String(a.description || "").toLowerCase();
+            return t === "MEETING_RESCHEDULED" || d.includes("meeting rescheduled") || d.includes("meeting moved to");
+          }).length;
+          finalRescheduleCount = Math.max(1, prevCount + 1);
+        }
+
+        const emailLead = {
+          ...leadForSave,
+          meetingDate: leadForSave.meetingDate || originalMeetingDateTime || lead.meetingDate,
+          followUpDate: leadForSave.followUpDate || originalMeetingDateTime || lead.followUpDate,
+          designerName: designerName || args.meetingAppointment?.designerName || lead.designerName,
+          designerEmail: args.meetingAppointment?.designerEmail || lead.designerEmail,
+        };
+        const emailPayload = buildEmailRequest(emailLead, persistedSubstage, false, finalRescheduleCount);
         if (emailPayload) {
           // Hub quote_sent_info (and other lead-bound emails) need numeric DB id + leadType.
           emailPayload.leadId = String(leadId);
           emailPayload.leadType = String(leadTypeParam);
+          if (emailLead.designerName && !emailPayload.designerName) {
+            emailPayload.designerName = emailLead.designerName;
+          }
+          if (emailLead.designerEmail && !emailPayload.designerEmail) {
+            emailPayload.designerEmail = emailLead.designerEmail;
+          }
           if (emailPayload.subStage === "Quote Sent") {
             const qLink = leadForSave.quoteLink?.trim() || "";
             if (qLink) emailPayload.quoteLink = qLink;

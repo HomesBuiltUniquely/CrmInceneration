@@ -64,6 +64,7 @@ export type ScheduleHubMeetingConfirmPayload = {
   endTime: string;
   meetingType: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
   notes: string;
+  virtualMeetingLink?: string;
 };
 
 export type ScheduleHubMeetingModalProps = {
@@ -631,6 +632,7 @@ export default function ScheduleHubMeetingModal({
   const slideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const SLIDE_MS = 580;
   const [meetingType, setMeetingType] = useState("");
+  const [virtualMeetingLink, setVirtualMeetingLink] = useState("");
   const [appointmentDate, setAppointmentDate] = useState(minDate);
   const [selectedStartMin, setSelectedStartMin] = useState<number | null>(null);
   const [designer, setDesigner] = useState<AvailableDesignerRow | null>(null);
@@ -738,6 +740,7 @@ export default function ScheduleHubMeetingModal({
     if (!wasOpenRef.current) {
       setNotes(initialNote);
       setMeetingType("");
+      setVirtualMeetingLink("");
       setAppointmentDate(minDate);
       setSelectedStartMin(null);
       setDesigner(null);
@@ -890,6 +893,7 @@ export default function ScheduleHubMeetingModal({
     setLocalError("");
     setShowNoteError(false);
     setNotes(initialNote);
+    setVirtualMeetingLink("");
     setAppointmentDate(minDate);
     const parsed = parseYmd(minDate);
     if (parsed) setViewMonth({ year: parsed.year, month: parsed.month });
@@ -958,6 +962,7 @@ export default function ScheduleHubMeetingModal({
         endTime: buildHubMeetingDateTimeIso(appointmentDate.trim(), selectedEndMin),
         meetingType: meetingType as ScheduleHubMeetingConfirmPayload["meetingType"],
         notes: notes.trim(),
+        virtualMeetingLink: meetingType === "VIRTUAL_MEETING" ? virtualMeetingLink.trim() : undefined,
       });
     } catch (e: unknown) {
       setLocalError(e instanceof Error ? e.message : "Could not schedule meeting.");
@@ -1163,7 +1168,9 @@ export default function ScheduleHubMeetingModal({
                                 onClick={() => {
                                   if (locked) return;
                                   setMeetingType(opt.value);
-                                  goNextSoon("designer");
+                                  if (opt.value !== "VIRTUAL_MEETING") {
+                                    goNextSoon("designer");
+                                  }
                                 }}
                                 className={cn(
                                   "hub-meet-card flex min-h-[52px] items-center gap-3 rounded-2xl border px-3.5 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#047857]",
@@ -1202,6 +1209,74 @@ export default function ScheduleHubMeetingModal({
                             );
                           })}
                         </div>
+
+                        {/* Meeting link input — shown only when Virtual Meeting is selected */}
+                        {meetingType === "VIRTUAL_MEETING" && (
+                          <div
+                            className="mt-3 rounded-2xl border bg-white p-4 shadow-sm transition-all duration-200"
+                            style={{ borderColor: C.border }}
+                          >
+                            <label
+                              htmlFor="virtual-meeting-link"
+                              className="block text-[11px] font-bold uppercase tracking-[0.08em]"
+                              style={{ color: C.muted }}
+                            >
+                              Meeting link
+                            </label>
+                            <div className="relative mt-2 flex items-center gap-2">
+                              <span
+                                className="pointer-events-none absolute left-3 flex shrink-0"
+                                style={{ color: C.primary }}
+                              >
+                                {/* Link icon */}
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  className="h-4 w-4"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth={1.8}
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  aria-hidden
+                                >
+                                  <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.07 1.07" />
+                                  <path d="M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.07-1.07" />
+                                </svg>
+                              </span>
+                              <input
+                                id="virtual-meeting-link"
+                                type="url"
+                                value={virtualMeetingLink}
+                                onChange={(e) => setVirtualMeetingLink(e.target.value)}
+                                disabled={locked}
+                                placeholder="Paste meeting link here (e.g. Google Meet, Zoom…)"
+                                className={cn(
+                                  "w-full rounded-xl border py-2.5 pl-9 pr-3 text-[13px] font-medium transition duration-200",
+                                  "placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#047857]/40",
+                                  locked ? "cursor-not-allowed bg-slate-50 opacity-60" : "bg-white",
+                                )}
+                                style={{ borderColor: C.border, color: C.text }}
+                              />
+                            </div>
+                            <div className="mt-3 flex justify-end">
+                              <button
+                                type="button"
+                                disabled={locked}
+                                onClick={() => goNextSoon("designer")}
+                                className={cn(
+                                  "inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-bold text-white transition duration-200 hover:brightness-110 active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#047857]",
+                                  locked ? "cursor-not-allowed opacity-60" : "",
+                                )}
+                                style={{ backgroundColor: C.primary }}
+                              >
+                                Continue
+                                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                  <path d="m9 5 6 7-6 7" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   }

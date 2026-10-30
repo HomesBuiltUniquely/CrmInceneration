@@ -36,6 +36,10 @@ export type CreateAppointmentBody = {
   startTime?: string;
   endTime?: string;
   meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
+  virtualMeetingLink?: string;
+  meetingLink?: string;
+  salesName?: string;
+  assignee?: string;
   meetingLabel?: string;
   source?: "CRM" | "DESIGN_MODULE";
   description: string;
@@ -58,6 +62,7 @@ export type CreateAppointmentResponse = {
   description?: string;
   googleSyncStatus?: string;
   googleHtmlLink?: string;
+  rescheduleCount?: number;
   error?: string;
   details?: string;
 };
@@ -395,6 +400,19 @@ function buildAppointmentPayload(body: CreateAppointmentBody): Record<string, un
     leadId: body.leadId,
   };
   if (designerEmail) payload.designerEmail = designerEmail;
+  if (body.virtualMeetingLink?.trim()) {
+    payload.virtualMeetingLink = body.virtualMeetingLink.trim();
+    payload.meetingLink = body.virtualMeetingLink.trim();
+  }
+  if (body.meetingLink?.trim()) {
+    payload.meetingLink = body.meetingLink.trim();
+  }
+  if (body.salesName?.trim()) {
+    payload.salesName = body.salesName.trim();
+  }
+  if (body.assignee?.trim()) {
+    payload.assignee = body.assignee.trim();
+  }
   if (body.meetingType) payload.meetingType = body.meetingType;
   if (body.meetingLabel?.trim()) payload.meetingLabel = body.meetingLabel.trim();
   if (body.source) payload.source = body.source;

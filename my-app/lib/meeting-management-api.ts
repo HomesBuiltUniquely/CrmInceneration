@@ -356,7 +356,7 @@ function toRecord(
   const offset = meetingOffset(when.date);
   const endMin = when.startMin + durationMin;
   const timePassed = indiaWallUtcMs(when.date, endMin) < Date.now();
-  const stillBooked = milestoneSubStage === "Meeting Scheduled" || milestoneSubStage === "Meeting Rescheduled";
+  const stillBooked = milestoneSubStage === "Meeting Scheduled" || milestoneSubStage.startsWith("Meeting Rescheduled");
   const needsOutcome = timePassed && stillBooked && experienceOrDesign;
   let status = statusFrom(row, when.date, when.startMin, endMin);
   if (milestoneSubStage === "Meeting Cancelled" || milestoneSubStage === "Meeting Cancelled/Paused") {
@@ -522,7 +522,7 @@ export function quoteSentLeadRows(
           ? "COMPLETED"
           : sub === "Meeting Scheduled"
             ? "SCHEDULED"
-            : sub === "Meeting Rescheduled"
+            : sub.startsWith("Meeting Rescheduled")
               ? "RESCHEDULED"
               : sub === "Meeting Cancelled" || sub === "Meeting Cancelled/Paused"
                 ? "CANCELLED"

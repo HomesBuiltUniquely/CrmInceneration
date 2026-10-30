@@ -8,6 +8,7 @@ import { resolveEmailSubstage, shouldSendEmail } from "@/lib/email-substage-mapp
  */
 export interface EmailRequestPayload {
   subStage: string;
+  rescheduleCount?: number;
   clientName: string;
   clientEmail: string;
   leadId?: string;
@@ -23,6 +24,43 @@ export interface EmailRequestPayload {
   reconnectDate?: string;
   cancellationReason?: string;
   feedbackFormLink?: string;
+  designerName?: string;
+  designerEmail?: string;
+  ccEmails?: string[];
+}
+
+function formatMeetingDateDisplay(rawDate?: string): string | undefined {
+  if (!rawDate || !rawDate.trim()) return undefined;
+  const str = rawDate.trim();
+  if (/^\d{1,2}\s+[A-Za-z]+\s+\d{4}$/.test(str)) {
+    return str;
+  }
+  const d = new Date(str.includes(" ") && !str.includes("T") ? str.replace(" ", "T") : str);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleDateString("en-IN", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }
+  return str;
+}
+
+function formatMeetingTimeDisplay(rawDate?: string): string | undefined {
+  if (!rawDate || !rawDate.trim()) return undefined;
+  const str = rawDate.trim();
+  if (/^\d{1,2}:\d{2}\s*(am|pm)$/i.test(str)) {
+    return str.toLowerCase();
+  }
+  const d = new Date(str.includes(" ") && !str.includes("T") ? str.replace(" ", "T") : str);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleTimeString("en-IN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).toLowerCase();
+  }
+  return undefined;
 }
 
 /**
@@ -32,7 +70,8 @@ export interface EmailRequestPayload {
 export function buildEmailRequest(
   lead: Lead,
   substage: string,
-  manualTrigger: boolean = false
+  manualTrigger: boolean = false,
+  rescheduleCount?: number
 ): EmailRequestPayload | null {
   const trimmedSubstage = substage.trim();
   const emailSubstage = resolveEmailSubstage(trimmedSubstage);
@@ -49,37 +88,40 @@ export function buildEmailRequest(
     return null;
   }
 
+  const reschedMatch = trimmedSubstage.match(/meeting rescheduled\s*(\d+)/i);
+  const parsedCount = reschedMatch
+    ? Number(reschedMatch[1])
+    : (typeof rescheduleCount === "number" && rescheduleCount > 0 ? rescheduleCount : undefined);
+  const finalSubStage =
+    emailSubstage === "Meeting Rescheduled" && parsedCount
+      ? `Meeting Rescheduled ${parsedCount}`
+      : emailSubstage;
+
   const payload: EmailRequestPayload = {
-    subStage: emailSubstage,
+    subStage: finalSubStage,
+    rescheduleCount: parsedCount,
     clientName: lead.name?.trim() || "Valued Customer",
     clientEmail: lead.email.trim(),
     // Hub quote_sent_info update needs numeric DB id + leadType (not business leadId alone).
     leadId: lead.id?.trim() || lead.leadId?.trim() || undefined,
     leadType: lead.leadType?.trim() || undefined,
+    designerName: lead.designerName?.trim() || undefined,
+    designerEmail: lead.designerEmail?.trim() || undefined,
   };
 
   // Add optional fields based on substage
   switch (emailSubstage) {
     case "Meeting Scheduled":
-    case "Meeting Rescheduled":
-      if (lead.followUpDate?.includes("T")) {
-        const date = new Date(lead.followUpDate);
-        
-        const formattedDate = date.toLocaleDateString("en-IN", {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        });
-        payload.meetingDate = formattedDate;
-        
-        const time = date.toLocaleTimeString("en-IN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        });
-        payload.meetingTime = time;
-      } else if (lead.meetingDate) {
-        payload.meetingDate = lead.meetingDate;
+    case "Meeting Rescheduled": {
+      const rawDateTime = lead.followUpDate || lead.meetingDate;
+      if (rawDateTime) {
+        const formattedDate = formatMeetingDateDisplay(rawDateTime);
+        if (formattedDate) payload.meetingDate = formattedDate;
+        const formattedTime = formatMeetingTimeDisplay(rawDateTime);
+        if (formattedTime) payload.meetingTime = formattedTime;
+      }
+      if (!payload.meetingDate && lead.meetingDate) {
+        payload.meetingDate = formatMeetingDateDisplay(lead.meetingDate) || lead.meetingDate;
       }
 
       if (lead.meetingVenue) {
@@ -92,10 +134,19 @@ export function buildEmailRequest(
         payload.meetingType = lead.meetingType.toLowerCase().includes("physical") ? "physical" : "online";
       }
       break;
+    }
 
-    case "Meeting Cancelled/Paused":
+    case "Meeting Cancelled/Paused": {
       payload.cancellationReason = lead.lostReason?.trim() || "No detailed reason provided";
+      const rawDateTime = lead.meetingDate || lead.followUpDate;
+      if (rawDateTime) {
+        const formattedDate = formatMeetingDateDisplay(rawDateTime);
+        if (formattedDate) payload.meetingDate = formattedDate;
+        const formattedTime = formatMeetingTimeDisplay(rawDateTime);
+        if (formattedTime) payload.meetingTime = formattedTime;
+      }
       break;
+    }
 
     case "Quote Sent":
       if (lead.budget) {
