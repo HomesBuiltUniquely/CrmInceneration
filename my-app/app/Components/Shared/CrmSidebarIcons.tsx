@@ -18,6 +18,7 @@ export const MODULE_TILE_ICON_SRC: Record<string, string> = {
   "hows-design": "/icons/module-design-sm.png",
   "hows-crm": "/icons/module-crm-sm.png",
   "hows-admin": "/icons/module-admin-sm.png",
+  "hows-hallway": "/icons/module-hallway-sm.png",
 };
 
 /** Paths to warm in the browser cache as soon as the shell mounts. */
@@ -533,6 +534,10 @@ const ICON_TILE_TONES: Record<string, { idle: string; active: string }> = {
     active: "bg-transparent",
   },
   "hows-admin": {
+    idle: "bg-transparent",
+    active: "bg-transparent",
+  },
+  "hows-hallway": {
     idle: "bg-transparent",
     active: "bg-transparent",
   },

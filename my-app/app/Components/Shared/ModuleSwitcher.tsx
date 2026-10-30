@@ -17,6 +17,7 @@ import {
   MODULE_TILE_PRELOAD_HREFS,
 } from "./CrmSidebarIcons";
 import { useSmoothRouter } from "@/lib/use-smooth-router";
+import { HALLWAY_PORTAL_URL } from "@/lib/auth/hallway-portal";
 
 function normalizeRole(value: string): string {
   const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
@@ -264,6 +265,27 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
                 </button>
               );
             })}
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                window.location.assign(HALLWAY_PORTAL_URL);
+              }}
+              title="Hallway"
+              aria-label="Hallway"
+              className={cn(
+                "group relative flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] border border-transparent bg-transparent transition-all duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:scale-[1.1] hover:border-[#bfdbfe] hover:bg-[#eff6ff] hover:shadow-[0_6px_14px_rgba(37,99,235,0.12)] active:scale-95",
+                panelVisible ? "scale-100 opacity-100" : "scale-75 opacity-0",
+              )}
+              style={{ transitionDelay: `${modules.length * 30}ms` }}
+            >
+              <div className="flex h-[34px] w-[34px] items-center justify-center overflow-hidden rounded-[10px] rounded-tr-[18px] bg-transparent transition-transform duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-[1.06]">
+                <CrmSidebarIcon name="hows-hallway" className="h-[34px] w-[34px]" />
+              </div>
+              <span className="pointer-events-none absolute -bottom-7 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#111827] px-1.5 py-0.5 text-[10px] font-semibold text-white opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100">
+                Hallway
+              </span>
+            </button>
           </div>
         </div>
       ) : null}
