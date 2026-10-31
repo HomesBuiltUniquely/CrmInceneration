@@ -522,7 +522,7 @@ export function quoteSentLeadRows(
           ? "COMPLETED"
           : sub === "Meeting Scheduled"
             ? "SCHEDULED"
-            : sub.startsWith("Meeting Rescheduled")
+            : sub?.startsWith("Meeting Rescheduled")
               ? "RESCHEDULED"
               : sub === "Meeting Cancelled" || sub === "Meeting Cancelled/Paused"
                 ? "CANCELLED"
