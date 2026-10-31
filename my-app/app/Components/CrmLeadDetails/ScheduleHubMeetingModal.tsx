@@ -82,6 +82,8 @@ export type ScheduleHubMeetingModalProps = {
   feedback: string;
   hubMeetingPanelTitle: string;
   initialNote?: string;
+  /** Previous virtual join link, shown again when this booking is a reschedule. */
+  initialVirtualMeetingLink?: string;
   minDate: string;
   emailMissing?: boolean;
   scheduleInstruction?: ReactNode;
@@ -617,6 +619,7 @@ export default function ScheduleHubMeetingModal({
   feedback: _feedback,
   hubMeetingPanelTitle: _hubMeetingPanelTitle,
   initialNote = "",
+  initialVirtualMeetingLink = "",
   minDate,
   emailMissing = false,
   scheduleInstruction: _scheduleInstruction,
@@ -740,7 +743,7 @@ export default function ScheduleHubMeetingModal({
     if (!wasOpenRef.current) {
       setNotes(initialNote);
       setMeetingType("");
-      setVirtualMeetingLink("");
+      setVirtualMeetingLink(initialVirtualMeetingLink.trim());
       setAppointmentDate(minDate);
       setSelectedStartMin(null);
       setDesigner(null);
@@ -758,7 +761,7 @@ export default function ScheduleHubMeetingModal({
       wasOpenRef.current = true;
       requestAnimationFrame(() => setEntered(true));
     }
-  }, [open, initialNote, minDate]);
+  }, [open, initialNote, initialVirtualMeetingLink, minDate]);
 
   useEffect(() => {
     if (!open || !appointmentDate.trim()) {
@@ -1249,7 +1252,7 @@ export default function ScheduleHubMeetingModal({
                                 value={virtualMeetingLink}
                                 onChange={(e) => setVirtualMeetingLink(e.target.value)}
                                 disabled={locked}
-                                placeholder="Paste meeting link here (e.g. Google Meet, Zoom…)"
+                                placeholder="Paste meeting link here (e.g. Google Meet, Zoom)"
                                 className={cn(
                                   "w-full rounded-xl border py-2.5 pl-9 pr-3 text-[13px] font-medium transition duration-200",
                                   "placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#047857]/40",
@@ -1258,6 +1261,12 @@ export default function ScheduleHubMeetingModal({
                                 style={{ borderColor: C.border, color: C.text }}
                               />
                             </div>
+                            <p className="mt-2 text-[11px] font-medium leading-relaxed" style={{ color: C.muted }}>
+                              This link is emailed to the client on Meeting Scheduled and Meeting Rescheduled.
+                              {initialVirtualMeetingLink.trim()
+                                ? " Leave it blank to keep the link already shared."
+                                : ""}
+                            </p>
                             <div className="mt-3 flex justify-end">
                               <button
                                 type="button"

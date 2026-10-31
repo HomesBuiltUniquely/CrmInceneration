@@ -35,13 +35,13 @@ export const SUBSTAGE_EMAIL_MAP: Record<EmailSubstage, EmailMetadata> = {
     substage: "Meeting Scheduled",
     subject: "Your Meeting is Confirmed!",
     requiresEmail: true,
-    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType"],
+    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType", "meetingLink"],
   },
   "Meeting Rescheduled": {
     substage: "Meeting Rescheduled",
     subject: "Your Meeting has been Rescheduled",
     requiresEmail: true,
-    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType"],
+    optionalFields: ["meetingDate", "meetingTime", "meetingLocation", "meetingType", "meetingLink"],
   },
   "Meeting Cancelled/Paused": {
     substage: "Meeting Cancelled/Paused",

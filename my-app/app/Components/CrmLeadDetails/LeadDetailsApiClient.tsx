@@ -149,6 +149,7 @@ import {
 } from "@/lib/auth/api";
 import {
   buildEmailRequest,
+  clientVirtualMeetingLink,
   sendEmailNotification,
 } from "@/lib/email-request-builder";
 import { formatCrmDateTime, parseCrmDateTime } from "@/lib/date-time-format";
@@ -3782,6 +3783,13 @@ export default function LeadDetailsApiClient({
           if (emailLead.designerEmail && !emailPayload.designerEmail) {
             emailPayload.designerEmail = emailLead.designerEmail;
           }
+          const sharedMeetingLink = clientVirtualMeetingLink({
+            subStage: emailPayload.subStage,
+            meetingType:
+              args.meetingAppointment?.meetingType || meetingType || emailLead.meetingType,
+            virtualMeetingLink: args.meetingAppointment?.virtualMeetingLink,
+          });
+          if (sharedMeetingLink) emailPayload.meetingLink = sharedMeetingLink;
           if (emailPayload.subStage === "Quote Sent") {
             const qLink = leadForSave.quoteLink?.trim() || "";
             if (qLink) emailPayload.quoteLink = qLink;

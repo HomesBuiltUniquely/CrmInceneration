@@ -16,6 +16,8 @@ export interface EmailRequestPayload {
   meetingTime?: string;
   meetingLocation?: string;
   meetingType?: "online" | "physical";
+  /** Join URL pasted for a virtual meeting. Included only on client schedule emails. */
+  meetingLink?: string;
   quotedAmount?: string;
   quoteLink?: string;
   /** Design / Hub quote id — stored in quote_sent_info when present. */
@@ -185,6 +187,23 @@ export function buildEmailRequest(
   }
 
   return payload;
+}
+
+/** Join link shared with the client. Only virtual meetings, and only the schedule / reschedule emails. */
+export function clientVirtualMeetingLink(args: {
+  subStage: string;
+  meetingType?: string | null;
+  virtualMeetingLink?: string | null;
+}): string | undefined {
+  const link = args.virtualMeetingLink?.trim();
+  if (!link) return undefined;
+  const stage = args.subStage.trim();
+  const isScheduleMail =
+    stage === "Meeting Scheduled" || /^Meeting Rescheduled(?:\s+\d+)?$/i.test(stage);
+  if (!isScheduleMail) return undefined;
+  const type = (args.meetingType ?? "").trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (!type.includes("VIRTUAL")) return undefined;
+  return link;
 }
 
 /**

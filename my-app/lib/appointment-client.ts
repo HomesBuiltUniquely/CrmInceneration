@@ -530,11 +530,23 @@ export type AppointmentRow = {
   leadId?: number;
   leadType?: string;
   meetingType?: string;
+  /** Join URL saved for a virtual meeting, reused when the meeting is rescheduled. */
+  virtualMeetingLink?: string;
   startTime?: string;
   endTime?: string;
   createdAt?: string;
   designerName?: string;
 };
+
+function readVirtualMeetingLink(row: Record<string, unknown>): string | undefined {
+  const raw = readAppointmentField(
+    row,
+    "virtualMeetingLink",
+    "virtual_meeting_link",
+    "VirtualMeetingLink",
+  );
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+}
 
 function readAppointmentField(row: Record<string, unknown>, ...keys: string[]): unknown {
   for (const key of keys) {
@@ -595,6 +607,7 @@ function normalizeAppointmentRow(row: unknown): AppointmentRow | null {
       typeof meetingTypeRaw === "string" && meetingTypeRaw.trim()
         ? meetingTypeRaw.trim()
         : undefined,
+    virtualMeetingLink: readVirtualMeetingLink(o),
     startTime: typeof startTimeRaw === "string" ? startTimeRaw : undefined,
     endTime:
       typeof readAppointmentField(o, "endTime", "EndTime", "end_time") === "string"

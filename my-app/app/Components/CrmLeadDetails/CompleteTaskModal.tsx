@@ -339,6 +339,13 @@ export default function CompleteTaskModal({
   );
   const [scheduleScopeWarning, setScheduleScopeWarning] = useState("");
   const [rescheduleAppointmentId, setRescheduleAppointmentId] = useState<number | null>(null);
+  const initialVirtualMeetingLink = useMemo(() => {
+    if (rescheduleAppointmentId == null) return "";
+    const row = conflictMeetings.find((meeting) => meeting.id === rescheduleAppointmentId);
+    const type = (row?.meetingType ?? "").toUpperCase();
+    if (!type.includes("VIRTUAL")) return "";
+    return row?.virtualMeetingLink?.trim() ?? "";
+  }, [conflictMeetings, rescheduleAppointmentId]);
 
   const minAppointmentDate = useMemo(() => {
     const d = new Date();
@@ -2323,6 +2330,7 @@ export default function CompleteTaskModal({
         feedback={feedback}
         hubMeetingPanelTitle={meetingSchedulePanelTitle(feedback)}
         initialNote={note}
+        initialVirtualMeetingLink={initialVirtualMeetingLink}
         minDate={minAppointmentDate}
         emailMissing={emailMissingForMeeting}
         onNotesChange={setNote}
