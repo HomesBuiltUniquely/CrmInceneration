@@ -444,7 +444,7 @@ Filters (`dateRange` / branch / manager / exec) match other Insights widgets. In
 
 ### 5.6 Team performance matrix
 
-One row per salesperson in scope. FE maps Hub metrics; Target / Achieved / Payoff are **FE Incentives only**.
+One row per salesperson in scope. FE maps Hub metrics only — **do not recompute Achieved on FE**.
 
 | Field | Source |
 |-------|--------|
@@ -452,8 +452,9 @@ One row per salesperson in scope. FE maps Hub metrics; Target / Achieved / Payof
 | `closedValue` | Hub still returns; **FE does not show Value** |
 | `conversionPercent` | Prefer Hub; else FE `(closed / leads) * 100` |
 | `active` | Hub optional row flag |
-| `achievedIncentive` / `payoff` | **FE Incentives**, Insights date filter (All = all time). Payoff = sum of 15-day slabs. **No Target column** |
-| `teamPeriod` | FE always sends `monthly` (Insights date window for matrix activity) |
+| `achievedIncentive` | Hub — incentives revenue (token+booking selected `quoteAmount`, recognition dates, Insights window; H1+H2 for a calendar month). FE: `achievedIncentive ?? payoff ?? 0` |
+| `payoff` | Hub alias of `achievedIncentive` (same INR). **No Target column** |
+| `teamPeriod` | FE always sends `monthly` (Insights date window for matrix activity; Achieved stays on Insights date window even if `teamPeriod=daily`) |
 
 **Hub field semantics (shipped — product-correct):**
 

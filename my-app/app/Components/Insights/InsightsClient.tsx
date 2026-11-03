@@ -82,14 +82,6 @@ import {
 import { salesAdminPoolInsightOpts } from "@/lib/sales-admin-insight-tiles";
 import { filterLeadsForSalesClientInbox } from "@/lib/crm-workspace";
 import {
-  computeTeamMatrixIncentiveMetrics,
-  formatTeamMatrixIncentiveScope,
-  loadTeamMatrixIncentiveBase,
-  type TeamMemberIncentiveMetrics,
-} from "@/lib/insights-team-incentive-matrix";
-import type { IncentiveBookingLead } from "@/lib/incentives-booking-data";
-import type { SalesTargetUserRow } from "@/lib/sales-targets";
-import {
   CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
@@ -203,19 +195,6 @@ export default function InsightsClient1() {
   const passagesTrendFetchGen = useRef(0);
   const [passagesTrendGranularity, setPassagesTrendGranularity] =
     useState<InsightsTrendGranularity>("month");
-
-  /** Achieved/Payoff vs Insights date filter (Incentives engine). */
-  const [teamIncentiveLeads, setTeamIncentiveLeads] = useState<
-    Map<number, IncentiveBookingLead[]>
-  >(() => new Map());
-  const [teamIncentiveTargets, setTeamIncentiveTargets] = useState<
-    Map<string, Map<number, SalesTargetUserRow>>
-  >(() => new Map());
-  const [teamIncentiveByUser, setTeamIncentiveByUser] = useState<
-    Map<number, TeamMemberIncentiveMetrics>
-  >(() => new Map());
-  const [incentiveScopeLabel, setIncentiveScopeLabel] = useState("");
-  const [teamIncentivesLoading, setTeamIncentivesLoading] = useState(false);
 
   useEffect(() => {
     setRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -351,17 +330,6 @@ export default function InsightsClient1() {
       cancelled = true;
     };
   }, [role, viewerUserId]);
-
-  const canPickTeamIncentives = useMemo(() => {
-    const r = role.toUpperCase();
-    return (
-      r === "SUPER_ADMIN" ||
-      r === "SALES_ADMIN" ||
-      r === "ADMIN" ||
-      r === "SALES_MANAGER" ||
-      r === "MANAGER"
-    );
-  }, [role]);
 
   const roleLabel = useMemo(
     () =>
@@ -902,105 +870,11 @@ export default function InsightsClient1() {
     dateFilter,
   ]);
 
-  // Achieved + Payoff = same executive-leads API as Incentives page
-  useEffect(() => {
-    let cancelled = false;
-    const team = dashboard.teamPerformance;
-    // Wait for role from localStorage so admin doesn't take the self-only path first.
-    if (!role) {
-      setTeamIncentivesLoading(team.length > 0);
-      return;
-    }
-    if (!canAccessCrmInsights(role)) {
-      setTeamIncentivesLoading(false);
-      return;
-    }
-    if (team.length === 0) {
-      setTeamIncentiveLeads(new Map());
-      setTeamIncentiveTargets(new Map());
-      setTeamIncentiveByUser(new Map());
-      setIncentiveScopeLabel("");
-      setTeamIncentivesLoading(false);
-      return;
-    }
-    setTeamIncentivesLoading(true);
-    setTeamIncentiveLeads(new Map());
-    setTeamIncentiveByUser(new Map());
-    setIncentiveScopeLabel(formatTeamMatrixIncentiveScope(dateFilter));
-
-    const applyProgress = (state: {
-      leadsByUserId: Map<number, IncentiveBookingLead[]>;
-      targetsByMonth: Map<string, Map<number, SalesTargetUserRow>>;
-      done: boolean;
-    }) => {
-      if (cancelled) return;
-      setTeamIncentiveLeads(state.leadsByUserId);
-      setTeamIncentiveTargets(state.targetsByMonth);
-      setTeamIncentiveByUser(
-        computeTeamMatrixIncentiveMetrics({
-          team,
-          leadsByUserId: state.leadsByUserId,
-          dateFilter,
-          targetsByMonth: state.targetsByMonth,
-        }),
-      );
-      if (state.done) setTeamIncentivesLoading(false);
-    };
-
-    void (async () => {
-      try {
-        await loadTeamMatrixIncentiveBase({
-          team,
-          dateFilter,
-          canPickTeam: canPickTeamIncentives,
-          viewerUserId,
-          onProgress: applyProgress,
-        });
-      } catch {
-        if (!cancelled) {
-          setTeamIncentiveLeads(new Map());
-          setTeamIncentiveTargets(new Map());
-          setTeamIncentiveByUser(new Map());
-          setTeamIncentivesLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    dashboard.teamPerformance,
-    dateFilter,
-    canPickTeamIncentives,
-    viewerUserId,
-    role,
-  ]);
-
-  // Recompute metrics when date/leads/targets change without a full reload mid-stream
-  useEffect(() => {
-    if (dashboard.teamPerformance.length === 0) return;
-    if (teamIncentiveLeads.size === 0) return;
-    setTeamIncentiveByUser(
-      computeTeamMatrixIncentiveMetrics({
-        team: dashboard.teamPerformance,
-        leadsByUserId: teamIncentiveLeads,
-        dateFilter,
-        targetsByMonth: teamIncentiveTargets,
-      }),
-    );
-    setIncentiveScopeLabel(formatTeamMatrixIncentiveScope(dateFilter));
-  }, [
-    dashboard.teamPerformance,
-    teamIncentiveLeads,
-    teamIncentiveTargets,
-    dateFilter,
-  ]);
-
+  /** Team matrix: Hub activity + Hub Achieved (do not recompute incentives on FE). */
   const teamForMatrix = useMemo((): InsightsTeamMember[] => {
     const rows = dashboard.teamPerformance
       .filter((m) => !isSalesManagerRole(m.role || ""))
       .map((m) => {
-        const uid = Number(m.userId);
         const leads = Number(m.leads) || 0;
         const closed = Number(m.closed) || 0;
         const proposals = Number(m.proposals) || 0;
@@ -1013,13 +887,12 @@ export default function InsightsClient1() {
             : leads > 0
               ? Math.round((closed / leads) * 1000) / 10
               : 0;
-        const inc =
-          Number.isFinite(uid) && uid > 0
-            ? teamIncentiveByUser.get(uid)
-            : undefined;
-        // Only FE Incentives engine — never fall back to missing Hub fields as 0
-        const achievedIncentive = inc != null ? inc.achievedIncentive : undefined;
-        const payoff = inc != null ? inc.payoff : undefined;
+        // Hub Achieved ₹ — incentives revenue; payoff is alias fallback
+        const achievedRaw = m.achievedIncentive ?? m.payoff;
+        const achievedIncentive =
+          achievedRaw != null && Number.isFinite(Number(achievedRaw))
+            ? Number(achievedRaw)
+            : 0;
 
         return {
           ...m,
@@ -1029,20 +902,18 @@ export default function InsightsClient1() {
           closed,
           conversionPercent,
           achievedIncentive,
-          payoff,
+          payoff: achievedIncentive,
         };
       });
     return rows.sort((a, b) => {
-      const aAchieved =
-        a.achievedIncentive == null ? -1 : Number(a.achievedIncentive) || 0;
-      const bAchieved =
-        b.achievedIncentive == null ? -1 : Number(b.achievedIncentive) || 0;
+      const aAchieved = Number(a.achievedIncentive) || 0;
+      const bAchieved = Number(b.achievedIncentive) || 0;
       if (bAchieved !== aAchieved) return bAchieved - aAchieved;
       const closedDiff = (Number(b.closed) || 0) - (Number(a.closed) || 0);
       if (closedDiff !== 0) return closedDiff;
       return (Number(b.leads) || 0) - (Number(a.leads) || 0);
     });
-  }, [dashboard.teamPerformance, teamIncentiveByUser]);
+  }, [dashboard.teamPerformance]);
 
   const executiveOptions = useMemo(() => {
     if (filterOptions.salesManagers.some((m) => (m.executives?.length ?? 0) > 0)) {
@@ -1795,11 +1666,7 @@ export default function InsightsClient1() {
             stagePathLoading={stagePathLoading}
             stageVelocity={dashboard.stageVelocity}
           />
-          <InsightsSect5
-            team={teamForMatrix}
-            incentiveScopeLabel={incentiveScopeLabel}
-            incentivesLoading={teamIncentivesLoading}
-          />
+          <InsightsSect5 team={teamForMatrix} />
           <InsightsSect6
             leadsOverTime={
               alignedVolumeChartBundle?.week.leadsOverTime ?? dashboard.leadsOverTime
