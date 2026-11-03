@@ -14,17 +14,25 @@ function hallwayBase(): string {
 
 /** Corner celebration for people already signed into CRM. */
 export default function BookingCelebrationHost() {
-  const [viewer, setViewer] = useState<{ key: string; name: string } | null>(null);
+  const [viewer, setViewer] = useState<{
+    key: string;
+    name: string;
+    aliases: string[];
+  } | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('crm_token');
     const name = (localStorage.getItem('crm_user_name') || '').trim();
-    const key = (
-      localStorage.getItem('crm_login_username') ||
-      localStorage.getItem('crm_user_id') ||
-      name
-    ).trim();
-    if (token && key) setViewer({ key, name: name || key });
+    const username = (localStorage.getItem('crm_login_username') || '').trim();
+    const userId = (localStorage.getItem('crm_user_id') || '').trim();
+    const key = (username || userId || name).trim();
+    if (token && key) {
+      setViewer({
+        key,
+        name: name || key,
+        aliases: [username, userId, name, userId ? `uid:${userId}` : ''].filter(Boolean),
+      });
+    }
   }, []);
 
   if (!viewer) return null;
@@ -33,6 +41,7 @@ export default function BookingCelebrationHost() {
       apiBase={hallwayBase()}
       placement="corner"
       viewerKey={viewer.key}
+      viewerAliases={viewer.aliases}
       viewerName={viewer.name}
     />
   );

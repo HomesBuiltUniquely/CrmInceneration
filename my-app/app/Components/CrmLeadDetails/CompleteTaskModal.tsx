@@ -214,6 +214,7 @@ export type CompleteTaskApiPayload = {
     startTime?: string;
     endTime?: string;
     meetingType?: "SHOWROOM_VISIT" | "VIRTUAL_MEETING" | "SITE_VISIT";
+    virtualMeetingLink?: string;
   };
   /** Hub appointment ids to cancel (DELETE) before lead save — used when multiple meetings exist. */
   cancelAppointmentIds?: number[];
@@ -1368,6 +1369,7 @@ export default function CompleteTaskModal({
           startTime: payload.startTime,
           endTime: payload.endTime,
           meetingType: payload.meetingType,
+          virtualMeetingLink: payload.virtualMeetingLink,
         },
         rescheduleAppointmentId: rescheduleAppointmentId ?? undefined,
       });

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <!-- Same tile silhouette as CRM/Design/Admin module marks -->
+  <path d="M18 10H82C105.196 10 118 22.804 118 46V110C118 114.418 114.418 118 110 118H18C13.582 118 10 114.418 10 110V18C10 13.582 13.582 10 18 10Z" fill="#1DA1E6"/>
+  <path
+    d="M44 98V50C44 44.477 48.477 40 54 40H74C79.523 40 84 44.477 84 50V98"
+    stroke="#FFFFFF"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M58 98V64C58 59.582 61.582 56 66 56H76"
+    stroke="#FFFFFF"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="72" cy="74" r="3.8" fill="#FFFFFF"/>
+</svg>

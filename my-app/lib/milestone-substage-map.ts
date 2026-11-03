@@ -24,13 +24,21 @@ const DESIGN_REFINEMENT_REVISIT_RE =
  * e.g. `Meeting Scheduled (Connection)` → `Meeting Scheduled`
  *
  * `(Revisit)` is part of the substage name — do not strip it like a category suffix.
+ * Trailing rescheduled counters like `Meeting Rescheduled 7` are normalised to
+ * `Meeting Rescheduled` so callers can use simple string equality.
  */
 export function pipelineSubStageLabel(value: string): string {
   const t = value.trim();
   if (DESIGN_REFINEMENT_REVISIT_RE.test(t)) {
     return DESIGN_REFINEMENT_REVISIT_SUBSTAGE;
   }
-  return t.replace(/\s*\([^)]+\)\s*$/i, "").trim();
+  // Strip parenthetical category suffix, e.g. "(Connection)"
+  const stripped = t.replace(/\s*\([^)]+\)\s*$/i, "").trim();
+  // Normalise "Meeting Rescheduled <n>" → "Meeting Rescheduled"
+  if (/^meeting rescheduled\s+\d+$/i.test(stripped)) {
+    return "Meeting Rescheduled";
+  }
+  return stripped;
 }
 
 /** True when selected feedback (substage) is one of the closer cancellation/refund substages. */

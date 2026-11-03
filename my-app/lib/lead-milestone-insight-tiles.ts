@@ -62,7 +62,7 @@ export function isMeetingScheduledSubStage(lead: ApiLead): boolean {
 }
 
 export function isMeetingRescheduledSubStage(lead: ApiLead): boolean {
-  return normLabel(readLeadMilestoneSubStage(lead)) === "meeting rescheduled";
+  return normLabel(readLeadMilestoneSubStage(lead)).startsWith("meeting rescheduled");
 }
 
 export function isMeetingCancelledSubStage(lead: ApiLead): boolean {
