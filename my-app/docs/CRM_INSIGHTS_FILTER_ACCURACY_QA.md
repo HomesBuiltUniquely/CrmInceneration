@@ -23,7 +23,7 @@
 
 `filtersApplied` also echoes: `assigneeRule`, `branchField`.
 
-**FE:** One `/dashboard` call. **Target / Achieved / Payoff** stay FE Incentives (Hub omits them).
+**FE:** One `/dashboard` call. **Achieved** = Hub `teamPerformance.achievedIncentive` (fallback `payoff`).
 
 ---
 
@@ -105,7 +105,7 @@ Team matrix **rows come from** `dashboard.teamPerformance`. Scope is entirely Hu
 | **Sales Executive** | `salesExecutiveId=M` only | **0 or 1** row; `userId === M` |
 | Both sent | Prefer executive | **400** if M not under manager |
 
-FE does **not** invent team rows. Target/Achieved/Payoff joined by `userId` via FE Incentives only.
+FE does **not** invent team rows. Achieved comes on each Hub row (`achievedIncentive` / `payoff`).
 
 ---
 
@@ -159,14 +159,10 @@ Must match Booking & Token:
 | Team `teamPeriod=monthly` | Matrix activity uses full Insights date window |
 | Trends / `% change` | Current window vs **previous equal-length** window |
 
-**Exception — FE Incentives columns (Target / Achieved / Payoff):**
-
-- Not from Hub dashboard aggregation  
-- Current calendar month Incentives engine (Month = H1+H2 default; optional 15-day half)  
-- **By design** they can differ from dashboard dateRange when dateRange ≠ “this month”  
-- Document on UI: “Incentive period” vs “Activity period”
+**Achieved (`achievedIncentive`):** Hub incentives revenue on Insights date window (calendar month = H1+H2). Not Closed / Conv % / `closedValue`. FE does not recompute.
 
 ---
+
 
 ## 5. Location (branch)
 
@@ -188,7 +184,7 @@ Must match Booking & Token:
 | Lost funnel / Drop reasons | FE lost-segment from same lead pool | ✓ | ✓ | ✓ | Align to Lost Total |
 | Stage Velocity | Hub `stageVelocity` | ✓ (exit) | ✓ | ✓ | |
 | Team matrix Leads…Conv | Hub `teamPerformance` | ✓ + `teamPeriod` | ✓ | ✓ **manager→team, exec→1** | |
-| Team Target/Achieved/Payoff | FE Incentives | Month/H1/H2 | Targets by user | Rows join by `userId` | Not Insights dateRange |
+| Team Achieved ₹ | Hub `achievedIncentive` (`payoff` alias) | Insights date window (H1+H2 for month) | ✓ | ✓ | FE does not recompute |
 | Charts 5.7 | Hub `leadsOverTime`, `conversionTrend`, `revenueForecast` | ✓ | ✓ | ✓ | No FE recompute |
 | Token metrics (if shown) | FE booking deals | date | **often date only** | may miss location/people | See §8 gaps |
 
@@ -289,9 +285,8 @@ Use one browser, Network tab open, auth same as CRM.
 |-------|------------------|
 | Filter UI | `InsightsClient.tsx` header: date / branch / sales people |
 | Dashboard params | `buildInsightsDashboardSearchParams` → `salesManagerId` **or** `salesExecutiveId` |
-| Team matrix | Renders Hub `teamPerformance` (+ FE incentives by `userId`) |
+| Team matrix | Renders Hub `teamPerformance` incl. `achievedIncentive` |
 | Clear all | Resets date, people, location |
-| Incentives period | Month \| H1 \| H2 — independent of `teamPeriod` |
 
 ---
 

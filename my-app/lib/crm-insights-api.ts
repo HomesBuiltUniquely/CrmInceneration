@@ -1437,16 +1437,23 @@ function normalizeTeamPerformanceMember(
           : Boolean(m.active),
     targetIncentive:
       m.targetIncentive != null ? asMetricCount(m.targetIncentive) : undefined,
+    // Hub Achieved ₹ (incentives revenue). `payoff` is an alias of the same value.
     achievedIncentive:
       m.achievedIncentive != null
         ? asMetricCount(m.achievedIncentive)
-        : undefined,
+        : m.payoff != null
+          ? asMetricCount(m.payoff)
+          : m.incentivePayout != null
+            ? asMetricCount(m.incentivePayout)
+            : undefined,
     payoff:
       m.payoff != null
         ? asMetricCount(m.payoff)
-        : m.incentivePayout != null
-          ? asMetricCount(m.incentivePayout)
-          : undefined,
+        : m.achievedIncentive != null
+          ? asMetricCount(m.achievedIncentive)
+          : m.incentivePayout != null
+            ? asMetricCount(m.incentivePayout)
+            : undefined,
   };
 }
 

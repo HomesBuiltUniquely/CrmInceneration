@@ -157,8 +157,13 @@ export default function FloorPlanUpload({
           return;
         }
       }
-      await onFileSelect(list);
-      if (inputRef.current) inputRef.current.value = "";
+      try {
+        await onFileSelect(list);
+      } catch (e) {
+        onError?.(e instanceof Error ? e.message : "Floor plan upload failed.");
+      } finally {
+        if (inputRef.current) inputRef.current.value = "";
+      }
     },
     [canUpload, count, onError, onFileSelect],
   );

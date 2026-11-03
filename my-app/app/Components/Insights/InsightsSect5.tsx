@@ -9,19 +9,13 @@ import {
 
 type Props = {
   team: InsightsTeamMember[];
-  /** e.g. All time · Insights date filter */
-  incentiveScopeLabel?: string;
-  incentivesLoading?: boolean;
 };
 
 const TEAM_VISIBLE_ROWS = 7;
 const TEAM_ROW_HEIGHT_PX = 60;
 const TEAM_SCROLL_MAX_PX = TEAM_VISIBLE_ROWS * TEAM_ROW_HEIGHT_PX;
 
-/**
- * Payoff stays computed + on the model; set true to show the column again.
- * Hide-only (not removed) so incentives data still loads.
- */
+/** Optional second money column (same Hub Achieved value). Off by default. */
 const SHOW_PAYOFF_COLUMN = false;
 
 /** No Value column — closed $ is not shown (Achieved/Payoff cover incentives money). */
@@ -106,15 +100,12 @@ function podiumTrophyWrapClass(rank: number): string {
   return "bg-orange-100 ring-orange-200";
 }
 
-export default function InsightSect5({
-  team,
-  incentiveScopeLabel,
-  incentivesLoading = false,
-}: Props) {
+export default function InsightSect5({ team }: Props) {
   const needsScroll = team.length > TEAM_VISIBLE_ROWS;
-  const hasAnyAchieved = team.some(
-    (m) => (Number(m.achievedIncentive) || 0) > 0,
-  );
+  const hasAnyAchieved = team.some((m) => {
+    const achieved = Number(m.achievedIncentive ?? m.payoff) || 0;
+    return achieved > 0;
+  });
   const cols = gridCols(hasAnyAchieved);
 
   return (
@@ -126,15 +117,7 @@ export default function InsightSect5({
               Team Performance Matrix
             </h2>
             <p className="mt-0.5 text-[11px] text-gray-400">
-              {incentivesLoading
-                ? SHOW_PAYOFF_COLUMN
-                  ? "Loading achieved & payoff…"
-                  : "Loading achieved…"
-                : incentiveScopeLabel
-                  ? `Hub activity · ${incentiveScopeLabel}`
-                  : SHOW_PAYOFF_COLUMN
-                    ? "Hub activity · Achieved & Payoff follow Insights date filter"
-                    : "Hub activity · Achieved follows Insights date filter"}
+              Hub activity · Achieved = incentives revenue (Insights date filter)
             </p>
           </div>
 
@@ -211,10 +194,10 @@ export default function InsightSect5({
                     const closed = Number(member.closed) || 0;
                     const conversionPercent =
                       Number(member.conversionPercent) || 0;
-                    const incentivePending =
-                      member.achievedIncentive == null && member.payoff == null;
-                    const achieved = Number(member.achievedIncentive) || 0;
-                    const payoff = Number(member.payoff) || 0;
+                    // Hub: achievedIncentive, with payoff as alias fallback
+                    const achieved =
+                      Number(member.achievedIncentive ?? member.payoff) || 0;
+                    const payoff = achieved;
 
                     return (
                       <div
@@ -322,19 +305,15 @@ export default function InsightSect5({
                                   : "text-slate-800"
                           }`}
                         >
-                          {incentivePending
-                            ? "…"
-                            : formatInsightsInrCompact(achieved)}
+                          {formatInsightsInrCompact(achieved)}
                         </div>
                         {SHOW_PAYOFF_COLUMN ? (
                           <div
                             className={`text-right text-sm font-semibold tabular-nums ${payoffTone(payoff)}`}
                           >
-                            {incentivePending
-                              ? "…"
-                              : payoff > 0
-                                ? formatInsightsInrCompact(payoff)
-                                : "₹0"}
+                            {payoff > 0
+                              ? formatInsightsInrCompact(payoff)
+                              : "₹0"}
                           </div>
                         ) : null}
                       </div>

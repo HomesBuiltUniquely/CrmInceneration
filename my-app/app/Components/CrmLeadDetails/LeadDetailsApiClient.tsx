@@ -1270,11 +1270,17 @@ export default function LeadDetailsApiClient({
               }
             : {}),
         }));
+        notifySuccess(
+          files.length > 1 ? `${files.length} floor plans added.` : "Floor plan added.",
+        );
+      } catch (e) {
+        notifyError(e instanceof Error ? e.message : "Floor plan upload failed.");
+        throw e;
       } finally {
         setFloorPlanUploading(false);
       }
     },
-    [validLeadType, leadType, leadId, patchLead],
+    [validLeadType, leadType, leadId, patchLead, notifySuccess, notifyError],
   );
 
   const handleFloorPlanMissing = useCallback(() => {

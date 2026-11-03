@@ -69,7 +69,7 @@ Helpers: `canAccessCrmInsights()`, `canUseInsightsOrgFilters()`, `isSuperAdminRo
 ├─────────────────────────────────────────────────────────────┤
 │ InsightsSect4 — Drop reasons + Stage velocity               │
 ├─────────────────────────────────────────────────────────────┤
-│ InsightsSect5 — Team performance matrix + incentives        │
+│ InsightsSect5 — Team performance matrix (Hub Achieved)      │
 ├─────────────────────────────────────────────────────────────┤
 │ InsightsSect6 — Leads over time, conversion trend, forecast │
 └─────────────────────────────────────────────────────────────┘
@@ -81,7 +81,7 @@ Helpers: `canAccessCrmInsights()`, `canUseInsightsOrgFilters()`, `isSuperAdminRo
 | KPI strip | `InsightSect2.tsx` | Hub dashboard KPIs + performance cards |
 | Sales Funnel | `InsightsSect3.tsx` | FE-aligned inventory (**Current**) or Hub `/sales-funnel` (**Passages / Cohort**) |
 | Drop + velocity | `InsightsSect4.tsx` | Hub dashboard + FE lost-segment alignment |
-| Team matrix | `InsightsSect5.tsx` | Hub `teamPerformance` + FE incentives engine |
+| Team matrix | `InsightsSect5.tsx` | Hub `teamPerformance` (incl. Achieved) |
 | Charts + forecast | `InsightsSect6.tsx` | Hub dashboard + FE week/month volume rebuild |
 
 **Removed (Sep 2026):** Revenue Distribution sidebar — Sales Funnel now uses full card width.
@@ -128,8 +128,7 @@ Frontend enrichment (parallel, for accuracy vs My Leads / Journey heatmap):
     ├── fetchAdminLeadsHeatmapData / fetchInsightsSalesManagerMyTeamLeads
     ├── insightsSalesManagerMilestoneAndTotal (id-merge stage inventory)
     ├── computeLostSegmentCounts / computeFunnelCurrentStageInvestmentTotals
-    ├── fetchInsightsFunnelStagePathData (won/lost/hold substages)
-    └── insights-team-incentive-matrix (Target / Achieved / Payoff)
+    └── fetchInsightsFunnelStagePathData (won/lost/hold substages)
 ```
 
 **Why FE enrichment exists:** Sales Funnel **Current** mode must match **My Leads** journey counts (id-merge, verified inbox, assignee aliases). Hub dashboard funnel is a fallback; when FE pool loads, `alignedSalesFunnel` replaces Hub stages.
@@ -424,13 +423,15 @@ Negative `trendDays` = faster than prior period (good).
 | Column | Window | Source |
 |--------|--------|--------|
 | Leads, Meetings, **Proposals**, **Closed**, **Conv %** | **1 calendar month** (Insights “This month”; `dateRange=current_month` + `teamPeriod=monthly`) | Hub `teamPerformance` — FE displays Hub numbers (no 15/15 filter) |
-| **Achieved ₹** (Payoff computed, column may be hidden) | Same calendar month, **H1+H2 = 15+15** | FE Incentives (`insights-team-incentive-matrix.ts`) |
+| **Achieved ₹** | Same Insights date window; calendar month = **H1+H2** | Hub `teamPerformance.achievedIncentive` (fallback `payoff`) — FE does **not** recompute |
 
 **Closed (display):** Hub `teamPerformance.closed` = distinct TOKEN+BOOKING deals with `submittedAt` in the Insights window (same as Booking & Token). FE displays Hub numbers — no `max(hub, booking)` overlay.
 
 **Conv % (FE):** Hub `conversionPercent`, else `(closed / leads) * 100`.
 
-`teamPeriod` is always **`monthly`** from FE. Payoff column hidden by flag but data still loads.
+**Achieved (FE):** `row.achievedIncentive ?? row.payoff ?? 0`. Sorted Achieved ↓, then Closed, then Leads. Closed ≠ Achieved is expected.
+
+`teamPeriod` is always **`monthly`** from FE.
 
 ### 8.4 Charts + forecast (Sect6)
 
@@ -459,7 +460,6 @@ Volume chart drill-down: month → week → day depending on date range length.
 | `lib/insights-sales-funnel-investment.ts` | ₹ per funnel stage |
 | `lib/insights-sm-journey-align.ts` | SM/admin pool + milestone totals |
 | `lib/insights-week-charts.ts` | Volume chart rebuild |
-| `lib/insights-team-incentive-matrix.ts` | Target / Achieved / Payoff |
 | `lib/insights-quotes-sent-month.ts` | Quotes-sent metrics helper |
 | `app/api/crm/insights/*/route.ts` | BFF proxies to Hub |
 

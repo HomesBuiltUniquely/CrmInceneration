@@ -163,9 +163,9 @@ export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = fals
             {canUsePaymentLinks ? (
               <LeadPaymentLinkBanner leadType={leadType} leadId={leadId} />
             ) : null}
-            <div className="mt-3 grid gap-3 lg:grid-cols-[270px_minmax(0,1fr)]">
-              <aside className="space-y-3">
-                <div id="deal-overview" className="scroll-mt-24">
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
+              <aside className="min-w-0 space-y-3">
+                <div id="deal-overview" className="min-w-0 scroll-mt-24">
                   <LeadProfileCard />
                 </div>
                 <FamilyContactCard />
@@ -1290,13 +1290,23 @@ function LeadProfileCard() {
     }
   };
 
+  const leadDisplayName = lead.name?.trim() || "—";
+  const leadDisplayId = resolveLeadDisplayIdentifier(
+    {
+      externalReferenceId: lead.externalReferenceId,
+      leadId: lead.leadId,
+      customerId: lead.customerId,
+    },
+    leadId,
+  );
+
   return (
-    <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
+    <article className="overflow-hidden rounded-xl border border-[#e0e5ec] bg-white p-4">
       <div className="mb-4 flex items-start gap-3">
         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-[#d9e0ea]" />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-hidden">
           {editingContact ? (
-            <div>
+            <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
                 Full name
               </p>
@@ -1308,39 +1318,26 @@ function LeadProfileCard() {
                 className={`mt-1 ${V2_INPUT}`}
                 placeholder="Customer name"
               />
-              <p className="mt-1 text-[11px] text-[#9ca3af]">
-                ID: #
-                {resolveLeadDisplayIdentifier(
-                  {
-                    externalReferenceId: lead.externalReferenceId,
-                    leadId: lead.leadId,
-                    customerId: lead.customerId,
-                  },
-                  leadId,
-                )}
+              <p className="mt-1 truncate text-[11px] text-[#9ca3af]" title={`ID: #${leadDisplayId}`}>
+                ID: #{leadDisplayId}
               </p>
             </div>
           ) : (
             <>
-              <p className="text-[20px] font-extrabold leading-tight text-[#111827]">
-                {lead.name || "—"}
+              <p
+                className="truncate text-[20px] font-extrabold leading-tight text-[#111827]"
+                title={leadDisplayName !== "—" ? leadDisplayName : undefined}
+              >
+                {leadDisplayName}
               </p>
-              <p className="mt-0.5 text-[11px] text-[#9ca3af]">
-                ID: #
-                {resolveLeadDisplayIdentifier(
-                  {
-                    externalReferenceId: lead.externalReferenceId,
-                    leadId: lead.leadId,
-                    customerId: lead.customerId,
-                  },
-                  leadId,
-                )}
+              <p className="mt-0.5 truncate text-[11px] text-[#9ca3af]" title={`ID: #${leadDisplayId}`}>
+                ID: #{leadDisplayId}
               </p>
             </>
           )}
         </div>
         {canEditLeadPhoneEmail ? (
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {editingContact ? (
               <>
                 <button
@@ -2106,6 +2103,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
     apiDesignQaLink,
     onDesignQaLinkCopied,
   } = useLeadDetailV2();
+  const { notifyError } = useGlobalNotifier();
   const designQaLeadId = lead.leadId?.trim() || "";
   const canInteract = !disabled;
   const designQaValue = apiDesignQaLink || designQaLink || "";
@@ -2272,6 +2270,7 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
             uploading={floorPlanUploading}
             removing={floorPlanRemoving}
             onFileSelect={(files) => void onFloorPlanUpload(files)}
+            onError={notifyError}
             onRemove={onFloorPlanRemove ? (index) => void onFloorPlanRemove(index) : undefined}
             onRemoveAll={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
             onFloorPlanMissing={onFloorPlanMissing}
