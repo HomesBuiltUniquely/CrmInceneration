@@ -3252,11 +3252,13 @@ export default function LeadDetailsApiClient({
       ? putResponse
       : await getLeadDetail(lt, leadId);
     const hubPersisted = presalesMilestonePersistedInDetail(detailJson, nextPresalesStage);
+    const isPresalesRenovationSave =
+      persistedSubStage.trim().toUpperCase() === "RENOVATION";
 
     if (!hubPersisted && usesPresalesMilestoneClientOverlay(lt)) {
       setStoredPresalesMilestone(lt, leadId, nextPresalesStage);
       detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
-      notifySuccess("Milestone saved");
+      if (!isPresalesRenovationSave) notifySuccess("Milestone saved");
     } else if (!hubPersisted) {
       throw new Error(
         lt === "whatsapplead"
@@ -3267,7 +3269,7 @@ export default function LeadDetailsApiClient({
       );
     } else {
       clearStoredPresalesMilestone(lt, leadId);
-      notifySuccess("Saved");
+      if (!isPresalesRenovationSave) notifySuccess("Saved");
       dispatchCrmLeadsInvalidate({
         leadTypes: [lt],
         reason: "presales-milestone",
@@ -3283,6 +3285,25 @@ export default function LeadDetailsApiClient({
       followUpDate: mapped.followUpDate || followUpDate || prev.followUpDate,
       lostReason: mapped.lostReason || args.lostReason?.trim() || prev.lostReason,
     }));
+
+    if (isPresalesRenovationSave) {
+      const mgr = mapped.stageBlock?.renovationSalesManager?.trim() || "";
+      const exec =
+        mapped.stageBlock?.renovationSalesExecutive?.trim() ||
+        mapped.assignee?.trim() ||
+        "";
+      const execMissing = !exec || /^[-–—]+$/.test(exec);
+      if (execMissing && !mgr) {
+        notifyError("Renovation team monthly limit reached; contact admin.");
+      } else {
+        notifySuccess(
+          execMissing
+            ? `Assigned to renovation team${mgr ? ` (Manager: ${mgr})` : ""}`
+            : `Assigned to ${exec}`,
+        );
+      }
+    }
+
     void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
     void refreshActivities();
   };
@@ -4193,10 +4214,12 @@ export default function LeadDetailsApiClient({
         />
         {validLeadType ? (
           <>
-            <TokenBookingRecognitionSection
-              leadType={leadTypeParam as CrmLeadType}
-              leadId={leadId}
-            />
+            {!isPresalesRole(viewerRoleKey) ? (
+              <TokenBookingRecognitionSection
+                leadType={leadTypeParam as CrmLeadType}
+                leadId={leadId}
+              />
+            ) : null}
             <BookingTokenCancellationBar
               leadType={leadTypeParam as CrmLeadType}
               leadId={leadId}

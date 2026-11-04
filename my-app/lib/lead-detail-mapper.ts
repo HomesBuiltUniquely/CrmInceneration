@@ -544,13 +544,16 @@ export function extractStage(detail: Record<string, unknown>) {
     (st?.milestoneSubStage as string | null | undefined) ?? null;
   const rawRenovationAssigned =
     (st?.renovationAssigned as boolean | undefined) ?? false;
-  // After Discovery → Fresh Lead rollback, Hub may still send renovationAssigned.
-  // Treat Fresh Lead as unlocked so Renovation can be assigned again.
+  // After Discovery/Data Conversion → Fresh rollback, Hub may still send renovationAssigned.
+  // Treat Fresh Lead / Fresh Data as unlocked so Renovation can be assigned again.
   const renovationAssigned = isRenovationFeedbackLocked(
     rawRenovationAssigned,
     milestoneStage,
     milestoneSubStage,
     milestoneStageCategory,
+    ps.stage,
+    ps.subStage,
+    ps.category,
   );
   return {
     milestoneStage,
@@ -1199,10 +1202,13 @@ function mapBackendActivityType(raw: string): ActivityType {
   if (u.includes("DESIGN_QA_SUBMITTED") || u.includes("DESIGNQA_SUBMITTED"))
     return "design_qa_submitted";
   if (u.includes("DESIGNQA_LINK") || u.includes("DESIGN_QA_LINK")) return "design_qa_invite";
+  if (u.includes("RENOVATION_ASSIGNMENT")) return "assignment";
+  if (u.includes("PRESALES_MILESTONE_UPDATE")) return "status";
   if (u.includes("ASSIGN") || u.includes("VERIF")) return "assignment";
   if (u.includes("NOTE")) return "note";
   if (u.includes("CALL")) return "call";
-  if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD")) return "status";
+  if (u.includes("STATUS") || u.includes("STAGE") || u.includes("FIELD") || u.includes("MILESTONE"))
+    return "status";
   if (u.includes("DESIGNQA") || u.includes("DESIGN_QA")) return "note";
   return "update";
 }

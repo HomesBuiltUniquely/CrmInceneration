@@ -19,7 +19,7 @@ import LeadPaymentLinkStatusChip from "./LeadPaymentLinkStatusChip";
 import TokenBookingRecognitionSection from "./TokenBookingRecognitionSection";
 import DealControlSidebar from "./DealControlSidebar";
 import DataCompletenessMeter from "./DataCompletenessMeter";
-import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
+import { canUsePaymentLinkIntegration, isPresalesRole } from "@/lib/roleUtils";
 import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
 import {
   V2_BTN_AMBER,
@@ -213,7 +213,7 @@ export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = fals
                   }
                   return null;
                 })}
-                {isCrmLeadType(leadType) ? (
+                {isCrmLeadType(leadType) && !isPresalesRole(viewerRoleKey) ? (
                   <div id="deal-token-booking-dates" className="scroll-mt-24">
                     <TokenBookingRecognitionSection
                       leadType={leadType}

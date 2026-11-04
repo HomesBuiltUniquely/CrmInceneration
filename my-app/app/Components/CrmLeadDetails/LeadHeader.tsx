@@ -210,11 +210,16 @@ export default function LeadHeader({
           ) : null}
           {lead.stageBlock?.milestoneSubStage?.trim().toUpperCase() ===
             "RENOVATION" ||
+          lead.stageBlock?.presalesMilestoneSubStage?.trim().toUpperCase() ===
+            "RENOVATION" ||
           isRenovationFeedbackLocked(
             lead.stageBlock?.renovationAssigned,
             lead.stageBlock?.milestoneStage,
             lead.stageBlock?.milestoneSubStage,
             lead.stageBlock?.milestoneStageCategory,
+            lead.stageBlock?.presalesMilestoneStage,
+            lead.stageBlock?.presalesMilestoneSubStage,
+            lead.stageBlock?.presalesMilestoneCategory,
           ) ? (
             <span className="inline-flex h-6 max-w-full items-center truncate rounded-full border border-amber-200 bg-amber-50 px-3 text-[11px] font-semibold text-amber-900">
               Renovation
