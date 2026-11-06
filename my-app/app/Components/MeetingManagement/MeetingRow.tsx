@@ -74,7 +74,11 @@ export function MeetingRow({
           {sequence}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] py-2.5 pl-1 pr-3 align-middle">
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <span className={`block whitespace-nowrap text-[13px] font-bold leading-tight ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
+        <span className="block whitespace-nowrap text-[12px] font-normal leading-tight text-[#5B6778]">{clock(row.startMin)}</span>
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <div className="flex items-center gap-2">
           <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${AVATAR[row.avatarTone]}`}>
             {row.initials}
@@ -85,9 +89,6 @@ export function MeetingRow({
           </span>
         </div>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
-        <StatusChip tone={progress} />
-      </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-semibold text-[#0F172A]">
         <span className="block truncate">{row.assignedSalesName?.trim() || "—"}</span>
       </td>
@@ -97,9 +98,8 @@ export function MeetingRow({
           {row.meetingType || "—"}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
-        <span className={`block whitespace-nowrap text-[13px] font-bold leading-tight ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
-        <span className="block whitespace-nowrap text-[12px] font-normal leading-tight text-[#5B6778]">{clock(row.startMin)}</span>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-semibold text-[#0F172A]">
+        <span className="block truncate">{designerName(row.assignee)}</span>
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-bold tabular-nums text-[#0F172A]">{formatMeetingValue(row.budget)}</td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
@@ -119,10 +119,19 @@ export function MeetingRow({
         )}
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <StatusChip tone={progress} />
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <RowActionsMenu customer={row.customer} onView={onView} onReschedule={onReschedule} />
       </td>
     </tr>
   );
+}
+
+function designerName(assignee: string | undefined): string {
+  const name = assignee?.trim();
+  if (!name || name === "Unassigned") return "-";
+  return name;
 }
 
 function clock(startMin: number) {
