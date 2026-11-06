@@ -10,6 +10,7 @@ import {
   type BookingDatePresetId,
 } from "@/lib/booking-token-date-filter";
 import type { DatePresetId } from "@/lib/meeting-date-range";
+import { MEETING_PROGRESS_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
 import type { FilterDraft, FilterOption } from "./FilterModal";
 import { focusRing } from "./motion";
 
@@ -145,6 +146,35 @@ export function MeetingHeaderMenus({
                 onChange={(id) => update({ branchIds: id ? [id] : [] })}
                 options={branchOptions}
               />
+            </FilterField>
+            <FilterField label="Progress">
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[#E3E8EE] p-1.5">
+                {MEETING_PROGRESS_FILTER_OPTIONS.map((option) => {
+                  const selected = (value.progress ?? []).includes(option.id);
+                  return (
+                    <label
+                      key={option.id}
+                      className={`flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 text-[11px] font-semibold leading-snug ${
+                        selected ? "bg-[#E8F1FF] text-[#1B3FA8]" : "text-[#334155] hover:bg-[#F4F6F8]"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 shrink-0"
+                        checked={selected}
+                        onChange={() => {
+                          const current = value.progress ?? [];
+                          const next: MeetingProgress[] = selected
+                            ? current.filter((id) => id !== option.id)
+                            : [...current, option.id];
+                          update({ progress: next });
+                        }}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </FilterField>
           </div>
         </div>

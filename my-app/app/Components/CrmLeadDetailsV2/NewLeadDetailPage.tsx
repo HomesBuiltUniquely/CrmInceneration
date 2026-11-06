@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   isEmptySpaceDoubleClickTarget,
@@ -36,6 +37,11 @@ import {
   V2_LINK_TEXT,
 } from "./lead-detail-v2-motion";
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
+import {
+  extractQuoteIdFromUrl,
+  resolveDesignDiscountQuoteUrl,
+  toCustomerQuoteLink,
+} from "@/lib/crm-quote-links";
 import { RequiredAsterisk, REQUIRED_FIELD_HINTS } from "./RequiredFieldHint";
 import {
   discoveryFieldLabels,
@@ -1489,8 +1495,8 @@ function RelatedContact({
 function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   const {
     lead,
+    leadId,
     canShowGetQuote,
-    onGetQuote,
     quoteFetching,
     quoteSending,
     quoteLinkPersisting,
@@ -1499,13 +1505,19 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
     onRetrySaveQuoteLink,
   } = useLeadDetailV2();
   const canInteract = !disabled;
-  const quoteLinkValue = lead.quoteLink?.trim() || "";
+  const quoteLinkValue = toCustomerQuoteLink(lead.quoteLink?.trim() || "");
   const quoteSentCount = lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
   const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
   const quoteId =
     lead.quoteId?.trim() ||
     lead.quoteSentInfo?.quoteId?.trim() ||
+    extractQuoteIdFromUrl(quoteLinkValue) ||
     "";
+  const designDiscountUrl = resolveDesignDiscountQuoteUrl({
+    quoteLink: quoteLinkValue,
+    quoteId,
+    hubLeadId: lead.leadId?.trim() || leadId,
+  });
 
   return (
     <div className="grid gap-4">
@@ -1530,16 +1542,10 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
                 </p>
               ) : null}
             </div>
-            {canShowGetQuote ? (
-              <button
-                type="button"
-                onClick={onGetQuote}
-                disabled={!canInteract || quoteFetching}
-                className={`inline-flex h-[42px] min-w-[160px] items-center justify-center gap-2 rounded-xl border border-[#c4b5fd] bg-[#f4f0ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#6d28d9] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_VIOLET}`}
-              >
-                <span aria-hidden>🔎</span>
-                {quoteFetching ? "Getting…" : "Get Quote"}
-              </button>
+            {canShowGetQuote && !quoteLinkValue ? (
+              <span className="inline-flex h-[42px] min-w-[160px] items-center justify-center rounded-xl border border-[#e9d5ff] bg-[#faf5ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#7c3aed]">
+                {quoteFetching || quoteLinkPersisting ? "Syncing quote…" : "Waiting for Design quote"}
+              </span>
             ) : null}
           </div>
         </div>
@@ -1547,18 +1553,18 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         <div className="p-5">
           <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
             <div>
-            <PhaseFieldLabel className="mb-2">Quote Link</PhaseFieldLabel>
-            {quoteLinkValue ? (
-              <Input
-                value={quoteLinkValue}
-                readOnly
-                className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
-              />
-            ) : (
-              <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
-                <span className="text-[12px] italic text-[#94a3b8]">Quote is not generated yet</span>
-              </div>
-            )}
+              <PhaseFieldLabel className="mb-2">Quote Link (customer)</PhaseFieldLabel>
+              {quoteLinkValue ? (
+                <Input
+                  value={quoteLinkValue}
+                  readOnly
+                  className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
+                />
+              ) : (
+                <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
+                  <span className="text-[12px] italic text-[#94a3b8]">Quote is not generated yet</span>
+                </div>
+              )}
             </div>
             <button
               type="button"
@@ -1569,12 +1575,22 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
               {quoteSending ? "Sending…" : "Send Quote"}
             </button>
           </div>
+
+          {designDiscountUrl ? (
+            <DesignStudioPass
+              quoteId={quoteId}
+              href={designDiscountUrl}
+              disabled={!canInteract}
+            />
+          ) : null}
         </div>
 
         <div className="border-t border-[#edf1f6] bg-[#fafcff] px-5 py-4">
           <p className="text-[12px] text-[#64748b]">
             {canShowGetQuote
-              ? "Generate quote after a successful meeting, then send it to customer."
+              ? quoteLinkValue
+                ? "Customer link is for Send Quote. Use Design Studio Pass for discounts and edits."
+                : "Quote syncs automatically from Design Module (Share to CRM / generated quote)."
               : "Quote tools unlock after meeting is marked successful."}
           </p>
         </div>
@@ -1599,6 +1615,164 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         ) : null}
       </section>
     </div>
+  );
+}
+
+/** Staff-only entrance to Design Module discount / edit tools — not the customer link. */
+function DesignStudioPass({
+  quoteId,
+  href,
+  disabled,
+}: {
+  quoteId: string;
+  href: string;
+  disabled?: boolean;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.a
+      href={disabled ? undefined : href}
+      target="_blank"
+      rel="noreferrer"
+      aria-disabled={disabled || undefined}
+      onClick={(event) => {
+        if (disabled) event.preventDefault();
+      }}
+      initial={reduce ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.97 }}
+      animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      transition={reduce ? { duration: 0.15 } : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      whileHover={
+        disabled || reduce
+          ? undefined
+          : {
+              y: -4,
+              scale: 1.01,
+              boxShadow: "0 22px 44px rgba(16,185,129,0.22)",
+              borderColor: "rgba(52,211,153,0.5)",
+            }
+      }
+      whileTap={disabled || reduce ? undefined : { scale: 0.985 }}
+      className={`group relative mt-4 block overflow-hidden rounded-2xl border border-[#1f2937]/30 bg-[linear-gradient(135deg,#0b1220_0%,#152033_48%,#0f172a_100%)] px-4 py-3.5 shadow-[0_14px_34px_rgba(15,23,42,0.28)] ${
+        disabled ? "pointer-events-none opacity-50" : ""
+      }`}
+    >
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 left-0 w-1.5 origin-top bg-gradient-to-b from-[#34d399] via-[#fbbf24] to-[#34d399]"
+        animate={
+          reduce
+            ? undefined
+            : {
+                backgroundPosition: ["0% 0%", "0% 100%", "0% 0%"],
+                opacity: [0.85, 1, 0.85],
+              }
+        }
+        transition={reduce ? undefined : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+        style={{ backgroundSize: "100% 200%" }}
+      />
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full bg-[#34d399]/20 blur-2xl"
+        animate={
+          reduce
+            ? undefined
+            : { scale: [1, 1.18, 1], opacity: [0.35, 0.55, 0.35], x: [0, -6, 0], y: [0, 8, 0] }
+        }
+        transition={reduce ? undefined : { duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute -bottom-12 left-16 h-24 w-24 rounded-full bg-[#fbbf24]/15 blur-2xl"
+        animate={
+          reduce ? undefined : { scale: [1, 1.12, 1], opacity: [0.2, 0.4, 0.2] }
+        }
+        transition={
+          reduce ? undefined : { duration: 5.2, repeat: Infinity, ease: "easeInOut", delay: 0.6 }
+        }
+      />
+      <motion.span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/12 to-transparent"
+        initial={{ x: "-130%" }}
+        whileHover={reduce ? undefined : { x: "130%" }}
+        transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+      />
+      <span className="relative flex flex-wrap items-center justify-between gap-3">
+        <span className="min-w-0">
+          <span className="flex items-center gap-2">
+            <motion.span
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-[#34d399]/15 text-[#6ee7b7] ring-1 ring-[#34d399]/30"
+              animate={reduce ? undefined : { rotate: [0, -6, 6, 0] }}
+              transition={
+                reduce
+                  ? undefined
+                  : { duration: 3.8, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.4 }
+              }
+              whileHover={reduce ? undefined : { scale: 1.08, rotate: 0 }}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+                <path
+                  d="M4 7.5h16M4 12h10M4 16.5h7"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M15.5 14.5l2.2 2.2 4-4.2"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </motion.span>
+            <span>
+              <motion.span
+                className="block text-[10px] font-bold uppercase tracking-[0.16em] text-[#94a3b8]"
+                animate={reduce ? undefined : { letterSpacing: ["0.16em", "0.2em", "0.16em"] }}
+                transition={reduce ? undefined : { duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+              >
+                Design Studio Pass
+              </motion.span>
+              <span className="mt-0.5 block text-[14px] font-extrabold tracking-[-0.01em] text-white">
+                Open Design quote
+                {quoteId ? ` · #${quoteId}` : ""}
+              </span>
+            </span>
+          </span>
+          <span className="mt-1.5 block pl-10 text-[11px] font-medium text-[#94a3b8]">
+            Discount, revise, and save — staff only. Never send this link to the customer.
+          </span>
+        </span>
+        <motion.span
+          className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#34d399] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#052e1a]"
+          whileHover={reduce ? undefined : { scale: 1.05, backgroundColor: "#6ee7b7" }}
+          transition={{ type: "spring", stiffness: 420, damping: 24 }}
+        >
+          Enter
+          <motion.svg
+            viewBox="0 0 16 16"
+            className="h-3.5 w-3.5"
+            fill="none"
+            aria-hidden
+            animate={reduce ? undefined : { x: [0, 3, 0] }}
+            transition={
+              reduce
+                ? undefined
+                : { duration: 1.35, repeat: Infinity, ease: "easeInOut", repeatDelay: 0.55 }
+            }
+          >
+            <path
+              d="M3 8h9M8.5 4.5L12 8l-3.5 3.5"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </motion.svg>
+        </motion.span>
+      </span>
+    </motion.a>
   );
 }
 

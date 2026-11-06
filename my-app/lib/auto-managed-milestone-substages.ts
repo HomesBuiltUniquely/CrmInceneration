@@ -1,7 +1,11 @@
 import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
 
-/** Substages set only by Booking & Token / cancellation automation — never manual Complete Task. */
+/**
+ * Substages set only by automation / Design Wizard / quote-share — never manual Complete Task.
+ * Hub still accepts Meeting Successful for Design auto + quote sync.
+ */
 export const AUTO_MANAGED_MILESTONE_SUBSTAGES = [
+  "Meeting Successful",
   "Booking Done (Booking)",
   "Token Done",
   "Project Cancelled After Token",

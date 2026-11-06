@@ -1,3 +1,5 @@
+import { isMeetingSuccessfulProgress } from "@/lib/meeting-progress";
+
 export type MeetingStatus =
   | "SCHEDULED"
   | "IN PROGRESS"
@@ -35,10 +37,19 @@ export type MeetingRecord = {
   locationTone: LocationTone;
   status: MeetingStatus;
   /**
-   * From the board. Scheduled before the slot, in progress only while the clock
-   * is inside the slot, abandoned after the end time until marked successful.
+   * From the board. Prefer Hub `progressLabel` for display.
+   * Includes quote-pending / PNF / quote-sent successful codes.
    */
-  progress?: "SCHEDULED" | "IN_PROGRESS" | "MEETING_ABANDONED" | "MEETING_SUCCESSFUL";
+  progress?:
+    | "SCHEDULED"
+    | "IN_PROGRESS"
+    | "MEETING_ABANDONED"
+    | "MEETING_SUCCESSFUL"
+    | "MEETING_SUCCESSFUL_QUOTE_PENDING"
+    | "MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF"
+    | "QUOTE_SENT_SUCCESSFUL";
+  /** Hub display label for `progress` — use for badges when present. */
+  progressLabel?: string;
   /** Board `meetingStatus` for this appointment: scheduled, rescheduled, or cancelled. */
   meetingStatus?: "SCHEDULED" | "RESCHEDULED" | "CANCELLED";
   /** Set when `meetingStatus` is CANCELLED. */
@@ -102,6 +113,8 @@ export type MeetingRecord = {
   meetingSuccessful?: boolean;
   /** When Meeting successful was first saved. The 4-hour quote clock starts here. */
   meetingSuccessfulAt?: string;
+  /** Who set Meeting Successful: Design Wizard, quote share sync, or manual. */
+  meetingSuccessfulSource?: "DESIGN_AUTO" | "QUOTE_SYNC" | "MANUAL" | string;
   /** Board result. True only after Meeting successful, quote still unsent, and 4 hours have passed. */
   quoteDelayed?: boolean;
 };
@@ -794,7 +807,9 @@ export function meetingBoardStats(rows: MeetingRecord[]) {
     const endedAt = meetingSlotEndMs(row);
     return endedAt != null && endedAt <= now.getTime();
   }).length;
-  const meetingSuccessful = rows.filter((row) => row.meetingSuccessful === true).length;
+  const meetingSuccessful = rows.filter(
+    (row) => row.meetingSuccessful === true || isMeetingSuccessfulProgress(row.progress),
+  ).length;
   const stillScheduled = rows.filter((row) => row.needsOutcome).length;
   const pct = (count: number) => (total > 0 ? Math.round((count / total) * 1000) / 10 : 0);
   return {

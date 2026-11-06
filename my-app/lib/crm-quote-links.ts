@@ -77,18 +77,84 @@ export function extractQuoteIdFromUrl(url: string): string {
   }
 }
 
+/** True when the URL is the Design internal/discount editor (not the customer page). */
+export function isInternalDesignQuoteUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed, "https://design.hubinterior.com");
+    if (parsed.searchParams.get("internal") === "1") return true;
+    if (parsed.searchParams.has("leadId") && parsed.pathname.includes("/quote/")) return true;
+  } catch {
+    /* fall through */
+  }
+  return /(?:\?|&)internal=1(?:&|$)/i.test(trimmed);
+}
+
+/**
+ * Always the public customer quote URL (no internal/discount query params).
+ * Accepts a full URL or a bare quote id.
+ */
+export function toCustomerQuoteLink(urlOrId: string): string {
+  const raw = urlOrId.trim();
+  if (!raw) return "";
+  if (/^\d+$/.test(raw)) return buildDesignQuotePageUrl(raw);
+  const quoteId = extractQuoteIdFromUrl(raw);
+  if (quoteId) return buildDesignQuotePageUrl(quoteId);
+  if (isInternalDesignQuoteUrl(raw)) {
+    try {
+      const parsed = new URL(raw);
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch {
+      return raw.split("?")[0]?.trim() || "";
+    }
+  }
+  return raw;
+}
+
+/** Design Module page used to apply discounts / edit the quote (CRM staff only). */
+export function resolveDesignDiscountQuoteUrl(args: {
+  quoteLink?: string | null;
+  quoteId?: string | null;
+  hubLeadId?: string | null;
+  internalQuoteUrl?: string | null;
+}): string {
+  const hubLeadId = (args.hubLeadId ?? "").trim();
+  const internal = (args.internalQuoteUrl ?? "").trim();
+  if (internal) {
+    return appendCrmAuthParams(
+      isInternalDesignQuoteUrl(internal)
+        ? internal
+        : buildDesignQuotePageUrl(extractQuoteIdFromUrl(internal) || internal, {
+            internal: Boolean(hubLeadId),
+            hubLeadId,
+          }),
+    );
+  }
+  const quoteId =
+    (args.quoteId ?? "").trim() || extractQuoteIdFromUrl(args.quoteLink ?? "");
+  if (!quoteId) return "";
+  return buildDesignQuotePageUrl(quoteId, {
+    internal: Boolean(hubLeadId),
+    hubLeadId: hubLeadId || undefined,
+  });
+}
+
 export function extractCustomerQuoteLink(resp: unknown): string {
   if (!resp || typeof resp !== "object" || Array.isArray(resp)) return "";
   const row = resp as Record<string, unknown>;
-  const candidates = [
-    row.customerLink,
-    row.customerQuoteUrl,
-    row.quoteLink,
-    row.link,
-    row.publicUrl,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) return value.trim();
+  const preferred = [row.customerLink, row.customerQuoteUrl, row.publicUrl];
+  for (const value of preferred) {
+    if (typeof value === "string" && value.trim()) {
+      return toCustomerQuoteLink(value);
+    }
+  }
+  const fallbacks = [row.quoteLink, row.link, row.internalQuoteUrl, row.internalLink];
+  for (const value of fallbacks) {
+    if (typeof value === "string" && value.trim()) {
+      const customer = toCustomerQuoteLink(value);
+      if (customer) return customer;
+    }
   }
   return "";
 }
@@ -99,6 +165,16 @@ export function extractInternalQuoteLink(resp: unknown): string {
   const candidates = [row.internalQuoteUrl, row.internalLink];
   for (const value of candidates) {
     if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  const quoteId =
+    pickStr(row, "quoteId", "id", "quote_id") ||
+    extractQuoteIdFromUrl(String(row.customerQuoteUrl ?? row.customerLink ?? row.quoteLink ?? ""));
+  const hubLeadId = pickStr(row, "leadId", "hubLeadId", "hub_lead_id");
+  if (quoteId) {
+    return buildDesignQuotePageUrl(quoteId, {
+      internal: Boolean(hubLeadId),
+      hubLeadId: hubLeadId || undefined,
+    });
   }
   return "";
 }

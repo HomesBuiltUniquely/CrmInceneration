@@ -102,7 +102,7 @@ export function MeetingsTable({
               ) : (
                 rows.map((row, index) => (
                   <MeetingRow
-                    key={`${row.id}-${row.appointmentId ?? "lead"}`}
+                    key={`${row.appointmentId ?? "lead"}-${row.leadId ?? row.id}-${row.date}-${row.startMin}-${index}`}
                     row={row}
                     now={now}
                     sequence={(page - 1) * pageSize + index + 1}

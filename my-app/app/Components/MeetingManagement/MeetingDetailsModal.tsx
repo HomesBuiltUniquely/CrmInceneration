@@ -5,6 +5,12 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { formatMeetingValue, type MeetingRecord } from "@/lib/meeting-management-data";
 import {
+  isMeetingQuotePendingProgress,
+  isMeetingSuccessfulProgress,
+  isQuoteSentSuccessfulProgress,
+  meetingProgressTone,
+} from "@/lib/meeting-progress";
+import {
   ActivityHistorySheet,
   ActivityHistoryTrigger,
   latestHistoryCaption,
@@ -12,13 +18,6 @@ import {
   type HistoryFilter,
 } from "./MeetingActivityHistory";
 import { focusRing } from "./motion";
-
-const PROGRESS_TONE = {
-  SCHEDULED: { label: "Scheduled", pill: "bg-[#E6EDFF] text-[#1B3FA8]", dot: "#1B3FA8" },
-  IN_PROGRESS: { label: "In Progress", pill: "bg-[#FFF1D6] text-[#8A5300]", dot: "#8A5300" },
-  MEETING_ABANDONED: { label: "Meeting Abandoned", pill: "bg-[#FDECEC] text-[#9B1C1C]", dot: "#9B1C1C" },
-  MEETING_SUCCESSFUL: { label: "Meeting Successful", pill: "bg-[#E3F3EA] text-[#0B6B45]", dot: "#0B6B45" },
-} as const;
 
 const STATUS_TONE = {
   SCHEDULED: "bg-[#E6EDFF] text-[#1B3FA8]",
@@ -135,18 +134,14 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
           <FieldSection title="Client">
             <Field label="Phone" value={phoneValue(row.phone)} />
             <Field label="Email" value={emailValue(row.customerEmail)} />
-            <Field label="Progress" value={<ProgressPill progress={row.progress ?? "SCHEDULED"} />} />
+            <Field label="Progress" value={<ProgressPill row={row} />} />
             <Field label="Lead budget" value={formatMeetingValue(row.budget)} />
             <Field label="Source" value={textOrDash(row.appointmentSource)} />
             <Field label="Lead quote" value={formatMeetingValue(row.quoteValue)} />
           </FieldSection>
           <FieldSection title="Team and meeting">
             <Field label="Meeting level" value={textOrDash(row.meetingLevel)} />
-            <Field label="Sales email" value={emailValue(row.salesEmail)} />
-            <Field label="Designer email" value={emailValue(row.designerEmail)} />
-            <Field label="Scheduled on" value={textOrDash(row.scheduledAt)} />
             <Field label="Quote link" value={quoteLinkValue(row)} />
-            <Field label="Scheduled by" value={scheduledByLine(row)} />
           </FieldSection>
           <ActivityHistoryTrigger
             open={historyOpen}
@@ -212,12 +207,12 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function ProgressPill({ progress }: { progress: keyof typeof PROGRESS_TONE }) {
-  const tone = PROGRESS_TONE[progress];
+function ProgressPill({ row }: { row: MeetingRecord }) {
+  const tone = meetingProgressTone(row.progress, row.progressLabel);
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold ${tone.pill}`}>
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />
-      {tone.label}
+    <span className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold ${tone.pill}`}>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone.dot }} />
+      <span className="truncate">{tone.label}</span>
     </span>
   );
 }
@@ -275,30 +270,43 @@ function StepMark({ state }: { state: "done" | "current" | "pending" }) {
 
 function journeySteps(row: MeetingRecord): Array<{ title: string; state: "done" | "current" | "pending"; detail?: string; tag?: string }> {
   const progress = row.progress ?? "SCHEDULED";
-  const visitDone = progress === "IN_PROGRESS" || progress === "MEETING_SUCCESSFUL";
-  const successDone = progress === "MEETING_SUCCESSFUL" || row.meetingSuccessful === true;
-  const quoteDone = row.quoteGenerated === true;
-  const followDone = row.quoteFollow === true || row.quoteSent === true;
+  const successDone = isMeetingSuccessfulProgress(progress) || row.meetingSuccessful === true;
+  const visitDone = progress === "IN_PROGRESS" || successDone;
+  const quoteDone = row.quoteGenerated === true || successDone;
+  const followDone =
+    isQuoteSentSuccessfulProgress(progress) || row.quoteFollow === true || row.quoteSent === true;
+  const quotePending = successDone && !followDone && isMeetingQuotePendingProgress(progress);
   const doneFlags = [true, visitDone, successDone, quoteDone, followDone, false];
   const currentIndex = doneFlags.findIndex((done) => !done);
   const when = textOrDash(row.whenLabel);
+  const progressTone = meetingProgressTone(progress, row.progressLabel);
   const visitDetail =
     progress === "IN_PROGRESS"
       ? `In Progress · ${when}`
       : progress === "MEETING_ABANDONED"
-        ? `Meeting Abandoned · ${when}`
-        : progress === "MEETING_SUCCESSFUL"
+        ? `Meeting Never Happened · ${when}`
+        : successDone
           ? when
           : `Up next · ${when}`;
   const person = row.salesName || row.assignee || "";
   const scheduledDetail = [row.scheduledAt && row.scheduledAt !== "—" ? row.scheduledAt : "", person].filter(Boolean).join(" · ");
   const visitTitle = row.meetingType && row.meetingType !== "—" ? row.meetingType : "Showroom visit";
+  const successDetail = successDone
+    ? quotePending
+      ? progressTone.label
+      : followDone
+        ? "Yes · Quote sent"
+        : "Yes"
+    : undefined;
   const steps: Array<{ title: string; detail?: string; tag?: string }> = [
     { title: "Meeting scheduled", detail: scheduledDetail || undefined },
     { title: visitTitle, detail: visitDetail },
-    { title: "Meeting successful", detail: successDone ? "Yes" : undefined },
+    { title: "Meeting successful", detail: successDetail },
     { title: "Quote generated", detail: quoteDone ? "Yes" : undefined },
-    { title: "Quote follow-up", tag: followDone ? "Quote sent" : undefined },
+    {
+      title: "Quote follow-up",
+      tag: followDone ? "Quote sent" : quotePending ? "Quote pending" : undefined,
+    },
     { title: "Converted to booking", detail: "Booking done · Pending" },
   ];
   return steps.map((step, index) => ({
@@ -322,13 +330,6 @@ function ecName(branch?: string): string {
 
 function subtitle(row: MeetingRecord): string {
   return [row.meetingType, row.meetingLevel, row.leadType].map((part) => (part && part !== "—" ? part : "")).filter(Boolean).join(" · ") || "—";
-}
-
-function scheduledByLine(row: MeetingRecord): string {
-  const name = row.salesName?.trim();
-  const source = row.appointmentSource && row.appointmentSource !== "—" ? row.appointmentSource : "";
-  if (name && source) return `${name} · ${source}`;
-  return name || source || "—";
 }
 
 function untilLine(row: MeetingRecord): string {

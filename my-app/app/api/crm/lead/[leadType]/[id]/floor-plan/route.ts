@@ -5,18 +5,70 @@ import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 
+/**
+ * Next/undici FormData parts sometimes fail `instanceof File` / `instanceof Blob`
+ * across realms. Duck-type size/name/type so mobile uploads are not dropped as
+ * "Missing file" when the multipart body is present.
+ */
+function toUploadFile(entry: FormDataEntryValue): File | null {
+  if (typeof entry === "string") return null;
+
+  const part = entry as Blob & { name?: string; size?: number; type?: string };
+  const size = typeof part.size === "number" ? part.size : 0;
+  if (size <= 0) return null;
+
+  const name =
+    typeof part.name === "string" && part.name.trim()
+      ? part.name.trim()
+      : "floor-plan.bin";
+  const type =
+    typeof part.type === "string" && part.type.trim()
+      ? part.type.trim()
+      : "application/octet-stream";
+
+  if (typeof File !== "undefined" && entry instanceof File) {
+    return entry;
+  }
+
+  try {
+    return new File([part], name, { type });
+  } catch {
+    return null;
+  }
+}
+
 function collectFloorPlanFiles(form: FormData): File[] {
   const files: File[] = [];
   for (const field of ["file", "files"] as const) {
     for (const entry of form.getAll(field)) {
-      if (entry instanceof File && entry.size > 0) {
-        files.push(entry);
-      } else if (entry instanceof Blob && entry.size > 0) {
-        files.push(new File([entry], "floor-plan.pdf", { type: entry.type || "application/pdf" }));
-      }
+      const file = toUploadFile(entry);
+      if (file) files.push(file);
+    }
+  }
+  // Fallback: some clients send a single unnamed blob under another key.
+  if (files.length === 0) {
+    for (const [key, entry] of form.entries()) {
+      if (key === "file" || key === "files") continue;
+      const file = toUploadFile(entry);
+      if (file) files.push(file);
     }
   }
   return files;
+}
+
+function describeFormParts(form: FormData): string {
+  const parts: string[] = [];
+  for (const [key, entry] of form.entries()) {
+    if (typeof entry === "string") {
+      parts.push(`${key}=string(${entry.length})`);
+      continue;
+    }
+    const part = entry as Blob & { name?: string; size?: number; type?: string };
+    parts.push(
+      `${key}=blob(size=${part.size ?? "?"},name=${part.name ?? "?"},type=${part.type || "?"})`,
+    );
+  }
+  return parts.join(", ") || "(empty)";
 }
 
 function floorPlanUpstreamUrl(leadType: string, id: string): string {
@@ -76,7 +128,11 @@ export async function POST(
     const files = collectFloorPlanFiles(incoming);
     if (files.length === 0) {
       return NextResponse.json(
-        { success: false, error: "Missing file" },
+        {
+          success: false,
+          error: "Missing file",
+          debugMessage: `No uploadable file/files part. Received: ${describeFormParts(incoming)}`,
+        },
         { status: 400 },
       );
     }

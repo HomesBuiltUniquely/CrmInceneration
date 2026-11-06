@@ -195,7 +195,14 @@ import BookingDoneModal from "@/app/Components/CrmLeadDetailsV2/BookingDoneModal
 import TokenBookingRecognitionSection from "@/app/Components/CrmLeadDetailsV2/TokenBookingRecognitionSection";
 import QuoteSentCelebrationOverlay from "@/app/Components/CrmLeadDetailsV2/QuoteSentCelebrationOverlay";
 import { pickRandomQuoteSentMotivateLine } from "@/lib/quote-sent-motivate";
-import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
+import {
+  extractCustomerQuoteLink,
+  extractInternalQuoteLink,
+  extractQuoteIdFromUrl,
+  isInternalDesignQuoteUrl,
+  resolveDesignDiscountQuoteUrl,
+  toCustomerQuoteLink,
+} from "@/lib/crm-quote-links";
 import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
@@ -263,32 +270,6 @@ function withStickyQuoteInDetail(
     quoteURL: quoteLink.trim(),
     proposalLink: quoteLink.trim(),
   };
-}
-
-function extractCustomerQuoteLink(resp: unknown): string {
-  if (!resp || typeof resp !== "object" || Array.isArray(resp)) return "";
-  const row = resp as Record<string, unknown>;
-  const candidates = [
-    row.customerLink,
-    row.customerQuoteUrl,
-    row.quoteLink,
-    row.link,
-    row.publicUrl,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
-function extractInternalQuoteLink(resp: unknown): string {
-  if (!resp || typeof resp !== "object" || Array.isArray(resp)) return "";
-  const row = resp as Record<string, unknown>;
-  const candidates = [row.internalQuoteUrl, row.internalLink];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
 }
 
 async function fetchSalesExecutivesForPicker(
@@ -1043,6 +1024,8 @@ export default function LeadDetailsApiClient({
   const [getQuoteUnlockedSticky, setGetQuoteUnlockedSticky] = useState(false);
   const [quoteLinkPersisting, setQuoteLinkPersisting] = useState(false);
   const [quoteLinkPersistError, setQuoteLinkPersistError] = useState("");
+  /** One auto Design→CRM quote sync attempt per opened lead. */
+  const autoQuoteSyncKeyRef = useRef("");
   const [quoteSubject, setQuoteSubject] = useState(
     "Your Hub Interior Quote",
   );
@@ -2538,7 +2521,7 @@ export default function LeadDetailsApiClient({
     }
     if (!link) {
       notifyError(
-        "Quote link is not available yet. Please generate the quote on the design side, then click Get Quote.",
+        "Quote link is not available yet. Generate or Share to CRM from Design Module, then reopen this lead.",
       );
       return;
     }
@@ -2627,7 +2610,7 @@ export default function LeadDetailsApiClient({
   const persistQuoteLinkOnly = useCallback(
     async (nextQuoteLink: string) => {
       if (!validLeadType) return;
-      const link = nextQuoteLink.trim();
+      const link = toCustomerQuoteLink(nextQuoteLink);
       if (!link) throw new Error("Quote link is empty.");
       const lt = leadTypeParam as CrmLeadType;
       setQuoteLinkPersisting(true);
@@ -2678,92 +2661,149 @@ export default function LeadDetailsApiClient({
     }
   }, [lead.quoteLink, notifyError, notifySuccess, persistQuoteLinkOnly]);
 
-  const handleGetQuote = useCallback(async () => {
-    if (!validLeadType) return;
-    const candidatesOk =
-      Boolean(lead.leadId?.trim()) ||
-      Boolean(lead.externalReferenceId?.trim()) ||
-      Boolean(leadId.trim());
-    if (!candidatesOk) {
-      notifyError("Lead ID is required to fetch quote.");
-      return;
-    }
-    setQuoteFetching(true);
-    setQuoteLinkPersistError("");
-    try {
-      const res = await resolveNewCrmQuoteInternalLink({
-        routeLeadId: leadId,
-        leadBusinessId: lead.leadId,
-        externalReferenceId: lead.externalReferenceId,
-        leadType: leadTypeParam,
-        baseDetail,
-      });
-      const customerLink = extractCustomerQuoteLink(res);
-      const internalLink = extractInternalQuoteLink(res);
-      if (!customerLink) {
-        notifyError(QUOTE_NOT_READY_USER_MESSAGE);
+  const handleGetQuote = useCallback(
+    async (options?: { silent?: boolean; openInternal?: boolean }) => {
+      const silent = options?.silent === true;
+      const openInternal = options?.openInternal === true;
+      if (!validLeadType) return;
+      const candidatesOk =
+        Boolean(lead.leadId?.trim()) ||
+        Boolean(lead.externalReferenceId?.trim()) ||
+        Boolean(leadId.trim());
+      if (!candidatesOk) {
+        if (!silent) notifyError("Lead ID is required to fetch quote.");
         return;
       }
-      patchLead({ quoteLink: customerLink });
-      setBaseDetail((prev) => ({
-        ...prev,
-        quoteLink: customerLink,
-        quoteURL: customerLink,
-        proposalLink: customerLink,
-      }));
+      setQuoteFetching(true);
+      setQuoteLinkPersistError("");
       try {
-        await persistQuoteLinkOnly(customerLink);
-        notifySuccess("Quote generated and saved successfully.");
-      } catch (e) {
-        notifyError(
-          e instanceof Error
-            ? toFriendlyQuoteErrorMessage(
-                e.message,
-                "Quote was found, but saving the quote link failed. Please retry.",
-              )
-            : "Quote was found, but saving the quote link failed. Please retry.",
+        const res = await resolveNewCrmQuoteInternalLink({
+          routeLeadId: leadId,
+          leadBusinessId: lead.leadId,
+          externalReferenceId: lead.externalReferenceId,
+          leadType: leadTypeParam,
+          baseDetail,
+        });
+        const customerLink = toCustomerQuoteLink(
+          extractCustomerQuoteLink(res) || extractInternalQuoteLink(res),
         );
-      }
-      if (internalLink && typeof window !== "undefined") {
-        const crmUserName =
-          (window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ||
-            window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY) ||
-            "").trim();
-        const crmRole = (window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) || "").trim();
-        let targetUrl = internalLink;
-        try {
-          const u = new URL(internalLink, window.location.href);
-          if (crmUserName) u.searchParams.set("crmUser", crmUserName);
-          if (crmRole) u.searchParams.set("crmRole", crmRole);
-          targetUrl = u.toString();
-        } catch {
-          const sep = internalLink.includes("?") ? "&" : "?";
-          const queryParts: string[] = [];
-          if (crmUserName) queryParts.push(`crmUser=${encodeURIComponent(crmUserName)}`);
-          if (crmRole) queryParts.push(`crmRole=${encodeURIComponent(crmRole)}`);
-          if (queryParts.length > 0) targetUrl = `${internalLink}${sep}${queryParts.join("&")}`;
+        const internalLink =
+          extractInternalQuoteLink(res) ||
+          resolveDesignDiscountQuoteUrl({
+            quoteLink: customerLink,
+            hubLeadId: lead.leadId?.trim() || leadId,
+          });
+        if (!customerLink) {
+          if (!silent) notifyError(QUOTE_NOT_READY_USER_MESSAGE);
+          return;
         }
-        window.open(targetUrl, "_blank", "noopener,noreferrer");
+        patchLead({ quoteLink: customerLink });
+        setBaseDetail((prev) => ({
+          ...prev,
+          quoteLink: customerLink,
+          quoteURL: customerLink,
+          proposalLink: customerLink,
+        }));
+        try {
+          await persistQuoteLinkOnly(customerLink);
+          if (!silent) notifySuccess("Quote generated and saved successfully.");
+        } catch (e) {
+          notifyError(
+            e instanceof Error
+              ? toFriendlyQuoteErrorMessage(
+                  e.message,
+                  "Quote was found, but saving the quote link failed. Please retry.",
+                )
+              : "Quote was found, but saving the quote link failed. Please retry.",
+          );
+        }
+        if (openInternal && internalLink && typeof window !== "undefined") {
+          window.open(internalLink, "_blank", "noopener,noreferrer");
+        }
+      } catch (e) {
+        if (!silent) {
+          notifyError(
+            e instanceof Error
+              ? toFriendlyQuoteErrorMessage(e.message, QUOTE_NOT_READY_USER_MESSAGE)
+              : QUOTE_NOT_READY_USER_MESSAGE,
+          );
+        }
+      } finally {
+        setQuoteFetching(false);
       }
-    } catch (e) {
-      notifyError(
-        e instanceof Error
-          ? toFriendlyQuoteErrorMessage(e.message, QUOTE_NOT_READY_USER_MESSAGE)
-          : QUOTE_NOT_READY_USER_MESSAGE,
-      );
-    } finally {
-      setQuoteFetching(false);
-    }
+    },
+    [
+      baseDetail,
+      lead.externalReferenceId,
+      lead.leadId,
+      leadId,
+      leadTypeParam,
+      notifyError,
+      notifySuccess,
+      patchLead,
+      persistQuoteLinkOnly,
+      validLeadType,
+    ],
+  );
+
+  /**
+   * After Design "Share to CRM":
+   * - Design pushes quote via CRM callback (no polling)
+   * - CRM pulls once on open, and once when the tab becomes visible again
+   *   (switch back from Design → quote appears without reload / heavy polling)
+   */
+  useEffect(() => {
+    if (!validLeadType) return;
+    if (lead.quoteLink?.trim()) return;
+
+    let cancelled = false;
+    let inFlight = false;
+    const pull = () => {
+      if (cancelled || inFlight || lead.quoteLink?.trim()) return;
+      inFlight = true;
+      void handleGetQuote({ silent: true, openInternal: false }).finally(() => {
+        inFlight = false;
+      });
+    };
+
+    const first = window.setTimeout(pull, 400);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") pull();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [handleGetQuote, lead.quoteLink, leadId, leadTypeParam, validLeadType]);
+
+  /** If an old internal/discount URL was saved as quoteLink, rewrite it to the customer link. */
+  useEffect(() => {
+    if (!validLeadType || quoteFetching || quoteLinkPersisting) return;
+    const raw = lead.quoteLink?.trim() ?? "";
+    if (!raw || !isInternalDesignQuoteUrl(raw)) return;
+    const customer = toCustomerQuoteLink(raw);
+    if (!customer || customer === raw) return;
+    patchLead({ quoteLink: customer });
+    setBaseDetail((prev) => ({
+      ...prev,
+      quoteLink: customer,
+      quoteURL: customer,
+      proposalLink: customer,
+    }));
+    void persistQuoteLinkOnly(customer).catch(() => {
+      /* keep patched UI; retry available from quote desk */
+    });
   }, [
-    baseDetail,
-    lead.externalReferenceId,
-    lead.leadId,
-    leadId,
-    leadTypeParam,
-    notifyError,
-    notifySuccess,
+    lead.quoteLink,
     patchLead,
     persistQuoteLinkOnly,
+    quoteFetching,
+    quoteLinkPersisting,
     validLeadType,
   ]);
 
@@ -3957,7 +3997,7 @@ export default function LeadDetailsApiClient({
         if (nextLeadType === leadType && nextLeadId === leadId) return;
         window.location.href = `/Leads/${nextLeadType}/${nextLeadId}`;
       },
-      onGetQuote: () => void handleGetQuote(),
+      onGetQuote: () => void handleGetQuote({ silent: false, openInternal: false }),
       quoteFetching,
       onOpenStageRollback: () => setRollbackOpen(true),
       onCompleteTask: () => {
@@ -4187,9 +4227,9 @@ export default function LeadDetailsApiClient({
             (presalesHandedOff && isPresalesRole(viewerRoleKey)) ||
             (inSalesPhase && isPresalesRole(viewerRoleKey))
           }
-          onGetQuote={() => void handleGetQuote()}
+          onGetQuote={() => void handleGetQuote({ silent: false, openInternal: false })}
           quoteFetching={quoteFetching}
-          showGetQuote={canShowGetQuote}
+          showGetQuote={false}
           onCallClosed={showMarkAsWon ? handleCallClosed : undefined}
           showCallClosed={showMarkAsWon}
           canStageRollback={isSuperAdmin}

@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { isQuoteDelayed, meetingBoardStats, sortMeetingsForList, type MeetingRecord } from "@/lib/meeting-management-data";
-import type { MeetingProgress } from "@/lib/meeting-management-api";
+import {
+  isMeetingSuccessfulProgress,
+  MEETING_PROGRESS_FILTER_OPTIONS,
+  meetingProgressMatchesFilter,
+  type MeetingProgress,
+} from "@/lib/meeting-progress";
 import { CRM_ROLE_STORAGE_KEY, getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { hierarchyUserDisplayName, type HierarchyUserLike } from "@/lib/hierarchy-user-display";
@@ -104,9 +109,15 @@ export function MeetingsPage({
       if (filters.designerIds.length && !filters.designerIds.includes(row.assignee)) return false;
       if (filters.salesIds.length && !filters.salesIds.includes(row.assignedSalesName ?? "")) return false;
       if (filters.branchIds.length && !filters.branchIds.some((branch) => sameBranch(row.branch, branch))) return false;
-      if (progressFilter.length && !progressFilter.includes(row.progress ?? "SCHEDULED")) return false;
+      if (!meetingProgressMatchesFilter(row.progress, progressFilter)) return false;
       if (filters.quoteDelayed && !isQuoteDelayed(row)) return false;
-      if (filters.meetingSuccessful && row.meetingSuccessful !== true && row.progress !== "MEETING_SUCCESSFUL") return false;
+      if (
+        filters.meetingSuccessful &&
+        row.meetingSuccessful !== true &&
+        !isMeetingSuccessfulProgress(row.progress)
+      ) {
+        return false;
+      }
       if (!focused && !matchesTab(row, filters.tab)) return false;
       if (!focused && filters.overdue && !row.needsOutcome) return false;
       if (!focused && filters.labels.length && !filters.labels.some((label) => label.toLowerCase() === row.meetingType.toLowerCase())) return false;
@@ -164,16 +175,27 @@ export function MeetingsPage({
         <div className="relative z-30 inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-2xl border border-[#E6EAF0] bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
           <StatusMenu
             tab={filters.tab}
+            progress={filters.progress}
             open={tabsOpen}
             reduce={Boolean(reduce)}
             onOpen={() => setTabsOpen(true)}
             onClose={() => setTabsOpen(false)}
-            onPick={(id) => {
-              if (id !== filters.tab) {
+            onPick={(item) => {
+              if (item.kind === "progress") {
                 filters.write({
-                  tab: id,
+                  tab: "all",
+                  progress: item.id ? [item.id] : [],
                   overdue: false,
-                  quoteSent: id === "all" ? filters.quoteSent : false,
+                  quoteSent: false,
+                  quoteDelayed: false,
+                  meetingSuccessful: item.id === "MEETING_SUCCESSFUL",
+                });
+              } else {
+                filters.write({
+                  tab: item.id,
+                  progress: [],
+                  overdue: false,
+                  quoteSent: item.id === "all" ? filters.quoteSent : false,
                   quoteDelayed: false,
                   meetingSuccessful: false,
                 });
@@ -296,7 +318,7 @@ function matchesTab(row: MeetingRecord, tab: MeetingTab): boolean {
       (row.meetingStatus ?? "SCHEDULED") === "SCHEDULED" &&
       row.progress !== "IN_PROGRESS" &&
       row.progress !== "MEETING_ABANDONED" &&
-      row.progress !== "MEETING_SUCCESSFUL"
+      !isMeetingSuccessfulProgress(row.progress)
     );
   }
   if (tab === "today") return row.dayOffset === 0 && row.meetingStatus !== "CANCELLED";
@@ -304,27 +326,61 @@ function matchesTab(row: MeetingRecord, tab: MeetingTab): boolean {
   return row.status === "COMPLETED" && row.meetingStatus !== "CANCELLED";
 }
 
-const HEADER_TABS: Array<{ id: MeetingTab; label: string }> = [
-  { id: "all", label: "ALL" },
-  { id: "scheduled", label: "SCHEDULED" },
-  { id: "rescheduled", label: "RESCHEDULED" },
-  { id: "in-progress", label: "IN PROGRESS" },
-  { id: "cancelled", label: "CANCELLED" },
+type StatusMenuPick =
+  | { kind: "tab"; id: MeetingTab }
+  | { kind: "progress"; id: MeetingProgress | "" };
+
+type StatusMenuItem = {
+  key: string;
+  label: string;
+  dot: string;
+  pick: StatusMenuPick;
+};
+
+const PROGRESS_MENU_DOT: Record<MeetingProgress, string> = {
+  SCHEDULED: "bg-[#2563EB]",
+  IN_PROGRESS: "bg-[#D97706]",
+  MEETING_ABANDONED: "bg-[#DC2626]",
+  MEETING_SUCCESSFUL_QUOTE_PENDING: "bg-[#10B981]",
+  MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF: "bg-[#EA580C]",
+  QUOTE_SENT_SUCCESSFUL: "bg-[#15803D]",
+  MEETING_SUCCESSFUL: "bg-[#0B6B45]",
+};
+
+const STATUS_MENU_ITEMS: StatusMenuItem[] = [
+  { key: "all", label: "ALL", dot: "bg-[#64748B]", pick: { kind: "progress", id: "" } },
+  ...MEETING_PROGRESS_FILTER_OPTIONS.map((option) => ({
+    key: option.id,
+    label: option.label,
+    dot: PROGRESS_MENU_DOT[option.id],
+    pick: { kind: "progress" as const, id: option.id },
+  })),
+  { key: "rescheduled", label: "Rescheduled", dot: "bg-[#D97706]", pick: { kind: "tab", id: "rescheduled" } },
+  { key: "cancelled", label: "Cancelled", dot: "bg-[#DC2626]", pick: { kind: "tab", id: "cancelled" } },
 ];
 
-const TAB_DOT: Record<MeetingTab, string> = {
-  all: "bg-[#64748B]",
-  scheduled: "bg-[#2563EB]",
-  rescheduled: "bg-[#D97706]",
-  "in-progress": "bg-[#0B6B45]",
-  cancelled: "bg-[#DC2626]",
-  completed: "bg-[#0B6B45]",
-  today: "bg-[#2563EB]",
-  upcoming: "bg-[#2563EB]",
-};
+function resolveStatusMenuItem(tab: MeetingTab, progress: MeetingProgress[]): StatusMenuItem {
+  if (progress.length === 1) {
+    const match = STATUS_MENU_ITEMS.find(
+      (item) => item.pick.kind === "progress" && item.pick.id === progress[0],
+    );
+    if (match) return match;
+  }
+  if (tab === "rescheduled" || tab === "cancelled") {
+    return STATUS_MENU_ITEMS.find((item) => item.key === tab) ?? STATUS_MENU_ITEMS[0]!;
+  }
+  if (tab === "scheduled") {
+    return STATUS_MENU_ITEMS.find((item) => item.key === "SCHEDULED") ?? STATUS_MENU_ITEMS[0]!;
+  }
+  if (tab === "in-progress") {
+    return STATUS_MENU_ITEMS.find((item) => item.key === "IN_PROGRESS") ?? STATUS_MENU_ITEMS[0]!;
+  }
+  return STATUS_MENU_ITEMS[0]!;
+}
 
 function StatusMenu({
   tab,
+  progress,
   open,
   reduce,
   onOpen,
@@ -332,14 +388,15 @@ function StatusMenu({
   onPick,
 }: {
   tab: MeetingTab;
+  progress: MeetingProgress[];
   open: boolean;
   reduce: boolean;
   onOpen: () => void;
   onClose: () => void;
-  onPick: (id: MeetingTab) => void;
+  onPick: (item: StatusMenuPick) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const current = HEADER_TABS.find((item) => item.id === tab) ?? HEADER_TABS[0];
+  const current = resolveStatusMenuItem(tab, progress);
 
   useEffect(() => {
     if (!open) return;
@@ -364,13 +421,13 @@ function StatusMenu({
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => (open ? onClose() : onOpen())}
-        className={`inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-semibold tracking-wide text-[#14171F] ${focusRing} ${
+        className={`inline-flex h-8 max-w-[220px] items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold tracking-wide text-[#14171F] ${focusRing} ${
           open ? "bg-white shadow-[0_1px_2px_rgba(15,23,42,0.08)]" : "bg-[#F3F5F8]"
         }`}
       >
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TAB_DOT[current.id]}`} />
-        <span>{current.label}</span>
-        <svg viewBox="0 0 16 16" className={`h-3 w-3 text-[#94A3B8] transition-transform ${open ? "rotate-180" : ""}`} fill="none" aria-hidden>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${current.dot}`} />
+        <span className="truncate">{current.label}</span>
+        <svg viewBox="0 0 16 16" className={`h-3 w-3 shrink-0 text-[#94A3B8] transition-transform ${open ? "rotate-180" : ""}`} fill="none" aria-hidden>
           <path d="M4 6.5 8 10.5 12 6.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
@@ -378,27 +435,27 @@ function StatusMenu({
         {open ? (
           <motion.div
             role="listbox"
-            aria-label="Meeting status"
+            aria-label="Meeting progress"
             initial={reduce ? false : { opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={reduce ? undefined : { opacity: 0, y: -6 }}
             transition={reduce ? { duration: 0 } : { duration: 0.16, ease: [0.2, 0.8, 0.2, 1] }}
-            className="absolute left-0 top-[calc(100%+6px)] z-50 flex w-[168px] flex-col overflow-hidden rounded-xl border border-[#E6EAF0] bg-white py-1 shadow-[0_12px_28px_rgba(15,23,42,0.12)]"
+            className="absolute left-0 top-[calc(100%+6px)] z-50 flex max-h-[min(420px,70vh)] w-[min(320px,calc(100vw-2rem))] flex-col overflow-y-auto rounded-xl border border-[#E6EAF0] bg-white py-1 shadow-[0_12px_28px_rgba(15,23,42,0.12)]"
           >
-            {HEADER_TABS.map((item) => {
-              const active = item.id === tab;
+            {STATUS_MENU_ITEMS.map((item) => {
+              const active = item.key === current.key;
               return (
                 <button
-                  key={item.id}
+                  key={item.key}
                   type="button"
                   role="option"
                   aria-selected={active}
-                  onClick={() => onPick(item.id)}
-                  className={`flex h-8 w-full items-center gap-1.5 px-2.5 text-left text-[12px] font-semibold tracking-wide ${focusRing} ${
+                  onClick={() => onPick(item.pick)}
+                  className={`flex min-h-8 w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[12px] font-semibold leading-snug tracking-wide ${focusRing} ${
                     active ? "bg-[#F3F5F8] text-[#14171F]" : "text-[#334155] hover:bg-[#F8FAFC]"
                   }`}
                 >
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TAB_DOT[item.id]}`} />
+                  <span className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${item.dot}`} />
                   <span>{item.label}</span>
                 </button>
               );
