@@ -484,26 +484,9 @@ export default function Header() {
     if (!isPresalesLeadsPage) {
       return defaultLeadsVerificationStatus("sales", undefined, currentRole);
     }
-    if (viewerUsesAdminLeadsApi) {
-      if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") {
-        return "verified";
-      }
-      return "";
-    }
-    const superAdminPresalesCards =
-      isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
-    if (!isPresalesRole(currentRole) && !superAdminPresalesCards) return "";
-    if (presalesSummaryTab === "verified" || presalesSummaryTab === "teamVerified") return "verified";
-    // "Total" tab should not force unverified-only filter.
+    // Presales dashboard keeps Total only — no verified-card filter.
     return "";
-  }, [
-    currentRole,
-    presalesSummaryTab,
-    isSuperAdminPresalesWorkspace,
-    superAdminPresalesNames.length,
-    isPresalesLeadsPage,
-    viewerUsesAdminLeadsApi,
-  ]);
+  }, [currentRole, isPresalesLeadsPage]);
 
   const heatmapFilterQuery = useMemo(() => {
     const q = new URLSearchParams();
@@ -516,11 +499,19 @@ export default function Header() {
     }
     const superAdminPresalesCards =
       isSuperAdminPresalesWorkspace && superAdminPresalesNames.length > 0;
-    const presalesMonthCards =
+    // Presales Manager / Executive Total = all-time assigned (no month window).
+    const presalesRoleAllTimeTotal =
       !viewerUsesAdminLeadsApi &&
-      ((isPresalesRole(currentRole) && presalesSummaryTab !== null) ||
-        (superAdminPresalesCards && presalesSummaryTab !== null));
-    if (presalesMonthCards) {
+      isPresalesRole(currentRole) &&
+      presalesSummaryTab !== null;
+    const superAdminPresalesMonthCards =
+      !viewerUsesAdminLeadsApi &&
+      superAdminPresalesCards &&
+      !isPresalesRole(currentRole) &&
+      presalesSummaryTab !== null;
+    if (presalesRoleAllTimeTotal) {
+      // All-time pool — omit date / crmMonthWindow filters.
+    } else if (superAdminPresalesMonthCards) {
       appendCrmDateFilters(q, { crmMonthWindow: "current" });
     } else {
       setEffectiveNewCrmDateRange(q, dateFrom, dateTo);
@@ -579,12 +570,17 @@ export default function Header() {
   };
 
   const handlePresalesSummaryTabChange = useCallback((tab: "total" | "verified" | "teamVerified") => {
+    // Verified / Team verified cards removed — always treat as Total.
+    if (tab !== "total") {
+      setPresalesSummaryTab("total");
+      return;
+    }
     const prev = presalesSummaryTabRef.current;
-    if (prev === tab) {
+    if (prev === "total") {
       setPresalesSummaryTab(null);
       return;
     }
-    setPresalesSummaryTab(tab);
+    setPresalesSummaryTab("total");
   }, []);
 
   const handleToolbarDateFromChange = useCallback((v: string) => {
@@ -747,9 +743,7 @@ export default function Header() {
                 highlightLeadIdentifier={highlightLeadIdentifier}
                 onHighlightConsumed={() => setHighlightLeadIdentifier("")}
                 onPresalesSummaryClear={() => setPresalesSummaryTab(null)}
-                presalesTeamExecutivesOnly={
-                  isPresalesManager && presalesSummaryTab === "teamVerified"
-                }
+                presalesTeamExecutivesOnly={false}
                 presalesTeamExecDisplayNames={presalesTeamNames}
                 superAdminPresalesAssigneeNames={
                   isSuperAdminPresalesWorkspace ? superAdminPresalesNames : undefined

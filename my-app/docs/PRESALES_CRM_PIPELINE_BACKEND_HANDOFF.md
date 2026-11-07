@@ -54,7 +54,21 @@ Backend returns **current + next** substages only (same rules as sales `forCompl
 
 **Fallback:** `forCompleteTask=true` when the full catalog is empty. Legacy `milestone-count` fallback is filtered to presales stages only.
 
-Complete Task save (unchanged): PUT lead detail with `presalesMilestoneStage`, `presalesMilestoneCategory`, `presalesMilestoneSubStage`, `followUpDate`, `resone` on LOST.
+Complete Task save (unchanged): PUT lead detail with `presalesMilestoneStage`, `presalesMilestoneCategory`, `presalesMilestoneSubStage`, `followUpDate`, `resone` on LOST. Do **not** send sales `milestoneStage` on this path.
+
+**Data Conversion → Won → Renovation:** Hub returns `Renovation` under Won (API-driven; not hardcoded). Selecting it shows the same confirm dialog as sales Renovation, then PUT:
+
+```json
+{
+  "stage": {
+    "presalesMilestoneStage": "Data Conversion",
+    "presalesMilestoneCategory": "Won",
+    "presalesMilestoneSubStage": "Renovation"
+  }
+}
+```
+
+Hub writes `RENOVATION_ASSIGNMENT` + `PRESALES_MILESTONE_UPDATE` activity rows (shown in lead Activity).
 
 ---
 

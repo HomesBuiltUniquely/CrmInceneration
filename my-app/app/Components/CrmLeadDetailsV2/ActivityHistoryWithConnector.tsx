@@ -203,6 +203,9 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
     activity.rawActivityType,
     activity.description,
   );
+  const rawTypeKey = (activity.rawActivityType ?? "")
+    .toUpperCase()
+    .replace(/\s+/g, "_");
   const title = isQuoteSent
     ? quoteId
       ? `Quote Sent to Customer ⭐ · #${quoteId}`
@@ -223,7 +226,11 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
                   activity.rawActivityType,
                   activity.description,
                 )
-              : formatActivitySummaryTitle(activity.description);
+              : rawTypeKey.includes("RENOVATION_ASSIGNMENT")
+                ? formatRenovationAssignmentTitle(activity.description, activity.change)
+                : rawTypeKey.includes("PRESALES_MILESTONE_UPDATE")
+                  ? formatPresalesMilestoneUpdateTitle(activity.description, activity.change)
+                  : formatActivitySummaryTitle(activity.description);
   const kind: ActivityKind =
     paymentBucket != null || activity.type === "payment"
       ? "payment"
@@ -249,6 +256,34 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
           ? pickPaymentReceivedMotivateLine(paymentKind, `${activity.id}-stage`)
           : undefined,
   };
+}
+
+function formatRenovationAssignmentTitle(
+  description: string,
+  change?: { old?: string; new?: string },
+): string {
+  const text = description.trim();
+  const next = change?.new?.trim();
+  if (/assignee\s*\(renovation\)/i.test(text) || /^assignee$/i.test(text)) {
+    return next ? `Assignee (Renovation) · ${next}` : "Assignee (Renovation)";
+  }
+  if (/sales manager\s*\(renovation\)/i.test(text) || /renovation.*manager/i.test(text)) {
+    return next ? `Sales Manager (Renovation) · ${next}` : "Sales Manager (Renovation)";
+  }
+  if (/renovation assignment/i.test(text)) return "Renovation Assignment";
+  return text || "Renovation Assignment";
+}
+
+function formatPresalesMilestoneUpdateTitle(
+  description: string,
+  change?: { old?: string; new?: string },
+): string {
+  const from = change?.old?.trim();
+  const to = change?.new?.trim();
+  if (from || to) return `Presales milestone · ${from || "—"} → ${to || "—"}`;
+  const text = description.trim();
+  if (text && text !== "—") return text;
+  return "Presales milestone updated";
 }
 
 /** Short, readable label for sidebar summary rows. */

@@ -3,11 +3,11 @@
 import { useCallback, useMemo } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { isDatePresetId, type DatePresetId } from "@/lib/meeting-date-range";
-import type { MeetingProgress } from "@/lib/meeting-management-api";
+import { MEETING_PROGRESS_CODES, type MeetingProgress } from "@/lib/meeting-progress";
 
 export const MEETING_TABS = ["all", "scheduled", "rescheduled", "in-progress", "cancelled", "completed", "today", "upcoming"] as const;
 export type MeetingTab = (typeof MEETING_TABS)[number];
-export const PAGE_SIZES = [10, 25, 50] as const;
+export const PAGE_SIZES = [10, 20, 50, 70, 80, 100] as const;
 export type PageSize = (typeof PAGE_SIZES)[number];
 
 export type MeetingFilterState = {
@@ -36,10 +36,8 @@ function splitList(value: string | null): string[] {
     .filter(Boolean);
 }
 
-const PROGRESS_VALUES: MeetingProgress[] = ["SCHEDULED", "IN_PROGRESS", "MEETING_ABANDONED", "MEETING_SUCCESSFUL"];
-
 function isProgress(value: string): value is MeetingProgress {
-  return (PROGRESS_VALUES as string[]).includes(value);
+  return (MEETING_PROGRESS_CODES as readonly string[]).includes(value);
 }
 
 function isTab(value: string | null): value is MeetingTab {
@@ -62,7 +60,9 @@ export function useMeetingFilters() {
       salesIds: splitList(params.get("salesIds")),
       branchIds: splitList(params.get("branchIds")),
       labels: splitList(params.get("labels")),
-      progress: splitList(params.get("progress")).filter(isProgress),
+      progress: splitList(params.get("progress"))
+        .map((value) => value.trim().toUpperCase().replace(/[\s-]+/g, "_"))
+        .filter(isProgress),
       preset: isDatePresetId(presetRaw) ? presetRaw : "",
       dateFrom: params.get("dateFrom") ?? "",
       dateTo: params.get("dateTo") ?? "",

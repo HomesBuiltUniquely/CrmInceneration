@@ -9,7 +9,19 @@ import { Pagination } from "./Pagination";
 import { TableSkeleton } from "./TableSkeleton";
 import type { PageSize } from "./useMeetingFilters";
 
-const HEADERS = ["No.", "Customer", "Progress", "Sales", "Meeting", "Date & time", "Lead budget", "Lead quote", "Delayed", "Actions"];
+const HEADERS = [
+  "No.",
+  "Date & Time",
+  "Customer",
+  "Sales",
+  "Meeting Mode",
+  "Designer",
+  "Lead Budget",
+  "Quote Value",
+  "Status",
+  "Progress",
+  "Actions",
+];
 
 export function MeetingsTable({
   rows,
@@ -56,17 +68,18 @@ export function MeetingsTable({
         .meetings-table td:nth-child(2) { padding-left: 4px; }
       `}</style>
       <div className="overflow-x-auto py-1">
-        <table className="meetings-table w-full min-w-[1080px] table-fixed border-separate border-spacing-0 text-left">
+        <table className="meetings-table w-full min-w-[1180px] table-fixed border-separate border-spacing-0 text-left">
           <colgroup>
             <col className="w-[4%]" />
-            <col className="w-[15%]" />
-            <col className="w-[11%]" />
-            <col className="w-[12%]" />
+            <col className="w-[10%]" />
             <col className="w-[13%]" />
+            <col className="w-[10%]" />
             <col className="w-[11%]" />
             <col className="w-[10%]" />
-            <col className="w-[10%]" />
+            <col className="w-[9%]" />
+            <col className="w-[9%]" />
             <col className="w-[8%]" />
+            <col className="w-[10%]" />
             <col className="w-[6%]" />
           </colgroup>
           <caption className="sr-only">Meetings</caption>
@@ -95,14 +108,14 @@ export function MeetingsTable({
                 <TableSkeleton />
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={10}>
+                  <td colSpan={11}>
                     <EmptyState onClear={onClear} />
                   </td>
                 </tr>
               ) : (
                 rows.map((row, index) => (
                   <MeetingRow
-                    key={`${row.id}-${row.appointmentId ?? "lead"}`}
+                    key={`${row.appointmentId ?? "lead"}-${row.leadId ?? row.id}-${row.date}-${row.startMin}-${index}`}
                     row={row}
                     now={now}
                     sequence={(page - 1) * pageSize + index + 1}

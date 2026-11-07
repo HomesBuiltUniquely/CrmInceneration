@@ -594,10 +594,8 @@ export default function JourneyPhaseHeatmap({
   const isAdminHeatmapViewer =
     usesAdminLeadsApi(roleKeyUi) && leadView !== "my" && leadView !== "team";
   const usePresalesSummaryUi = leadsWorkspace === "presales";
-  const showPresalesManagerTeamVerifiedCard =
-    leadsWorkspace === "presales" &&
-    roleKeyUi === "PRESALES_MANAGER" &&
-    aggregateNormSet.size === 0;
+  /** Manager / Executive Total card + phases use full assigned pool (not this month only). */
+  const presalesTotalAllTime = usePresalesSummaryUi && isPresalesRole(roleKeyUi);
 
   const presalesIdentity = useMemo(() => {
     const myAliases = new Set(
@@ -638,15 +636,17 @@ export default function JourneyPhaseHeatmap({
     if (isAdminHeatmapViewer && adminPresalesSummaryLocal) return adminPresalesSummaryLocal;
     if (adminPresalesSummary && usesAdminLeadsApi(roleKeyUi)) return adminPresalesSummary;
     // Summary counts must reflect full presales pool, not an insight-tile drill-down subset.
-    const monthPool = filterLeadsCurrentMonthAssignedPool(poolLeads);
-    const totalMonth = monthPool.length;
-    const verifiedMonth = monthPool.filter((l) => isLeadVerifiedForPresales(l)).length;
+    const countPool = presalesTotalAllTime
+      ? poolLeads
+      : filterLeadsCurrentMonthAssignedPool(poolLeads);
+    const totalMonth = countPool.length;
+    const verifiedMonth = countPool.filter((l) => isLeadVerifiedForPresales(l)).length;
     const execNorms = new Set(
       presalesTeamNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
     );
     const teamVerifiedMonth =
       roleKeyUi === "PRESALES_MANAGER" && aggregateNormSet.size === 0
-        ? monthPool.filter(
+        ? countPool.filter(
             (l) =>
               isLeadVerifiedForPresales(l) &&
               !presalesIdentity.isSelfLead(l) &&
@@ -663,35 +663,21 @@ export default function JourneyPhaseHeatmap({
     presalesTeamNames,
     roleKeyUi,
     presalesIdentity,
+    presalesTotalAllTime,
   ]);
 
-  /** Presales journey phases must match Total / Verified / Team summary cards (this-month assigned pool). */
+  /** Presales journey phases match the Total summary card (all-time for manager/exec). */
   const presalesPhaseLeads = useMemo(() => {
     if (!usePresalesSummaryUi || presalesSummaryTab === null) {
       return filteredInsightLeads;
     }
-    let leads = filterLeadsCurrentMonthAssignedPool(filteredInsightLeads);
-    if (presalesSummaryTab === "verified") {
-      return leads.filter((l) => isLeadVerifiedForPresales(l));
-    }
-    if (presalesSummaryTab === "teamVerified") {
-      const execNorms = new Set(
-        presalesTeamNames.map((n) => n.trim().toLowerCase()).filter(Boolean),
-      );
-      return leads.filter(
-        (l) =>
-          isLeadVerifiedForPresales(l) &&
-          !presalesIdentity.isSelfLead(l) &&
-          leadAssignedToPresalesExecNameSet(l, execNorms),
-      );
-    }
-    return leads;
+    if (presalesTotalAllTime) return filteredInsightLeads;
+    return filterLeadsCurrentMonthAssignedPool(filteredInsightLeads);
   }, [
     usePresalesSummaryUi,
     presalesSummaryTab,
     filteredInsightLeads,
-    presalesTeamNames,
-    presalesIdentity,
+    presalesTotalAllTime,
   ]);
 
   const assigneeScopedAdminCounts =
@@ -766,13 +752,9 @@ export default function JourneyPhaseHeatmap({
     }
     if (adminCountsEffective && Object.keys(adminCountsEffective).length > 0) {
       const shareDenominator = usePresalesSummaryUi
-        ? presalesSummaryTab === "verified"
-          ? presalesMonthMetrics.verifiedMonth
-          : presalesSummaryTab === "teamVerified"
-            ? presalesMonthMetrics.teamVerifiedMonth
-            : presalesSummaryTab === "total"
-              ? presalesMonthMetrics.totalMonth
-              : Object.values(adminCountsEffective).reduce((s, n) => s + (Number(n) || 0), 0)
+        ? presalesSummaryTab === "total"
+          ? presalesMonthMetrics.totalMonth
+          : Object.values(adminCountsEffective).reduce((s, n) => s + (Number(n) || 0), 0)
         : (() => {
             const combined = adminSummaryFromCounts.lead + adminSummaryFromCounts.opportunity;
             return combined > 0
@@ -791,13 +773,9 @@ export default function JourneyPhaseHeatmap({
     );
     if (!usePresalesSummaryUi) return mapped;
     const shareDenominator =
-      presalesSummaryTab === "verified"
-        ? presalesMonthMetrics.verifiedMonth
-        : presalesSummaryTab === "teamVerified"
-          ? presalesMonthMetrics.teamVerifiedMonth
-          : presalesSummaryTab === "total"
-            ? presalesMonthMetrics.totalMonth
-            : mapped.reduce((sum, p) => sum + p.count, 0);
+      presalesSummaryTab === "total"
+        ? presalesMonthMetrics.totalMonth
+        : mapped.reduce((sum, p) => sum + p.count, 0);
     return phasesWithShareDenominator(mapped, shareDenominator);
   }, [
     adminCountsEffective,
@@ -811,8 +789,6 @@ export default function JourneyPhaseHeatmap({
     usePresalesSummaryUi,
     presalesSummaryTab,
     presalesMonthMetrics.totalMonth,
-    presalesMonthMetrics.verifiedMonth,
-    presalesMonthMetrics.teamVerifiedMonth,
     summaryTotalsOverride?.lead,
     summaryTotalsOverride?.opportunity,
   ]);
@@ -1270,32 +1246,16 @@ export default function JourneyPhaseHeatmap({
         ) : null}
         {usePresalesSummaryUi ? (
           <div className="p-4 md:p-5">
-            <div
-              className={`grid grid-cols-1 gap-4 ${showPresalesManagerTeamVerifiedCard ? "md:grid-cols-3" : "md:grid-cols-2"}`}
-            >
+            <div className="grid max-w-md grid-cols-1 gap-4">
               <PresalesSummaryCard
                 label="Total"
                 total={presalesMonthMetrics.totalMonth}
-                subtitle="assigned · this month"
-                selected={presalesSummaryTab === "total"}
+                subtitle={
+                  presalesTotalAllTime ? "assigned · all time" : "assigned · this month"
+                }
+                selected={presalesSummaryTab === "total" || presalesSummaryTab === null}
                 onClick={() => onPresalesSummaryTabChange?.("total")}
               />
-              <PresalesSummaryCard
-                label="Verified"
-                total={presalesMonthMetrics.verifiedMonth}
-                subtitle="verified · this month"
-                selected={presalesSummaryTab === "verified"}
-                onClick={() => onPresalesSummaryTabChange?.("verified")}
-              />
-              {showPresalesManagerTeamVerifiedCard ? (
-                <PresalesSummaryCard
-                  label="Team verified"
-                  total={presalesMonthMetrics.teamVerifiedMonth}
-                  subtitle="execs · this month"
-                  selected={presalesSummaryTab === "teamVerified"}
-                  onClick={() => onPresalesSummaryTabChange?.("teamVerified")}
-                />
-              ) : null}
             </div>
             <div
               className={`mt-4 rounded-2xl transition-all ${

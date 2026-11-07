@@ -16,6 +16,7 @@ import { isManualCompleteTaskSubstage } from "@/lib/auto-managed-milestone-subst
 import {
   isRenovationCompleteTaskOptionAllowed,
   isRenovationFeedbackLocked,
+  isRenovationFeedbackOption as isRenovationFeedbackOptionPath,
   leadPropertyGateErrorMessage,
   missingLeadPropertyGateFields,
   requiresLeadPropertyGateForCompleteTask,
@@ -806,16 +807,25 @@ export default function CompleteTaskModal({
       if (!presalesMode && subStageName && !isManualCompleteTaskSubstage(subStageName)) {
         continue;
       }
-      if (
-        !presalesMode &&
-        subStageName.trim().toUpperCase() === "RENOVATION" &&
-        !isRenovationCompleteTaskOptionAllowed(
-          lead.stageBlock?.milestoneStage,
-          lead.stageBlock?.milestoneSubStage,
-          lead.stageBlock?.milestoneStageCategory,
-        )
-      ) {
-        continue;
+      if (subStageName.trim().toUpperCase() === "RENOVATION") {
+        const renovationStage = presalesMode
+          ? lead.stageBlock?.presalesMilestoneStage
+          : lead.stageBlock?.milestoneStage;
+        const renovationSub = presalesMode
+          ? lead.stageBlock?.presalesMilestoneSubStage
+          : lead.stageBlock?.milestoneSubStage;
+        const renovationCat = presalesMode
+          ? lead.stageBlock?.presalesMilestoneCategory
+          : lead.stageBlock?.milestoneStageCategory;
+        if (
+          !isRenovationCompleteTaskOptionAllowed(
+            renovationStage,
+            renovationSub,
+            renovationCat,
+          )
+        ) {
+          continue;
+        }
       }
       if (presalesMode && !isPresalesTopLevelStage(stage)) continue;
       const stageKey = stage.toLowerCase();
@@ -837,6 +847,9 @@ export default function CompleteTaskModal({
     lead.stageBlock?.milestoneStage,
     lead.stageBlock?.milestoneSubStage,
     lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    lead.stageBlock?.presalesMilestoneCategory,
   ]);
   const budgetOptions = useMemo(() => {
     const normalizedBudget = (lead.budget ?? "").trim();
@@ -1254,7 +1267,15 @@ export default function CompleteTaskModal({
   };
 
   const isRenovationFeedbackOption = (option: FeedbackOption | undefined): boolean =>
-    Boolean(option && option.subStageName.trim().toUpperCase() === "RENOVATION");
+    Boolean(
+      option &&
+        isRenovationFeedbackOptionPath({
+          stage: option.stage,
+          stageCategory: option.stageCategory,
+          subStageName: option.subStageName,
+          presalesMode,
+        }),
+    );
 
   const applyFeedbackSelection = async (value: string) => {
     setFeedback(value);
@@ -1270,16 +1291,17 @@ export default function CompleteTaskModal({
     lead.stageBlock?.milestoneStage,
     lead.stageBlock?.milestoneSubStage,
     lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    lead.stageBlock?.presalesMilestoneCategory,
   );
 
   const handleFeedbackSelect = async (value: string) => {
     const option = feedbackOptions.find((o) => o.label === value);
     // Renovation: confirm popup before committing selection (no PUT until Save).
-    if (
-      !presalesMode &&
-      isRenovationFeedbackOption(option) &&
-      !renovationFeedbackLocked
-    ) {
+    // Sales: Discovery → Discovery Won → Renovation
+    // Presales: Data Conversion → Won → Renovation
+    if (isRenovationFeedbackOption(option) && !renovationFeedbackLocked) {
       pendingRenovationLabelRef.current = value;
       setRenovationConfirmOpen(true);
       return;
@@ -2382,11 +2404,12 @@ export default function CompleteTaskModal({
               Confirm Renovation lead?
             </h3>
             <p className="mt-2 text-[13px] leading-relaxed text-[var(--crm-text-secondary)]">
-              This lead will be marked as Renovation and reassigned to the renovation sales team
-              using round-robin. Continue?
+              This lead will be marked as Renovation and reassigned to the renovation team
+              (manager + executive) using round-robin. Continue?
             </p>
             <p className="mt-2 text-[12px] text-[var(--crm-text-muted)]">
-              This cannot be undone from Complete Task. Saving the note will apply the assignment.
+              This cannot be undone from Complete Task. Saving will apply the assignment
+              {presalesMode ? " and write Renovation activity history" : ""}.
             </p>
             <div className="mt-5 flex flex-col-reverse justify-end gap-2 sm:flex-row">
               <Button

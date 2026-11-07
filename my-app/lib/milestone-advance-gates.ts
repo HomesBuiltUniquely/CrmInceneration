@@ -5,7 +5,7 @@ import { normalizeStageKey } from "@/lib/milestone-progress";
 const DISCOVERY_STAGE = "Discovery";
 const CONNECTION_STAGE = "Connection";
 
-/** True when the lead is still in the Fresh Lead intake phase (own stage or Discovery + fresh substage/category). */
+/** True when the lead is still in Fresh Lead / Fresh Data intake (sales or presales). */
 export function isFreshLeadMilestonePosition(
   milestoneStage: string | null | undefined,
   milestoneSubStage: string | null | undefined,
@@ -15,22 +15,29 @@ export function isFreshLeadMilestonePosition(
   const sub = normalizeStageKey(milestoneSubStage ?? "");
   const cat = normalizeStageKey(milestoneStageCategory ?? "");
   const isFreshToken = (s: string) =>
-    s === "fresh lead" || s === "fresh leads" || /^fresh\s+leads?$/.test(s);
+    s === "fresh lead" ||
+    s === "fresh leads" ||
+    s === "fresh data" ||
+    /^fresh\s+leads?$/.test(s) ||
+    /^fresh\s+data$/.test(s);
   if (isFreshToken(st)) return true;
   if (isFreshToken(sub)) return true;
   if (isFreshToken(cat)) return true;
   return false;
 }
 
-/** True when Renovation feedback must stay locked (already assigned and not rolled back to Fresh Lead). */
+/** True when Renovation feedback must stay locked (already assigned and not rolled back to Fresh). */
 export function isRenovationFeedbackLocked(
   renovationAssigned: boolean | null | undefined,
   milestoneStage: string | null | undefined,
   milestoneSubStage: string | null | undefined,
   milestoneStageCategory: string | null | undefined,
+  presalesMilestoneStage?: string | null | undefined,
+  presalesMilestoneSubStage?: string | null | undefined,
+  presalesMilestoneCategory?: string | null | undefined,
 ): boolean {
   if (!renovationAssigned) return false;
-  // Stage rollback to Fresh Lead should allow Renovation to be selected again.
+  // Stage rollback to Fresh Lead / Fresh Data should allow Renovation again.
   if (
     isFreshLeadMilestonePosition(
       milestoneStage,
@@ -40,10 +47,38 @@ export function isRenovationFeedbackLocked(
   ) {
     return false;
   }
+  if (
+    isFreshLeadMilestonePosition(
+      presalesMilestoneStage,
+      presalesMilestoneSubStage,
+      presalesMilestoneCategory,
+    )
+  ) {
+    return false;
+  }
   return true;
 }
 
-/** Renovation is only a Discovery Won substage — hide it after Discovery. */
+/** Renovation Complete Task option from sales Discovery Won or presales Data Conversion → Won. */
+export function isRenovationFeedbackOption(args: {
+  stage?: string | null;
+  stageCategory?: string | null;
+  subStageName?: string | null;
+  presalesMode?: boolean;
+}): boolean {
+  if ((args.subStageName ?? "").trim().toUpperCase() !== "RENOVATION") return false;
+  if (!args.presalesMode) return true;
+  const stage = normalizeStageKey(args.stage ?? "");
+  const cat = normalizeStageKey(args.stageCategory ?? "");
+  return stage === "data conversion" && cat === "won";
+}
+
+/**
+ * Renovation is offered under:
+ * - Sales: Discovery / Discovery Won / Fresh Lead
+ * - Presales: Data Conversion / Won / Fresh Data
+ * Hide it after the lead has moved past those phases.
+ */
 export function isRenovationCompleteTaskOptionAllowed(
   milestoneStage: string | null | undefined,
   milestoneSubStage: string | null | undefined,
@@ -55,6 +90,8 @@ export function isRenovationCompleteTaskOptionAllowed(
   const cat = normalizeStageKey(milestoneStageCategory ?? "");
   if (stage === "discovery") return true;
   if (cat === "discovery won") return true;
+  if (stage === "data conversion") return true;
+  if (cat === "won" && stage === "data conversion") return true;
   if (isFreshLeadMilestonePosition(milestoneStage, milestoneSubStage, milestoneStageCategory)) {
     return true;
   }

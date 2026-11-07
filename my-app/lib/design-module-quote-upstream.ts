@@ -14,6 +14,9 @@ function normalizeOrigin(value: string | undefined | null): string {
 export function designModuleQuoteUpstreamBases(): string[] {
   const ordered = [
     normalizeOrigin(process.env.DESIGN_MODULE_URL),
+    // Local Design Module — Share to CRM works without Design→Hub ERP login.
+    "http://127.0.0.1:3001",
+    "http://localhost:3001",
     normalizeOrigin(process.env.NEXT_PUBLIC_API),
     DEFAULT_DESIGN_API,
     normalizeOrigin(BASE_URL),

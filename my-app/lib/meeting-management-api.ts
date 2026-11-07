@@ -5,6 +5,7 @@ import {
 } from "@/lib/appointment-client";
 import { CRM_LOGIN_USERNAME_KEY, CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
+import { extractQuoteIdFromUrl } from "@/lib/crm-quote-links";
 import { parseBudgetLabelToInr, resolveAnchorQuoteId } from "@/lib/insights-lead-investment";
 import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { meetingTypeDisplay } from "@/lib/lead-detail-v2-display";
@@ -31,9 +32,16 @@ import {
   type MeetingStatus,
 } from "@/lib/meeting-management-data";
 import {
+  isMeetingSuccessfulProgress,
+  normalizeMeetingProgressCode,
+  type MeetingProgress,
+} from "@/lib/meeting-progress";
+import {
   extractProlanceQuoteTotalAmount,
   fetchProlanceQuoteShare,
 } from "@/lib/prolance-quote-api";
+
+export type { MeetingProgress };
 
 const AVATAR_TONES: AvatarTone[] = ["blue", "green", "violet", "amber", "rose"];
 
@@ -114,18 +122,14 @@ function leadIdFrom(row: Record<string, unknown>): number | undefined {
 }
 
 function boardProgress(row: Record<string, unknown>): MeetingRecord["progress"] | undefined {
-  const raw = readString(row, "meetingProgress", "meeting_progress", "progress")
-    .toUpperCase()
-    .replace(/[\s-]+/g, "_");
-  if (
-    raw === "SCHEDULED" ||
-    raw === "IN_PROGRESS" ||
-    raw === "MEETING_ABANDONED" ||
-    raw === "MEETING_SUCCESSFUL"
-  ) {
-    return raw;
+  const raw = readString(row, "meetingProgress", "meeting_progress", "progress");
+  const code = normalizeMeetingProgressCode(raw);
+  if (!code || code === "MEETING_SUCCESSFUL") {
+    // Filter-only umbrella — prefer a concrete row code when Hub still sends legacy value.
+    if (code === "MEETING_SUCCESSFUL") return "MEETING_SUCCESSFUL_QUOTE_PENDING";
+    return undefined;
   }
-  return undefined;
+  return code;
 }
 
 function boardMeetingStatus(row: Record<string, unknown>): "SCHEDULED" | "RESCHEDULED" | "CANCELLED" {
@@ -533,8 +537,6 @@ export function quoteSentLeadRows(
   return sortMeetingsForList(rows).map((row, index) => ({ ...row, order: index + 1 }));
 }
 
-export type MeetingProgress = "SCHEDULED" | "IN_PROGRESS" | "MEETING_ABANDONED" | "MEETING_SUCCESSFUL";
-
 export type MeetingBoardQuery = {
   from?: string;
   to?: string;
@@ -569,10 +571,91 @@ function readFlag(row: Record<string, unknown>, ...keys: string[]): boolean | un
   return undefined;
 }
 
+/** Whole rupees from a board/lead money field. Accepts numbers and ₹ / comma strings. */
+function moneyToRupees(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return Math.round(value);
+  if (typeof value !== "string") return 0;
+  const cleaned = value.replace(/[^\d.-]/g, "").trim();
+  if (!cleaned) return 0;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
+}
+
 function wholeRupees(row: Record<string, unknown>, ...keys: string[]): number {
-  const amount = readNumber(row, ...keys);
-  if (amount == null || !Number.isFinite(amount) || amount <= 0) return 0;
-  return Math.round(amount);
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    const amount = moneyToRupees(row[key]);
+    if (amount > 0) return amount;
+  }
+  return 0;
+}
+
+const QUOTE_AMOUNT_KEYS = [
+  "quoteAmount",
+  "quote_amount",
+  "quotedAmount",
+  "quoted_amount",
+  "quotationAmount",
+  "quotation_amount",
+  "quotationValue",
+  "quotation_value",
+  "quoteValue",
+  "quote_value",
+  "totalAmount",
+  "grandTotal",
+  "dealValue",
+] as const;
+
+function boardQuoteId(row: Record<string, unknown>, quoteLink: string): string {
+  return (
+    readString(row, "quoteId", "quote_id", "hubQuoteId", "hub_quote_id") ||
+    extractQuoteIdFromUrl(quoteLink) ||
+    ""
+  );
+}
+
+/** Fill quote amounts the board left at 0 when a quote id/link is already present. */
+async function enrichMeetingQuoteAmounts(rows: MeetingRecord[]): Promise<MeetingRecord[]> {
+  const missingIds = [
+    ...new Set(
+      rows
+        .filter((row) => !(row.quoteValue > 0))
+        .map((row) => row.quoteNo?.trim() || extractQuoteIdFromUrl(row.quoteLink ?? ""))
+        .filter(Boolean),
+    ),
+  ];
+  if (missingIds.length === 0) return rows;
+
+  const totals = new Map<string, number>();
+  await runPool(
+    missingIds,
+    async (quoteId) => {
+      try {
+        const share = await fetchProlanceQuoteShare(quoteId);
+        const amount = resolveQuoteAmount(extractProlanceQuoteTotalAmount(share));
+        if (amount != null) totals.set(quoteId, Math.round(amount));
+      } catch {
+        /* keep board amount */
+      }
+    },
+    5,
+  );
+  if (totals.size === 0) return rows;
+
+  return rows.map((row) => {
+    if (row.quoteValue > 0) return row;
+    const quoteId = row.quoteNo?.trim() || extractQuoteIdFromUrl(row.quoteLink ?? "");
+    const quoteAmount = quoteId ? totals.get(quoteId) ?? 0 : 0;
+    if (quoteAmount <= 0) return row;
+    return {
+      ...row,
+      quoteNo: row.quoteNo || quoteId,
+      quoteValue: quoteAmount,
+      value: quoteAmount,
+      valueSource: "quotation" as const,
+      quoteGenerated: true,
+    };
+  });
 }
 
 function asRecordList(value: unknown): Record<string, unknown>[] {
@@ -604,20 +687,31 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
   const createdAtRaw = readString(row, "createdAt", "CreatedAt", "created_at");
   const updatedAtRaw = readString(row, "updatedAt", "UpdatedAt", "updated_at");
   const scheduledAtMs = Math.max(Date.parse(updatedAtRaw) || 0, Date.parse(createdAtRaw) || 0, Date.parse(sentRaw) || 0);
-  const quoteId = readString(row, "quoteId", "quote_id");
-  const quoteAmount = wholeRupees(row, "quoteAmount", "quote_amount");
-  const budget = wholeRupees(row, "budget");
-  const quoteGenerated = readFlag(row, "quoteGenerated", "quote_generated") === true;
+  const quoteLinkRaw = readString(row, "quoteLink", "quote_link");
+  const quoteId = boardQuoteId(row, quoteLinkRaw);
+  const quoteAmount = wholeRupees(row, ...QUOTE_AMOUNT_KEYS);
+  const budget = wholeRupees(row, "budget", "leadBudget", "lead_budget", "budgetRange");
   const quoteFollow = readFlag(row, "quoteFollow", "quote_follow") === true;
-  const quoteLink = quoteGenerated ? readString(row, "quoteLink", "quote_link") : "";
+  const quoteGenerated =
+    readFlag(row, "quoteGenerated", "quote_generated") === true ||
+    Boolean(quoteId) ||
+    Boolean(quoteLinkRaw) ||
+    quoteAmount > 0;
+  const quoteLink = quoteGenerated ? quoteLinkRaw : "";
   const quoteSent = quoteFollow || readFlag(row, "quoteSent", "quote_sent") === true || quoteLead;
   const flaggedSuccessful = quoteLead ? undefined : readFlag(row, "meetingSuccessful", "meeting_successful");
   const meetingSuccessfulAt = readString(row, "meetingSuccessfulAt", "meeting_successful_at");
+  const meetingSuccessfulSource = readString(
+    row,
+    "meetingSuccessfulSource",
+    "meeting_successful_source",
+  );
+  const progressLabel = readString(row, "progressLabel", "progress_label");
   const apiProgress = boardProgress(row);
   const meetingSuccessful = quoteLead
     ? undefined
     : apiProgress
-      ? apiProgress === "MEETING_SUCCESSFUL"
+      ? isMeetingSuccessfulProgress(apiProgress)
       : flaggedSuccessful;
   const quoteDelayed = readFlag(row, "quoteDelayed", "quote_delayed") === true;
   const meetingStatus = quoteLead ? undefined : boardMeetingStatus(row);
@@ -635,7 +729,9 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
       ?? (meetingStatus === "CANCELLED"
         ? "SCHEDULED"
         : meetingSuccessful === true
-          ? "MEETING_SUCCESSFUL"
+          ? quoteSent
+            ? "QUOTE_SENT_SUCCESSFUL"
+            : "MEETING_SUCCESSFUL_QUOTE_PENDING"
           : !meetingStarted
             ? "SCHEDULED"
             : slotEnded
@@ -671,6 +767,7 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     locationTone: code ? locationTone(code) : "blue",
     status,
     progress,
+    progressLabel: progressLabel || undefined,
     meetingStatus,
     cancelledAt: cancelledAtRaw ? formatStamp(cancelledAtRaw) : undefined,
     value,
@@ -704,6 +801,7 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     quoteSentAt: formatStamp(sentRaw),
     meetingSuccessful,
     meetingSuccessfulAt: meetingSuccessfulAt || undefined,
+    meetingSuccessfulSource: meetingSuccessfulSource || undefined,
     quoteDelayed,
     needsOutcome,
   };
@@ -770,12 +868,18 @@ export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<M
   };
   if (!res.ok) throw new Error(json.error || "Could not load meetings.");
   const meetings = Array.isArray(json.meetings) ? json.meetings : [];
+  const quoteSentMeetings = Array.isArray(json.quoteSentMeetings) ? json.quoteSentMeetings : [];
+  const [enrichedMeetings, enrichedQuoteSent] = await Promise.all([
+    enrichMeetingQuoteAmounts(meetings),
+    enrichMeetingQuoteAmounts(quoteSentMeetings),
+  ]);
   return {
-    meetings,
-    quoteSentMeetings: Array.isArray(json.quoteSentMeetings) ? json.quoteSentMeetings : [],
-    total: typeof json.total === "number" ? json.total : meetings.length,
+    meetings: enrichedMeetings,
+    quoteSentMeetings: enrichedQuoteSent,
+    total: typeof json.total === "number" ? json.total : enrichedMeetings.length,
     page: typeof json.page === "number" ? json.page : query.page ?? 1,
-    pageSize: typeof json.pageSize === "number" ? json.pageSize : query.pageSize ?? meetings.length,
+    pageSize:
+      typeof json.pageSize === "number" ? json.pageSize : query.pageSize ?? enrichedMeetings.length,
   };
 }
 

@@ -1045,13 +1045,26 @@ export async function uploadLeadFloorPlan(
   }
 
   const formData = new FormData();
-  if (files.length === 1) formData.append("file", files[0]!);
-  else for (const file of files) formData.append("files", file);
+  // Pass filename explicitly — some Android WebViews omit it and the proxy
+  // then treats the part as a string → "Missing file".
+  if (files.length === 1) {
+    const f = files[0]!;
+    formData.append("file", f, f.name || "floor-plan.bin");
+  } else {
+    for (const file of files) {
+      formData.append("files", file, file.name || "floor-plan.bin");
+    }
+  }
+
+  // Only Authorization — never set Content-Type (browser must add multipart boundary).
+  const headers = new Headers();
+  const auth = new Headers(getCrmAuthHeaders()).get("Authorization");
+  if (auth) headers.set("Authorization", auth);
 
   const res = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan`, {
     method: "POST",
     credentials: "include",
-    headers: getCrmAuthHeaders(),
+    headers,
     body: formData,
     cache: "no-store",
   });

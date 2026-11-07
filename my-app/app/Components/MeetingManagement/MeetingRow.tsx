@@ -1,7 +1,8 @@
 "use client";
 
 import { format } from "date-fns";
-import { formatMeetingValue, type MeetingRecord, type MeetingStatus } from "@/lib/meeting-management-data";
+import { formatMeetingValue, type MeetingRecord } from "@/lib/meeting-management-data";
+import { meetingProgressTone } from "@/lib/meeting-progress";
 import { focusRing } from "./motion";
 import { RowActionsMenu } from "./RowActionsMenu";
 
@@ -16,29 +17,15 @@ const AVATAR: Record<MeetingRecord["avatarTone"], string> = {
 function StatusChip({ tone }: { tone: { bg: string; text: string; dot: string; label: string } }) {
   return (
     <span
-      className="inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold"
+      className="inline-flex min-h-7 max-w-[11.5rem] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold leading-tight"
       style={{ background: tone.bg, color: tone.text }}
+      title={tone.label}
     >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />
-      {tone.label}
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone.dot }} />
+      <span className="truncate">{tone.label}</span>
     </span>
   );
 }
-
-const STATUS: Record<MeetingStatus, { bg: string; text: string; dot: string; label: string }> = {
-  SCHEDULED: { bg: "#E0ECFF", text: "#1E40AF", dot: "#1D4ED8", label: "Scheduled" },
-  "IN PROGRESS": { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In progress" },
-  COMPLETED: { bg: "#F0FDF4", text: "#14532D", dot: "#15803D", label: "Completed" },
-  RESCHEDULED: { bg: "#F3E8FF", text: "#6B21A8", dot: "#7C3AED", label: "Rescheduled" },
-  CANCELLED: { bg: "#FEF3F2", text: "#B42318", dot: "#B42318", label: "Cancelled" },
-};
-
-const PROGRESS_CHIP: Record<NonNullable<MeetingRecord["progress"]>, { bg: string; text: string; dot: string; label: string }> = {
-  SCHEDULED: { bg: "#E0ECFF", text: "#1E40AF", dot: "#1D4ED8", label: "Scheduled" },
-  IN_PROGRESS: { bg: "#FEF3C7", text: "#92400E", dot: "#D97706", label: "In Progress" },
-  MEETING_ABANDONED: { bg: "#FEF3F2", text: "#B42318", dot: "#B42318", label: "Meeting Abandoned" },
-  MEETING_SUCCESSFUL: { bg: "#F0FDF4", text: "#14532D", dot: "#15803D", label: "Meeting Successful" },
-};
 
 export function MeetingRow({
   row,
@@ -53,7 +40,8 @@ export function MeetingRow({
   onView: () => void;
   onReschedule: () => void;
 }) {
-  const progress = PROGRESS_CHIP[row.progress ?? "SCHEDULED"];
+  void now;
+  const progress = meetingProgressTone(row.progress, row.progressLabel);
   const delay = row.quoteDelayed === true;
   const dateLabel = row.dayOffset === 0 ? "Today" : row.dayOffset === 1 ? "Tomorrow" : format(new Date(`${row.date}T00:00:00`), "d MMM yyyy");
   const dateGreen = row.dayOffset === 0 || row.dayOffset === 1;
@@ -74,7 +62,11 @@ export function MeetingRow({
           {sequence}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] py-2.5 pl-1 pr-3 align-middle">
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <span className={`block whitespace-nowrap text-[13px] font-bold leading-tight ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
+        <span className="block whitespace-nowrap text-[12px] font-normal leading-tight text-[#5B6778]">{clock(row.startMin)}</span>
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <div className="flex items-center gap-2">
           <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${AVATAR[row.avatarTone]}`}>
             {row.initials}
@@ -85,9 +77,6 @@ export function MeetingRow({
           </span>
         </div>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
-        <StatusChip tone={progress} />
-      </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-semibold text-[#0F172A]">
         <span className="block truncate">{row.assignedSalesName?.trim() || "—"}</span>
       </td>
@@ -97,14 +86,15 @@ export function MeetingRow({
           {row.meetingType || "—"}
         </span>
       </td>
-      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
-        <span className={`block whitespace-nowrap text-[13px] font-bold leading-tight ${dateGreen ? "text-[#047857]" : "text-[#0F172A]"}`}>{dateLabel}</span>
-        <span className="block whitespace-nowrap text-[12px] font-normal leading-tight text-[#5B6778]">{clock(row.startMin)}</span>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-semibold text-[#0F172A]">
+        <span className="block truncate">{designerName(row.assignee)}</span>
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle text-[13px] font-bold tabular-nums text-[#0F172A]">{formatMeetingValue(row.budget)}</td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         {row.quoteValue > 0 ? (
           <span className="inline-flex h-7 items-center text-[13px] font-bold tabular-nums text-[#0F172A]">{formatMeetingValue(row.quoteValue)}</span>
+        ) : row.quoteGenerated || row.quoteFollow || row.quoteSent ? (
+          <span className="inline-flex h-7 items-center text-[13px] font-semibold tabular-nums text-[#94A3B8]">—</span>
         ) : (
           <span className="inline-flex h-7 items-center rounded-full bg-[#F4F6F8] px-2.5 text-[12px] font-semibold text-[#94A3B8]">No quote</span>
         )}
@@ -119,10 +109,19 @@ export function MeetingRow({
         )}
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
+        <StatusChip tone={progress} />
+      </td>
+      <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         <RowActionsMenu customer={row.customer} onView={onView} onReschedule={onReschedule} />
       </td>
     </tr>
   );
+}
+
+function designerName(assignee: string | undefined): string {
+  const name = assignee?.trim();
+  if (!name || name === "Unassigned") return "-";
+  return name;
 }
 
 function clock(startMin: number) {

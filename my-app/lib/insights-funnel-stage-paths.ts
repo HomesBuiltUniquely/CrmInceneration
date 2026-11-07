@@ -386,6 +386,7 @@ const FALLBACK_SUBSTAGES: Record<
       "Non Serviceable Area",
       "Wrong Number",
       "Appointment Requested, No Response",
+      "Dead Lead",
     ],
     hold: [], // Hold only from pipeline mappings — never invent
   },

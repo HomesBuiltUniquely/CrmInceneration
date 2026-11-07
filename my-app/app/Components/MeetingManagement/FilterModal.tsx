@@ -13,6 +13,7 @@ import {
   toDateKey,
   type DatePresetId,
 } from "@/lib/meeting-date-range";
+import { MEETING_PROGRESS_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
 import { EASE, focusRing, hoverLift } from "./motion";
 import type { MeetingFilterState } from "./useMeetingFilters";
 
@@ -208,6 +209,49 @@ export function FilterModal({
                               ) : null}
                             </AnimatePresence>
                             {label}
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#334155]">Progress</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {MEETING_PROGRESS_FILTER_OPTIONS.map((option) => {
+                        const selected = (draft.progress ?? []).includes(option.id);
+                        return (
+                          <motion.button
+                            key={option.id}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() =>
+                              setDraft((current) => {
+                                const progress: MeetingProgress[] = selected
+                                  ? current.progress.filter((id) => id !== option.id)
+                                  : [...current.progress, option.id];
+                                return { ...current, progress };
+                              })
+                            }
+                            className={`inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border px-3 text-left text-[12px] font-semibold ${focusRing} ${
+                              selected
+                                ? "border-2 border-[#22C55E] bg-[#F0FDF4] text-[#14532D]"
+                                : "border-[#E3E8EE] bg-white text-[#334155]"
+                            }`}
+                            {...hoverLift(reduce)}
+                          >
+                            <AnimatePresence>
+                              {selected ? (
+                                <motion.span
+                                  initial={reduce ? { opacity: 0 } : { scale: 0 }}
+                                  animate={reduce ? { opacity: 1 } : { scale: 1 }}
+                                  exit={{ opacity: 0 }}
+                                  transition={reduce ? { duration: 0.15 } : { type: "spring", stiffness: 500, damping: 24 }}
+                                >
+                                  <CheckGlyph />
+                                </motion.span>
+                              ) : null}
+                            </AnimatePresence>
+                            <span className="truncate">{option.label}</span>
                           </motion.button>
                         );
                       })}
