@@ -43,9 +43,16 @@ export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
 };
 
-type ActivityKind = "note" | "update" | "call" | "booking_token" | "payment";
-type FilterId = "all" | "calls" | "notes" | "updates" | "booking_token" | "payments";
+type ActivityKind = "note" | "update" | "call" | "booking_token" | "payment" | "quote_open";
+type FilterId = "all" | "calls" | "notes" | "updates" | "quote_opens" | "booking_token" | "payments";
 type PaymentSubFilter = "all" | "links" | "settlements";
+
+export type QuoteOpenSummary = {
+  openCount: number;
+  lastOpenedAt?: string | null;
+  quoteId?: string | null;
+  quoteLink?: string | null;
+};
 
 type DisplayActivityItem = {
   id: string;
@@ -55,12 +62,16 @@ type DisplayActivityItem = {
   author: string;
   detail: string;
   isQuoteSent?: boolean;
+  isQuoteOpen?: boolean;
   isPaymentReceived?: boolean;
   isPaymentStage?: boolean;
   isPaymentFailed?: boolean;
   paymentKind?: PaymentReceivedKind;
   paymentBucket?: PaymentActivityBucket;
   motivateLine?: string;
+  quoteOpenCount?: number;
+  quoteId?: string | null;
+  quoteLink?: string | null;
 };
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
@@ -104,11 +115,42 @@ const MOCK_FILTER_COUNTS = {
   calls: 1,
   notes: 3,
   updates: 25,
+  quote_opens: 0,
   booking_token: 0,
   payments: 0,
   payment_links: 0,
   payment_settlements: 0,
 };
+
+function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayActivityItem | null {
+  const openCount = Math.max(0, Math.floor(Number(summary?.openCount) || 0));
+  if (openCount <= 0) return null;
+  const lastOpenedAt = summary?.lastOpenedAt?.trim() || "";
+  const quoteId = summary?.quoteId?.trim() || "";
+  const quoteLink = summary?.quoteLink?.trim() || "";
+  const timestamp = lastOpenedAt
+    ? formatActivityDisplayTime(lastOpenedAt)
+    : "—";
+  const detailParts = [
+    `customerQuoteOpenCount = ${openCount}`,
+    quoteId ? `quoteId = ${quoteId}` : "",
+    lastOpenedAt ? `lastOpenedAt = ${formatActivityDisplayTime(lastOpenedAt)}` : "",
+    quoteLink ? `quoteLink = ${quoteLink}` : "",
+  ].filter(Boolean);
+  return {
+    id: "quote-open-summary",
+    kind: "quote_open",
+    title: `Customer opened quote link · ${openCount} ${openCount === 1 ? "time" : "times"}`,
+    timestamp,
+    author: "System",
+    detail: detailParts.join("\n"),
+    isQuoteOpen: true,
+    quoteOpenCount: openCount,
+    quoteId: quoteId || null,
+    quoteLink: quoteLink || null,
+    motivateLine: "Customer engagement on the proposal — follow up while interest is warm.",
+  };
+}
 
 function mapApiTypeToKind(type: ActivityItem["type"]): ActivityKind {
   if (type === "note") return "note";
@@ -375,15 +417,19 @@ function activityListKey(activities: ActivityItem[] | undefined): string {
 
 const ActivityHistoryWithConnector = forwardRef<
   ActivityHistoryHandle,
-  { activities?: ActivityItem[] }
->(function ActivityHistoryWithConnector({ activities }, ref) {
+  { activities?: ActivityItem[]; quoteOpenSummary?: QuoteOpenSummary }
+>(function ActivityHistoryWithConnector({ activities, quoteOpenSummary }, ref) {
   const activitiesKey = activityListKey(activities);
   const hasApiActivities = Boolean(activities && activities.length > 0);
 
   const displayActivities = useMemo(() => {
-    if (hasApiActivities && activities) return activities.map(mapApiActivity);
-    return MOCK_ACTIVITIES;
-  }, [activities, activitiesKey, hasApiActivities]);
+    const base =
+      hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
+    const quoteOpen = buildQuoteOpenActivity(quoteOpenSummary);
+    if (!quoteOpen) return base;
+    // Keep summary at top so sales see opens next to recent quote-sent events.
+    return [quoteOpen, ...base.filter((item) => item.id !== quoteOpen.id)];
+  }, [activities, activitiesKey, hasApiActivities, quoteOpenSummary]);
 
   const summaryItems = useMemo(
     () =>
@@ -423,6 +469,7 @@ const ActivityHistoryWithConnector = forwardRef<
               if (item.kind === "call") acc.calls += 1;
               if (item.kind === "note") acc.notes += 1;
               if (item.kind === "update") acc.updates += 1;
+              if (item.kind === "quote_open") acc.quote_opens += 1;
               if (item.kind === "booking_token") acc.booking_token += 1;
               if (item.kind === "payment") {
                 acc.payments += 1;
@@ -436,6 +483,7 @@ const ActivityHistoryWithConnector = forwardRef<
               calls: 0,
               notes: 0,
               updates: 0,
+              quote_opens: 0,
               booking_token: 0,
               payments: 0,
               payment_links: 0,
@@ -472,6 +520,7 @@ const ActivityHistoryWithConnector = forwardRef<
         if (filter === "all") return true;
         if (filter === "calls") return item.kind === "call";
         if (filter === "notes") return item.kind === "note";
+        if (filter === "quote_opens") return item.kind === "quote_open";
         if (filter === "booking_token") return item.kind === "booking_token";
         if (filter === "payments") {
           if (item.kind !== "payment") return false;
@@ -691,6 +740,12 @@ const ActivityHistoryWithConnector = forwardRef<
                   label={`Updates ${filterCounts.updates}`}
                   icon="🔄"
                 />
+                <FilterPill
+                  active={filter === "quote_opens"}
+                  onClick={() => setFilter("quote_opens")}
+                  label={`Quote opens ${filterCounts.quote_opens}`}
+                  icon="🔗"
+                />
                 {filterCounts.booking_token > 0 ? (
                   <FilterPill
                     active={filter === "booking_token"}
@@ -749,7 +804,9 @@ const ActivityHistoryWithConnector = forwardRef<
                               : "Payments"
                           : filter === "booking_token"
                             ? "Booking & Token"
-                            : filter}
+                            : filter === "quote_opens"
+                              ? "Quote opens"
+                              : filter}
                     </p>
                     <p className="text-[10px] font-medium text-[#94a3b8]">
                       Click once to view details
@@ -758,6 +815,7 @@ const ActivityHistoryWithConnector = forwardRef<
                   <ul className="min-h-0 flex-1 overflow-y-auto">
                     {filteredActivities.map((item) => {
                       const isQuote = Boolean(item.isQuoteSent);
+                      const isQuoteOpen = Boolean(item.isQuoteOpen);
                       const isPay =
                         Boolean(item.isPaymentReceived) || Boolean(item.isPaymentStage);
                       const isPayFail = Boolean(item.isPaymentFailed);
@@ -772,82 +830,96 @@ const ActivityHistoryWithConnector = forwardRef<
                         ? selectedRow
                           ? "border-emerald-200 bg-[#d1fae5]"
                           : `border-emerald-100 bg-[#ecfdf5] text-[#065f46] ${V2_BTN_LIST_ITEM}`
-                        : isPayFail
+                        : isQuoteOpen
                           ? selectedRow
-                            ? "border-amber-300 bg-amber-100"
-                            : `border-amber-200 bg-amber-50 text-amber-950 ${V2_BTN_LIST_ITEM}`
-                          : isPay
-                            ? payBooking
-                              ? selectedRow
-                                ? "border-violet-200 bg-[#ddd6fe]"
-                                : `border-violet-100 bg-[#f5f3ff] text-violet-950 ${V2_BTN_LIST_ITEM}`
-                              : selectedRow
-                                ? "border-amber-200 bg-[#fde68a]"
-                                : `border-amber-100 bg-[#fffbeb] text-amber-950 ${V2_BTN_LIST_ITEM}`
-                            : isPayLink
-                              ? selectedRow
-                                ? "border-sky-200 bg-[#bae6fd]"
-                                : `border-sky-100 bg-[#f0f9ff] text-sky-950 ${V2_BTN_LIST_ITEM}`
-                              : selectedRow
-                                ? "border-[#f1f5f9] bg-[#eff6ff]"
-                                : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`;
+                            ? "border-indigo-200 bg-[#c7d2fe]"
+                            : `border-indigo-100 bg-[#eef2ff] text-indigo-950 ${V2_BTN_LIST_ITEM}`
+                          : isPayFail
+                            ? selectedRow
+                              ? "border-amber-300 bg-amber-100"
+                              : `border-amber-200 bg-amber-50 text-amber-950 ${V2_BTN_LIST_ITEM}`
+                            : isPay
+                              ? payBooking
+                                ? selectedRow
+                                  ? "border-violet-200 bg-[#ddd6fe]"
+                                  : `border-violet-100 bg-[#f5f3ff] text-violet-950 ${V2_BTN_LIST_ITEM}`
+                                : selectedRow
+                                  ? "border-amber-200 bg-[#fde68a]"
+                                  : `border-amber-100 bg-[#fffbeb] text-amber-950 ${V2_BTN_LIST_ITEM}`
+                              : isPayLink
+                                ? selectedRow
+                                  ? "border-sky-200 bg-[#bae6fd]"
+                                  : `border-sky-100 bg-[#f0f9ff] text-sky-950 ${V2_BTN_LIST_ITEM}`
+                                : selectedRow
+                                  ? "border-[#f1f5f9] bg-[#eff6ff]"
+                                  : `border-[#f1f5f9] text-[#475569] ${V2_BTN_LIST_ITEM}`;
                       const labelClass = isQuote
                         ? "text-emerald-700"
-                        : isPayFail
-                          ? "text-amber-800"
-                          : isPay
-                            ? payBooking
-                              ? "text-violet-700"
-                              : "text-amber-800"
-                            : isPayLink
-                              ? "text-sky-700"
-                              : "text-[#9ca3af]";
+                        : isQuoteOpen
+                          ? "text-indigo-700"
+                          : isPayFail
+                            ? "text-amber-800"
+                            : isPay
+                              ? payBooking
+                                ? "text-violet-700"
+                                : "text-amber-800"
+                              : isPayLink
+                                ? "text-sky-700"
+                                : "text-[#9ca3af]";
                       const titleClass = isQuote
                         ? "text-emerald-950"
-                        : isPayFail
-                          ? "text-amber-950"
-                          : isPay
-                            ? payBooking
-                              ? "text-violet-950"
-                              : "text-amber-950"
-                            : isPayLink
-                              ? "text-sky-950"
-                              : "text-[#111827]";
+                        : isQuoteOpen
+                          ? "text-indigo-950"
+                          : isPayFail
+                            ? "text-amber-950"
+                            : isPay
+                              ? payBooking
+                                ? "text-violet-950"
+                                : "text-amber-950"
+                              : isPayLink
+                                ? "text-sky-950"
+                                : "text-[#111827]";
                       const motivateClass = isQuote
                         ? "text-emerald-800"
-                        : isPay
-                          ? payBooking
-                            ? "text-violet-800"
-                            : "text-amber-900"
-                          : "text-[#64748b]";
+                        : isQuoteOpen
+                          ? "text-indigo-800"
+                          : isPay
+                            ? payBooking
+                              ? "text-violet-800"
+                              : "text-amber-900"
+                            : "text-[#64748b]";
                       const metaClass = isQuote
                         ? "text-emerald-700/70"
-                        : isPayFail
-                          ? "text-amber-800/70"
-                          : isPay
-                            ? payBooking
-                              ? "text-violet-700/70"
-                              : "text-amber-800/70"
-                            : isPayLink
-                              ? "text-sky-700/70"
-                              : "text-[#9ca3af]";
+                        : isQuoteOpen
+                          ? "text-indigo-700/70"
+                          : isPayFail
+                            ? "text-amber-800/70"
+                            : isPay
+                              ? payBooking
+                                ? "text-violet-700/70"
+                                : "text-amber-800/70"
+                              : isPayLink
+                                ? "text-sky-700/70"
+                                : "text-[#9ca3af]";
                       const eyebrow = isQuote
                         ? "Quote Sent to Customer ⭐"
-                        : isPayFail
-                          ? "Payment failed"
-                          : isPay
-                            ? payBooking
-                              ? item.isPaymentStage
-                                ? "Booking milestone"
-                                : "Booking payment"
-                              : item.isPaymentStage
-                                ? "Token milestone"
-                                : "Token payment"
-                            : isPayLink
-                              ? "Payment link"
-                              : item.kind === "payment"
-                                ? "Payment"
-                                : item.kind;
+                        : isQuoteOpen
+                          ? "Quote Link Opens"
+                          : isPayFail
+                            ? "Payment failed"
+                            : isPay
+                              ? payBooking
+                                ? item.isPaymentStage
+                                  ? "Booking milestone"
+                                  : "Booking payment"
+                                : item.isPaymentStage
+                                  ? "Token milestone"
+                                  : "Token payment"
+                              : isPayLink
+                                ? "Payment link"
+                                : item.kind === "payment"
+                                  ? "Payment"
+                                  : item.kind;
                       return (
                       <li key={item.id}>
                         <button
@@ -860,6 +932,7 @@ const ActivityHistoryWithConnector = forwardRef<
                             <KindBadge
                               kind={item.kind}
                               quoteSent={isQuote}
+                              quoteOpen={isQuoteOpen}
                               paymentKind={isPay ? item.paymentKind : undefined}
                               paymentFailed={isPayFail}
                               paymentBucket={
@@ -883,7 +956,7 @@ const ActivityHistoryWithConnector = forwardRef<
                               >
                                 {item.title}
                               </p>
-                              {(isQuote || isPay) && item.motivateLine ? (
+                              {(isQuote || isQuoteOpen || isPay) && item.motivateLine ? (
                                 <p
                                   className={`mt-1 line-clamp-2 text-[11px] font-medium italic leading-snug ${motivateClass}`}
                                 >
@@ -912,6 +985,7 @@ const ActivityHistoryWithConnector = forwardRef<
                         <KindBadge
                           kind={selected.kind}
                           quoteSent={Boolean(selected.isQuoteSent)}
+                          quoteOpen={Boolean(selected.isQuoteOpen)}
                           paymentKind={
                             selected.isPaymentReceived || selected.isPaymentStage
                               ? selected.paymentKind
@@ -927,6 +1001,33 @@ const ActivityHistoryWithConnector = forwardRef<
                       <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
                         {selected.title}
                       </p>
+                      {selected.isQuoteOpen ? (
+                        <div className="mt-3 rounded-lg border border-indigo-200 bg-[#eef2ff] px-3 py-2.5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-indigo-700">
+                            Quote engagement
+                          </p>
+                          <p className="mt-1 text-[13px] font-semibold leading-snug text-indigo-950">
+                            Opened {selected.quoteOpenCount ?? 0}{" "}
+                            {(selected.quoteOpenCount ?? 0) === 1 ? "time" : "times"}
+                            {selected.quoteId ? ` · #${selected.quoteId}` : ""}
+                          </p>
+                          {selected.motivateLine ? (
+                            <p className="mt-1.5 text-[12px] font-medium italic text-indigo-800">
+                              {selected.motivateLine}
+                            </p>
+                          ) : null}
+                          {selected.quoteLink ? (
+                            <a
+                              href={selected.quoteLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-block text-[12px] font-bold text-indigo-700 underline"
+                            >
+                              Open quote link
+                            </a>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {selected.isQuoteSent && selected.motivateLine ? (
                         <div className="mt-3 rounded-lg border border-emerald-200 bg-[#ecfdf5] px-3 py-2.5">
                           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-700">
@@ -1170,12 +1271,14 @@ function FilterPill({
 function KindBadge({
   kind,
   quoteSent,
+  quoteOpen,
   paymentKind,
   paymentFailed,
   paymentBucket,
 }: {
   kind: ActivityKind;
   quoteSent?: boolean;
+  quoteOpen?: boolean;
   paymentKind?: PaymentReceivedKind;
   paymentFailed?: boolean;
   paymentBucket?: PaymentActivityBucket;
@@ -1184,6 +1287,13 @@ function KindBadge({
     return (
       <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#bbf7d0] text-[10px] font-bold uppercase text-emerald-800">
         Q
+      </span>
+    );
+  }
+  if (quoteOpen || kind === "quote_open") {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#c7d2fe] text-[10px] font-bold uppercase text-indigo-900">
+        O
       </span>
     );
   }

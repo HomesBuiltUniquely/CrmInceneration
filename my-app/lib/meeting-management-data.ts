@@ -105,6 +105,9 @@ export type MeetingRecord = {
   /** True after that quote was sent to the customer. */
   quoteFollow?: boolean;
   quoteSentAt?: string;
+  /** Times the customer opened the production quote link (from Hub quote_sent_info). */
+  customerQuoteOpenCount?: number;
+  lastCustomerQuoteOpenAt?: string;
   milestoneStage?: string;
   milestoneSubStage?: string;
   /** Meeting time has passed and the board says this meeting was not successful. */

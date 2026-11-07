@@ -179,6 +179,21 @@ export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = fals
                   <ActivityHistoryWithConnector
                     ref={activityPanelRef}
                     activities={lead.activities as ActivityItem[]}
+                    quoteOpenSummary={{
+                      openCount:
+                        lead.customerQuoteOpenCount ??
+                        lead.quoteSentInfo?.customerQuoteOpenCount ??
+                        0,
+                      lastOpenedAt:
+                        lead.lastCustomerQuoteOpenAt ??
+                        lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
+                        null,
+                      quoteId:
+                        lead.quoteId?.trim() ||
+                        lead.quoteSentInfo?.quoteId?.trim() ||
+                        null,
+                      quoteLink: lead.quoteLink?.trim() || lead.quoteSentInfo?.quoteLink || null,
+                    }}
                   />
                 </div>
               </aside>
