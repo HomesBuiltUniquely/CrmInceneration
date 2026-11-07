@@ -12,7 +12,7 @@ import {
 import { CRM_ROLE_STORAGE_KEY, getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { hierarchyUserDisplayName, type HierarchyUserLike } from "@/lib/hierarchy-user-display";
-import { isDatePresetId, resolveDatePreset, toDateKey } from "@/lib/meeting-date-range";
+import { resolveMeetingBoardDateKeys } from "@/lib/meeting-date-range";
 import type { FilterDraft } from "./FilterModal";
 import { KpiCard } from "./KpiCard";
 import { MeetingHeaderMenus } from "./MeetingHeaderMenus";
@@ -85,7 +85,7 @@ export function MeetingsPage({
   const branches = BRANCH_OPTIONS;
 
   const boardDates = useMemo(
-    () => meetingBoardDates(filters.preset, filters.dateFrom, filters.dateTo),
+    () => resolveMeetingBoardDateKeys(filters.preset, filters.dateFrom, filters.dateTo),
     [filters.preset, filters.dateFrom, filters.dateTo],
   );
   const progressFilter: MeetingProgress[] = filters.meetingSuccessful ? ["MEETING_SUCCESSFUL"] : filters.progress;
@@ -506,21 +506,6 @@ function CalendarSwitchIcon() {
       <path d="M3 8h14M7 3.5v2.5M13 3.5v2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
-}
-
-function meetingBoardDates(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } | null {
-  if (preset === "all") return null;
-  const effective = preset || "this-month";
-  if (effective === "custom") {
-    const from = dateFrom.trim();
-    const to = dateTo.trim();
-    if (!from && !to) return null;
-    return { from: from || undefined, to: to || undefined };
-  }
-  if (!isDatePresetId(effective) || effective === "custom") return null;
-  const range = resolveDatePreset(effective, new Date(), { from: dateFrom, to: dateTo });
-  if (!range) return null;
-  return { from: toDateKey(range.from), to: toDateKey(range.to) };
 }
 
 async function loadUsersByRole(role: "DESIGNER" | "SALES_EXECUTIVE"): Promise<HierarchyUserLike[]> {
