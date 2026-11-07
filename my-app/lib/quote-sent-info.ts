@@ -13,6 +13,9 @@ export type QuoteSentInfo = {
   leadIdentifier?: string | null;
   quoteId?: string | null;
   quoteSentCount?: number;
+  customerQuoteOpenCount?: number;
+  lastCustomerQuoteOpenAt?: string | null;
+  customerQuoteOpenAsOfQuoteId?: string | null;
 };
 
 export type QuoteSentLeadFields = {
@@ -73,17 +76,31 @@ export function parseQuoteSentInfo(raw: unknown): QuoteSentInfo | null {
   const quoteLink = pickStr(obj.quoteLink);
   const leadIdentifier = pickStr(obj.leadIdentifier);
   const quoteId = pickStr(obj.quoteId);
+  const customerQuoteOpenCount = pickCount(
+    obj.customerQuoteOpenCount,
+    obj.customer_quote_open_count,
+  );
+  const lastCustomerQuoteOpenAt = pickStr(
+    obj.lastCustomerQuoteOpenAt,
+    obj.last_customer_quote_open_at,
+  );
+  const customerQuoteOpenAsOfQuoteId = pickStr(
+    obj.customerQuoteOpenAsOfQuoteId,
+    obj.customer_quote_open_as_of_quote_id,
+  );
 
   const empty =
     quoteSentToCustomer === undefined &&
     quoteSentCount === 0 &&
+    customerQuoteOpenCount === 0 &&
     !quoteSentAt &&
     !quoteSentBy &&
     !lastQuoteSentAt &&
     !lastQuoteSentBy &&
     !quoteLink &&
     !leadIdentifier &&
-    !quoteId;
+    !quoteId &&
+    !lastCustomerQuoteOpenAt;
   if (empty) return null;
 
   return {
@@ -96,6 +113,9 @@ export function parseQuoteSentInfo(raw: unknown): QuoteSentInfo | null {
     leadIdentifier,
     quoteId,
     quoteSentCount: quoteSentCount > 0 ? quoteSentCount : undefined,
+    customerQuoteOpenCount: customerQuoteOpenCount > 0 ? customerQuoteOpenCount : undefined,
+    lastCustomerQuoteOpenAt,
+    customerQuoteOpenAsOfQuoteId,
   };
 }
 
@@ -109,6 +129,8 @@ export function extractQuoteSentFields(source: Record<string, unknown>): {
   lastQuoteSentBy: string | null;
   quoteSentCount: number;
   quoteId: string | null;
+  customerQuoteOpenCount: number;
+  lastCustomerQuoteOpenAt: string | null;
 } {
   const df = asRecord(source.dynamicFields) ?? {};
   const info =
@@ -146,6 +168,18 @@ export function extractQuoteSentFields(source: Record<string, unknown>): {
     pickStr(info?.quoteId, source.quoteId, df.quoteId, source.hub_quote_id, df.hub_quote_id) ??
     null;
 
+  const customerQuoteOpenCount = pickCount(
+    info?.customerQuoteOpenCount,
+    source.customerQuoteOpenCount,
+    df.customerQuoteOpenCount,
+  );
+  const lastCustomerQuoteOpenAt =
+    pickStr(
+      info?.lastCustomerQuoteOpenAt,
+      source.lastCustomerQuoteOpenAt,
+      df.lastCustomerQuoteOpenAt,
+    ) ?? null;
+
   return {
     quoteSentInfo: info,
     quoteSentToCustomer,
@@ -155,6 +189,8 @@ export function extractQuoteSentFields(source: Record<string, unknown>): {
     lastQuoteSentBy,
     quoteSentCount,
     quoteId,
+    customerQuoteOpenCount,
+    lastCustomerQuoteOpenAt,
   };
 }
 
@@ -178,6 +214,13 @@ export function isQuoteSentLead(lead: QuoteSentLeadFields): boolean {
 
 export function quoteSentCountOf(lead: QuoteSentLeadFields): number {
   return pickCount(lead.quoteSentCount, lead.quoteSentInfo?.quoteSentCount);
+}
+
+export function customerQuoteOpenCountOf(lead: QuoteSentLeadFields): number {
+  return pickCount(
+    lead.quoteSentInfo?.customerQuoteOpenCount,
+    (lead as Record<string, unknown>).customerQuoteOpenCount,
+  );
 }
 
 export function quoteSentIdOf(lead: QuoteSentLeadFields): string {

@@ -1507,6 +1507,8 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   const canInteract = !disabled;
   const quoteLinkValue = toCustomerQuoteLink(lead.quoteLink?.trim() || "");
   const quoteSentCount = lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
+  const customerQuoteOpenCount =
+    lead.customerQuoteOpenCount ?? lead.quoteSentInfo?.customerQuoteOpenCount ?? 0;
   const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
   const quoteId =
     lead.quoteId?.trim() ||
@@ -1539,6 +1541,12 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
                   Quote Sent to Customer
                   {quoteId ? ` · #${quoteId}` : ""}
                   {quoteSentCount > 1 ? ` · Sent ${quoteSentCount} times` : ""}
+                </p>
+              ) : null}
+              {quoteSent && customerQuoteOpenCount > 0 ? (
+                <p className="mt-1 text-[12px] font-medium text-[#475569]">
+                  Customer opened link {customerQuoteOpenCount}{" "}
+                  {customerQuoteOpenCount === 1 ? "time" : "times"}
                 </p>
               ) : null}
             </div>

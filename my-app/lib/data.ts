@@ -124,6 +124,9 @@ export interface Lead {
   lastQuoteSentBy?: string | null;
   /** Design / Hub quote id stored in quoteSentInfo. */
   quoteId?: string | null;
+  /** Times customer opened the Design quote link (from quoteSentInfo). */
+  customerQuoteOpenCount?: number;
+  lastCustomerQuoteOpenAt?: string | null;
   /**
    * Read-only from GET detail (`designQaLink` / `design_qa_quiz_url`). Same URL as the Style Discovery email.
    * Do not include on PUT bodies — backend owns persistence.
