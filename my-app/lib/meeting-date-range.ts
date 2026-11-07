@@ -88,3 +88,24 @@ export function meetingFallsInRange(dateIso: string, range: DateRange): boolean 
   const day = dayOnly(parsed).getTime();
   return day >= range.from.getTime() && day <= range.to.getTime();
 }
+
+/** Date keys for the meetings board API. Empty preset defaults to this month. */
+export function resolveMeetingBoardDateKeys(
+  preset: string,
+  dateFrom = "",
+  dateTo = "",
+  today: Date = new Date(),
+): { from?: string; to?: string } | null {
+  if (preset === "all") return null;
+  const effective = preset || "this-month";
+  if (effective === "custom") {
+    const from = dateFrom.trim();
+    const to = dateTo.trim();
+    if (!from && !to) return null;
+    return { from: from || undefined, to: to || undefined };
+  }
+  if (!isDatePresetId(effective) || effective === "custom") return null;
+  const range = resolveDatePreset(effective, today, { from: dateFrom, to: dateTo });
+  if (!range) return null;
+  return { from: toDateKey(range.from), to: toDateKey(range.to) };
+}

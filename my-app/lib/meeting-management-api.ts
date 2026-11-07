@@ -15,6 +15,7 @@ import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
 import { isQuoteSentLead } from "@/lib/lead-milestone-insight-tiles";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 import { salesInsightCountLeads } from "@/lib/sales-admin-insight-tiles";
+import { resolveMeetingBoardDateKeys } from "@/lib/meeting-date-range";
 import {
   formatMeetingWhen,
   indiaWallUtcMs,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/meeting-management-data";
 import {
   isMeetingSuccessfulProgress,
+  MEETING_PROGRESS_CODES,
   normalizeMeetingProgressCode,
   type MeetingProgress,
 } from "@/lib/meeting-progress";
@@ -540,6 +542,8 @@ export function quoteSentLeadRows(
 export type MeetingBoardQuery = {
   from?: string;
   to?: string;
+  /** Explicit "All dates" — do not auto-scope to this month. */
+  allDates?: boolean;
   designerNames?: string[];
   salesNames?: string[];
   branches?: string[];
@@ -614,6 +618,24 @@ function boardQuoteId(row: Record<string, unknown>, quoteLink: string): string {
   );
 }
 
+const QUOTE_ENRICH_MAX_IDS = 24;
+const QUOTE_ENRICH_CONCURRENCY = 4;
+const QUOTE_ENRICH_TIMEOUT_MS = 4000;
+
+async function fetchQuoteShareWithTimeout(quoteId: string): Promise<Record<string, unknown>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetchProlanceQuoteShare(quoteId),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("quote share timeout")), QUOTE_ENRICH_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** Fill quote amounts the board left at 0 when a quote id/link is already present. */
 async function enrichMeetingQuoteAmounts(rows: MeetingRecord[]): Promise<MeetingRecord[]> {
   const missingIds = [
@@ -623,7 +645,7 @@ async function enrichMeetingQuoteAmounts(rows: MeetingRecord[]): Promise<Meeting
         .map((row) => row.quoteNo?.trim() || extractQuoteIdFromUrl(row.quoteLink ?? ""))
         .filter(Boolean),
     ),
-  ];
+  ].slice(0, QUOTE_ENRICH_MAX_IDS);
   if (missingIds.length === 0) return rows;
 
   const totals = new Map<string, number>();
@@ -631,14 +653,14 @@ async function enrichMeetingQuoteAmounts(rows: MeetingRecord[]): Promise<Meeting
     missingIds,
     async (quoteId) => {
       try {
-        const share = await fetchProlanceQuoteShare(quoteId);
+        const share = await fetchQuoteShareWithTimeout(quoteId);
         const amount = resolveQuoteAmount(extractProlanceQuoteTotalAmount(share));
         if (amount != null) totals.set(quoteId, Math.round(amount));
       } catch {
         /* keep board amount */
       }
     },
-    5,
+    QUOTE_ENRICH_CONCURRENCY,
   );
   if (totals.size === 0) return rows;
 
@@ -656,6 +678,15 @@ async function enrichMeetingQuoteAmounts(rows: MeetingRecord[]): Promise<Meeting
       quoteGenerated: true,
     };
   });
+}
+
+/** Background fill for quote amounts — never block the first board paint. */
+export async function enrichMeetingBoardQuotes(payload: MeetingBoardPayload): Promise<MeetingBoardPayload> {
+  const [meetings, quoteSentMeetings] = await Promise.all([
+    enrichMeetingQuoteAmounts(payload.meetings),
+    enrichMeetingQuoteAmounts(payload.quoteSentMeetings),
+  ]);
+  return { ...payload, meetings, quoteSentMeetings };
 }
 
 function asRecordList(value: unknown): Record<string, unknown>[] {
@@ -835,6 +866,39 @@ export function recordsFromMeetingsBoard(
   };
 }
 
+/** Build board query from URL filters. Empty date preset → this calendar month. */
+export function meetingBoardQueryFromSearchParams(params: URLSearchParams): MeetingBoardQuery {
+  const split = (value: string | null) =>
+    (value ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  const presetRaw = params.get("preset") ?? "";
+  const allDates = presetRaw === "all";
+  const dates = allDates
+    ? null
+    : resolveMeetingBoardDateKeys(presetRaw, params.get("dateFrom") ?? "", params.get("dateTo") ?? "");
+  const progress = split(params.get("progress"))
+    .map((value) => value.trim().toUpperCase().replace(/[\s-]+/g, "_"))
+    .filter((value): value is MeetingProgress =>
+      (MEETING_PROGRESS_CODES as readonly string[]).includes(value),
+    );
+  const query: MeetingBoardQuery = { allDates };
+  if (dates?.from) query.from = dates.from;
+  if (dates?.to) query.to = dates.to;
+  const designers = split(params.get("designerIds"));
+  const sales = split(params.get("salesIds"));
+  const branches = split(params.get("branchIds"));
+  if (designers.length) query.designerNames = designers;
+  if (sales.length) query.salesNames = sales;
+  if (branches.length) query.branches = branches;
+  if (progress.length) query.progress = progress;
+  if (params.get("meetingSuccessful") === "1") {
+    query.progress = [...new Set([...(query.progress ?? []), "MEETING_SUCCESSFUL" as MeetingProgress])];
+  }
+  return query;
+}
+
 /** The meeting page calls this one route. Joins and filters happen on the server. */
 export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<MeetingBoardPayload> {
   const params = new URLSearchParams();
@@ -844,14 +908,24 @@ export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<M
     if (role) params.set("role", role);
     if (username) params.set("username", username);
   }
-  if (query.from) params.set("from", query.from);
-  if (query.to) params.set("to", query.to);
-  for (const name of query.designerNames ?? []) params.append("designerName", name);
-  for (const name of query.salesNames ?? []) params.append("salesName", name);
-  for (const branch of query.branches ?? []) params.append("branch", branch);
-  for (const progress of query.progress ?? []) params.append("progress", progress);
-  if (query.page) params.set("page", String(query.page));
-  if (query.pageSize) params.set("pageSize", String(query.pageSize));
+  let scoped = query;
+  // Unscoped boards routinely hit the proxy timeout — default to this month unless "all" is explicit.
+  if (!scoped.allDates && !scoped.from && !scoped.to) {
+    const dates = resolveMeetingBoardDateKeys("this-month");
+    scoped = {
+      ...scoped,
+      ...(dates?.from ? { from: dates.from } : {}),
+      ...(dates?.to ? { to: dates.to } : {}),
+    };
+  }
+  if (scoped.from) params.set("from", scoped.from);
+  if (scoped.to) params.set("to", scoped.to);
+  for (const name of scoped.designerNames ?? []) params.append("designerName", name);
+  for (const name of scoped.salesNames ?? []) params.append("salesName", name);
+  for (const branch of scoped.branches ?? []) params.append("branch", branch);
+  for (const progress of scoped.progress ?? []) params.append("progress", progress);
+  if (scoped.page) params.set("page", String(scoped.page));
+  if (scoped.pageSize) params.set("pageSize", String(scoped.pageSize));
   const search = params.toString();
   const res = await fetch(`/api/crm/meeting-management${search ? `?${search}` : ""}`, {
     cache: "no-store",
@@ -869,17 +943,13 @@ export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<M
   if (!res.ok) throw new Error(json.error || "Could not load meetings.");
   const meetings = Array.isArray(json.meetings) ? json.meetings : [];
   const quoteSentMeetings = Array.isArray(json.quoteSentMeetings) ? json.quoteSentMeetings : [];
-  const [enrichedMeetings, enrichedQuoteSent] = await Promise.all([
-    enrichMeetingQuoteAmounts(meetings),
-    enrichMeetingQuoteAmounts(quoteSentMeetings),
-  ]);
+  // Return board immediately — quote enrichment runs in the background via enrichMeetingBoardQuotes.
   return {
-    meetings: enrichedMeetings,
-    quoteSentMeetings: enrichedQuoteSent,
-    total: typeof json.total === "number" ? json.total : enrichedMeetings.length,
-    page: typeof json.page === "number" ? json.page : query.page ?? 1,
-    pageSize:
-      typeof json.pageSize === "number" ? json.pageSize : query.pageSize ?? enrichedMeetings.length,
+    meetings,
+    quoteSentMeetings,
+    total: typeof json.total === "number" ? json.total : meetings.length,
+    page: typeof json.page === "number" ? json.page : scoped.page ?? 1,
+    pageSize: typeof json.pageSize === "number" ? json.pageSize : scoped.pageSize ?? meetings.length,
   };
 }
 

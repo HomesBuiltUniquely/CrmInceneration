@@ -6,6 +6,8 @@ import { recordsFromMeetingsBoard } from "@/lib/meeting-management-api";
 
 export const maxDuration = 30;
 
+const UPSTREAM_TIMEOUT_MS = 28_000;
+
 function scopeForRole(role: string): "all" | "team" | "own" {
   const normalized = normalizeRole(role);
   if (normalized === "SUPER_ADMIN" || normalized === "ADMIN" || normalized === "SALES_ADMIN") return "all";
@@ -23,6 +25,12 @@ function upstreamMessage(payload: unknown, fallback: string): string {
   const row = payload as Record<string, unknown>;
   const message = row.message ?? row.error ?? row.userMessage;
   return typeof message === "string" && message.trim() ? message.trim() : fallback;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "TimeoutError" || error.name === "AbortError") return true;
+  return /aborted|timeout/i.test(error.message);
 }
 
 export async function GET(req: NextRequest) {
@@ -47,7 +55,7 @@ export async function GET(req: NextRequest) {
     const res = await fetch(url, {
       headers: { ...upstreamAuthHeaders(req), Accept: "application/json" },
       cache: "no-store",
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
     const text = await res.text();
     let payload: unknown = {};
@@ -97,6 +105,16 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     const detail = error instanceof Error ? error.message : "";
     console.error("[meetings/board]", BASE_URL, detail || "Could not load meetings.");
+    if (isTimeoutError(error)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Meetings took too long to load. Try This month or a smaller date range, then retry.",
+        },
+        { status: 504 },
+      );
+    }
     return NextResponse.json(
       { success: false, error: detail ? `Could not load meetings. ${detail}` : "Could not load meetings." },
       { status: 500 },

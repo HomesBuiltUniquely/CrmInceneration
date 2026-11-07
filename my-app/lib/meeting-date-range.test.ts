@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatRangeLabel, meetingFallsInRange, resolveDatePreset, toDateKey } from "./meeting-date-range";
+import {
+  formatRangeLabel,
+  meetingFallsInRange,
+  resolveDatePreset,
+  resolveMeetingBoardDateKeys,
+  toDateKey,
+} from "./meeting-date-range";
 
 const today = new Date(2026, 9, 14);
 
@@ -51,4 +57,10 @@ test("custom range swaps reversed dates and rejects blanks", () => {
   assert.equal(toDateKey(range.to), "2026-10-20");
   assert.equal(meetingFallsInRange("2026-10-14", range), true);
   assert.equal(meetingFallsInRange("2026-10-01", range), false);
+});
+
+test("board date keys default empty preset to this month and keep all unscoped", () => {
+  assert.equal(resolveMeetingBoardDateKeys("all", "", "", today), null);
+  const month = resolveMeetingBoardDateKeys("", "", "", today);
+  assert.deepEqual(month, { from: "2026-10-01", to: "2026-10-31" });
 });

@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
 import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
@@ -10,7 +10,12 @@ import { dashboardSidebarSections } from "../Shared/sidebar-data";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import { canAccessMeetingManagement } from "@/lib/roleUtils";
 import { updateAppointment } from "@/lib/appointment-client";
-import { loadMeetingBoard } from "@/lib/meeting-management-api";
+import {
+  enrichMeetingBoardQuotes,
+  loadMeetingBoard,
+  meetingBoardQueryFromSearchParams,
+  type MeetingBoardQuery,
+} from "@/lib/meeting-management-api";
 import { meetingIso, startOfMeetingBoardToday, type MeetingRecord } from "@/lib/meeting-management-data";
 import ScheduleHubMeetingModal, { type ScheduleHubMeetingConfirmPayload } from "../CrmLeadDetails/ScheduleHubMeetingModal";
 import MeetingCalendarView from "./MeetingCalendarView";
@@ -43,8 +48,29 @@ function roleLabel(role: string): string {
 }
 
 export default function MeetingManagementClient() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-sm font-semibold text-[#5B6778]">Loading meetings…</div>}>
+      <MeetingManagementClientInner />
+    </Suspense>
+  );
+}
+
+function boardQueryKey(query: MeetingBoardQuery): string {
+  return JSON.stringify({
+    from: query.from ?? "",
+    to: query.to ?? "",
+    allDates: Boolean(query.allDates),
+    designerNames: query.designerNames ?? [],
+    salesNames: query.salesNames ?? [],
+    branches: query.branches ?? [],
+    progress: query.progress ?? [],
+  });
+}
+
+function MeetingManagementClientInner() {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const reduce = useReducedMotion();
   const [role, setRole] = useState("");
   const [ready, setReady] = useState(false);
@@ -61,6 +87,12 @@ export default function MeetingManagementClient() {
   const [board, setBoard] = useState<"table" | "calendar">("table");
   const [viewDir, setViewDir] = useState(1);
   const [toast, setToast] = useState<Toast | null>(null);
+  const loadGen = useRef(0);
+  const boardQuery = useMemo(
+    () => meetingBoardQueryFromSearchParams(searchParams),
+    [searchParams],
+  );
+  const boardKey = useMemo(() => boardQueryKey(boardQuery), [boardQuery]);
 
   useEffect(() => {
     if (!celebrateName) return;
@@ -151,28 +183,39 @@ export default function MeetingManagementClient() {
     }
   };
 
-  const refreshMeetings = async () => {
+  const refreshMeetings = async (query: MeetingBoardQuery = boardQuery) => {
+    const gen = ++loadGen.current;
     setLoading(true);
     setLoadError("");
     try {
-      const boardData = await loadMeetingBoard();
+      const boardData = await loadMeetingBoard(query);
+      if (gen !== loadGen.current) return;
       setMeetings(boardData.meetings);
       setQuoteSentMeetings(boardData.quoteSentMeetings);
+      setLoading(false);
+      // Quote amounts fill in after the table is already visible.
+      void enrichMeetingBoardQuotes(boardData).then((enriched) => {
+        if (gen !== loadGen.current) return;
+        setMeetings(enriched.meetings);
+        setQuoteSentMeetings(enriched.quoteSentMeetings);
+      });
     } catch (error) {
+      if (gen !== loadGen.current) return;
       setMeetings([]);
       setQuoteSentMeetings([]);
       const message = error instanceof Error ? error.message : "Could not load meetings from the server.";
       setLoadError(message);
       setToast({ id: Date.now(), message, tone: "error" });
-    } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
     if (!ready || !canAccessMeetingManagement(role)) return;
-    void refreshMeetings();
-  }, [ready, role]);
+    void refreshMeetings(boardQuery);
+    // boardKey tracks server-relevant filters (dates / people / progress).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, role, boardKey]);
 
   const beginReschedule = (row: MeetingRecord) => {
     setScheduleError("");
