@@ -68,19 +68,19 @@ export function MeetingsTable({
         .meetings-table td:nth-child(2) { padding-left: 4px; }
       `}</style>
       <div className="overflow-x-auto py-1">
-        <table className="meetings-table w-full min-w-[1180px] table-fixed border-separate border-spacing-0 text-left">
+        <table className="meetings-table w-full min-w-[1360px] table-fixed border-separate border-spacing-0 text-left">
           <colgroup>
-            <col className="w-[4%]" />
-            <col className="w-[10%]" />
-            <col className="w-[13%]" />
-            <col className="w-[10%]" />
-            <col className="w-[11%]" />
-            <col className="w-[10%]" />
+            <col className="w-[3.5%]" />
             <col className="w-[9%]" />
+            <col className="w-[12%]" />
+            <col className="w-[9%]" />
+            <col className="w-[10%]" />
             <col className="w-[9%]" />
             <col className="w-[8%]" />
-            <col className="w-[10%]" />
-            <col className="w-[6%]" />
+            <col className="w-[8%]" />
+            <col className="w-[7%]" />
+            <col className="w-[16.5%]" />
+            <col className="w-[8%]" />
           </colgroup>
           <caption className="sr-only">Meetings</caption>
           <thead>
