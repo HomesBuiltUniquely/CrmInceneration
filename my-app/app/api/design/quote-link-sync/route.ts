@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
-import { isCrmLeadType, type CrmLeadType } from "@/lib/leads-filter";
-import { leadUpdatePutPaths } from "@/lib/crm-lead-endpoints";
+import type { CrmLeadType } from "@/lib/leads-filter";
+import { isCrmLeadType, leadUpdatePutPaths } from "@/lib/crm-lead-endpoints";
 import { toCustomerQuoteLink } from "@/lib/crm-quote-links";
 
 const EXTERNAL_LEAD_INGEST_API_KEY =
@@ -42,17 +42,19 @@ function normalizeLeadType(raw: unknown): CrmLeadType | null {
     walkin: "walkinlead",
     whatsapplead: "whatsapplead",
     whatsapp: "whatsapplead",
-    home1: "home1",
-    glead: "home1",
-    google: "home1",
-    googlelead: "home1",
-    metalead: "metalead",
-    meta: "metalead",
-    mlead: "metalead",
+    glead: "glead",
+    home1: "glead",
+    google: "glead",
+    googlelead: "glead",
+    mlead: "mlead",
+    metalead: "mlead",
+    meta: "mlead",
     websitelead: "websitelead",
     website: "websitelead",
     ivrlead: "ivrlead",
     ivr: "ivrlead",
+    quikrlead: "quikrlead",
+    quikr: "quikrlead",
   };
   const mapped = aliases[text] ?? (text as CrmLeadType);
   return isCrmLeadType(mapped) ? mapped : null;
