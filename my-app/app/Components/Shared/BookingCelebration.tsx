@@ -13,6 +13,10 @@ export const CELEBRATION_VISIBLE_MS = 6000;
  */
 export const CELEBRATION_SOUND_PATH = '/celebrations/booking-done.mp3';
 
+const CELEBRATION_HTTP_FALLBACK_MS = 60_000;
+const CELEBRATION_HTTP_FALLBACK_MAX_MS = 300_000;
+const CELEBRATION_LEADER_STALE_MS = 12_000;
+
 type CelebrationEvent = {
   id: string;
   celebrationType: 'new_booking' | 'big_one' | 'spot_closure' | string;
@@ -63,6 +67,10 @@ export default function BookingCelebration({
   const [queue, setQueue] = useState<CelebrationEvent[]>([]);
   const [paused, setPaused] = useState(false);
   const [congratsState, setCongratsState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [isLeaderTab, setIsLeaderTab] = useState(false);
+  const [tabVisible, setTabVisible] = useState(
+    () => typeof document !== 'undefined' && document.visibilityState === 'visible'
+  );
   const tabId = useRef(`tab-${Math.random().toString(36).slice(2)}`);
   const leader = useRef(false);
   const claimedIds = useRef<Set<string>>(new Set());
@@ -146,94 +154,133 @@ export default function BookingCelebration({
         currentLock = null;
       }
       const mine = currentLock?.id === tabId.current;
-      const stale = !currentLock?.ts || now - Number(currentLock.ts) > 8000;
+      const stale = !currentLock?.ts || now - Number(currentLock.ts) > CELEBRATION_LEADER_STALE_MS;
       if (mine || stale) {
         localStorage.setItem(lockKey, JSON.stringify({ id: tabId.current, ts: now }));
         leader.current = true;
+        setIsLeaderTab(true);
         return;
       }
       leader.current = false;
+      setIsLeaderTab(false);
     };
     claim();
-    const beat = window.setInterval(claim, 3000);
+    const beat = window.setInterval(claim, 4000);
     return () => window.clearInterval(beat);
   }, [enabled, identityKeys.length]);
 
   useEffect(() => {
-    if (!enabled || !viewerQuery) return;
+    if (typeof document === 'undefined') return;
+    const onVis = () => setTabVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || !viewerQuery || !isLeaderTab || !tabVisible) return;
+
     const base = hallwayOrigin(apiBase);
-    let pollTimer: number | null = null;
     let source: EventSource | null = null;
+    let fallbackTimer: number | null = null;
+    let fallbackDelay = CELEBRATION_HTTP_FALLBACK_MS;
     let closed = false;
 
-    const pull = async () => {
-      if (!leader.current) return;
+    const mergePull = (events: CelebrationEvent[]) => {
+      if (!Array.isArray(events) || events.length === 0) return;
+      setQueue((prev) => {
+        const showing = prev[0];
+        const ids = new Set(
+          events.filter((event) => !claimedIds.current.has(event.id)).map((event) => event.id)
+        );
+        const kept = showing && ids.has(showing.id) ? [showing] : [];
+        for (const event of events) {
+          if (claimedIds.current.has(event.id)) continue;
+          if (kept.some((item) => item.id === event.id)) continue;
+          kept.push(event);
+        }
+        return kept.slice(0, 5);
+      });
+    };
+
+    const pullOnce = async () => {
       try {
         const res = await fetch(
           `${base}/api/celebrations?viewer=${encodeURIComponent(viewerQuery)}`
         );
         if (!res.ok) return;
         const body = await res.json();
-        const events: CelebrationEvent[] = Array.isArray(body?.events) ? body.events : [];
-        setQueue((prev) => {
-          const showing = prev[0];
-          const ids = new Set(
-            events.filter((event) => !claimedIds.current.has(event.id)).map((event) => event.id)
-          );
-          const kept = showing && ids.has(showing.id) ? [showing] : [];
-          for (const event of events) {
-            if (claimedIds.current.has(event.id)) continue;
-            if (kept.some((item) => item.id === event.id)) continue;
-            kept.push(event);
-          }
-          return kept.slice(0, 5);
-        });
+        mergePull(Array.isArray(body?.events) ? body.events : []);
       } catch {
-        /* next poll */
+        /* ignore */
       }
     };
 
-    const startPoll = () => {
-      if (pollTimer != null) return;
-      void pull();
-      pollTimer = window.setInterval(() => void pull(), 4000);
+    const scheduleFallbackPoll = () => {
+      if (closed || fallbackTimer != null) return;
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = null;
+        if (closed) return;
+        void pullOnce().finally(() => {
+          fallbackDelay = Math.min(
+            Math.round(fallbackDelay * 1.5),
+            CELEBRATION_HTTP_FALLBACK_MAX_MS
+          );
+          scheduleFallbackPoll();
+        });
+      }, fallbackDelay);
     };
 
-    try {
+    const clearFallbackPoll = () => {
+      if (fallbackTimer != null) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+      fallbackDelay = CELEBRATION_HTTP_FALLBACK_MS;
+    };
+
+    const openStream = () => {
+      clearFallbackPoll();
+      try {
+        source?.close();
+      } catch {
+        /* ignore */
+      }
       source = new EventSource(
         `${base}/api/celebrations/stream?viewer=${encodeURIComponent(viewerQuery)}`
       );
       source.onmessage = (message) => {
-        if (!leader.current) return;
         try {
           const events = JSON.parse(message.data);
           if (Array.isArray(events)) enqueue(events);
         } catch {
-          /* ignore */
+          /* ping or non-JSON */
         }
       };
       source.onerror = () => {
-        source?.close();
+        try {
+          source?.close();
+        } catch {
+          /* ignore */
+        }
         source = null;
-        startPoll();
+        scheduleFallbackPoll();
       };
-    } catch {
-      startPoll();
-    }
+    };
 
-    const pollFallback = window.setTimeout(() => {
-      if (!closed && queue.length === 0) startPoll();
-    }, 6000);
+    void pullOnce();
+    openStream();
 
     return () => {
       closed = true;
-      window.clearTimeout(pollFallback);
-      if (pollTimer != null) window.clearInterval(pollTimer);
-      source?.close();
+      clearFallbackPoll();
+      try {
+        source?.close();
+      } catch {
+        /* ignore */
+      }
+      source = null;
     };
-    // queue.length is read only for the fallback; the stream owns live updates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiBase, enabled, enqueue, viewerQuery]);
+  }, [apiBase, enabled, enqueue, isLeaderTab, tabVisible, viewerQuery]);
 
   const currentId = current?.id || '';
 
