@@ -15,16 +15,52 @@ const AVATAR: Record<MeetingRecord["avatarTone"], string> = {
 };
 
 function StatusChip({ tone }: { tone: { bg: string; text: string; dot: string; label: string } }) {
+  const { title, detail } = splitProgressLabel(tone.label);
   return (
     <span
-      className="inline-flex min-h-7 max-w-[11.5rem] items-center gap-1.5 rounded-full px-2.5 text-[11px] font-semibold leading-tight"
-      style={{ background: tone.bg, color: tone.text }}
+      className="inline-flex w-full max-w-full items-start gap-2 rounded-xl border px-2.5 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
+      style={{
+        background: tone.bg,
+        color: tone.text,
+        borderColor: withAlpha(tone.dot, 0.22),
+      }}
       title={tone.label}
     >
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone.dot }} />
-      <span className="truncate">{tone.label}</span>
+      <span
+        className="mt-[5px] h-2 w-2 shrink-0 rounded-full ring-2 ring-white/90"
+        style={{
+          background: tone.dot,
+          boxShadow: `0 0 0 3px ${withAlpha(tone.dot, 0.16)}`,
+        }}
+      />
+      <span className="min-w-0 text-left">
+        <span className="block text-[11.5px] font-bold leading-tight tracking-[-0.01em]">{title}</span>
+        {detail ? (
+          <span className="mt-0.5 block text-[10.5px] font-semibold leading-snug opacity-75">{detail}</span>
+        ) : null}
+      </span>
     </span>
   );
+}
+
+/** Split "Meeting Successful · Quote pending" into title + detail for a cleaner chip. */
+function splitProgressLabel(label: string): { title: string; detail?: string } {
+  const normalized = label.replace(/\s*[-–—|:]\s*/g, " · ").replace(/\s+·\s+/g, " · ").trim();
+  const idx = normalized.indexOf(" · ");
+  if (idx <= 0) return { title: label.trim() || "—" };
+  const title = normalized.slice(0, idx).trim();
+  const detail = normalized.slice(idx + 3).trim();
+  if (!title || !detail) return { title: label.trim() || "—" };
+  return { title, detail };
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const raw = hex.replace("#", "").trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(raw)) return hex;
+  const r = Number.parseInt(raw.slice(0, 2), 16);
+  const g = Number.parseInt(raw.slice(2, 4), 16);
+  const b = Number.parseInt(raw.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 export function MeetingRow({
@@ -101,11 +137,15 @@ export function MeetingRow({
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">
         {delay ? (
-          <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full bg-[#FEF3F2] px-2.5 text-[12px] font-bold text-[#B42318]">
+          <span className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#FECACA] bg-[#FEF3F2] px-2.5 text-[11.5px] font-bold text-[#B42318]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#DC2626]" aria-hidden />
             Delayed
           </span>
         ) : (
-          <span className="inline-flex h-7 items-center whitespace-nowrap rounded-full bg-[#F0FDF4] px-2.5 text-[12px] font-semibold text-[#15803D]">On time</span>
+          <span className="inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#BBF7D0] bg-[#F0FDF4] px-2.5 text-[11.5px] font-semibold text-[#15803D]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#22C55E]" aria-hidden />
+            On time
+          </span>
         )}
       </td>
       <td className="border-b border-[#E3E8EE] px-3 py-2.5 align-middle">

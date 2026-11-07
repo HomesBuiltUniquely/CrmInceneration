@@ -38,7 +38,7 @@ const DEFAULT_LABELS: Record<MeetingProgressRow, string> = {
   MEETING_ABANDONED: "Meeting Never Happened",
   MEETING_SUCCESSFUL_QUOTE_PENDING: "Meeting Successful · Quote pending",
   MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF: "Meeting Successful · Quote pending (PNF)",
-  QUOTE_SENT_SUCCESSFUL: "Quote Sent Successful",
+  QUOTE_SENT_SUCCESSFUL: "Quote Sent · Successful",
 };
 
 const TONES: Record<MeetingProgressRow, MeetingProgressTone> = {
