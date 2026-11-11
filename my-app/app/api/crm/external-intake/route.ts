@@ -67,6 +67,11 @@ export async function POST(req: NextRequest) {
       typeof parsed?.floorPlanPublicLink === "string" &&
         parsed.floorPlanPublicLink.trim(),
     ),
+    floorPlansCount: Array.isArray(parsed?.floor_plans)
+      ? parsed.floor_plans.length
+      : Array.isArray(parsed?.floorPlans)
+        ? parsed.floorPlans.length
+        : 0,
     contactNoMasked: maskValue(parsed?.contactNo),
     clientEmailMasked: maskValue(parsed?.clientEmail),
   });
