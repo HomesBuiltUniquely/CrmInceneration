@@ -154,6 +154,8 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
           <FieldSection title="Team and meeting">
             <Field label="Meeting level" value={textOrDash(row.meetingLevel)} />
             <Field label="Quote link" value={quoteLinkValue(row)} />
+            <Field label="Quote link opens" value={quoteOpenCountValue(row)} />
+            <Field label="Last quote open" value={textOrDash(row.lastCustomerQuoteOpenAt)} />
           </FieldSection>
           <ActivityHistoryTrigger
             open={historyOpen}
@@ -431,4 +433,10 @@ function quoteLinkValue(row: MeetingRecord): ReactNode {
       Open quote
     </a>
   );
+}
+
+function quoteOpenCountValue(row: MeetingRecord): ReactNode {
+  const n = row.customerQuoteOpenCount ?? 0;
+  if (n <= 0) return "0";
+  return `${n} ${n === 1 ? "time" : "times"}`;
 }

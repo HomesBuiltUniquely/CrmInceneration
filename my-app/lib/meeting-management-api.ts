@@ -830,6 +830,13 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     quoteLink,
     quoteFollow,
     quoteSentAt: formatStamp(sentRaw),
+    customerQuoteOpenCount: (() => {
+      const n = Number(row.customerQuoteOpenCount ?? row.customer_quote_open_count ?? 0);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+    })(),
+    lastCustomerQuoteOpenAt: formatStamp(
+      readString(row, "lastCustomerQuoteOpenAt", "last_customer_quote_open_at"),
+    ),
     meetingSuccessful,
     meetingSuccessfulAt: meetingSuccessfulAt || undefined,
     meetingSuccessfulSource: meetingSuccessfulSource || undefined,

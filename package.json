@@ -1,4 +1,12 @@
 {
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix my-app",
+    "dev:stop": "powershell -NoProfile -Command \"$p = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($id in $p) { if ($id -gt 0) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue } }\"",
+    "build": "npm run build --prefix my-app",
+    "start": "npm run start --prefix my-app",
+    "lint": "npm run lint --prefix my-app"
+  },
   "dependencies": {
     "nodemailer": "^8.0.5"
   }
