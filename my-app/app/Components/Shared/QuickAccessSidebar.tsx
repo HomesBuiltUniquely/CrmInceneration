@@ -14,6 +14,7 @@ import {
   canAccessBookingTokenDashboard,
   canAccessCrmInsights,
   canAccessMeetingManagement,
+  canAccessRecordingCallLogs,
   isAdminRole,
 } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
@@ -188,6 +189,9 @@ export default function QuickAccessSidebar({
           if (item.id === "crm-booking-token") return canAccessBookingTokenDashboard(currentRole || profileRole);
           if (item.id === "crm-insights") return canAccessCrmInsights(currentRole || profileRole);
           if (item.id === "crm-meeting-management") return canAccessMeetingManagement(currentRole || profileRole);
+          if (item.id === "crm-recording-call-logs") {
+            return canAccessRecordingCallLogs(currentRole || profileRole);
+          }
           return true;
         }),
       }))

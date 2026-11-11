@@ -7,25 +7,34 @@ import {
   isEmptySpaceDoubleClickTarget,
   requestLeadDetailOverlayClose,
 } from "@/lib/lead-detail-overlay-close";
+import { canAccessRecordingCallLogs } from "@/lib/roleUtils";
 
 export type DealControlSectionId =
   | "deal-overview"
   | "deal-blockers"
   | "deal-property"
+  | "deal-calls"
   | "deal-activity";
 
 type NavItem = {
   id: DealControlSectionId;
   label: string;
-  icon: "overview" | "blockers" | "property" | "activity";
+  icon: "overview" | "blockers" | "property" | "calls" | "activity";
 };
 
 const navItems: NavItem[] = [
   { id: "deal-overview", label: "Overview", icon: "overview" },
   { id: "deal-blockers", label: "Blockers", icon: "blockers" },
   { id: "deal-property", label: "Property Details", icon: "property" },
+  { id: "deal-calls", label: "Calls & Recordings", icon: "calls" },
   { id: "deal-activity", label: "Activity", icon: "activity" },
 ];
+
+const scrollSectionIds = new Set<DealControlSectionId>([
+  "deal-overview",
+  "deal-blockers",
+  "deal-property",
+]);
 
 function NavIcon({ type, active }: { type: NavItem["icon"]; active: boolean }) {
   const className = `h-4 w-4 shrink-0 ${active ? "text-[#111827]" : "text-[#9ca3af]"}`;
@@ -53,6 +62,12 @@ function NavIcon({ type, active }: { type: NavItem["icon"]; active: boolean }) {
           <path d="M5 21V7l8-4v18" />
           <path d="M19 21V11l-6-4" />
           <path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
+        </svg>
+      );
+    case "calls":
+      return (
+        <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.81.36 1.6.68 2.35a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.75.32 1.54.55 2.35.68A2 2 0 0 1 22 16.92z" />
         </svg>
       );
     case "activity":
@@ -99,11 +114,27 @@ function TeamMemberRow({
 
 export default function DealControlSidebar({
   onActivityClick,
+  onCallsClick,
+  onMainSectionClick,
+  activeSectionId: controlledActiveSectionId,
 }: {
   onActivityClick?: () => void;
+  onCallsClick?: () => void;
+  onMainSectionClick?: (sectionId: DealControlSectionId) => void;
+  activeSectionId?: DealControlSectionId;
 }) {
-  const { lead } = useLeadDetailV2();
-  const [activeSectionId, setActiveSectionId] = useState<DealControlSectionId>("deal-overview");
+  const { lead, viewerRoleKey } = useLeadDetailV2();
+  const canSeeCallsRecordings = canAccessRecordingCallLogs(viewerRoleKey);
+  const visibleNavItems = canSeeCallsRecordings
+    ? navItems
+    : navItems.filter((item) => item.id !== "deal-calls");
+  const [activeSectionId, setActiveSectionId] = useState<DealControlSectionId>(
+    controlledActiveSectionId ?? "deal-overview",
+  );
+
+  useEffect(() => {
+    if (controlledActiveSectionId) setActiveSectionId(controlledActiveSectionId);
+  }, [controlledActiveSectionId]);
 
   const assigneeName = lead.assignee?.trim() || "—";
   const designerName = lead.designerName?.trim() || "—";
@@ -115,13 +146,24 @@ export default function DealControlSidebar({
         onActivityClick?.();
         return;
       }
-      document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (sectionId === "deal-calls") {
+        onCallsClick?.();
+        return;
+      }
+      onMainSectionClick?.(sectionId);
+      // Allow main content to remount before scrolling when leaving Calls panel.
+      requestAnimationFrame(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     },
-    [onActivityClick],
+    [onActivityClick, onCallsClick, onMainSectionClick],
   );
 
   useEffect(() => {
+    if (controlledActiveSectionId === "deal-calls") return;
+
     const sectionElements = navItems
+      .filter((item) => scrollSectionIds.has(item.id))
       .map((item) => document.getElementById(item.id))
       .filter((element): element is HTMLElement => Boolean(element));
 
@@ -146,7 +188,7 @@ export default function DealControlSidebar({
 
     sectionElements.forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, []);
+  }, [controlledActiveSectionId]);
 
   return (
     <aside
@@ -173,7 +215,7 @@ export default function DealControlSidebar({
         </div>
 
         <nav className="mt-5 min-h-0 flex-1 space-y-1 overflow-y-auto" aria-label="Deal sections">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = activeSectionId === item.id;
             return (
               <button
