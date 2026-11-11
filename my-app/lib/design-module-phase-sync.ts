@@ -19,6 +19,11 @@ import {
   type ConfigurationScopeFrontendPrefs,
 } from "@/lib/configuration-scope-frontend-prefs";
 import { formatInvestmentRangeLabel } from "@/lib/lead-budget-display";
+import { normalizeFloorPlanPublicLink } from "@/lib/floor-plan";
+import {
+  floorPlanFieldsFromState,
+  getLeadFloorPlanMeta,
+} from "@/lib/lead-details-client";
 
 export type DesignModuleRoomUnitSummary = {
   label: string;
@@ -90,9 +95,18 @@ export type DesignModuleDiscoveryPayload = {
   propertyNotes: string | null;
 };
 
+/** One floor plan for Design Module upsert / external-intake (snake_case contract). */
+export type DesignModuleFloorPlanItem = {
+  public_url: string;
+  filename?: string | null;
+  index?: number;
+};
+
 export type DesignModuleConnectionPayload = {
   floorPlanPublicLink: string | null;
   floorPlanUrl: string | null;
+  /** Multi floor plans — Design stores these; a lone link must not wipe the list. */
+  floor_plans: DesignModuleFloorPlanItem[];
   meetingType: string | null;
   designerName: string | null;
   configurationScope: DesignModuleConfigScopeSummary | null;
@@ -223,16 +237,50 @@ export function buildDiscoveryPayload(lead: Lead): DesignModuleDiscoveryPayload 
   };
 }
 
+/** Build `floor_plans[]` with each file's public_url for Design Module sync. */
+export function buildFloorPlansForDesignModule(lead: Lead): DesignModuleFloorPlanItem[] {
+  const items: DesignModuleFloorPlanItem[] = [];
+  const seen = new Set<string>();
+  const push = (rawUrl: string, filename?: string, index?: number) => {
+    const public_url = normalizeFloorPlanPublicLink(rawUrl.trim());
+    if (!public_url || seen.has(public_url)) return;
+    seen.add(public_url);
+    items.push({
+      public_url,
+      ...(filename?.trim() ? { filename: filename.trim() } : {}),
+      ...(typeof index === "number" && Number.isFinite(index) ? { index } : {}),
+    });
+  };
+
+  const files = Array.isArray(lead.floorPlans) ? lead.floorPlans : [];
+  for (const file of files) {
+    if (!file?.publicUrl?.trim()) continue;
+    push(file.publicUrl, file.filename, file.index);
+  }
+
+  // Legacy single-link leads (or meta that only returned one public URL).
+  if (items.length === 0) {
+    const single =
+      trimOrNull(lead.floorPlanPublicLink) ||
+      trimOrNull((lead as { floorPlan?: string }).floorPlan);
+    if (single && (single.includes("/v1/public/floor-plan/") || /^https?:\/\//i.test(single))) {
+      push(single, files[0]?.filename, files[0]?.index ?? 0);
+    }
+  }
+
+  return items;
+}
+
 export function buildConnectionPayload(
   lead: Lead,
   scopeSummary: DesignModuleConfigScopeSummary | null,
 ): DesignModuleConnectionPayload {
-  const floorPlan =
-    trimOrNull(lead.floorPlanPublicLink) ||
-    trimOrNull((lead as { floorPlan?: string }).floorPlan);
+  const floorPlans = buildFloorPlansForDesignModule(lead);
+  const floorPlan = floorPlans[0]?.public_url ?? null;
   return {
     floorPlanPublicLink: floorPlan,
     floorPlanUrl: floorPlan,
+    floor_plans: floorPlans,
     meetingType: trimOrNull(lead.meetingType),
     designerName: trimOrNull(lead.designerName),
     configurationScope: scopeSummary,
@@ -319,6 +367,13 @@ export function buildPhaseFieldsForDesignModule(args: {
     meetingType: connection.meetingType,
     floorPlanPublicLink: connection.floorPlanPublicLink,
     floorPlanUrl: connection.floorPlanUrl,
+    // Design Module contract: multi list with each file's public_url (not only one link).
+    floor_plans: connection.floor_plans,
+    floorPlans: connection.floor_plans.map((item) => ({
+      publicUrl: item.public_url,
+      ...(item.filename ? { filename: item.filename } : {}),
+      ...(typeof item.index === "number" ? { index: item.index } : {}),
+    })),
   };
 
   if (designerName) out.designerName = designerName;
@@ -400,13 +455,24 @@ export async function syncCrmLeadToDesignModule(args: {
     budget: args.lead.budget,
   });
 
+  // Refresh floor-plan meta so new syncs carry every public_url, not only the first link.
+  let leadForSync = args.lead;
+  try {
+    const meta = await getLeadFloorPlanMeta(args.leadType, args.leadId);
+    if (meta) {
+      leadForSync = { ...args.lead, ...floorPlanFieldsFromState(meta) };
+    }
+  } catch {
+    /* keep lead snapshot */
+  }
+
   const body: Record<string, unknown> = {
     leadType: args.leadType,
     leadId: numericLeadId,
     leadIdentifier,
     externalLeadId: leadIdentifier,
     projectName:
-      args.lead.name?.trim() ||
+      leadForSync.name?.trim() ||
       pick(detail.fullName) ||
       pick(detail.customerName) ||
       pick(detail.name),
@@ -414,28 +480,28 @@ export async function syncCrmLeadToDesignModule(args: {
       pick(detail.phone) ||
       pick(detail.phoneNumber) ||
       pick(detail.mobile) ||
-      args.lead.phone ||
+      leadForSync.phone ||
       "",
     clientEmail:
       pick(detail.email) ||
       pick(detail.emailAddress) ||
-      args.lead.email ||
+      leadForSync.email ||
       "",
     designerName:
       trimOrNull(args.designerName) ||
-      trimOrNull(args.lead.designerName) ||
+      trimOrNull(leadForSync.designerName) ||
       "",
     ...buildPhaseFieldsForDesignModule({
-      lead: args.lead,
+      lead: leadForSync,
       scopeSummary,
       schedule: {
         ...args.schedule,
-        designerName: args.designerName || args.lead.designerName,
+        designerName: args.designerName || leadForSync.designerName,
       },
-      pincode: args.lead.pincode,
-      leadSource: args.lead.leadSource,
-      possessionDate: args.lead.possessionDate,
-      altPhone: args.lead.altPhone,
+      pincode: leadForSync.pincode,
+      leadSource: leadForSync.leadSource,
+      possessionDate: leadForSync.possessionDate,
+      altPhone: leadForSync.altPhone,
     }),
   };
 

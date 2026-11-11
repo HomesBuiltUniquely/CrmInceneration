@@ -725,6 +725,11 @@ async function postExternalIntakeLead(args: {
       typeof payload.floorPlanPublicLink === "string" &&
         payload.floorPlanPublicLink.trim(),
     ),
+    floorPlansCount: Array.isArray(payload.floor_plans)
+      ? payload.floor_plans.length
+      : Array.isArray(payload.floorPlans)
+        ? payload.floorPlans.length
+        : 0,
   });
 
   const res = await fetch("/api/crm/external-intake", {

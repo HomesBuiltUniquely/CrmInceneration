@@ -876,18 +876,26 @@ function floorPlanFilesFromMeta(
   id: string,
 ): FloorPlanFileRef[] {
   if (!Array.isArray(data.floorPlans)) return [];
+  const topPublic = pickFloorPlanPublicLink(data);
   return data.floorPlans.flatMap((item, position) => {
     if (!item || typeof item !== "object") return [];
     const index = Number.isFinite(item.index) ? Number(item.index) : position;
     const filename = item.filename?.trim() || `Floor plan ${index + 1}.pdf`;
     const viewRaw = item.viewUrl?.trim() ?? "";
     const openRaw = item.openUrl?.trim() || viewRaw;
+    const publicUrl =
+      pickFloorPlanPublicLink({
+        publicUrl: item.publicUrl ?? item.public_url ?? item.publicLink,
+        floorPlanPublicLink: item.floorPlanPublicLink,
+        floorPlanUrl: null,
+      }) || (position === 0 ? topPublic : "");
     return [
       {
         index,
         filename,
         viewPath: proxyFloorPlanFilePath(viewRaw, leadType, id, "content", index),
         openPath: proxyFloorPlanFilePath(openRaw, leadType, id, "content", index),
+        ...(publicUrl ? { publicUrl } : {}),
       },
     ];
   });
@@ -906,12 +914,18 @@ function parseLeadFloorPlanState(
 
   if (listed.length > 0) {
     const first = listed[0]!;
+    const files =
+      publicLink && !first.publicUrl
+        ? listed.map((file, i) =>
+            i === 0 ? { ...file, publicUrl: file.publicUrl || publicLink } : file,
+          )
+        : listed;
     return {
       s3Key: s3Key || first.filename,
-      publicLink,
+      publicLink: publicLink || first.publicUrl || "",
       viewPath: first.viewPath,
       openPath: first.openPath,
-      files: listed,
+      files,
     };
   }
 
@@ -938,6 +952,7 @@ function parseLeadFloorPlanState(
         filename,
         viewPath,
         openPath,
+        ...(publicLink ? { publicUrl: publicLink } : {}),
       },
     ],
   };
@@ -1045,8 +1060,8 @@ export async function uploadLeadFloorPlan(
   }
 
   const formData = new FormData();
-  // Pass filename explicitly — some Android WebViews omit it and the proxy
-  // then treats the part as a string → "Missing file".
+  // CRM FloorPlanController only accepts parts named `file` or `files`.
+  // Pass filename explicitly — some Android WebViews omit it.
   if (files.length === 1) {
     const f = files[0]!;
     formData.append("file", f, f.name || "floor-plan.bin");
