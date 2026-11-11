@@ -2,12 +2,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
   loadMeetingActivityHistory,
   type MeetingActivity,
   type MeetingActivityAction,
 } from "@/lib/meeting-management-api";
+import { canViewDesignerMeetingFeedbackHistory } from "@/lib/roleUtils";
 import { EASE } from "./motion";
+
+function isDesignerFeedbackActivity(action: MeetingActivityAction | string): boolean {
+  const key = String(action || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "_");
+  return key === "FEEDBACK" || key === "MEETING_FEEDBACK_DESIGNER";
+}
+
+function filterActivitiesForRole(rows: MeetingActivity[]): MeetingActivity[] {
+  if (typeof window === "undefined") return rows;
+  const role = normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
+  if (canViewDesignerMeetingFeedbackHistory(role)) return rows;
+  return rows.filter((row) => !isDesignerFeedbackActivity(row.action));
+}
 
 const historyFocus =
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B6B45]";
@@ -15,13 +32,15 @@ const historyFocus =
 type HistoryTone = {
   label: string;
   className: string;
-  icon: "tick" | "refresh" | "cancel" | "quote" | "sent";
+  icon: "tick" | "refresh" | "cancel" | "quote" | "sent" | "note";
 };
 
 const TAG: Record<string, HistoryTone> = {
   SCHEDULED: { label: "Meeting scheduled", className: "bg-[#E3F3EA] text-[#0B6B45]", icon: "tick" },
   RESCHEDULED: { label: "Meeting rescheduled", className: "bg-[#FFF1D6] text-[#8A5300]", icon: "refresh" },
   CANCELLED: { label: "Meeting cancelled", className: "bg-[#FDECEC] text-[#9B1C1C]", icon: "cancel" },
+  FEEDBACK: { label: "Designer feedback", className: "bg-[#EEF2FF] text-[#3730A3]", icon: "note" },
+  MEETING_FEEDBACK_DESIGNER: { label: "Designer feedback", className: "bg-[#EEF2FF] text-[#3730A3]", icon: "note" },
   QUOTE_GENERATED: { label: "Quote generated", className: "bg-[#E6EDFF] text-[#1B3FA8]", icon: "quote" },
   QUOTE_SENT: { label: "Quote sent", className: "bg-[#E3F3EA] text-[#0B6B45]", icon: "sent" },
   QUOTE_FOLLOW: { label: "Quote follow-up", className: "bg-[#FFF1D6] text-[#8A5300]", icon: "refresh" },
@@ -107,7 +126,7 @@ function initialOf(name: string): string {
   return letter || "—";
 }
 
-export function useMeetingActivityHistory(leadId?: number, leadType?: string) {
+export function useMeetingActivityHistory(leadId?: number, leadType?: string, refreshKey = 0) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activities, setActivities] = useState<MeetingActivity[]>([]);
@@ -125,7 +144,7 @@ export function useMeetingActivityHistory(leadId?: number, leadType?: string) {
     setError("");
     void loadMeetingActivityHistory(leadId, leadType.trim())
       .then((rows) => {
-        if (!cancelled) setActivities([...rows].sort(byNewest));
+        if (!cancelled) setActivities(filterActivitiesForRole([...rows].sort(byNewest)));
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -139,7 +158,7 @@ export function useMeetingActivityHistory(leadId?: number, leadType?: string) {
     return () => {
       cancelled = true;
     };
-  }, [leadId, leadType, ready]);
+  }, [leadId, leadType, ready, refreshKey]);
 
   return { ready, loading, error, activities };
 }
@@ -356,7 +375,28 @@ function TimelineItem({ row, latest, connected }: { row: MeetingActivity; latest
           <TagIcon name={tag.icon} />
           {tag.label}
         </span>
-        {key === "RESCHEDULED" ? (
+        {key === "FEEDBACK" || key === "MEETING_FEEDBACK_DESIGNER" ? (
+          <div className="mt-2.5 space-y-2">
+            {row.previousFeedbackDesigner ? (
+              <div className="rounded-[12px] bg-[#F4F6F9] px-3 py-2.5">
+                <p className="text-[11.5px] font-semibold text-[#5F6675]">Previous note</p>
+                <p className="mt-0.5 text-[13px] font-medium leading-snug break-words text-[#5F6675] line-through">
+                  {row.previousFeedbackDesigner}
+                </p>
+              </div>
+            ) : null}
+            <div className="rounded-[12px] border border-[#E0E7FF] bg-[#F8FAFF] px-3 py-2.5">
+              <p className="text-[11.5px] font-semibold text-[#4338CA]">Designer feedback</p>
+              <p className="mt-0.5 text-[13.5px] font-bold leading-snug break-words text-[#14171F]">
+                {row.feedbackDesigner || row.details || "—"}
+              </p>
+            </div>
+            <dl className="grid grid-cols-2 gap-3">
+              <HistoryCell label="Designer" value={row.designerName || "—"} />
+              <HistoryCell label="Customer" value={row.customerName || "—"} />
+            </dl>
+          </div>
+        ) : key === "RESCHEDULED" ? (
           <div className="mt-2.5 grid grid-cols-1 gap-2 rounded-[12px] bg-[#F4F6F9] px-3 py-2.5 sm:grid-cols-2">
             <div>
               <p className="text-[11.5px] font-semibold text-[#5F6675]">Was</p>
@@ -373,10 +413,12 @@ function TimelineItem({ row, latest, connected }: { row: MeetingActivity; latest
             <p className="text-[13.5px] font-bold leading-snug break-words text-[#14171F]">{formatCardWhen(row.meetingAt)}</p>
           </div>
         )}
-        <dl className="mt-2.5 grid grid-cols-2 gap-3">
-          <HistoryCell label="Designer" value={row.designerName || "—"} />
-          <HistoryCell label="Type" value={row.meetingType || "—"} />
-        </dl>
+        {key === "FEEDBACK" || key === "MEETING_FEEDBACK_DESIGNER" ? null : (
+          <dl className="mt-2.5 grid grid-cols-2 gap-3">
+            <HistoryCell label="Designer" value={row.designerName || "—"} />
+            <HistoryCell label="Type" value={row.meetingType || "—"} />
+          </dl>
+        )}
       </article>
     </li>
   );
@@ -419,6 +461,14 @@ function TagIcon({ name }: { name: HistoryTone["icon"] }) {
     return (
       <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
         <path d="M3 8.2l2.4 2.4 7-7.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (name === "note") {
+    return (
+      <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
+        <path d="M3.5 3.5h9v9H6.2L3.5 9.8V3.5z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="M6 6.5h4M6 9h2.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
       </svg>
     );
   }

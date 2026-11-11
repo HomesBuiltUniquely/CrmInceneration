@@ -117,6 +117,12 @@ export type MeetingRecord = {
   meetingSuccessfulSource?: "DESIGN_AUTO" | "QUOTE_SYNC" | "MANUAL" | string;
   /** Board result. True only after Meeting successful, quote still unsent, and 4 hours have passed. */
   quoteDelayed?: boolean;
+  /** Pre-10% designer note from board. Does not change meeting progress. */
+  feedbackDesigner?: string;
+  /** When designer feedback was last saved (IST wall clock from Hub). */
+  feedbackDesignerAt?: string;
+  /** Who wrote the designer feedback. */
+  feedbackDesignerBy?: string;
 };
 
 /** Hub meetings are booked and shown in India, including when this runs on a UTC server. */

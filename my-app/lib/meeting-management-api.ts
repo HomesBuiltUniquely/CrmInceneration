@@ -835,6 +835,15 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     meetingSuccessfulSource: meetingSuccessfulSource || undefined,
     quoteDelayed,
     needsOutcome,
+    feedbackDesigner: quoteLead
+      ? undefined
+      : readString(row, "feedbackDesigner", "feedback_designer") || undefined,
+    feedbackDesignerAt: quoteLead
+      ? undefined
+      : readString(row, "feedbackDesignerAt", "feedback_designer_at") || undefined,
+    feedbackDesignerBy: quoteLead
+      ? undefined
+      : readString(row, "feedbackDesignerBy", "feedback_designer_by") || undefined,
   };
 }
 
@@ -953,7 +962,7 @@ export async function loadMeetingBoard(query: MeetingBoardQuery = {}): Promise<M
   };
 }
 
-export type MeetingActivityAction = "SCHEDULED" | "RESCHEDULED" | "CANCELLED";
+export type MeetingActivityAction = "SCHEDULED" | "RESCHEDULED" | "CANCELLED" | "FEEDBACK";
 
 export type MeetingActivity = {
   activityId: number;
@@ -970,6 +979,8 @@ export type MeetingActivity = {
   meetingType: string;
   customerName: string;
   details: string;
+  feedbackDesigner?: string;
+  previousFeedbackDesigner?: string;
 };
 
 function activityText(value: unknown): string {
@@ -1010,5 +1021,7 @@ export async function loadMeetingActivityHistory(leadId: number, leadType: strin
       meetingType: activityText(row.meetingType),
       customerName: activityText(row.customerName),
       details: activityText(row.details),
+      feedbackDesigner: activityText(row.feedbackDesigner) || undefined,
+      previousFeedbackDesigner: activityText(row.previousFeedbackDesigner) || undefined,
     }));
 }
