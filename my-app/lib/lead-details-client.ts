@@ -1045,8 +1045,8 @@ export async function uploadLeadFloorPlan(
   }
 
   const formData = new FormData();
-  // Pass filename explicitly — some Android WebViews omit it and the proxy
-  // then treats the part as a string → "Missing file".
+  // CRM FloorPlanController only accepts parts named `file` or `files`.
+  // Pass filename explicitly — some Android WebViews omit it.
   if (files.length === 1) {
     const f = files[0]!;
     formData.append("file", f, f.name || "floor-plan.bin");
