@@ -1,13 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import {
   isEmptySpaceDoubleClickTarget,
   requestLeadDetailOverlayClose,
 } from "@/lib/lead-detail-overlay-close";
-import { FieldLabel, Input, Select, Textarea } from "@/app/Components/CrmLeadDetails/ui";
+import {
+  FieldLabel,
+  Input,
+  Select,
+  Textarea,
+} from "@/app/Components/CrmLeadDetails/ui";
 import FloorPlanUpload from "@/app/Components/CrmLeadDetails/FloorPlanUpload";
 import DesignPreferencesWithModal from "./DesignPreferencesWithModal";
 import NewConfigurationScopePage from "./NewConfigurationScopePage";
@@ -18,9 +30,16 @@ import ActivityHistoryWithConnector, {
 import LeadPaymentLinkBanner from "./LeadPaymentLinkBanner";
 import LeadPaymentLinkStatusChip from "./LeadPaymentLinkStatusChip";
 import TokenBookingRecognitionSection from "./TokenBookingRecognitionSection";
-import DealControlSidebar from "./DealControlSidebar";
+import DealControlSidebar, {
+  type DealControlSectionId,
+} from "./DealControlSidebar";
+import LeadCallsRecordingsPanel from "./LeadCallsRecordingsPanel";
 import DataCompletenessMeter from "./DataCompletenessMeter";
-import { canUsePaymentLinkIntegration, isPresalesRole } from "@/lib/roleUtils";
+import {
+  canAccessRecordingCallLogs,
+  canUsePaymentLinkIntegration,
+  isPresalesRole,
+} from "@/lib/roleUtils";
 import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
 import {
   V2_BTN_AMBER,
@@ -79,7 +98,12 @@ import {
 } from "@/lib/configuration-scope-frontend-prefs";
 import { resolveMeetingTypeForLead } from "@/lib/appointment-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
-import { BUDGET_OPTIONS, BOOKING_TYPE_OPTIONS, CONFIGURATION_OPTIONS, LANGUAGE_OPTIONS } from "@/lib/data";
+import {
+  BUDGET_OPTIONS,
+  BOOKING_TYPE_OPTIONS,
+  CONFIGURATION_OPTIONS,
+  LANGUAGE_OPTIONS,
+} from "@/lib/data";
 import { formatLeadSourceLabel } from "@/lib/lead-source-utils";
 import {
   bookingTypeDisplay,
@@ -105,7 +129,12 @@ import type { ActivityItem, Lead } from "@/lib/data";
 
 type DiscoveryPhaseDraft = Pick<
   Lead,
-  "propertyLocation" | "budget" | "language" | "configuration" | "propertyNotes" | "bookingType"
+  | "propertyLocation"
+  | "budget"
+  | "language"
+  | "configuration"
+  | "propertyNotes"
+  | "bookingType"
 >;
 
 function readDiscoveryPhaseDraft(lead: Lead): DiscoveryPhaseDraft {
@@ -119,7 +148,10 @@ function readDiscoveryPhaseDraft(lead: Lead): DiscoveryPhaseDraft {
   };
 }
 
-function discoveryPhaseDraftsEqual(a: DiscoveryPhaseDraft, b: DiscoveryPhaseDraft): boolean {
+function discoveryPhaseDraftsEqual(
+  a: DiscoveryPhaseDraft,
+  b: DiscoveryPhaseDraft,
+): boolean {
   return (
     a.propertyLocation === b.propertyLocation &&
     a.budget === b.budget &&
@@ -149,101 +181,180 @@ const phaseItems: PhaseItem[] = [
   { id: "decision", title: "4. Decision Phase" },
 ];
 
-export default function NewLeadDetailPage({ leadType, leadId, isPopupMode = false }: Props) {
+export default function NewLeadDetailPage({
+  leadType,
+  leadId,
+  isPopupMode = false,
+}: Props) {
   const { lead, viewerRoleKey } = useLeadDetailV2();
   const activityPanelRef = useRef<ActivityHistoryHandle>(null);
   const currentPhaseId = resolveLeadDetailUiPhase(lead);
   const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRoleKey);
+  const [dealSection, setDealSection] =
+    useState<DealControlSectionId>("deal-overview");
+  const [openActivityAfterMain, setOpenActivityAfterMain] = useState(false);
+  const canSeeCallsRecordings = canAccessRecordingCallLogs(viewerRoleKey);
+  const showCallsPanel = canSeeCallsRecordings && dealSection === "deal-calls";
 
   const openActivityPanel = useCallback(() => {
+    if (dealSection === "deal-calls") {
+      setDealSection("deal-activity");
+      setOpenActivityAfterMain(true);
+      return;
+    }
+    setDealSection("deal-activity");
     activityPanelRef.current?.openPanel();
-  }, []);
+  }, [dealSection]);
+
+  useEffect(() => {
+    if (!openActivityAfterMain || showCallsPanel) return;
+    setOpenActivityAfterMain(false);
+    const t = window.setTimeout(() => activityPanelRef.current?.openPanel(), 0);
+    return () => window.clearTimeout(t);
+  }, [openActivityAfterMain, showCallsPanel]);
 
   return (
     <main className="min-h-screen bg-[#eef1f5] px-3 py-4 font-sans md:px-4">
       <div className="mx-auto max-w-[1480px]">
         <div className="grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <DealControlSidebar onActivityClick={openActivityPanel} />
+          <DealControlSidebar
+            activeSectionId={dealSection}
+            onActivityClick={openActivityPanel}
+            onCallsClick={() => setDealSection("deal-calls")}
+            onMainSectionClick={(sectionId) => setDealSection(sectionId)}
+          />
           <section className="rounded-xl border border-[#e1e6ed] bg-[#f3f5f8] p-3">
             <LeadDetailHeader isPopupMode={isPopupMode} />
             {canUsePaymentLinks ? (
               <LeadPaymentLinkBanner leadType={leadType} leadId={leadId} />
             ) : null}
-            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
-              <aside className="min-w-0 space-y-3">
-                <div id="deal-overview" className="min-w-0 scroll-mt-24">
-                  <LeadProfileCard />
-                </div>
-                <FamilyContactCard />
-                <div id="deal-activity" className="scroll-mt-24">
-                  <ActivityHistoryWithConnector
-                    ref={activityPanelRef}
-                    activities={lead.activities as ActivityItem[]}
-                    quoteOpenSummary={{
-                      openCount:
-                        lead.customerQuoteOpenCount ??
-                        lead.quoteSentInfo?.customerQuoteOpenCount ??
-                        0,
-                      lastOpenedAt:
-                        lead.lastCustomerQuoteOpenAt ??
-                        lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
-                        null,
-                      quoteId:
-                        lead.quoteId?.trim() ||
-                        lead.quoteSentInfo?.quoteId?.trim() ||
-                        null,
-                      quoteLink: lead.quoteLink?.trim() || lead.quoteSentInfo?.quoteLink || null,
-                    }}
-                  />
-                </div>
-              </aside>
 
-              <section className="space-y-3">
-                {phaseItems.map((phase) => {
-                  const accessState = resolvePhaseAccessState(currentPhaseId, phase.id);
-                  if (phase.id === "discovery") {
-                    return (
-                      <div key={phase.id} id="deal-property" className="scroll-mt-24">
-                        <DiscoveryPhaseCard accessState={accessState} />
-                      </div>
-                    );
-                  }
-                  if (phase.id === "connection") {
-                    return (
-                      <div key={phase.id} id="deal-connection" className="scroll-mt-24">
-                        <ConnectionPhaseCard accessState={accessState} />
-                      </div>
-                    );
-                  }
-                  if (phase.id === "experience") {
-                    return (
-                      <ExperiencePhaseCard
-                        key={phase.id}
-                        leadType={leadType}
-                        leadId={leadId}
-                        accessState={accessState}
-                      />
-                    );
-                  }
-                  if (phase.id === "decision") {
-                    return (
-                      <div key={phase.id} id="deal-blockers" className="scroll-mt-24">
-                        <DecisionPhaseCard accessState={accessState} />
-                      </div>
-                    );
-                  }
-                  return null;
-                })}
-                {isCrmLeadType(leadType) && !isPresalesRole(viewerRoleKey) ? (
-                  <div id="deal-token-booking-dates" className="scroll-mt-24">
-                    <TokenBookingRecognitionSection
-                      leadType={leadType}
-                      leadId={leadId}
+      {showCallsPanel ? (
+      <div className="mt-3">
+        <LeadCallsRecordingsPanel
+          leadType={leadType}
+          leadId={leadId}
+          onBack={() => setDealSection("deal-overview")}
+        />
+      </div>
+    ) : (
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
+        <aside className="min-w-0 space-y-3">
+          <div id="deal-overview" className="min-w-0 scroll-mt-24">
+            <LeadProfileCard />
+          </div>
+          <FamilyContactCard />
+          <div id="deal-activity" className="scroll-mt-24">
+            <ActivityHistoryWithConnector
+              ref={activityPanelRef}
+              activities={lead.activities as ActivityItem[]}
+              quoteOpenSummary={{
+                openCount:
+                  lead.customerQuoteOpenCount ??
+                  lead.quoteSentInfo?.customerQuoteOpenCount ??
+                  0,
+                lastOpenedAt:
+                  lead.lastCustomerQuoteOpenAt ??
+                  lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
+                  null,
+                quoteId:
+                  lead.quoteId?.trim() ||
+                  lead.quoteSentInfo?.quoteId?.trim() ||
+                  null,
+                quoteLink:
+                  lead.quoteLink?.trim() ||
+                  lead.quoteSentInfo?.quoteLink ||
+                  null,
+              }}
+            />
+          </div>
+        </aside> 
+=======
+            {showCallsPanel ? (
+              <div className="mt-3">
+                <LeadCallsRecordingsPanel
+                  leadType={leadType}
+                  leadId={leadId}
+                  onBack={() => setDealSection("deal-overview")}
+                />
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
+                <aside className="min-w-0 space-y-3">
+                  <div id="deal-overview" className="min-w-0 scroll-mt-24">
+                    <LeadProfileCard />
+                  </div>
+                  <FamilyContactCard />
+                  <div id="deal-activity" className="scroll-mt-24">
+                    <ActivityHistoryWithConnector
+                      ref={activityPanelRef}
+                      activities={lead.activities as ActivityItem[]}
                     />
                   </div>
-                ) : null}
-              </section>
-            </div>
+                    </aside>
+
+                <section className="space-y-3">
+                  {phaseItems.map((phase) => {
+                    const accessState = resolvePhaseAccessState(
+                      currentPhaseId,
+                      phase.id,
+                    );
+                    if (phase.id === "discovery") {
+                      return (
+                        <div
+                          key={phase.id}
+                          id="deal-property"
+                          className="scroll-mt-24"
+                        >
+                          <DiscoveryPhaseCard accessState={accessState} />
+                        </div>
+                      );
+                    }
+                    if (phase.id === "connection") {
+                      return (
+                        <div
+                          key={phase.id}
+                          id="deal-connection"
+                          className="scroll-mt-24"
+                        >
+                          <ConnectionPhaseCard accessState={accessState} />
+                        </div>
+                      );
+                    }
+                    if (phase.id === "experience") {
+                      return (
+                        <ExperiencePhaseCard
+                          key={phase.id}
+                          leadType={leadType}
+                          leadId={leadId}
+                          accessState={accessState}
+                        />
+                      );
+                    }
+                    if (phase.id === "decision") {
+                      return (
+                        <div
+                          key={phase.id}
+                          id="deal-blockers"
+                          className="scroll-mt-24"
+                        >
+                          <DecisionPhaseCard accessState={accessState} />
+                        </div>
+                      );
+                    }
+                    return null;
+                  })}
+                  {isCrmLeadType(leadType) && !isPresalesRole(viewerRoleKey) ? (
+                    <div id="deal-token-booking-dates" className="scroll-mt-24">
+                      <TokenBookingRecognitionSection
+                        leadType={leadType}
+                        leadId={leadId}
+                      />
+                    </div>
+                  ) : null}
+                </section>
+              </div>
+            )}
           </section>
         </div>
       </div>
@@ -281,10 +392,12 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
   const [ivrDeleting, setIvrDeleting] = useState(false);
   const timelineWrapRef = useRef<HTMLDivElement | null>(null);
   const selectedTimeline =
-    createdTimelineOptions.find((x) => x.value === selectedTimelineValue) ?? null;
+    createdTimelineOptions.find((x) => x.value === selectedTimelineValue) ??
+    null;
   const leadComeCount = createdTimelineOptions.length;
   const showIvrDelete =
-    canDeleteIvrLead(viewerRoleKey) && isIvrInboundLead(leadType, lead.leadSource);
+    canDeleteIvrLead(viewerRoleKey) &&
+    isIvrInboundLead(leadType, lead.leadSource);
 
   const handleClose = useCallback(() => {
     router.back();
@@ -334,7 +447,11 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
   const handleConfirmIvrDelete = useCallback(async () => {
     try {
       setIvrDeleting(true);
-      const body = await deleteIvrInboundLead(leadType, lead.leadSource, leadId);
+      const body = await deleteIvrInboundLead(
+        leadType,
+        lead.leadSource,
+        leadId,
+      );
       notifySuccess(body.message || "IVR lead deleted successfully");
       dispatchCrmLeadsInvalidate({
         leadTypes: ["ivrlead", "addlead", "quikrlead"],
@@ -342,7 +459,9 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
       });
       requestLeadDetailOverlayClose();
     } catch (error) {
-      notifyError(error instanceof Error ? error.message : "Failed to delete IVR lead");
+      notifyError(
+        error instanceof Error ? error.message : "Failed to delete IVR lead",
+      );
     } finally {
       setIvrDeleting(false);
       setIvrDeleteOpen(false);
@@ -351,104 +470,52 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
 
   return (
     <>
-    <div
-      className="py-4 lg:py-5"
-      onDoubleClick={(event) => {
-        if (!isEmptySpaceDoubleClickTarget(event.target)) return;
-        event.preventDefault();
-        requestLeadDetailOverlayClose();
-      }}
-      title="Double-click empty space to close"
-    >
-      {/* Header row with title and actions */}
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
-          Lead Information
-        </p>
+      <div
+        className="py-4 lg:py-5"
+        onDoubleClick={(event) => {
+          if (!isEmptySpaceDoubleClickTarget(event.target)) return;
+          event.preventDefault();
+          requestLeadDetailOverlayClose();
+        }}
+        title="Double-click empty space to close"
+      >
+        {/* Header row with title and actions */}
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <p className="text-[40px] font-bold leading-tight tracking-[-0.01em] text-[#0f1729]">
+            Lead Information
+          </p>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          {canStageRollback ? (
-            <button
-              type="button"
-              onClick={onOpenStageRollback}
-              className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#fcd34d] bg-[#fffbeb] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#92400e] ${V2_BTN_AMBER}`}
-            >
-              <span aria-hidden>↩</span>
-              Stage Rollback
-            </button>
-          ) : null}
-          {showIvrDelete ? (
-            <button
-              type="button"
-              onClick={() => setIvrDeleteOpen(true)}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-rose-200 bg-white px-3.5 text-[12px] font-bold uppercase tracking-wide text-rose-700 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-50 hover:shadow-sm active:scale-[0.98]"
-            >
-              Delete
-            </button>
-          ) : null}
-          {!isPopupMode ? (
-            <button
-              type="button"
-              onClick={handleClose}
-              aria-label="Close Lead Information"
-              className="inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg border border-[#e2e8f0] bg-white text-[#6b7280] transition-all hover:border-[#cbd5e1] hover:bg-[#f1f5f9] hover:text-[#1f2937]"
-              title="Close (Back)"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {canStageRollback ? (
+              <button
+                type="button"
+                onClick={onOpenStageRollback}
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#fcd34d] bg-[#fffbeb] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#92400e] ${V2_BTN_AMBER}`}
               >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {/* Content area */}
-      <div className="grid gap-3 lg:grid-cols-[1fr_440px] lg:items-start lg:gap-x-4">
-        <div data-no-dblclick-close className="max-w-[560px]">
-          <div className="flex flex-wrap items-center gap-2">
-            <CreatedMetaChip createdAt={lead.createdAt} />
-            <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
-              Lead came {leadComeCount} times
-            </span>
-            {canUsePaymentLinkIntegration(viewerRoleKey) ? (
-              <LeadPaymentLinkStatusChip
-                leadType={leadType}
-                leadId={leadId}
-                activities={lead.activities}
-              />
+                <span aria-hidden>↩</span>
+                Stage Rollback
+              </button>
             ) : null}
-          </div>
-
-          <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
-            <InfoPill title="Stage" value={milestoneStageLabel || "—"} compact />
-            <InfoPill title="Category" value={milestoneCategoryLabel || "—"} compact />
-            <InfoPill title="Sub-Stage" value={milestoneSubLabel || "—"} compact />
-          </div>
-
-          <DataCompletenessMeter />
-        </div>
-
-        <div data-no-dblclick-close className="flex w-full flex-col gap-2.5">
-          <div className="w-full rounded-[8px] border border-[#dde3ec] bg-[#f4f7fb] px-4 py-3">
-            <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9aa7bb]">Next Follow Up</p>
-            <div className="mt-2 flex min-h-[42px] w-full items-center gap-3 rounded-[6px] border border-[#d8dfeb] bg-[#fdfefe] px-3 py-2 sm:px-4">
-              <span
-                className="flex min-w-0 flex-1 items-center gap-2 text-[15px] font-extrabold leading-tight tracking-[-0.01em] text-[#1f2a3c] sm:text-[17px]"
-                title={headerFollowUpDate}
+            {showIvrDelete ? (
+              <button
+                type="button"
+                onClick={() => setIvrDeleteOpen(true)}
+                className="inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-rose-200 bg-white px-3.5 text-[12px] font-bold uppercase tracking-wide text-rose-700 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-50 hover:shadow-sm active:scale-[0.98]"
+              >
+                Delete
+              </button>
+            ) : null}
+            {!isPopupMode ? (
+              <button
+                type="button"
+                onClick={handleClose}
+                aria-label="Close Lead Information"
+                className="inline-flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg border border-[#e2e8f0] bg-white text-[#6b7280] transition-all hover:border-[#cbd5e1] hover:bg-[#f1f5f9] hover:text-[#1f2937]"
+                title="Close (Back)"
               >
                 <svg
                   viewBox="0 0 24 24"
-                  className="h-[14px] w-[14px] shrink-0 text-[#35d977]"
+                  className="h-5 w-5"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
@@ -456,66 +523,65 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
                   strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                  <line x1="16" y1="2" x2="16" y2="6" />
-                  <line x1="8" y1="2" x2="8" y2="6" />
-                  <line x1="3" y1="10" x2="21" y2="10" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-                <span className="truncate">{headerFollowUpDate}</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Content area */}
+        <div className="grid gap-3 lg:grid-cols-[1fr_440px] lg:items-start lg:gap-x-4">
+          <div data-no-dblclick-close className="max-w-[560px]">
+            <div className="flex flex-wrap items-center gap-2">
+              <CreatedMetaChip createdAt={lead.createdAt} />
+              <span className="inline-flex items-center rounded-full border border-[#e2e8f0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#64748b]">
+                Lead came {leadComeCount} times
               </span>
+              {canUsePaymentLinkIntegration(viewerRoleKey) ? (
+                <LeadPaymentLinkStatusChip
+                  leadType={leadType}
+                  leadId={leadId}
+                  activities={lead.activities}
+                />
+              ) : null}
+            </div>
 
-              <div className="h-[22px] w-px shrink-0 bg-[#dfe5ee]" aria-hidden="true" />
+            <div className="mt-2 grid max-w-[520px] grid-cols-3 gap-2">
+              <InfoPill
+                title="Stage"
+                value={milestoneStageLabel || "—"}
+                compact
+              />
+              <InfoPill
+                title="Category"
+                value={milestoneCategoryLabel || "—"}
+                compact
+              />
+              <InfoPill
+                title="Sub-Stage"
+                value={milestoneSubLabel || "—"}
+                compact
+              />
+            </div>
 
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  aria-label="Call"
-                  disabled={!hasLeadPhone}
-                  onClick={handleHeaderCall}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
+            <DataCompletenessMeter />
+          </div>
+
+          <div data-no-dblclick-close className="flex w-full flex-col gap-2.5">
+            <div className="w-full rounded-[8px] border border-[#dde3ec] bg-[#f4f7fb] px-4 py-3">
+              <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#9aa7bb]">
+                Next Follow Up
+              </p>
+              <div className="mt-2 flex min-h-[42px] w-full items-center gap-3 rounded-[6px] border border-[#d8dfeb] bg-[#fdfefe] px-3 py-2 sm:px-4">
+                <span
+                  className="flex min-w-0 flex-1 items-center gap-2 text-[15px] font-extrabold leading-tight tracking-[-0.01em] text-[#1f2a3c] sm:text-[17px]"
+                  title={headerFollowUpDate}
                 >
                   <svg
                     viewBox="0 0 24 24"
-                    className="h-[16px] w-[16px]"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.2 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.8.62 2.66a2 2 0 0 1-.45 2.11L8 9.92a16 16 0 0 0 6.08 6.08l1.43-1.28a2 2 0 0 1 2.11-.45c.86.29 1.76.5 2.66.62A2 2 0 0 1 22 16.92z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  aria-label="WhatsApp message"
-                  title="Open WhatsApp chat"
-                  disabled={!hasLeadPhone}
-                  onClick={handleHeaderWhatsApp}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-[16px] w-[16px]"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Schedule"
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-[16px] w-[16px]"
+                    className="h-[14px] w-[14px] shrink-0 text-[#35d977]"
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="2"
@@ -528,120 +594,199 @@ function LeadDetailHeader({ isPopupMode = false }: { isPopupMode?: boolean }) {
                     <line x1="8" y1="2" x2="8" y2="6" />
                     <line x1="3" y1="10" x2="21" y2="10" />
                   </svg>
-                </button>
+                  <span className="truncate">{headerFollowUpDate}</span>
+                </span>
+
+                <div
+                  className="h-[22px] w-px shrink-0 bg-[#dfe5ee]"
+                  aria-hidden="true"
+                />
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label="Call"
+                    disabled={!hasLeadPhone}
+                    onClick={handleHeaderCall}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-[16px] w-[16px]"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.2 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.33 1.8.62 2.66a2 2 0 0 1-.45 2.11L8 9.92a16 16 0 0 0 6.08 6.08l1.43-1.28a2 2 0 0 1 2.11-.45c.86.29 1.76.5 2.66.62A2 2 0 0 1 22 16.92z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="WhatsApp message"
+                    title="Open WhatsApp chat"
+                    disabled={!hasLeadPhone}
+                    onClick={handleHeaderWhatsApp}
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] disabled:cursor-not-allowed disabled:opacity-40 ${V2_BTN_ICON}`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-[16px] w-[16px]"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Schedule"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-[4px] bg-[#f1f4f8] text-[#6f7d90] ${V2_BTN_ICON}`}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-[16px] w-[16px]"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div
-            className={`grid gap-2.5 ${showMarkAsWon ? "grid-cols-2" : "grid-cols-1"}`}
-          >
-            {showMarkAsWon ? (
+            <div
+              className={`grid gap-2.5 ${showMarkAsWon ? "grid-cols-2" : "grid-cols-1"}`}
+            >
+              {showMarkAsWon ? (
+                <button
+                  type="button"
+                  onClick={onMarkAsWon}
+                  className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f] ${V2_BTN_PRIMARY}`}
+                >
+                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
+                    ✓
+                  </span>
+                  Mark As Won
+                </button>
+              ) : null}
               <button
                 type="button"
-                onClick={onMarkAsWon}
-                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] bg-[#1dde63] text-[12px] font-bold uppercase tracking-wide text-[#05220f] ${V2_BTN_PRIMARY}`}
+                onClick={onCompleteTask}
+                disabled={completeTaskDisabled}
+                className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#d6dce6] bg-white text-[12px] font-bold uppercase tracking-wide text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_SECONDARY}`}
               >
-                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#0f9d3d] text-[10px] leading-none text-[#0f9d3d]">
-                  ✓
+                <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#7d8998] text-[10px] leading-none text-[#7d8998]">
+                  ⊙
                 </span>
-                Mark As Won
+                Complete Task
               </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={onCompleteTask}
-              disabled={completeTaskDisabled}
-              className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-[6px] border border-[#d6dce6] bg-white text-[12px] font-bold uppercase tracking-wide text-[#111827] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_SECONDARY}`}
-            >
-              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-[#7d8998] text-[10px] leading-none text-[#7d8998]">
-                ⊙
-              </span>
-              Complete Task
-            </button>
-          </div>
+            </div>
 
-          <div className="mt-2.5 w-full" ref={timelineWrapRef}>
-            <button
-              type="button"
-              className={`inline-flex w-full items-center justify-between gap-2 rounded-[8px] border border-[#d6dce6] bg-[#f8fafc] px-3 py-2 text-left text-[12px] font-semibold text-[#334155] outline-none focus:border-[#94a3b8] focus:ring-2 focus:ring-[#e2e8f0] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DROPDOWN}`}
-              aria-haspopup="listbox"
-              aria-expanded={timelineOpen}
-              aria-label="Lead come history"
-              title={selectedTimeline?.fullLabel}
-              disabled={createdTimelineLoading || createdTimelineOptions.length === 0}
-              onClick={() => setTimelineOpen((v) => !v)}
-            >
-              <span className="truncate">
-                {selectedTimeline?.label ?? "Lead created timeline"}
-              </span>
-              <span aria-hidden className="shrink-0 text-[10px] text-[#94a3b8]">
-                {timelineOpen ? "▲" : "▼"}
-              </span>
-            </button>
-            {timelineOpen ? (
-              <div
-                role="listbox"
-                className="mt-1 max-h-56 w-full overflow-y-auto rounded-[8px] border border-[#e2e8f0] bg-white p-1 shadow-lg"
+            <div className="mt-2.5 w-full" ref={timelineWrapRef}>
+              <button
+                type="button"
+                className={`inline-flex w-full items-center justify-between gap-2 rounded-[8px] border border-[#d6dce6] bg-[#f8fafc] px-3 py-2 text-left text-[12px] font-semibold text-[#334155] outline-none focus:border-[#94a3b8] focus:ring-2 focus:ring-[#e2e8f0] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_DROPDOWN}`}
+                aria-haspopup="listbox"
+                aria-expanded={timelineOpen}
+                aria-label="Lead come history"
+                title={selectedTimeline?.fullLabel}
+                disabled={
+                  createdTimelineLoading || createdTimelineOptions.length === 0
+                }
+                onClick={() => setTimelineOpen((v) => !v)}
               >
-                {createdTimelineOptions.map((item) => {
-                  const isSelected = item.value === selectedTimelineValue;
-                  return (
-                    <button
-                      key={item.value}
-                      type="button"
-                      role="option"
-                      aria-selected={isSelected}
-                      className={`block w-full rounded-[6px] px-2.5 py-2 text-left text-[12px] ${
-                        isSelected
-                          ? "bg-[#e8fbf0] font-semibold text-[#0f8f3d]"
-                          : `text-[#475569] ${V2_BTN_LIST_ITEM}`
-                      }`}
-                      title={item.fullLabel}
-                      onClick={() => {
-                        onCreatedTimelineChange(item.value);
-                        setTimelineOpen(false);
-                      }}
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
+                <span className="truncate">
+                  {selectedTimeline?.label ?? "Lead created timeline"}
+                </span>
+                <span
+                  aria-hidden
+                  className="shrink-0 text-[10px] text-[#94a3b8]"
+                >
+                  {timelineOpen ? "▲" : "▼"}
+                </span>
+              </button>
+              {timelineOpen ? (
+                <div
+                  role="listbox"
+                  className="mt-1 max-h-56 w-full overflow-y-auto rounded-[8px] border border-[#e2e8f0] bg-white p-1 shadow-lg"
+                >
+                  {createdTimelineOptions.map((item) => {
+                    const isSelected = item.value === selectedTimelineValue;
+                    return (
+                      <button
+                        key={item.value}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`block w-full rounded-[6px] px-2.5 py-2 text-left text-[12px] ${
+                          isSelected
+                            ? "bg-[#e8fbf0] font-semibold text-[#0f8f3d]"
+                            : `text-[#475569] ${V2_BTN_LIST_ITEM}`
+                        }`}
+                        title={item.fullLabel}
+                        onClick={() => {
+                          onCreatedTimelineChange(item.value);
+                          setTimelineOpen(false);
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
-    </div>
-    {ivrDeleteOpen ? (
-      <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-[2px]">
-        <div
-          className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_25px_60px_rgba(15,23,42,0.25)]"
-          data-no-dblclick-close
-        >
-          <h3 className="text-sm font-bold text-slate-800">{IVR_DELETE_CONFIRM_TITLE}</h3>
-          <p className="mt-1 text-xs text-slate-500">{IVR_DELETE_CONFIRM_BODY}</p>
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              type="button"
-              className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-              onClick={() => setIvrDeleteOpen(false)}
-              disabled={ivrDeleting}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
-              onClick={() => void handleConfirmIvrDelete()}
-              disabled={ivrDeleting}
-            >
-              {ivrDeleting ? "Deleting..." : "Confirm Delete"}
-            </button>
+      {ivrDeleteOpen ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-[2px]">
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-5 shadow-[0_25px_60px_rgba(15,23,42,0.25)]"
+            data-no-dblclick-close
+          >
+            <h3 className="text-sm font-bold text-slate-800">
+              {IVR_DELETE_CONFIRM_TITLE}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              {IVR_DELETE_CONFIRM_BODY}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                onClick={() => setIvrDeleteOpen(false)}
+                disabled={ivrDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-50"
+                onClick={() => void handleConfirmIvrDelete()}
+                disabled={ivrDeleting}
+              >
+                {ivrDeleting ? "Deleting..." : "Confirm Delete"}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    ) : null}
+      ) : null}
     </>
   );
 }
@@ -661,7 +806,9 @@ function familyContactRoleStorageKey(leadId: string): string {
 
 function readFamilyContactRole(leadId: string): string {
   if (typeof window === "undefined") return "";
-  return (sessionStorage.getItem(familyContactRoleStorageKey(leadId)) ?? "").trim();
+  return (
+    sessionStorage.getItem(familyContactRoleStorageKey(leadId)) ?? ""
+  ).trim();
 }
 
 function persistFamilyContactRole(leadId: string, role: string): void {
@@ -672,9 +819,15 @@ function persistFamilyContactRole(leadId: string, role: string): void {
   else sessionStorage.setItem(key, value);
 }
 
-function readFamilyContactRelationshipFallback(leadType: string, leadId: string): string {
+function readFamilyContactRelationshipFallback(
+  leadType: string,
+  leadId: string,
+): string {
   const prefRole =
-    readConfigurationScopeFrontendPrefs(leadType, leadId).familyContactRelationship?.trim() ?? "";
+    readConfigurationScopeFrontendPrefs(
+      leadType,
+      leadId,
+    ).familyContactRelationship?.trim() ?? "";
   if (prefRole) return prefRole;
 
   const sessionRole = readFamilyContactRole(leadId);
@@ -706,31 +859,36 @@ function readFamilyContactDraft(
     name: requirements?.familyContactName?.trim() ?? "",
     role: relationship,
     phone:
-      requirements?.familyContactPhone?.trim() ||
-      lead.altPhone?.trim() ||
-      "",
+      requirements?.familyContactPhone?.trim() || lead.altPhone?.trim() || "",
   };
 }
 
-function familyContactDraftsEqual(a: FamilyContactDraft, b: FamilyContactDraft): boolean {
+function familyContactDraftsEqual(
+  a: FamilyContactDraft,
+  b: FamilyContactDraft,
+): boolean {
   return a.name === b.name && a.role === b.role && a.phone === b.phone;
 }
 
 function FamilyContactCard() {
-  const {
-    leadType,
-    leadId,
-    lead,
-    shouldMaskLeadPhone,
-    canEditLeadPhoneEmail,
-  } = useLeadDetailV2();
+  const { leadType, leadId, lead, shouldMaskLeadPhone, canEditLeadPhoneEmail } =
+    useLeadDetailV2();
   const { notifyError, notifySuccess } = useGlobalNotifier();
-  const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
+  const validLeadType = isCrmLeadType(leadType)
+    ? (leadType as CrmLeadType)
+    : null;
 
   const [editing, setEditing] = useState(false);
-  const [editSnapshot, setEditSnapshot] = useState<FamilyContactDraft | null>(null);
-  const [draft, setDraft] = useState<FamilyContactDraft>({ name: "", role: "", phone: "" });
-  const [requirements, setRequirements] = useState<ConfigurationScopeRequirements | null>(null);
+  const [editSnapshot, setEditSnapshot] = useState<FamilyContactDraft | null>(
+    null,
+  );
+  const [draft, setDraft] = useState<FamilyContactDraft>({
+    name: "",
+    role: "",
+    phone: "",
+  });
+  const [requirements, setRequirements] =
+    useState<ConfigurationScopeRequirements | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -745,12 +903,17 @@ function FamilyContactCard() {
 
     void (async () => {
       try {
-        const data = await getConfigurationScopeRequirements(validLeadType, leadId);
+        const data = await getConfigurationScopeRequirements(
+          validLeadType,
+          leadId,
+        );
         if (cancelled) return;
         setRequirements(mergeRequirementDefaults(data).requirements);
       } catch {
         if (!cancelled) {
-          setRequirements(mergeRequirementDefaults(createDefaultRequirements()).requirements);
+          setRequirements(
+            mergeRequirementDefaults(createDefaultRequirements()).requirements,
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -768,7 +931,9 @@ function FamilyContactCard() {
   }, [lead, leadId, requirements, validLeadType]);
 
   const isDirty =
-    editing && editSnapshot !== null && !familyContactDraftsEqual(draft, editSnapshot);
+    editing &&
+    editSnapshot !== null &&
+    !familyContactDraftsEqual(draft, editSnapshot);
 
   const startEditing = () => {
     setEditSnapshot({ ...draft });
@@ -829,7 +994,15 @@ function FamilyContactCard() {
         setSaving(false);
       }
     });
-  }, [draft, editSnapshot, editing, isDirty, leadId, requirements, validLeadType]);
+  }, [
+    draft,
+    editSnapshot,
+    editing,
+    isDirty,
+    leadId,
+    requirements,
+    validLeadType,
+  ]);
 
   const handleSave = async () => {
     if (!validLeadType || !requirements) {
@@ -864,7 +1037,9 @@ function FamilyContactCard() {
       notifySuccess("Family contact saved.");
       exitEditing();
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Could not save family contact.");
+      notifyError(
+        e instanceof Error ? e.message : "Could not save family contact.",
+      );
     } finally {
       setSaving(false);
     }
@@ -879,7 +1054,9 @@ function FamilyContactCard() {
   return (
     <article className="rounded-xl border border-[#e0e5ec] bg-white p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Family Contact</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+          Family Contact
+        </p>
         <div className="flex items-center gap-2">
           {editing ? (
             <>
@@ -947,7 +1124,9 @@ function FamilyContactCard() {
             <FieldLabel>Name</FieldLabel>
             <Input
               value={draft.name}
-              onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, name: e.target.value }))
+              }
               placeholder="Ananya Sharma"
               className={`mt-1 ${V2_INPUT}`}
             />
@@ -956,7 +1135,9 @@ function FamilyContactCard() {
             <FieldLabel>Relationship</FieldLabel>
             <Input
               value={draft.role}
-              onChange={(e) => setDraft((prev) => ({ ...prev, role: e.target.value }))}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, role: e.target.value }))
+              }
               placeholder="Spouse"
               className={`mt-1 ${V2_INPUT}`}
             />
@@ -965,7 +1146,9 @@ function FamilyContactCard() {
             <FieldLabel>Phone</FieldLabel>
             <Input
               value={draft.phone}
-              onChange={(e) => setDraft((prev) => ({ ...prev, phone: e.target.value }))}
+              onChange={(e) =>
+                setDraft((prev) => ({ ...prev, phone: e.target.value }))
+              }
               placeholder="+91 98765 43210"
               className={`mt-1 ${V2_INPUT}`}
             />
@@ -990,13 +1173,17 @@ function FamilyContactCard() {
               </svg>
             </div>
             <div>
-              <p className="text-[15px] font-bold text-[#111827]">{displayName}</p>
+              <p className="text-[15px] font-bold text-[#111827]">
+                {displayName}
+              </p>
               <p className="text-[12px] text-[#9ca3af]">{displayRole}</p>
             </div>
           </div>
 
           <div className="mt-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Phone</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+              Phone
+            </p>
             <p className="mt-1 inline-flex items-center gap-2 text-[14px] font-medium text-[#374151]">
               <svg
                 viewBox="0 0 24 24"
@@ -1022,10 +1209,13 @@ function FamilyContactCard() {
 function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
   const { lead, leadType, leadId } = useLeadDetailV2();
   const isLocked = accessState === "locked";
-  const validLeadType = isCrmLeadType(leadType) ? (leadType as CrmLeadType) : null;
+  const validLeadType = isCrmLeadType(leadType)
+    ? (leadType as CrmLeadType)
+    : null;
   const [expectedTimeline, setExpectedTimeline] = useState("");
   const [familyContactName, setFamilyContactName] = useState("");
-  const [familyContactRelationship, setFamilyContactRelationship] = useState("");
+  const [familyContactRelationship, setFamilyContactRelationship] =
+    useState("");
   const [decisionMaker, setDecisionMaker] = useState(DECISION_MAKER_SELF_VALUE);
   const [timelineLoading, setTimelineLoading] = useState(true);
   const [finalBudgetLoading, setFinalBudgetLoading] = useState(true);
@@ -1042,11 +1232,16 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
 
     void (async () => {
       try {
-        const data = await getConfigurationScopeRequirements(validLeadType, leadId);
+        const data = await getConfigurationScopeRequirements(
+          validLeadType,
+          leadId,
+        );
         if (cancelled) return;
         setExpectedTimeline(data.expectedTimeline?.trim() ?? "");
         setFamilyContactName(data.familyContactName?.trim() ?? "");
-        setFamilyContactRelationship(data.familyContactRelationship?.trim() ?? "");
+        setFamilyContactRelationship(
+          data.familyContactRelationship?.trim() ?? "",
+        );
       } catch {
         if (!cancelled) {
           setExpectedTimeline("");
@@ -1102,7 +1297,13 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
     return () => {
       cancelled = true;
     };
-  }, [lead.externalReferenceId, lead.leadId, lead.quoteLink, leadId, validLeadType]);
+  }, [
+    lead.externalReferenceId,
+    lead.leadId,
+    lead.quoteLink,
+    leadId,
+    validLeadType,
+  ]);
 
   const decisionMakerOptions = useMemo(
     () =>
@@ -1116,21 +1317,33 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
 
   useEffect(() => {
     if (!validLeadType) return;
-    const saved = readConfigurationScopeFrontendPrefs(validLeadType, leadId).decisionMaker;
-    const fallback = decisionMakerOptions.some((option) => option.value === saved)
+    const saved = readConfigurationScopeFrontendPrefs(
+      validLeadType,
+      leadId,
+    ).decisionMaker;
+    const fallback = decisionMakerOptions.some(
+      (option) => option.value === saved,
+    )
       ? saved!
       : DECISION_MAKER_SELF_VALUE;
     setDecisionMaker(fallback);
   }, [decisionMakerOptions, leadId, validLeadType]);
 
-  const timelineDisplay = timelineLoading ? "Loading…" : expectedTimeline || "Not set";
-  const decisionMakerDisplay = labelForDecisionMakerValue(decisionMaker, decisionMakerOptions);
+  const timelineDisplay = timelineLoading
+    ? "Loading…"
+    : expectedTimeline || "Not set";
+  const decisionMakerDisplay = labelForDecisionMakerValue(
+    decisionMaker,
+    decisionMakerOptions,
+  );
   const finalBudgetValue = finalBudgetLoading ? "Loading…" : finalBudgetDisplay;
 
   const handleDecisionMakerChange = (value: string) => {
     setDecisionMaker(value);
     if (!validLeadType) return;
-    patchConfigurationScopeFrontendPrefs(validLeadType, leadId, { decisionMaker: value });
+    patchConfigurationScopeFrontendPrefs(validLeadType, leadId, {
+      decisionMaker: value,
+    });
   };
 
   return (
@@ -1158,7 +1371,11 @@ function DecisionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
             4. Decision Phase
           </h2>
         </div>
-        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
+        {isLocked ? (
+          <PhaseLockIcon />
+        ) : accessState === "completed" ? (
+          <PhaseDoneIcon />
+        ) : null}
       </div>
 
       <PhaseAccessGate locked={isLocked}>
@@ -1198,7 +1415,9 @@ function DecisionReadField({ label, value }: { label: string; value: string }) {
     <div>
       <PhaseFieldLabel>{label}</PhaseFieldLabel>
       <div className="flex min-h-[42px] items-center rounded-lg border border-[#e4e8ef] bg-[#fafbfc] px-3 py-2.5">
-        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">{value}</span>
+        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">
+          {value}
+        </span>
       </div>
     </div>
   );
@@ -1207,8 +1426,12 @@ function DecisionReadField({ label, value }: { label: string; value: string }) {
 function LockedField({ label }: { label: string }) {
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#b0b8c4]">{label}</p>
-      <p className="mt-1 text-[13px] font-semibold uppercase tracking-wide text-[#c4cad4]">Locked</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#b0b8c4]">
+        {label}
+      </p>
+      <p className="mt-1 text-[13px] font-semibold uppercase tracking-wide text-[#c4cad4]">
+        Locked
+      </p>
     </div>
   );
 }
@@ -1238,7 +1461,10 @@ function LeadProfileCard() {
       : possessionDateRaw
     : "Not set";
   const designerName = lead.designerName?.trim() || "—";
-  const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", shouldMaskLeadPhone);
+  const phoneDisplay = resolveLeadPhoneDisplayForRole(
+    lead.phone ?? "",
+    shouldMaskLeadPhone,
+  );
 
   const startContactEdit = () => {
     setContactDraft({
@@ -1307,7 +1533,9 @@ function LeadProfileCard() {
       await onLeadContactSave(patch);
       setEditingContact(false);
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Could not save contact details.");
+      notifyError(
+        e instanceof Error ? e.message : "Could not save contact details.",
+      );
     }
   };
 
@@ -1339,7 +1567,10 @@ function LeadProfileCard() {
                 className={`mt-1 ${V2_INPUT}`}
                 placeholder="Customer name"
               />
-              <p className="mt-1 truncate text-[11px] text-[#9ca3af]" title={`ID: #${leadDisplayId}`}>
+              <p
+                className="mt-1 truncate text-[11px] text-[#9ca3af]"
+                title={`ID: #${leadDisplayId}`}
+              >
                 ID: #{leadDisplayId}
               </p>
             </div>
@@ -1351,7 +1582,10 @@ function LeadProfileCard() {
               >
                 {leadDisplayName}
               </p>
-              <p className="mt-0.5 truncate text-[11px] text-[#9ca3af]" title={`ID: #${leadDisplayId}`}>
+              <p
+                className="mt-0.5 truncate text-[11px] text-[#9ca3af]"
+                title={`ID: #${leadDisplayId}`}
+              >
                 ID: #{leadDisplayId}
               </p>
             </>
@@ -1368,7 +1602,16 @@ function LeadProfileCard() {
                   aria-label="Cancel contact edit"
                   className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] disabled:opacity-60 ${V2_BTN_GHOST_ICON}`}
                 >
-                  <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
                     <line x1="18" y1="6" x2="6" y2="18" />
                     <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
@@ -1389,7 +1632,16 @@ function LeadProfileCard() {
                 aria-label="Update name, phone and email"
                 className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
               >
-                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                 </svg>
@@ -1403,19 +1655,33 @@ function LeadProfileCard() {
         {editingContact ? (
           <>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Phone</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                Phone
+              </p>
               <Input
                 value={contactDraft.phone}
-                onChange={(e) => setContactDraft((prev) => ({ ...prev, phone: e.target.value }))}
+                onChange={(e) =>
+                  setContactDraft((prev) => ({
+                    ...prev,
+                    phone: e.target.value,
+                  }))
+                }
                 className={`mt-1 ${V2_INPUT}`}
               />
             </div>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">Email</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                Email
+              </p>
               <Input
                 type="email"
                 value={contactDraft.email}
-                onChange={(e) => setContactDraft((prev) => ({ ...prev, email: e.target.value }))}
+                onChange={(e) =>
+                  setContactDraft((prev) => ({
+                    ...prev,
+                    email: e.target.value,
+                  }))
+                }
                 className={`mt-1 ${V2_INPUT}`}
               />
             </div>
@@ -1427,7 +1693,10 @@ function LeadProfileCard() {
           </>
         )}
         <ProfileField label="Pincode" value={pincodeValue} />
-        <ProfilePillField label="Lead Source" value={formatLeadSourceLabel(lead.leadSource)} />
+        <ProfilePillField
+          label="Lead Source"
+          value={formatLeadSourceLabel(lead.leadSource)}
+        />
         <ProfilePillField label="Possession Date" value={possessionDisplay} />
       </div>
 
@@ -1470,8 +1739,12 @@ function LeadProfileCard() {
 function ProfileField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{label}</p>
-      <p className="mt-1 text-[14px] font-medium leading-snug text-[#1f2937]">{value}</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+        {label}
+      </p>
+      <p className="mt-1 text-[14px] font-medium leading-snug text-[#1f2937]">
+        {value}
+      </p>
     </div>
   );
 }
@@ -1479,7 +1752,9 @@ function ProfileField({ label, value }: { label: string; value: string }) {
 function ProfilePillField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{label}</p>
+      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+        {label}
+      </p>
       <span className="mt-1 inline-flex rounded-full bg-[#f3f4f6] px-3 py-1 text-[13px] font-semibold text-[#374151]">
         {value}
       </span>
@@ -1500,7 +1775,9 @@ function RelatedContact({
     <div className="flex items-center gap-3">
       {avatar}
       <div>
-        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">{label}</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+          {label}
+        </p>
         <p className="mt-0.5 text-[14px] font-bold text-[#111827]">{name}</p>
       </div>
     </div>
@@ -1521,9 +1798,10 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   } = useLeadDetailV2();
   const canInteract = !disabled;
   const quoteLinkValue = toCustomerQuoteLink(lead.quoteLink?.trim() || "");
-  const quoteSentCount = lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
-  const customerQuoteOpenCount =
-    lead.customerQuoteOpenCount ?? lead.quoteSentInfo?.customerQuoteOpenCount ?? 0;
+  const quoteSentCount =
+  lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
+const customerQuoteOpenCount =
+  lead.customerQuoteOpenCount ?? lead.quoteSentInfo?.customerQuoteOpenCount ?? 0;
   const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
   const quoteId =
     lead.quoteId?.trim() ||
@@ -1567,7 +1845,9 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
             </div>
             {canShowGetQuote && !quoteLinkValue ? (
               <span className="inline-flex h-[42px] min-w-[160px] items-center justify-center rounded-xl border border-[#e9d5ff] bg-[#faf5ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#7c3aed]">
-                {quoteFetching || quoteLinkPersisting ? "Syncing quote…" : "Waiting for Design quote"}
+                {quoteFetching || quoteLinkPersisting
+                  ? "Syncing quote…"
+                  : "Waiting for Design quote"}
               </span>
             ) : null}
           </div>
@@ -1576,7 +1856,9 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         <div className="p-5">
           <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
             <div>
-              <PhaseFieldLabel className="mb-2">Quote Link (customer)</PhaseFieldLabel>
+              <PhaseFieldLabel className="mb-2">
+                Quote Link (customer)
+              </PhaseFieldLabel>
               {quoteLinkValue ? (
                 <Input
                   value={quoteLinkValue}
@@ -1585,13 +1867,20 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
                 />
               ) : (
                 <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
-                  <span className="text-[12px] italic text-[#94a3b8]">Quote is not generated yet</span>
+                  <span className="text-[12px] italic text-[#94a3b8]">
+                    Quote is not generated yet
+                  </span>
                 </div>
               )}
             </div>
             <button
               type="button"
-              disabled={!canInteract || quoteSending || quoteLinkPersisting || !quoteLinkValue}
+              disabled={
+                !canInteract ||
+                quoteSending ||
+                quoteLinkPersisting ||
+                !quoteLinkValue
+              }
               onClick={() => void onSendQuote()}
               className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
             >
@@ -1619,7 +1908,9 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         </div>
 
         {quoteLinkPersisting ? (
-          <p className="px-5 pb-2 text-[11px] text-[#9ca3af]">Saving quote link…</p>
+          <p className="px-5 pb-2 text-[11px] text-[#9ca3af]">
+            Saving quote link…
+          </p>
         ) : null}
         {quoteLinkPersistError ? (
           <div className="px-5 pb-4 pt-1 flex flex-wrap items-center gap-2 text-[11px] text-[#dc2626]">
@@ -1663,7 +1954,11 @@ function DesignStudioPass({
       }}
       initial={reduce ? { opacity: 0 } : { opacity: 0, y: 14, scale: 0.97 }}
       animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
-      transition={reduce ? { duration: 0.15 } : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      transition={
+        reduce
+          ? { duration: 0.15 }
+          : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }
+      }
       whileHover={
         disabled || reduce
           ? undefined
@@ -1690,7 +1985,11 @@ function DesignStudioPass({
                 opacity: [0.85, 1, 0.85],
               }
         }
-        transition={reduce ? undefined : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
+        transition={
+          reduce
+            ? undefined
+            : { duration: 3.2, repeat: Infinity, ease: "easeInOut" }
+        }
         style={{ backgroundSize: "100% 200%" }}
       />
       <motion.span
@@ -1699,9 +1998,18 @@ function DesignStudioPass({
         animate={
           reduce
             ? undefined
-            : { scale: [1, 1.18, 1], opacity: [0.35, 0.55, 0.35], x: [0, -6, 0], y: [0, 8, 0] }
+            : {
+                scale: [1, 1.18, 1],
+                opacity: [0.35, 0.55, 0.35],
+                x: [0, -6, 0],
+                y: [0, 8, 0],
+              }
         }
-        transition={reduce ? undefined : { duration: 4.5, repeat: Infinity, ease: "easeInOut" }}
+        transition={
+          reduce
+            ? undefined
+            : { duration: 4.5, repeat: Infinity, ease: "easeInOut" }
+        }
       />
       <motion.span
         aria-hidden
@@ -1710,7 +2018,9 @@ function DesignStudioPass({
           reduce ? undefined : { scale: [1, 1.12, 1], opacity: [0.2, 0.4, 0.2] }
         }
         transition={
-          reduce ? undefined : { duration: 5.2, repeat: Infinity, ease: "easeInOut", delay: 0.6 }
+          reduce
+            ? undefined
+            : { duration: 5.2, repeat: Infinity, ease: "easeInOut", delay: 0.6 }
         }
       />
       <motion.span
@@ -1729,11 +2039,21 @@ function DesignStudioPass({
               transition={
                 reduce
                   ? undefined
-                  : { duration: 3.8, repeat: Infinity, ease: "easeInOut", repeatDelay: 1.4 }
+                  : {
+                      duration: 3.8,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      repeatDelay: 1.4,
+                    }
               }
               whileHover={reduce ? undefined : { scale: 1.08, rotate: 0 }}
             >
-              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="none"
+                aria-hidden
+              >
                 <path
                   d="M4 7.5h16M4 12h10M4 16.5h7"
                   stroke="currentColor"
@@ -1752,8 +2072,16 @@ function DesignStudioPass({
             <span>
               <motion.span
                 className="block text-[10px] font-bold uppercase tracking-[0.16em] text-[#94a3b8]"
-                animate={reduce ? undefined : { letterSpacing: ["0.16em", "0.2em", "0.16em"] }}
-                transition={reduce ? undefined : { duration: 3.6, repeat: Infinity, ease: "easeInOut" }}
+                animate={
+                  reduce
+                    ? undefined
+                    : { letterSpacing: ["0.16em", "0.2em", "0.16em"] }
+                }
+                transition={
+                  reduce
+                    ? undefined
+                    : { duration: 3.6, repeat: Infinity, ease: "easeInOut" }
+                }
               >
                 Design Studio Pass
               </motion.span>
@@ -1764,12 +2092,15 @@ function DesignStudioPass({
             </span>
           </span>
           <span className="mt-1.5 block pl-10 text-[11px] font-medium text-[#94a3b8]">
-            Discount, revise, and save — staff only. Never send this link to the customer.
+            Discount, revise, and save — staff only. Never send this link to the
+            customer.
           </span>
         </span>
         <motion.span
           className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#34d399] px-3.5 text-[12px] font-bold uppercase tracking-wide text-[#052e1a]"
-          whileHover={reduce ? undefined : { scale: 1.05, backgroundColor: "#6ee7b7" }}
+          whileHover={
+            reduce ? undefined : { scale: 1.05, backgroundColor: "#6ee7b7" }
+          }
           transition={{ type: "spring", stiffness: 420, damping: 24 }}
         >
           Enter
@@ -1782,7 +2113,12 @@ function DesignStudioPass({
             transition={
               reduce
                 ? undefined
-                : { duration: 1.35, repeat: Infinity, ease: "easeInOut", repeatDelay: 0.55 }
+                : {
+                    duration: 1.35,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                    repeatDelay: 0.55,
+                  }
             }
           >
             <path
@@ -1821,7 +2157,11 @@ function ExperiencePhaseCard({
             3. Experience Phase
           </h2>
         </div>
-        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
+        {isLocked ? (
+          <PhaseLockIcon />
+        ) : accessState === "completed" ? (
+          <PhaseDoneIcon />
+        ) : null}
       </div>
 
       <PhaseAccessGate locked={isLocked}>
@@ -1846,7 +2186,9 @@ function PhaseCardShell({
 
   if (isCurrent) {
     return (
-      <article className={`relative ${radius} border-2 border-[#2ee06a] bg-white px-4 pb-4 pt-7`}>
+      <article
+        className={`relative ${radius} border-2 border-[#2ee06a] bg-white px-4 pb-4 pt-7`}
+      >
         <span className="absolute -top-3 left-4 rounded-full bg-[#2ee06a] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-[#0f1729]">
           Current Phase
         </span>
@@ -1857,12 +2199,16 @@ function PhaseCardShell({
 
   if (isLocked) {
     return (
-      <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>{children}</article>
+      <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>
+        {children}
+      </article>
     );
   }
 
   return (
-    <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>{children}</article>
+    <article className={`${radius} border border-[#e4e8ef] bg-white p-4`}>
+      {children}
+    </article>
   );
 }
 
@@ -1893,7 +2239,13 @@ function PhaseDoneIcon() {
 }
 
 /** Shows full phase content but blocks interaction when the phase is not yet unlocked. */
-function PhaseAccessGate({ locked, children }: { locked: boolean; children: ReactNode }) {
+function PhaseAccessGate({
+  locked,
+  children,
+}: {
+  locked: boolean;
+  children: ReactNode;
+}) {
   if (!locked) return <>{children}</>;
 
   return (
@@ -1928,23 +2280,34 @@ function ConnectionReadField({
       <PhaseFieldLabel>{label}</PhaseFieldLabel>
       <div className="flex min-h-[42px] items-center gap-2.5 rounded-lg border border-[#e4e8ef] bg-white px-3 py-2.5">
         <span className="shrink-0 text-[#6b7280]">{icon}</span>
-        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">{value}</span>
+        <span className="text-[14px] font-medium leading-snug text-[#1f2937]">
+          {value}
+        </span>
       </div>
     </div>
   );
 }
 
-function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
+function DiscoveryPhaseCard({
+  accessState,
+}: {
+  accessState: PhaseAccessState;
+}) {
   const [editing, setEditing] = useState(false);
-  const [editSnapshot, setEditSnapshot] = useState<DiscoveryPhaseDraft | null>(null);
-  const { lead, connectionPhaseSaving, onConnectionPhaseSave, onLeadPatch } = useLeadDetailV2();
+  const [editSnapshot, setEditSnapshot] = useState<DiscoveryPhaseDraft | null>(
+    null,
+  );
+  const { lead, connectionPhaseSaving, onConnectionPhaseSave, onLeadPatch } =
+    useLeadDetailV2();
   const { notifyError } = useGlobalNotifier();
   const isLocked = accessState === "locked";
   const canEdit = !isLocked;
 
   const currentDraft = readDiscoveryPhaseDraft(lead);
   const isDirty =
-    editing && editSnapshot !== null && !discoveryPhaseDraftsEqual(currentDraft, editSnapshot);
+    editing &&
+    editSnapshot !== null &&
+    !discoveryPhaseDraftsEqual(currentDraft, editSnapshot);
 
   const startEditing = () => {
     setEditSnapshot(readDiscoveryPhaseDraft(lead));
@@ -1985,7 +2348,9 @@ function DiscoveryPhaseCard({ accessState }: { accessState: PhaseAccessState }) 
       await onConnectionPhaseSave(readDiscoveryPhaseDraft(lead));
       exitEditing();
     } catch (e) {
-      notifyError(e instanceof Error ? e.message : "Could not save discovery phase.");
+      notifyError(
+        e instanceof Error ? e.message : "Could not save discovery phase.",
+      );
     }
   };
 
@@ -2100,7 +2465,16 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
         ) : (
           <ValuePill
             icon={
-              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M3 21h18" />
                 <path d="M5 21V7l8-4v18" />
                 <path d="M19 21V11l-6-4" />
@@ -2113,7 +2487,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
       </div>
 
       <div className="flex min-w-0 flex-col gap-1.5">
-        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.configuration}>
+        <PhaseFieldLabel
+          className="mb-0"
+          required
+          requiredHint={REQUIRED_FIELD_HINTS.configuration}
+        >
           Configuration
         </PhaseFieldLabel>
         {editing ? (
@@ -2132,7 +2510,8 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
             </Select>
             {isAdsLead && !(lead.configuration ?? "").trim() ? (
               <p className="text-[11px] text-[#9ca3af]">
-                Not provided by the ad form — enter configuration and click Done to save.
+                Not provided by the ad form — enter configuration and click Done
+                to save.
               </p>
             ) : null}
           </>
@@ -2142,7 +2521,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
       </div>
 
       <div className="flex min-w-0 flex-col gap-1.5">
-        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.budget}>
+        <PhaseFieldLabel
+          className="mb-0"
+          required
+          requiredHint={REQUIRED_FIELD_HINTS.budget}
+        >
           Budget Range
         </PhaseFieldLabel>
         {editing ? (
@@ -2164,7 +2547,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
       </div>
 
       <div className="flex min-w-0 flex-col gap-1.5">
-        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.bookingType}>
+        <PhaseFieldLabel
+          className="mb-0"
+          required
+          requiredHint={REQUIRED_FIELD_HINTS.bookingType}
+        >
           Type
         </PhaseFieldLabel>
         {editing ? (
@@ -2224,7 +2611,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
       </div>
 
       <div className="flex min-w-0 flex-col gap-1.5">
-        <PhaseFieldLabel className="mb-0" required requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}>
+        <PhaseFieldLabel
+          className="mb-0"
+          required
+          requiredHint={REQUIRED_FIELD_HINTS.propertyNotes}
+        >
           Property Notes
         </PhaseFieldLabel>
         {editing ? (
@@ -2262,7 +2653,11 @@ function DiscoveryPhaseContent({ editing }: { editing: boolean }) {
   );
 }
 
-function ConnectionPhaseCard({ accessState }: { accessState: PhaseAccessState }) {
+function ConnectionPhaseCard({
+  accessState,
+}: {
+  accessState: PhaseAccessState;
+}) {
   const isLocked = accessState === "locked";
 
   return (
@@ -2276,7 +2671,11 @@ function ConnectionPhaseCard({ accessState }: { accessState: PhaseAccessState })
             2. Connection Phase
           </h2>
         </div>
-        {isLocked ? <PhaseLockIcon /> : accessState === "completed" ? <PhaseDoneIcon /> : null}
+        {isLocked ? (
+          <PhaseLockIcon />
+        ) : accessState === "completed" ? (
+          <PhaseDoneIcon />
+        ) : null}
       </div>
       <PhaseAccessGate locked={isLocked}>
         <ConnectionPhaseContent disabled={isLocked} />
@@ -2307,8 +2706,11 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
   const [appointmentMeetingType, setAppointmentMeetingType] = useState("");
   const appointmentMeetingTypeRef = useRef("");
   const [configScopeOpen, setConfigScopeOpen] = useState(false);
-  const [configScopeHighlightMissing, setConfigScopeHighlightMissing] = useState(false);
-  const pendingResumeMeetingRef = useRef<ResumeMeetingScheduleDetail | null>(null);
+  const [configScopeHighlightMissing, setConfigScopeHighlightMissing] =
+    useState(false);
+  const pendingResumeMeetingRef = useRef<ResumeMeetingScheduleDetail | null>(
+    null,
+  );
   const pendingResumeStorageKey = `crm:pending-meeting-resume:${leadType}:${leadId}`;
 
   const readPendingResume = (): ResumeMeetingScheduleDetail | null => {
@@ -2330,7 +2732,10 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
     if (typeof window === "undefined") return;
     try {
       if (detail) {
-        window.sessionStorage.setItem(pendingResumeStorageKey, JSON.stringify(detail));
+        window.sessionStorage.setItem(
+          pendingResumeStorageKey,
+          JSON.stringify(detail),
+        );
       } else {
         window.sessionStorage.removeItem(pendingResumeStorageKey);
       }
@@ -2341,7 +2746,8 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
 
   useEffect(() => {
     const onOpenScope = (event: Event) => {
-      const detail = (event as CustomEvent<OpenConfigurationScopeDetail>).detail;
+      const detail = (event as CustomEvent<OpenConfigurationScopeDetail>)
+        .detail;
       if (!detail?.leadId || detail.leadId !== leadId) return;
       if (detail.leadType && detail.leadType !== leadType) return;
       if (detail.reason === "meeting-scheduled") {
@@ -2357,7 +2763,8 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
       setConfigScopeOpen(true);
     };
     window.addEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
-    return () => window.removeEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
+    return () =>
+      window.removeEventListener(OPEN_CONFIGURATION_SCOPE_EVENT, onOpenScope);
   }, [leadId, leadType, pendingResumeStorageKey]);
 
   const closeConfigScopeWithoutResume = () => {
@@ -2457,7 +2864,9 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
             </div>
           </div>
           <FloorPlanUpload
-            hasFloorPlan={Boolean(lead.floorPlan?.trim() || lead.floorPlans?.length)}
+            hasFloorPlan={Boolean(
+              lead.floorPlan?.trim() || lead.floorPlans?.length,
+            )}
             files={lead.floorPlans}
             viewHref={lead.floorPlanViewPath ?? ""}
             openHref={lead.floorPlanOpenPath ?? ""}
@@ -2468,8 +2877,14 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
             removing={floorPlanRemoving}
             onFileSelect={(files) => void onFloorPlanUpload(files)}
             onError={notifyError}
-            onRemove={onFloorPlanRemove ? (index) => void onFloorPlanRemove(index) : undefined}
-            onRemoveAll={onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined}
+            onRemove={
+              onFloorPlanRemove
+                ? (index) => void onFloorPlanRemove(index)
+                : undefined
+            }
+            onRemoveAll={
+              onFloorPlanRemove ? () => void onFloorPlanRemove() : undefined
+            }
             onFloorPlanMissing={onFloorPlanMissing}
           />
         </div>
@@ -2533,7 +2948,8 @@ function ConnectionPhaseContent({ disabled = false }: { disabled?: boolean }) {
         </div>
 
         <p className="mt-auto pt-4 text-[11px] leading-relaxed text-[#9ca3af]">
-          Meeting details are updated from Complete Task. Design QA link is synced from CRM.
+          Meeting details are updated from Complete Task. Design QA link is
+          synced from CRM.
         </p>
       </section>
     </div>
@@ -2595,7 +3011,9 @@ function DesignQaLinkField({
         </button>
       </div>
       {copied ? (
-        <p className="mt-1 text-[11px] font-medium text-[#059669]">Design QA Link copied</p>
+        <p className="mt-1 text-[11px] font-medium text-[#059669]">
+          Design QA Link copied
+        </p>
       ) : null}
     </div>
   );
@@ -2618,7 +3036,9 @@ function PhaseFieldLabel({
       className={`${margin} flex items-center text-[10px] font-bold uppercase tracking-[0.1em] text-[#8b97a8] ${className}`.trim()}
     >
       {children}
-      {required && requiredHint ? <RequiredAsterisk message={requiredHint} /> : null}
+      {required && requiredHint ? (
+        <RequiredAsterisk message={requiredHint} />
+      ) : null}
     </p>
   );
 }
@@ -2643,9 +3063,7 @@ function ValuePill({
   return (
     <span
       className={`inline-flex w-fit max-w-full items-center gap-2 rounded-full px-3.5 py-1.5 text-[14px] font-bold text-[#1a2432] ${
-        variant === "green"
-          ? "bg-[#e8fbf0] text-[#0f8f3d]"
-          : "bg-[#f0f3f7]"
+        variant === "green" ? "bg-[#e8fbf0] text-[#0f8f3d]" : "bg-[#f0f3f7]"
       }`}
     >
       {icon ? <span className="text-[#4a5568]">{icon}</span> : null}
@@ -2687,7 +3105,9 @@ function InfoPill({
         wide ? "min-w-[180px]" : "min-w-[108px]"
       }`}
     >
-      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8f9bad]">{title}</p>
+      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#8f9bad]">
+        {title}
+      </p>
       <p className="mt-1 text-[17px] font-semibold uppercase leading-tight tracking-[-0.01em] text-[#121926]">
         {value}
       </p>

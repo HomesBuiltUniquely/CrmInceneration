@@ -73,6 +73,19 @@ export function canAccessCrmInsights(role: string): boolean {
   );
 }
 
+/**
+ * Recording & Call Logs (mobile Summary parity) — sales + presales hierarchy + admin.
+ */
+export function canAccessRecordingCallLogs(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    isAdminRole(r) ||
+    isSalesRole(r) ||
+    isPresalesRole(r) ||
+    r === "SALES_ADMIN"
+  );
+}
+
 /** Org-wide Insights filters (branch + manager hierarchy). SM uses team-only filters. */
 export function canUseInsightsOrgFilters(role: string): boolean {
   const r = normalizeRole(role);
