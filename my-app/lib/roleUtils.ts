@@ -26,6 +26,17 @@ export function canAccessMeetingManagement(role: string): boolean {
   return isAdminRole(r) || r === "SALES_ADMIN" || r === "SALES_MANAGER" || r === "SALES_EXECUTIVE";
 }
 
+/** Current designer-feedback note in Meeting details popup. */
+export function canViewDesignerMeetingFeedback(role: string): boolean {
+  const r = normalizeRole(role);
+  return r === "SUPER_ADMIN" || r === "SALES_ADMIN" || r === "SALES_MANAGER";
+}
+
+/** Feedback history rows (`FEEDBACK` / `MEETING_FEEDBACK_DESIGNER`) — Super Admin only. */
+export function canViewDesignerMeetingFeedbackHistory(role: string): boolean {
+  return normalizeRole(role) === "SUPER_ADMIN";
+}
+
 /** Easebuzz payment-link / online payment — available to all roles. */
 export function canUsePaymentLinkIntegration(_role: string): boolean {
   return true;

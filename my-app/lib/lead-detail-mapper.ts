@@ -664,6 +664,8 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
         lastQuoteSentAt: qs.lastQuoteSentAt,
         lastQuoteSentBy: qs.lastQuoteSentBy,
         quoteId: qs.quoteId,
+        customerQuoteOpenCount: qs.customerQuoteOpenCount,
+        lastCustomerQuoteOpenAt: qs.lastCustomerQuoteOpenAt,
       };
     })(),
     designQaLink:
