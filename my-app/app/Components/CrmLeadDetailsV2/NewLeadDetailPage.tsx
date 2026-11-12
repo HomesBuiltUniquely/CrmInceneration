@@ -228,48 +228,6 @@ export default function NewLeadDetailPage({
             {canUsePaymentLinks ? (
               <LeadPaymentLinkBanner leadType={leadType} leadId={leadId} />
             ) : null}
-
-      {showCallsPanel ? (
-      <div className="mt-3">
-        <LeadCallsRecordingsPanel
-          leadType={leadType}
-          leadId={leadId}
-          onBack={() => setDealSection("deal-overview")}
-        />
-      </div>
-    ) : (
-      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
-        <aside className="min-w-0 space-y-3">
-          <div id="deal-overview" className="min-w-0 scroll-mt-24">
-            <LeadProfileCard />
-          </div>
-          <FamilyContactCard />
-          <div id="deal-activity" className="scroll-mt-24">
-            <ActivityHistoryWithConnector
-              ref={activityPanelRef}
-              activities={lead.activities as ActivityItem[]}
-              quoteOpenSummary={{
-                openCount:
-                  lead.customerQuoteOpenCount ??
-                  lead.quoteSentInfo?.customerQuoteOpenCount ??
-                  0,
-                lastOpenedAt:
-                  lead.lastCustomerQuoteOpenAt ??
-                  lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
-                  null,
-                quoteId:
-                  lead.quoteId?.trim() ||
-                  lead.quoteSentInfo?.quoteId?.trim() ||
-                  null,
-                quoteLink:
-                  lead.quoteLink?.trim() ||
-                  lead.quoteSentInfo?.quoteLink ||
-                  null,
-              }}
-            />
-          </div>
-        </aside> 
-=======
             {showCallsPanel ? (
               <div className="mt-3">
                 <LeadCallsRecordingsPanel
@@ -289,9 +247,27 @@ export default function NewLeadDetailPage({
                     <ActivityHistoryWithConnector
                       ref={activityPanelRef}
                       activities={lead.activities as ActivityItem[]}
+                      quoteOpenSummary={{
+                        openCount:
+                          lead.customerQuoteOpenCount ??
+                          lead.quoteSentInfo?.customerQuoteOpenCount ??
+                          0,
+                        lastOpenedAt:
+                          lead.lastCustomerQuoteOpenAt ??
+                          lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
+                          null,
+                        quoteId:
+                          lead.quoteId?.trim() ||
+                          lead.quoteSentInfo?.quoteId?.trim() ||
+                          null,
+                        quoteLink:
+                          lead.quoteLink?.trim() ||
+                          lead.quoteSentInfo?.quoteLink ||
+                          null,
+                      }}
                     />
                   </div>
-                    </aside>
+                </aside>
 
                 <section className="space-y-3">
                   {phaseItems.map((phase) => {
@@ -1799,9 +1775,11 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   const canInteract = !disabled;
   const quoteLinkValue = toCustomerQuoteLink(lead.quoteLink?.trim() || "");
   const quoteSentCount =
-  lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
-const customerQuoteOpenCount =
-  lead.customerQuoteOpenCount ?? lead.quoteSentInfo?.customerQuoteOpenCount ?? 0;
+    lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
+  const customerQuoteOpenCount =
+    lead.customerQuoteOpenCount ??
+    lead.quoteSentInfo?.customerQuoteOpenCount ??
+    0;
   const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
   const quoteId =
     lead.quoteId?.trim() ||
