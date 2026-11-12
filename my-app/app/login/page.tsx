@@ -24,6 +24,7 @@ import {
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
+import { persistPresalesAccessFlagsFromUser } from "@/lib/presales-access";
 import {
   isLocalCrmHost,
   redirectToAuthEntry,
@@ -120,6 +121,7 @@ export default function LoginPage() {
       } else {
         localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
       }
+      persistPresalesAccessFlagsFromUser(sessionUser);
       router.replace(landingPathByRole(role));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");

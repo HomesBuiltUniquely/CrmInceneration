@@ -18,6 +18,7 @@ import { normalizeStageKey } from "@/lib/milestone-progress";
 import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
 import type { MilestoneFilterQuery } from "@/lib/presales-milestone";
 import { presalesTopLevelStage, readPresalesMilestoneFromLead } from "@/lib/presales-milestone";
+import { readShowPresalesModule } from "@/lib/presales-access";
 import { isAdminRole } from "@/lib/roleUtils";
 import type { QuickAccessParentItem } from "@/app/Components/Shared/QuickAccessSidebar";
 import {
@@ -429,6 +430,9 @@ export function sidebarSectionsForViewer(
 ): QuickAccessParentItem[] {
   const r = normalizeRole(role);
   if (r === "SUPER_ADMIN" || r === "ADMIN" || r === "SALES_ADMIN") {
+    if ((r === "ADMIN" || r === "SALES_ADMIN") && !readShowPresalesModule()) {
+      return dashboardSidebarSections.filter((section) => section.id !== "presales");
+    }
     return dashboardSidebarSections;
   }
   if (workspace === "presales") return presalesWorkspaceSidebarSections;
