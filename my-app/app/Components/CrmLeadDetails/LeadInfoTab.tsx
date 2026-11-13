@@ -6,6 +6,7 @@ import type { Lead } from "@/lib/data";
 import { BOOKING_TYPE_OPTIONS, BUDGET_OPTIONS, LANGUAGE_OPTIONS, LEAD_SOURCES } from "@/lib/data";
 import { canShowGetQuoteButton } from "@/lib/quote-email-stage";
 import {
+  canEditLeadEmail,
   canEditLeadPhoneAndEmail,
   shouldMaskLeadPhoneForRole,
 } from "@/lib/lead-contact-access";
@@ -68,6 +69,11 @@ type Props = {
   onLeadChange?: (patch: Partial<Lead>) => void;
   /** Super Admin / Admin / Sales Admin, or Sales Manager for team leads — name, email & phone. */
   canEditEmailPhone?: boolean;
+  /**
+   * Email-only write (includes Sales Executive on assigned leads).
+   * Defaults to `canEditEmailPhone` when omitted.
+   */
+  canEditEmail?: boolean;
   /** Save callback for Additional Information section when user clicks Done. */
   onAdditionalInfoSave?: () => void | Promise<void>;
   /** Save callback for Contact Details email & phone when user clicks Done. */
@@ -123,11 +129,18 @@ export default function LeadInfoTab({
   onWhatsappNameSave,
   whatsappNameSaving = false,
   canEditEmailPhone = false,
+  canEditEmail: canEditEmailProp,
   quoteExtras,
 }: Props) {
   const c = onLeadChange;
   const { notifySuccess, notifyError } = useGlobalNotifier();
   const canEditContact = canEditLeadPhoneAndEmail(viewerRole);
+  const canEditEmailField =
+    canEditEmailProp !== undefined
+      ? canEditEmailProp
+      : canEditEmailPhone || canEditLeadEmail(viewerRole);
+  /** Show Update when full contact edit OR email-only (Sales Executive). */
+  const canUpdateContactDetails = canEditEmailPhone || canEditEmailField;
   const maskPhone = shouldMaskLeadPhoneForRole(viewerRole);
   const phoneDisplay = resolveLeadPhoneDisplayForRole(lead.phone ?? "", maskPhone);
   const altPhoneDisplay = resolveLeadPhoneDisplayForRole(lead.altPhone ?? "", maskPhone);
@@ -159,13 +172,14 @@ export default function LeadInfoTab({
   useEffect(() => {
     setLockedIdentityFields({
       // Privileged roles (SA / Admin / Super Admin / SM-on-team): unlock name with ✎ Update.
+      // Sales Executive: email only — name stays locked.
       // Everyone else: WhatsApp/IVR one-time lock or lock when name already set.
       name: canEditEmailPhone
         ? !contactDetailsEditable
         : nameFieldLocked !== undefined
           ? nameFieldLocked
           : Boolean((lead.name ?? "").trim()),
-      email: !canEditEmailPhone || !contactDetailsEditable,
+      email: !canEditEmailField || !contactDetailsEditable,
       phone: !canEditEmailPhone || !contactDetailsEditable,
       pincode: Boolean((lead.pincode ?? "").trim()),
     });
@@ -176,6 +190,7 @@ export default function LeadInfoTab({
     lead.email,
     lead.phone,
     canEditEmailPhone,
+    canEditEmailField,
     contactDetailsEditable,
   ]);
 
@@ -306,7 +321,8 @@ export default function LeadInfoTab({
       return;
     }
     const emailChanged = (lead.email ?? "") !== contactEditBaseline.email;
-    const phoneChanged = (lead.phone ?? "") !== contactEditBaseline.phone;
+    const phoneChanged =
+      canEditEmailPhone && (lead.phone ?? "") !== contactEditBaseline.phone;
     if (!emailChanged && !phoneChanged) {
       setContactDetailsEditable(false);
       return;
@@ -326,12 +342,12 @@ export default function LeadInfoTab({
     }
   };
 
-  const editableContactInputClass = canEditEmailPhone
+  const editableContactInputClass = canUpdateContactDetails
     ? contactDetailsEditable
       ? "border-[var(--crm-accent)] bg-[var(--crm-accent-soft)] ring-1 ring-[var(--crm-accent-ring)]"
       : "border-[var(--crm-accent-ring)] bg-[var(--crm-accent-soft)]/60"
     : "";
-  const lockedContactInputClass = canEditEmailPhone
+  const lockedContactInputClass = canUpdateContactDetails
     ? "cursor-default bg-[var(--crm-surface-subtle)] text-[var(--crm-text-muted)]"
     : "";
 
@@ -343,7 +359,7 @@ export default function LeadInfoTab({
             icon="👤"
             color="blue"
             action={
-              canEditEmailPhone ? (
+              canUpdateContactDetails ? (
                 <div className="flex items-center gap-1.5">
                   {contactDetailsEditable ? (
                     <>
@@ -394,6 +410,14 @@ export default function LeadInfoTab({
                 ? " Sales Managers can edit only their own team’s leads."
                 : ""}
             </p>
+          ) : canEditEmailField ? (
+            <p className="-mt-3 mb-4 text-[11px] text-[var(--crm-text-muted)]">
+              You can update{" "}
+              <span className="font-semibold text-[var(--crm-accent)]">email</span> on
+              your assigned leads. Tap{" "}
+              <strong className="text-[var(--crm-text-secondary)]">✎ Update</strong> to
+              edit. Phone stays locked.
+            </p>
           ) : null}
 
           <div className="mb-4">
@@ -435,7 +459,7 @@ export default function LeadInfoTab({
           <div className="mb-4">
             <FieldLabel required>
               Email Address
-              {canEditEmailPhone ? (
+              {canEditEmailField ? (
                 <span className="ml-1.5 font-normal normal-case text-[var(--crm-accent)]">
                   (editable)
                 </span>
@@ -445,16 +469,29 @@ export default function LeadInfoTab({
               type="email"
               placeholder="Not provided — add email"
               missing={!lead.email}
-              className={editableContactInputClass}
+              className={
+                canEditEmailField
+                  ? canEditEmailPhone
+                    ? editableContactInputClass
+                    : lockedIdentityFields.email
+                      ? lockedContactInputClass || editableContactInputClass
+                      : editableContactInputClass
+                  : ""
+              }
               {...(c
                 ? {
                     value: lead.email,
                     onChange: (e) => c({ email: e.target.value }),
-                    readOnly: !canEditContact,
+                    // Privileged roles: always editable. SE: unlock via ✎ Update.
+                    readOnly: canEditEmailPhone
+                      ? false
+                      : lockedIdentityFields.email,
                   }
                 : {
                     defaultValue: lead.email,
-                    readOnly: !canEditContact,
+                    readOnly: canEditEmailPhone
+                      ? false
+                      : lockedIdentityFields.email,
                   })}
             />
             {!lead.email && (
@@ -476,7 +513,9 @@ export default function LeadInfoTab({
               </FieldLabel>
               <div className="mt-1.5">
                 <Input
-                  className={`min-w-0 ${editableContactInputClass}`.trim()}
+                  className={`min-w-0 ${
+                    canEditEmailPhone ? editableContactInputClass : ""
+                  }`.trim()}
                   {...(c
                     ? {
                         value: canEditContact ? lead.phone : phoneDisplay,

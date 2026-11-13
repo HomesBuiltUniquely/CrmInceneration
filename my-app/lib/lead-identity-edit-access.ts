@@ -12,6 +12,33 @@ const NAME_PUT_KEYS = [
   "leadName",
 ] as const;
 
+export type LeadIdentityWriteAccess = {
+  name: boolean;
+  email: boolean;
+  phone: boolean;
+};
+
+function leadAssignedToViewer(
+  lead: ApiLead,
+  viewerAliases?: string[],
+  managerTeamNames?: string[],
+): boolean {
+  const teamSet = new Set(
+    (managerTeamNames ?? [])
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const viewerSet = new Set(
+    (viewerAliases ?? [])
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (const alias of assigneeAliasNorms(lead)) {
+    if (teamSet.has(alias) || viewerSet.has(alias)) return true;
+  }
+  return false;
+}
+
 /**
  * Super Admin / Admin / Sales Admin: name + contact on any lead.
  * Sales Manager: only leads assigned to self or their under-team executives
@@ -29,23 +56,47 @@ export function canEditLeadIdentityFields(args: {
   }
 
   if (role === "SALES_MANAGER" || role === "MANAGER") {
-    const teamSet = new Set(
-      (args.managerTeamNames ?? [])
-        .map((name) => name.trim().toLowerCase())
-        .filter(Boolean),
+    return leadAssignedToViewer(
+      args.lead,
+      args.viewerAliases,
+      args.managerTeamNames,
     );
-    const viewerSet = new Set(
-      (args.viewerAliases ?? [])
-        .map((name) => name.trim().toLowerCase())
-        .filter(Boolean),
-    );
-    for (const alias of assigneeAliasNorms(args.lead)) {
-      if (teamSet.has(alias) || viewerSet.has(alias)) return true;
-    }
-    return false;
   }
 
   return false;
+}
+
+/**
+ * Email write access: full identity editors, plus Sales Executive on own assigned leads.
+ * Phone/name stay locked for SE.
+ */
+export function canEditLeadEmailField(args: {
+  viewerRole: string;
+  lead: ApiLead;
+  managerTeamNames?: string[];
+  viewerAliases?: string[];
+}): boolean {
+  if (canEditLeadIdentityFields(args)) return true;
+
+  const role = normalizeRole(args.viewerRole);
+  if (role !== "SALES_EXECUTIVE") return false;
+
+  return leadAssignedToViewer(args.lead, args.viewerAliases);
+}
+
+export function resolveLeadIdentityWriteAccess(args: {
+  viewerRole: string;
+  lead: ApiLead;
+  managerTeamNames?: string[];
+  viewerAliases?: string[];
+}): LeadIdentityWriteAccess {
+  if (canEditLeadIdentityFields(args)) {
+    return { name: true, email: true, phone: true };
+  }
+  if (canEditLeadEmailField(args)) {
+    return { name: false, email: true, phone: false };
+  }
+  return { name: false, email: false, phone: false };
 }
 
 /** @deprecated Prefer canEditLeadIdentityFields — same rule (name + email + phone). */
@@ -62,9 +113,16 @@ export function canEditLeadEmailAndPhone(args: {
 export function stripUnauthorizedLeadIdentityFromPutBody(
   body: Record<string, unknown>,
   base: Record<string, unknown>,
+  access?: LeadIdentityWriteAccess,
 ): Record<string, unknown> {
   const next = { ...body };
-  for (const key of [...NAME_PUT_KEYS, ...EMAIL_PUT_KEYS, ...PHONE_PUT_KEYS]) {
+  const allow = access ?? { name: false, email: false, phone: false };
+  const keysToRevert = [
+    ...(allow.name ? [] : NAME_PUT_KEYS),
+    ...(allow.email ? [] : EMAIL_PUT_KEYS),
+    ...(allow.phone ? [] : PHONE_PUT_KEYS),
+  ];
+  for (const key of keysToRevert) {
     if (key in base) next[key] = base[key];
     else delete next[key];
   }
@@ -75,6 +133,7 @@ export function stripUnauthorizedLeadIdentityFromPutBody(
 export function stripUnauthorizedLeadEmailPhoneFromPutBody(
   body: Record<string, unknown>,
   base: Record<string, unknown>,
+  access?: LeadIdentityWriteAccess,
 ): Record<string, unknown> {
-  return stripUnauthorizedLeadIdentityFromPutBody(body, base);
+  return stripUnauthorizedLeadIdentityFromPutBody(body, base, access);
 }
