@@ -294,72 +294,116 @@ function PhaseCard({
   maxCount,
   active = false,
   onClick,
+  accent = "auto",
 }: {
   p: Phase;
   maxCount: number;
   active?: boolean;
   onClick?: () => void;
+  /** Presales funnel: fixed stage colors so empty cards stay readable. */
+  accent?: "auto" | "fresh" | "discovery" | "conversion";
 }) {
-  const bar =
+  const isEmpty = p.count <= 0;
+  const toneBar =
     p.tone === "healthy"
       ? "bg-[var(--crm-success)]"
       : p.tone === "warning"
         ? "bg-[var(--crm-warning-text)]"
         : "bg-[var(--crm-danger)]";
-  const bg =
+  const toneBg =
     p.tone === "healthy"
       ? "bg-[var(--crm-success-bg)]"
       : p.tone === "warning"
         ? "bg-[var(--crm-warning-bg)]"
         : "bg-[var(--crm-danger-bg)]";
-  const shareText =
+  const toneShare =
     p.tone === "healthy"
       ? "text-[var(--crm-success-text)]"
       : p.tone === "warning"
         ? "text-[var(--crm-warning-text)]"
         : "text-[var(--crm-danger-text)]";
+
+  const accentBar =
+    accent === "fresh"
+      ? "bg-[var(--crm-info)]"
+      : accent === "discovery"
+        ? "bg-[var(--crm-warning-text)]"
+        : accent === "conversion"
+          ? "bg-[var(--crm-success)]"
+          : toneBar;
+  const accentBg =
+    accent === "fresh"
+      ? "bg-[var(--crm-info-bg)]"
+      : accent === "discovery"
+        ? "bg-[var(--crm-warning-bg)]"
+        : accent === "conversion"
+          ? "bg-[var(--crm-success-bg)]"
+          : toneBg;
+  const accentShare =
+    accent === "fresh"
+      ? "text-[var(--crm-info-text)]"
+      : accent === "discovery"
+        ? "text-[var(--crm-warning-text)]"
+        : accent === "conversion"
+          ? "text-[var(--crm-success-text)]"
+          : toneShare;
+
+  const bar = isEmpty && accent === "auto" ? "bg-[var(--crm-border-strong)]" : accentBar;
+  const bg =
+    isEmpty && accent === "auto"
+      ? "bg-[var(--crm-surface)]"
+      : isEmpty
+        ? `${accentBg} opacity-[0.92]`
+        : accentBg;
+  const shareText =
+    isEmpty && accent === "auto" ? "text-[var(--crm-text-muted)]" : accentShare;
   const barWidth = maxCount > 0 ? (p.count / maxCount) * 100 : 0;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex h-full min-h-[168px] w-full flex-col rounded-2xl border px-4 py-4 text-left transition-all sm:px-5 ${
+      className={`group relative flex h-full min-h-[148px] w-full flex-col overflow-hidden rounded-2xl border px-4 py-3.5 text-left shadow-[var(--crm-shadow-sm)] transition-all duration-200 sm:min-h-[156px] sm:px-5 ${
         active
-          ? "border-[var(--crm-accent-ring)] ring-2 ring-[var(--crm-accent-ring)]"
-          : "border-[var(--crm-border)]"
-      } ${bg} ${onClick ? "cursor-pointer hover:-translate-y-px" : ""}`}
+          ? "border-[var(--crm-accent)] ring-2 ring-[var(--crm-accent-ring)]"
+          : "border-[var(--crm-border)] hover:border-[var(--crm-border-strong)]"
+      } ${bg} ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:shadow-[var(--crm-shadow-md)]" : ""}`}
       aria-pressed={active}
     >
-      <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
-        {p.phaseLabel}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--crm-text-muted)]">
+          {p.phaseLabel}
+        </div>
+        {active ? (
+          <span className="rounded-full bg-[var(--crm-accent-soft)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--crm-accent-strong)]">
+            Filtered
+          </span>
+        ) : null}
       </div>
       <div className="mt-2 flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 text-[15px] font-bold leading-snug text-[var(--crm-text-primary)] sm:text-[17px]">
+        <div className="min-w-0 flex-1 text-[15px] font-bold leading-snug text-[var(--crm-text-primary)] sm:text-[16px]">
           {p.name}
         </div>
         <div className="shrink-0 text-right">
-          <div className="text-[20px] font-semibold leading-none text-[var(--crm-text-primary)]">
-            {p.count}
+          <div className="text-[26px] font-extrabold tabular-nums leading-none tracking-tight text-[var(--crm-text-primary)]">
+            {p.count.toLocaleString()}
           </div>
           <div className={`mt-1 whitespace-nowrap text-[10px] font-semibold ${shareText}`}>
             {p.sharePct}% of total
           </div>
         </div>
       </div>
-      <div className="mt-3 h-1.5 w-full shrink-0 rounded-full bg-[var(--crm-surface)]/70">
+      <div className="mt-3 h-1.5 w-full shrink-0 overflow-hidden rounded-full bg-[var(--crm-surface)]/80">
         <div
-          className={`h-1.5 rounded-full ${bar}`}
-          style={{ width: `${Math.min(100, barWidth)}%` }}
+          className={`h-1.5 rounded-full transition-[width] duration-300 ${bar}`}
+          style={{ width: `${isEmpty ? 0 : Math.min(100, Math.max(barWidth, 0))}%` }}
         />
       </div>
-      <div className="mt-auto flex items-center gap-2 pt-3 text-[10px] font-semibold text-[var(--crm-text-muted)]">
+      <div className="mt-auto flex items-center gap-2 pt-3 text-[10px] font-semibold leading-snug text-[var(--crm-text-muted)]">
         <Icon kind={p.note.icon} />
-        <span>{p.note.text}</span>
+        <span className="line-clamp-2">{p.note.text}</span>
       </div>
-      <div
-        className={`absolute bottom-0 left-0 h-1.5 w-full rounded-b-2xl ${bar}`}
-      />
+      <div className={`absolute bottom-0 left-0 h-1.5 w-full ${bar}`} />
     </button>
   );
 }
@@ -401,35 +445,63 @@ function PresalesSummaryCard({
   subtitle,
   selected,
   onClick,
+  loading = false,
 }: {
   label: string;
   total: number;
   subtitle: string;
   selected: boolean;
   onClick: () => void;
+  loading?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="w-full text-left transition-transform hover:opacity-[0.97] active:scale-[0.99]"
+      className="w-full text-left transition-all duration-200 hover:opacity-[0.98] active:scale-[0.995]"
       aria-pressed={selected}
     >
       <div
-        className={`relative min-h-[132px] rounded-2xl border border-[var(--crm-warning-text)] bg-[var(--crm-warning-bg)] px-5 py-4 ${
-          selected ? "ring-2 ring-[var(--crm-text-primary)] ring-offset-2 ring-offset-[var(--crm-surface)]" : ""
+        className={`relative overflow-hidden rounded-2xl border px-5 py-4 sm:px-6 sm:py-5 ${
+          selected
+            ? "border-[var(--crm-accent)] bg-gradient-to-r from-[var(--crm-accent-soft)] via-[var(--crm-surface)] to-[var(--crm-surface)] ring-2 ring-[var(--crm-accent-ring)]"
+            : "border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] hover:border-[var(--crm-border-strong)]"
         }`}
       >
-        <div className="text-[10px] font-semibold tracking-wide text-[var(--crm-text-muted)]">
-          SUMMARY
-        </div>
-        <div className="mt-2 flex items-start justify-between">
-          <div className="max-w-[70%] text-[18px] font-bold leading-6 text-[var(--crm-text-primary)]">
-            {label}
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-[var(--crm-accent)]"
+          aria-hidden
+        />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--crm-text-muted)]">
+              Summary
+            </div>
+            <div className="mt-1.5 text-[22px] font-extrabold leading-none tracking-tight text-[var(--crm-text-primary)] sm:text-[26px]">
+              {label}
+            </div>
+            <div className="mt-2 inline-flex items-center rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--crm-text-secondary)]">
+              {subtitle}
+            </div>
           </div>
-          <div className="text-right">
-            <div className="text-[20px] font-semibold text-[var(--crm-text-primary)]">{total}</div>
-            <div className="text-[10px] font-semibold text-[var(--crm-warning-text)]">{subtitle}</div>
+          <div className="flex shrink-0 items-end justify-between gap-3 sm:flex-col sm:items-end sm:justify-center">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[40px] font-extrabold tabular-nums leading-none tracking-tight text-[var(--crm-text-primary)] sm:text-[44px]">
+                {loading && total <= 0 ? "…" : total.toLocaleString()}
+              </span>
+              <span className="pb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--crm-text-muted)]">
+                leads
+              </span>
+            </div>
+            {selected ? (
+              <span className="text-[10px] font-bold uppercase tracking-wide text-[var(--crm-accent-strong)]">
+                Active filter
+              </span>
+            ) : (
+              <span className="text-[10px] font-semibold text-[var(--crm-text-muted)]">
+                Tap to filter table
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1240,28 +1312,41 @@ export default function JourneyPhaseHeatmap({
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]">
         {loading || error ? (
-          <div className="border-b border-[var(--crm-border)] px-4 py-3 text-[11px] font-medium text-[var(--crm-text-muted)] md:px-5">
-            {loading ? "Loading milestone counts from CRM API..." : `Could not load counts: ${error}`}
+          <div className="flex items-center gap-2 border-b border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-4 py-2.5 md:px-5">
+            {loading ? (
+              <>
+                <span
+                  className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--crm-accent)]"
+                  aria-hidden
+                />
+                <span className="text-[11px] font-medium text-[var(--crm-text-muted)]">
+                  Loading milestone counts from CRM API…
+                </span>
+              </>
+            ) : (
+              <span className="text-[11px] font-medium text-[var(--crm-danger-text)]">
+                Could not load counts: {error}
+              </span>
+            )}
           </div>
         ) : null}
         {usePresalesSummaryUi ? (
-          <div className="p-4 md:p-5">
-            <div className="grid max-w-md grid-cols-1 gap-4">
-              <PresalesSummaryCard
-                label="Total"
-                total={presalesMonthMetrics.totalMonth}
-                subtitle={
-                  presalesTotalAllTime ? "assigned · all time" : "assigned · this month"
-                }
-                selected={presalesSummaryTab === "total" || presalesSummaryTab === null}
-                onClick={() => onPresalesSummaryTabChange?.("total")}
-              />
-            </div>
+          <div className="space-y-4 p-4 md:p-5">
+            <PresalesSummaryCard
+              label="Total"
+              total={presalesMonthMetrics.totalMonth}
+              subtitle={
+                presalesTotalAllTime ? "assigned · all time" : "assigned · this month"
+              }
+              selected={presalesSummaryTab === "total" || presalesSummaryTab === null}
+              onClick={() => onPresalesSummaryTabChange?.("total")}
+              loading={loading && presalesMonthMetrics.totalMonth <= 0}
+            />
             <div
-              className={`mt-4 rounded-2xl transition-all ${
+              className={`rounded-2xl transition-all ${
                 presalesPhasesOpen
-                  ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 shadow-[var(--crm-shadow-sm)]"
-                  : "border-0 bg-transparent p-0 shadow-none"
+                  ? "border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] p-3 sm:p-4"
+                  : "border-0 bg-transparent p-0"
               }`}
             >
               <button
@@ -1270,26 +1355,46 @@ export default function JourneyPhaseHeatmap({
                 className="w-full text-left"
                 aria-expanded={presalesPhasesOpen}
               >
-                <div className="relative flex min-h-[48px] items-center justify-between rounded-xl border border-dashed border-[var(--crm-border)] px-4 py-3">
-                  <span className="text-[13px] font-semibold text-[var(--crm-text-primary)]">
-                    Journey phases
-                  </span>
-                  <span className="text-[12px] font-semibold text-[var(--crm-warning-text)]">
+                <div
+                  className={`flex items-center justify-between gap-3 rounded-xl px-3 py-3 sm:px-4 ${
+                    presalesPhasesOpen
+                      ? "bg-[var(--crm-surface)] shadow-[var(--crm-shadow-sm)]"
+                      : "border border-dashed border-[var(--crm-border)] bg-[var(--crm-surface-subtle)]"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-bold text-[var(--crm-text-primary)]">
+                      Journey phases
+                    </div>
+                    <div className="mt-0.5 text-[11px] font-medium text-[var(--crm-text-muted)]">
+                      Fresh → Discovery → Conversion
+                    </div>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--crm-border)] bg-[var(--crm-surface-subtle)] px-3 py-1 text-[11px] font-bold text-[var(--crm-accent-strong)]">
                     {presalesPhasesOpen ? "Hide" : "Open"}
                   </span>
                 </div>
               </button>
               {presalesPhasesOpen ? (
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  {phases.map((p) => (
-                    <PhaseCard
-                      key={`${p.phaseLabel}-${p.name}`}
-                      p={p}
-                      maxCount={maxCount}
-                      active={normName(activeStageFilter) === normName(p.name)}
-                      onClick={() => onPhaseFilterToggle?.(p.name)}
-                    />
-                  ))}
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
+                  {phases.map((p, index) => {
+                    const accent =
+                      index === 0
+                        ? "fresh"
+                        : index === 1
+                          ? "discovery"
+                          : "conversion";
+                    return (
+                      <PhaseCard
+                        key={`${p.phaseLabel}-${p.name}`}
+                        p={p}
+                        maxCount={maxCount}
+                        accent={accent}
+                        active={normName(activeStageFilter) === normName(p.name)}
+                        onClick={() => onPhaseFilterToggle?.(p.name)}
+                      />
+                    );
+                  })}
                 </div>
               ) : null}
             </div>

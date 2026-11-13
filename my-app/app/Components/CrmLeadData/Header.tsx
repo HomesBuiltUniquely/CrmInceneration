@@ -34,6 +34,10 @@ import {
   normalizeLegacyHierarchyUser,
 } from "@/lib/hierarchy-user-display";
 import { isLeadTypeAllowedForRole, isPresalesRole, sanitizeLeadTypeForRole } from "@/lib/crm-role-access";
+import {
+  persistPresalesAccessFlagsFromUser,
+  roleMaySeePresalesModule,
+} from "@/lib/presales-access";
 import { fetchPresalesExecutiveNamesForManager } from "@/lib/fetch-presales-executives-for-manager";
 import { setEffectiveNewCrmDateRange } from "@/lib/new-crm-cutoff";
 import { usesAdminLeadsApi } from "@/lib/admin-leads-api";
@@ -247,7 +251,12 @@ export default function Header() {
     if (!authResolved) return;
     const r = normalizeRole(currentRole);
     if (r === "SUPER_ADMIN") return;
-    if (isPresalesLeadsPage && (r === "SALES_EXECUTIVE" || r === "SALES_MANAGER")) {
+    if (
+      isPresalesLeadsPage &&
+      (r === "SALES_EXECUTIVE" ||
+        r === "SALES_MANAGER" ||
+        ((r === "ADMIN" || r === "SALES_ADMIN") && !roleMaySeePresalesModule(r)))
+    ) {
       router.replace("/Leads");
       return;
     }
@@ -315,6 +324,7 @@ export default function Header() {
           .map((v) => v.trim().toLowerCase())
           .filter(Boolean);
         setCurrentUserAliases(Array.from(new Set(aliases)));
+        persistPresalesAccessFlagsFromUser(user);
       })
       .catch((e: unknown) => {
         if (cancelled) return;

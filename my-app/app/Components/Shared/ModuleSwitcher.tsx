@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CRM_ROLE_STORAGE_KEY } from "@/lib/auth/api";
+import {
+  CRM_PRESALES_ACCESS_CHANGED_EVENT,
+  roleMaySeePresalesModule,
+} from "@/lib/presales-access";
 import { isAdminRole } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
 import { dashboardSidebarSections } from "./sidebar-data";
@@ -39,10 +43,11 @@ function modulesForRole(roleRaw: string): QuickAccessParentItem[] {
   const isDesignRole = isTerritoryDesignManager || isDesignManager || isDesigner;
   const isSuperAdmin = role === "SUPER_ADMIN";
   const isHubAdmin = isAdminRole(role) || role === "SALES_ADMIN";
+  const canSeePresales = roleMaySeePresalesModule(role);
 
   return dashboardSidebarSections.filter((section) => {
     if (section.id === "presales") {
-      return isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive;
+      return canSeePresales && (isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive);
     }
     if (isDesignRole) return section.id === "design";
     if (isPresalesManager || isPresalesExecutive) return section.id === "presales";
@@ -132,11 +137,17 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
   const [open, setOpen] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
   const [role, setRole] = useState("");
+  const [accessTick, setAccessTick] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
     preloadModuleTileIcons();
+    const onAccessChange = () => setAccessTick((n) => n + 1);
+    window.addEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    return () => {
+      window.removeEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -172,7 +183,7 @@ export default function ModuleSwitcher({ forceCompact = false, className }: Modu
     };
   }, [activeModuleId, open]);
 
-  const modules = useMemo(() => modulesForRole(role), [role]);
+  const modules = useMemo(() => modulesForRole(role), [role, accessTick]);
 
   const handleSelect = (section: QuickAccessParentItem) => {
     const id = section.id as CrmModuleId;

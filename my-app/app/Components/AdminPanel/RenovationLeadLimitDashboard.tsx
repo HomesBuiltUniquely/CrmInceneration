@@ -47,7 +47,8 @@ const VIEWPORT_PX = 36 + VIEWPORT_ROWS * 44;
 
 const COLOR_LEGEND = [
   { color: "rgba(234, 179, 8, 0.55)", label: "Inactive" },
-  { color: "rgba(185, 28, 28, 0.55)", label: "Limit 0" },
+  { color: "rgba(148, 163, 184, 0.55)", label: "Not in pool" },
+  { color: "rgba(185, 28, 28, 0.55)", label: "At capacity" },
   { color: "rgba(22, 163, 74, 0.55)", label: "Usage > 80%" },
 ] as const;
 
@@ -57,10 +58,26 @@ interface UserLimit {
   role: string;
   branch: string;
   active: boolean;
+  inRenovationPool: boolean;
+  poolStatus: string;
+  salesRenovationThisMonth: number;
+  presalesRenovationThisMonth: number;
+  /** Total used for limit / % (sales + presales). */
   current: number;
   limit: number;
   remaining: number;
   pct: number;
+}
+
+function asBool(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1" || v === "yes" || v === "in_pool") return true;
+    if (v === "false" || v === "0" || v === "no" || v === "not_in_pool") return false;
+  }
+  return fallback;
 }
 
 function normalizedUserRole(u: Record<string, unknown>): string {
@@ -72,15 +89,36 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
   const userId = Number(u.userId ?? u.id ?? idx);
   const limit =
     pickNumber(u, ["renovationLimit", "limit", "monthlyLimit"]) ?? fallbackLimit;
+  const salesRenovationThisMonth =
+    pickNumber(u, ["salesRenovationThisMonth", "salesRenovationCount"]) ?? 0;
+  const presalesRenovationThisMonth =
+    pickNumber(u, ["presalesRenovationThisMonth", "presalesRenovationCount"]) ?? 0;
   const current =
-    pickNumber(u, ["renovationAssignedThisMonth", "current", "used", "currentCount"]) ?? 0;
-  const remaining =
-    pickNumber(u, ["remaining", "remainingLeads"]) ?? Math.max(0, limit - current);
-  const pctRaw = pickNumber(u, ["renovationUsagePercent", "usagePercent", "percentageUsed", "pct"]);
+    pickNumber(u, [
+      "renovationAssignedThisMonth",
+      "current",
+      "used",
+      "currentCount",
+    ]) ??
+    salesRenovationThisMonth + presalesRenovationThisMonth;
+  const inRenovationPool = asBool(
+    u.inRenovationPool ?? u.poolStatus,
+    limit > 0,
+  );
+  const remaining = inRenovationPool
+    ? pickNumber(u, ["renovationRemaining", "remaining", "remainingLeads"]) ??
+      Math.max(0, limit - current)
+    : 0;
+  const pctRaw = pickNumber(u, [
+    "renovationUsagePercent",
+    "usagePercent",
+    "percentageUsed",
+    "pct",
+  ]);
   const pct =
     pctRaw != null
       ? Math.round(pctRaw * 10) / 10
-      : limit > 0
+      : inRenovationPool && limit > 0
         ? Math.round((current / limit) * 1000) / 10
         : 0;
   return {
@@ -89,6 +127,10 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
     role: normalizedUserRole(u),
     branch: String(u.branch ?? ""),
     active: isUserActive(u as { active?: boolean; isActive?: boolean }),
+    inRenovationPool,
+    poolStatus: String(u.poolStatus ?? (inRenovationPool ? "IN_POOL" : "NOT_IN_POOL")),
+    salesRenovationThisMonth,
+    presalesRenovationThisMonth,
     current,
     limit,
     remaining,
@@ -98,7 +140,8 @@ function mapLimitUser(u: Record<string, unknown>, idx: number, fallbackLimit: nu
 
 function rowBackground(u: UserLimit): string {
   if (!u.active) return "rgba(234, 179, 8, 0.32)";
-  if (u.limit === 0) return "rgba(185, 28, 28, 0.22)";
+  if (!u.inRenovationPool || u.limit === 0) return "rgba(148, 163, 184, 0.22)";
+  if (u.remaining === 0) return "rgba(185, 28, 28, 0.22)";
   if (u.pct > 80) return "rgba(22, 163, 74, 0.38)";
   return C.card;
 }
@@ -383,6 +426,11 @@ export default function RenovationLeadLimitDashboard() {
           <p style={{ margin: "2px 0 0", fontSize: 13, fontWeight: 600, color: C.text }}>
             {defaultLimit} leads / month for new users
           </p>
+          <p style={{ margin: "6px 0 0", fontSize: 11, color: C.muted, lineHeight: 1.45, maxWidth: 520 }}>
+            Limit <strong>0</strong> = not in renovation pool (no auto assigns). To send all
+            renovations to one person: set default/others to 0, then set that user&apos;s limit
+            &gt; 0.
+          </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
@@ -414,7 +462,11 @@ export default function RenovationLeadLimitDashboard() {
                 .setRenovationDefault(n)
                 .then(() => {
                   loadLimits({ force: true });
-                  notifySuccess("Default renovation lead limit updated.");
+                  notifySuccess(
+                    n > 0
+                      ? `Default renovation limit set to ${n} (new users enter the pool).`
+                      : "Default renovation limit set to 0 (new users stay out of the pool).",
+                  );
                 })
                 .catch((e) =>
                   notifyError(e instanceof Error ? e.message : "Failed to update default limit."),
@@ -545,15 +597,17 @@ export default function RenovationLeadLimitDashboard() {
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                minWidth: 640,
+                minWidth: 920,
               }}
             >
               <thead>
                 <tr>
-                  <th style={{ ...th, paddingLeft: 12 }}>Name</th>
+                  <th style={{ ...th, paddingLeft: 12 }}>Pool</th>
+                  <th style={th}>Name</th>
                   <th style={th}>Role</th>
-                  <th style={th}>Branch</th>
-                  <th style={{ ...th, textAlign: "right" }}>Current</th>
+                  <th style={{ ...th, textAlign: "right" }}>Sales Reno</th>
+                  <th style={{ ...th, textAlign: "right" }}>Presales Reno</th>
+                  <th style={{ ...th, textAlign: "right" }}>Total</th>
                   <th style={{ ...th, textAlign: "right" }}>Limit</th>
                   <th style={{ ...th, textAlign: "right" }}>Left</th>
                   <th style={{ ...th, minWidth: 100 }}>Usage</th>
@@ -570,11 +624,13 @@ export default function RenovationLeadLimitDashboard() {
                       title={
                         !u.active
                           ? "Inactive"
-                          : u.limit === 0
-                            ? "Limit is 0"
-                            : u.pct > 80
-                              ? `Usage ${u.pct}%`
-                              : undefined
+                          : !u.inRenovationPool
+                            ? "Not in renovation pool (limit 0)"
+                            : u.remaining === 0
+                              ? "At capacity this month"
+                              : u.pct > 80
+                                ? `Usage ${u.pct}%`
+                                : undefined
                       }
                       style={{
                         background: rowBackground(u),
@@ -582,14 +638,39 @@ export default function RenovationLeadLimitDashboard() {
                         transition: "background 0.2s ease, opacity 0.2s ease",
                       }}
                     >
-                      <td style={{ ...td, paddingLeft: 12, fontWeight: 600, borderBottom: border }}>
+                      <td style={{ ...td, paddingLeft: 12, borderBottom: border }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            borderRadius: 999,
+                            padding: "3px 8px",
+                            fontSize: 10,
+                            fontWeight: 700,
+                            letterSpacing: "0.02em",
+                            whiteSpace: "nowrap",
+                            color: u.inRenovationPool ? "#166534" : "#475569",
+                            background: u.inRenovationPool
+                              ? "rgba(22, 163, 74, 0.14)"
+                              : "rgba(100, 116, 139, 0.14)",
+                            border: `1px solid ${
+                              u.inRenovationPool
+                                ? "rgba(22, 163, 74, 0.28)"
+                                : "rgba(100, 116, 139, 0.28)"
+                            }`,
+                          }}
+                        >
+                          {u.inRenovationPool ? "In pool" : "Not in pool"}
+                        </span>
+                      </td>
+                      <td style={{ ...td, fontWeight: 600, borderBottom: border }}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                           <span
                             style={{
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
-                              maxWidth: 160,
+                              maxWidth: 140,
                             }}
                           >
                             {u.name}
@@ -611,8 +692,27 @@ export default function RenovationLeadLimitDashboard() {
                       <td style={{ ...td, color: C.muted, fontSize: 12, borderBottom: border }}>
                         {u.role.replace(/_/g, " ")}
                       </td>
-                      <td style={{ ...td, color: C.muted, fontSize: 12, borderBottom: border }}>
-                        {u.branch ? u.branch.replace(/_/g, " ") : "—"}
+                      <td
+                        style={{
+                          ...td,
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: C.muted,
+                          borderBottom: border,
+                        }}
+                      >
+                        {u.inRenovationPool ? u.salesRenovationThisMonth : "—"}
+                      </td>
+                      <td
+                        style={{
+                          ...td,
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                          color: C.muted,
+                          borderBottom: border,
+                        }}
+                      >
+                        {u.inRenovationPool ? u.presalesRenovationThisMonth : "—"}
                       </td>
                       <td
                         style={{
@@ -623,7 +723,7 @@ export default function RenovationLeadLimitDashboard() {
                           borderBottom: border,
                         }}
                       >
-                        {u.current}
+                        {u.inRenovationPool ? u.current : "—"}
                       </td>
                       <td
                         style={{
@@ -631,14 +731,14 @@ export default function RenovationLeadLimitDashboard() {
                           textAlign: "right",
                           fontWeight: 600,
                           fontVariantNumeric: "tabular-nums",
-                          color: u.limit === 0 ? C.danger : C.text,
+                          color: !u.inRenovationPool || u.limit === 0 ? C.danger : C.text,
                           borderBottom: border,
                         }}
                       >
                         <button
                           type="button"
                           onClick={() => openEdit(u)}
-                          title="Edit limit"
+                          title="Edit limit (0 removes from pool)"
                           style={{
                             border: "none",
                             background: "transparent",
@@ -660,46 +760,51 @@ export default function RenovationLeadLimitDashboard() {
                           ...td,
                           textAlign: "right",
                           fontVariantNumeric: "tabular-nums",
-                          color: u.remaining === 0 ? C.danger : C.muted,
+                          color:
+                            u.inRenovationPool && u.remaining === 0 ? C.danger : C.muted,
                           borderBottom: border,
                         }}
                       >
-                        {u.remaining}
+                        {u.inRenovationPool ? u.remaining : "—"}
                       </td>
                       <td style={{ ...td, borderBottom: border }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 88 }}>
-                          <div
-                            style={{
-                              flex: 1,
-                              height: 3,
-                              background: C.border,
-                              borderRadius: 2,
-                              overflow: "hidden",
-                            }}
-                          >
+                        {u.inRenovationPool ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 88 }}>
                             <div
                               style={{
-                                width: `${Math.min(100, Math.max(0, u.pct))}%`,
-                                height: "100%",
-                                background: C.text,
-                                opacity: 0.45,
+                                flex: 1,
+                                height: 3,
+                                background: C.border,
                                 borderRadius: 2,
-                                transition: "width 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+                                overflow: "hidden",
                               }}
-                            />
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, u.pct))}%`,
+                                  height: "100%",
+                                  background: C.text,
+                                  opacity: 0.45,
+                                  borderRadius: 2,
+                                  transition: "width 0.35s cubic-bezier(0.32, 0.72, 0, 1)",
+                                }}
+                              />
+                            </div>
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: C.muted,
+                                fontVariantNumeric: "tabular-nums",
+                                minWidth: 36,
+                                textAlign: "right",
+                              }}
+                            >
+                              {u.pct}%
+                            </span>
                           </div>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              color: C.muted,
-                              fontVariantNumeric: "tabular-nums",
-                              minWidth: 36,
-                              textAlign: "right",
-                            }}
-                          >
-                            {u.pct}%
-                          </span>
-                        </div>
+                        ) : (
+                          <span style={{ fontSize: 11, color: C.muted }}>—</span>
+                        )}
                       </td>
                       <td style={{ ...td, paddingRight: 14, borderBottom: border }}>
                         <button
@@ -797,11 +902,16 @@ export default function RenovationLeadLimitDashboard() {
               </button>
             </div>
             <div style={{ padding: 16 }}>
-              <p style={{ margin: "0 0 12px", fontSize: 13, color: C.muted }}>
+              <p style={{ margin: "0 0 4px", fontSize: 13, fontWeight: 600, color: C.text }}>
                 {currentEditingUser.name}
+              </p>
+              <p style={{ margin: "0 0 12px", fontSize: 12, color: C.muted, lineHeight: 1.45 }}>
+                Set limit &gt; 0 to add to the renovation pool. Set <strong>0</strong> to remove
+                from the pool (no auto Renovation assigns).
               </p>
               <input
                 type="number"
+                min={0}
                 value={currentEditingLimit}
                 onChange={(e) => setCurrentEditingLimit(e.target.value)}
                 autoFocus
@@ -849,13 +959,20 @@ export default function RenovationLeadLimitDashboard() {
                   type="button"
                   onClick={() => {
                     const lim = Number(currentEditingLimit);
-                    if (Number.isNaN(lim)) return;
+                    if (Number.isNaN(lim) || lim < 0) return;
                     void leadLimitsApi
                       .setUserRenovationLimit(currentEditingUser.userId, lim)
-                      .then(() => {
+                      .then((res) => {
                         setShowModal(false);
                         loadLimits({ force: true });
-                        notifySuccess("Renovation limit updated.");
+                        const data = (res ?? {}) as Record<string, unknown>;
+                        const msg =
+                          typeof data.message === "string" && data.message.trim()
+                            ? data.message.trim()
+                            : lim > 0
+                              ? `Added to renovation pool (limit ${lim}).`
+                              : "Removed from renovation pool.";
+                        notifySuccess(msg);
                       })
                       .catch((e) =>
                         notifyError(
