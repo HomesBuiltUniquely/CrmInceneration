@@ -126,6 +126,7 @@ import {
 } from "@/lib/lead-quote-options";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import type { ActivityItem, Lead } from "@/lib/data";
+import CustomerQuoteSendsPanel from "./CustomerQuoteSendsPanel";
 
 type DiscoveryPhaseDraft = Pick<
   Lead,
@@ -1832,47 +1833,58 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         </div>
 
         <div className="p-5">
-          <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
-            <div>
-              <PhaseFieldLabel className="mb-2">
-                Quote Link (customer)
-              </PhaseFieldLabel>
-              {quoteLinkValue ? (
-                <Input
-                  value={quoteLinkValue}
-                  readOnly
-                  className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
-                />
-              ) : (
-                <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
-                  <span className="text-[12px] italic text-[#94a3b8]">
-                    Quote is not generated yet
-                  </span>
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              disabled={
-                !canInteract ||
-                quoteSending ||
-                quoteLinkPersisting ||
-                !quoteLinkValue
-              }
-              onClick={() => void onSendQuote()}
-              className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
-            >
-              {quoteSending ? "Sending…" : "Send Quote"}
-            </button>
-          </div>
-
-          {designDiscountUrl ? (
-            <DesignStudioPass
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_1fr] lg:items-start">
+            <CustomerQuoteSendsPanel
+              quoteSentInfo={lead.quoteSentInfo}
+              quoteSentCount={quoteSentCount}
+              quoteLink={quoteLinkValue}
               quoteId={quoteId}
-              href={designDiscountUrl}
-              disabled={!canInteract}
+              className="min-h-[120px] lg:sticky lg:top-4"
             />
-          ) : null}
+            <div className="grid gap-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
+                <div>
+                  <PhaseFieldLabel className="mb-2">
+                    Quote Link (customer)
+                  </PhaseFieldLabel>
+                  {quoteLinkValue ? (
+                    <Input
+                      value={quoteLinkValue}
+                      readOnly
+                      className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
+                    />
+                  ) : (
+                    <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
+                      <span className="text-[12px] italic text-[#94a3b8]">
+                        Quote is not generated yet
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={
+                    !canInteract ||
+                    quoteSending ||
+                    quoteLinkPersisting ||
+                    !quoteLinkValue
+                  }
+                  onClick={() => void onSendQuote()}
+                  className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
+                >
+                  {quoteSending ? "Sending…" : "Send Quote"}
+                </button>
+              </div>
+
+              {designDiscountUrl ? (
+                <DesignStudioPass
+                  quoteId={quoteId}
+                  href={designDiscountUrl}
+                  disabled={!canInteract}
+                />
+              ) : null}
+            </div>
+          </div>
         </div>
 
         <div className="border-t border-[#edf1f6] bg-[#fafcff] px-5 py-4">

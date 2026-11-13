@@ -208,6 +208,12 @@ import {
   toCustomerQuoteLink,
 } from "@/lib/crm-quote-links";
 import {
+  fetchQuoteOptionsForLeadDetail,
+  leadToQuoteDetailPayload,
+  pickLatestQuoteOption,
+  resolveQuoteAmount,
+} from "@/lib/lead-quote-options";
+import {
   LeadDetailV2Provider,
   type LeadDetailV2ContextValue,
 } from "@/app/Components/CrmLeadDetailsV2/LeadDetailV2Context";
@@ -2545,6 +2551,30 @@ export default function LeadDetailsApiClient({
         extractQuoteIdFromUrl(link) ||
         "";
 
+      let quoteVersionNumber: number | undefined;
+      let quotedAmount: number | undefined;
+      try {
+        const detailPayload = leadToQuoteDetailPayload(
+          { ...lead, quoteLink: link },
+          leadId,
+        );
+        const { options } = await fetchQuoteOptionsForLeadDetail(detailPayload, leadId);
+        const match =
+          options.find(
+            (option) =>
+              (quoteId && (option.quoteId === quoteId || option.id === quoteId)) ||
+              (link &&
+                option.customerQuoteUrl?.trim() === link.trim()),
+          ) ?? pickLatestQuoteOption(options);
+        if (match?.version != null && match.version > 0) {
+          quoteVersionNumber = match.version;
+        }
+        const amount = resolveQuoteAmount(match?.amount);
+        if (amount != null) quotedAmount = amount;
+      } catch {
+        // Hub still records send without version metadata.
+      }
+
       // POST /v1/quote/send — Hub updates quote_sent_info only when leadId + leadType are set.
       const formData = new FormData();
       formData.append("leadId", String(leadId));
@@ -2554,6 +2584,12 @@ export default function LeadDetailsApiClient({
       formData.append("subject", quoteSubject.trim() || "Your Hub Interior Quote");
       formData.append("body", quoteBody.trim() || "Please find your quote in the link below.");
       if (quoteId) formData.append("quoteId", quoteId);
+      if (quoteVersionNumber != null) {
+        formData.append("quoteVersionNumber", String(quoteVersionNumber));
+      }
+      if (quotedAmount != null) {
+        formData.append("quotedAmount", String(quotedAmount));
+      }
 
       await postQuoteSend(formData);
       notifySuccess("Quote sent.");
