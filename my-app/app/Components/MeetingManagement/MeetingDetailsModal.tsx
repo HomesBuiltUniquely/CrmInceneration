@@ -3,13 +3,15 @@
 import { useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
-import { formatMeetingValue, type MeetingRecord } from "@/lib/meeting-management-data";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
+import { formatMeetingValue, MEETING_TIME_ZONE, type MeetingRecord } from "@/lib/meeting-management-data";
 import {
   isMeetingQuotePendingProgress,
   isMeetingSuccessfulProgress,
   isQuoteSentSuccessfulProgress,
   meetingProgressTone,
 } from "@/lib/meeting-progress";
+import { canViewDesignerMeetingFeedback } from "@/lib/roleUtils";
 import {
   ActivityHistorySheet,
   ActivityHistoryTrigger,
@@ -119,6 +121,7 @@ function Header({ row, onClose }: { row: MeetingRecord; onClose: () => void }) {
 function DetailsBody({ row }: { row: MeetingRecord }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filter, setFilter] = useState<HistoryFilter>("meeting");
+  const [canViewFeedback, setCanViewFeedback] = useState(false);
   const history = useMeetingActivityHistory(row.leadId, row.leadTypeCode);
 
   useEffect(() => {
@@ -126,19 +129,28 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
     setFilter("meeting");
   }, [row.id]);
 
+  useEffect(() => {
+    const role = normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
+    setCanViewFeedback(canViewDesignerMeetingFeedback(role));
+  }, []);
+
   return (
     <>
       <div className="mt-4 flex flex-col items-stretch gap-4 lg:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <SummaryCards row={row} />
-          <FieldSection title="Client">
-            <Field label="Phone" value={phoneValue(row.phone)} />
-            <Field label="Email" value={emailValue(row.customerEmail)} />
-            <Field label="Progress" value={<ProgressPill row={row} />} />
-            <Field label="Lead budget" value={formatMeetingValue(row.budget)} />
-            <Field label="Source" value={textOrDash(row.appointmentSource)} />
-            <Field label="Lead quote" value={formatMeetingValue(row.quoteValue)} />
-          </FieldSection>
+          <section>
+            <h2 className="text-[11px] font-bold tracking-[0.08em] text-[#5F6675]">CLIENT</h2>
+            <div className="mt-2 grid grid-cols-1 gap-x-3 gap-y-3 sm:grid-cols-3">
+              <Field label="Phone" value={phoneValue(row.phone)} />
+              <Field label="Email" value={emailValue(row.customerEmail)} />
+              <Field label="Progress" value={<ProgressPill row={row} />} />
+              <Field label="Lead budget" value={formatMeetingValue(row.budget)} />
+              <Field label="Source" value={textOrDash(row.appointmentSource)} />
+              <Field label="Lead quote" value={formatMeetingValue(row.quoteValue)} />
+            </div>
+            {canViewFeedback ? <DesignerFeedbackView row={row} /> : null}
+          </section>
           <FieldSection title="Team and meeting">
             <Field label="Meeting level" value={textOrDash(row.meetingLevel)} />
             <Field label="Quote link" value={quoteLinkValue(row)} />
@@ -169,6 +181,38 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
       />
     </>
   );
+}
+
+/** View-only. Hidden when board has no feedback text. */
+function DesignerFeedbackView({ row }: { row: MeetingRecord }) {
+  const text = row.feedbackDesigner?.trim() ?? "";
+  if (!text) return null;
+  const meta = [row.feedbackDesignerBy, formatFeedbackWhen(row.feedbackDesignerAt)]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="mt-3 rounded-[14px] border border-[#E0E7FF] bg-gradient-to-br from-[#F8FAFF] to-white px-3.5 py-3">
+      <p className="text-[12px] font-bold tracking-[0.04em] text-[#4338CA]">DESIGNER FEEDBACK</p>
+      <p className="mt-2 text-[14px] font-bold leading-snug text-[#14171F] whitespace-pre-wrap break-words">{text}</p>
+      {meta ? <p className="mt-1.5 text-[12px] font-medium text-[#5F6675]">{meta}</p> : null}
+    </div>
+  );
+}
+
+function formatFeedbackWhen(raw?: string): string {
+  const text = raw?.trim() ?? "";
+  if (!text) return "";
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return text;
+  return new Date(parsed).toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: MEETING_TIME_ZONE,
+  });
 }
 
 function SummaryCards({ row }: { row: MeetingRecord }) {

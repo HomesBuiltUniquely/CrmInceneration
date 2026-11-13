@@ -42,6 +42,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
         icon: "chart",
         href: "/Insights",
       },
+      {
+        id: "crm-recording-call-logs",
+        label: "Recording & Call Logs",
+        description: "Call activity summary & HUB recordings",
+        icon: "call-logs",
+        href: "/recording-call-logs",
+      },
     ],
   },
   {

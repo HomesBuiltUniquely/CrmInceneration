@@ -1,9 +1,58 @@
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { normalizeToArray } from "@/lib/api-normalize";
 import { getAuthApiBaseUrl, normalizeRole } from "@/lib/auth/api";
+import { PRESALES_ACCESS_DISABLED_CODE } from "@/lib/presales-access";
 import { isPresalesExecutiveRole, isUserActive } from "@/lib/user-active";
 
 type AnyJson = Record<string, unknown>;
+
+export class AdminPanelApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly allowedParentRoles?: string[];
+  readonly selectedParentRole?: string;
+
+  constructor(
+    message: string,
+    opts: {
+      status: number;
+      code?: string;
+      allowedParentRoles?: string[];
+      selectedParentRole?: string;
+    },
+  ) {
+    super(message);
+    this.name = "AdminPanelApiError";
+    this.status = opts.status;
+    this.code = opts.code;
+    this.allowedParentRoles = opts.allowedParentRoles;
+    this.selectedParentRole = opts.selectedParentRole;
+  }
+}
+
+function throwApiError(data: AnyJson, status: number): never {
+  const message =
+    data.message ?? data.error ?? data.userMessage;
+  const msg = typeof message === "string" && message.trim()
+    ? message.trim()
+    : `HTTP ${status}`;
+  const code = typeof data.code === "string" ? data.code : undefined;
+  const allowedParentRoles = Array.isArray(data.allowedParentRoles)
+    ? data.allowedParentRoles.map(String)
+    : undefined;
+  const selectedParentRole =
+    typeof data.selectedParentRole === "string"
+      ? data.selectedParentRole
+      : undefined;
+  throw new AdminPanelApiError(msg, {
+    status,
+    code: code ?? (status === 403 && /presales/i.test(msg)
+      ? PRESALES_ACCESS_DISABLED_CODE
+      : undefined),
+    allowedParentRoles,
+    selectedParentRole,
+  });
+}
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api/admin/${path}`, {
@@ -17,12 +66,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & AnyJson;
   if (!res.ok) {
-    const message =
-      (data as AnyJson).message ??
-      (data as AnyJson).error ??
-      (data as AnyJson).userMessage;
-    const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
-    throw new Error(msg);
+    throwApiError(data as AnyJson, res.status);
   }
   return data;
 }
@@ -38,9 +82,7 @@ async function callAuth<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = (await res.json().catch(() => ({}))) as T & AnyJson;
   if (!res.ok || data.success === false) {
-    const message = data.message ?? data.error ?? data.userMessage;
-    const msg = typeof message === "string" ? message : `HTTP ${res.status}`;
-    throw new Error(msg);
+    throwApiError(data as AnyJson, res.status || 400);
   }
   return data;
 }
@@ -190,7 +232,10 @@ export const adminPanelApi = {
   createSalesExecutive: (payload: AnyJson) =>
     call<AnyJson>("create-sales-executive", { method: "POST", body: JSON.stringify(payload) }),
   createPreSales: (payload: AnyJson) =>
-    call<AnyJson>("create-pre-sales", { method: "POST", body: JSON.stringify(payload) }),
+    call<AnyJson>("create-pre-sales", {
+      method: "POST",
+      body: JSON.stringify(withPreferredParentId(payload)),
+    }),
   createAdmin: (payload: AnyJson) =>
     call<AnyJson>("create-admin", { method: "POST", body: JSON.stringify(payload) }),
   /** SUPER_ADMIN / ADMIN: create SALES_ADMIN via auth register-with-role. */

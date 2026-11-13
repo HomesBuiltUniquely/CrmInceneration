@@ -525,6 +525,70 @@ export async function updateAppointment(
   return parseAppointmentWriteResponse(res, text, body.designerName);
 }
 
+export const DESIGNER_FEEDBACK_MAX_CHARS = 4000;
+
+export type DesignerFeedbackSaveResult = {
+  appointmentId: number;
+  feedbackDesigner: string;
+  feedbackDesignerAt: string;
+  feedbackDesignerBy: string;
+  progressUnchanged?: boolean;
+};
+
+/** Pre-10% CRM note for Design. Does not change meeting progress/status. */
+export async function saveAppointmentDesignerFeedback(
+  appointmentId: number | string,
+  feedbackDesigner: string,
+  feedbackBy?: string,
+): Promise<DesignerFeedbackSaveResult> {
+  const text = feedbackDesigner.trim();
+  if (!text) throw new Error("Feedback is required.");
+  if (text.length > DESIGNER_FEEDBACK_MAX_CHARS) {
+    throw new Error(`Feedback must be ${DESIGNER_FEEDBACK_MAX_CHARS} characters or less.`);
+  }
+  const payload: Record<string, string> = { feedbackDesigner: text };
+  if (feedbackBy?.trim()) payload.feedbackBy = feedbackBy.trim();
+
+  const res = await fetch(
+    `/api/crm/appointment/${encodeURIComponent(String(appointmentId))}/feedback-designer`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: authJson(),
+      body: JSON.stringify(payload),
+      cache: "no-store",
+    },
+  );
+  const raw = await res.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    json = {};
+  }
+  if (!res.ok) {
+    const message =
+      (typeof json.error === "string" && json.error.trim()) ||
+      (typeof json.message === "string" && json.message.trim()) ||
+      (typeof json.userMessage === "string" && json.userMessage.trim()) ||
+      raw.trim() ||
+      `Could not save designer feedback (${res.status}).`;
+    throw new Error(message);
+  }
+  return {
+    appointmentId: Number(json.appointmentId) || Number(appointmentId) || 0,
+    feedbackDesigner:
+      (typeof json.feedbackDesigner === "string" && json.feedbackDesigner.trim()) || text,
+    feedbackDesignerAt:
+      (typeof json.feedbackDesignerAt === "string" && json.feedbackDesignerAt.trim()) || "",
+    feedbackDesignerBy:
+      (typeof json.feedbackDesignerBy === "string" && json.feedbackDesignerBy.trim()) ||
+      feedbackBy?.trim() ||
+      "",
+    progressUnchanged: json.progressUnchanged !== false,
+  };
+}
+
 export type AppointmentRow = {
   id?: number;
   leadId?: number;

@@ -239,6 +239,11 @@ export type FloorPlanFileMeta = {
   filename?: string | null;
   viewUrl?: string | null;
   openUrl?: string | null;
+  /** Permanent public link for this file (Design Module sync). */
+  publicUrl?: string | null;
+  public_url?: string | null;
+  floorPlanPublicLink?: string | null;
+  publicLink?: string | null;
 };
 
 export type FloorPlanMetaResponse = {
@@ -263,6 +268,8 @@ export type FloorPlanFileRef = {
   filename: string;
   viewPath: string;
   openPath: string;
+  /** Permanent public link for Design Module / external intake (`public_url`). */
+  publicUrl?: string;
 };
 
 export type LeadFloorPlanState = {

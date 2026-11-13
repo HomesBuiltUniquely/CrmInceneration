@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import {
   fetchBookingDoneRecords,
@@ -8,6 +9,8 @@ import {
   type BookingTokenRecognitionInput,
   type BookingTokenRecord,
 } from "@/lib/booking-done-api";
+import { isPresalesRole } from "@/lib/roleUtils";
+import { useOptionalLeadDetailV2 } from "./LeadDetailV2Context";
 
 type Props = {
   leadType: CrmLeadType | string;
@@ -117,12 +120,23 @@ function Field({
 const inputClass =
   "w-full rounded-lg border border-[#d6dce6] bg-white px-3 py-2 text-[13px] text-[#0f172a] outline-none transition focus:border-[#86efac] focus:ring-2 focus:ring-[#bbf7d0] disabled:opacity-60";
 
+function readViewerRoleKey(contextRole?: string): string {
+  const fromContext = normalizeRole(contextRole ?? "");
+  if (fromContext) return fromContext;
+  if (typeof window === "undefined") return "";
+  return normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
+}
+
 export default function TokenBookingRecognitionSection({
   leadType,
   leadId,
   compact = false,
   onSaved,
 }: Props) {
+  const leadDetail = useOptionalLeadDetailV2();
+  const viewerRoleKey = readViewerRoleKey(leadDetail?.viewerRoleKey);
+  const hideForPresales = isPresalesRole(viewerRoleKey);
+
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -154,8 +168,9 @@ export default function TokenBookingRecognitionSection({
   }, [leadId, leadType]);
 
   useEffect(() => {
+    if (hideForPresales) return;
     void load();
-  }, [load]);
+  }, [hideForPresales, load]);
 
   const patch = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -195,6 +210,8 @@ export default function TokenBookingRecognitionSection({
       setSaving(false);
     }
   };
+
+  if (hideForPresales) return null;
 
   return (
     <section

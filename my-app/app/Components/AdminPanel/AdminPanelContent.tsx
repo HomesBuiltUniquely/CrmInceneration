@@ -9,7 +9,7 @@ import {
   ChangeEvent,
   MouseEvent,
 } from "react";
-import { adminPanelApi } from "@/lib/admin-panel-api";
+import { AdminPanelApiError, adminPanelApi } from "@/lib/admin-panel-api";
 import { leadLimitsApi } from "@/lib/lead-limits-api";
 import { mergeUserRowsById, pickNumber } from "@/lib/api-normalize";
 import { cn } from "@/lib/cn";
@@ -19,7 +19,21 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   getMe,
   normalizeRole,
+  unwrapAuthUserPayload,
 } from "@/lib/auth/api";
+import {
+  CRM_PRESALES_ACCESS_CHANGED_EVENT,
+  isPresalesAccessDisabledError,
+  persistPresalesAccessFlags,
+  persistPresalesAccessFlagsFromUser,
+  presalesAccessDisabledMessage,
+  readCanConfigurePresalesTeam,
+  roleMayConfigurePresalesTeam,
+} from "@/lib/presales-access";
+import {
+  flagsAfterSuperAdminToggle,
+  presalesAccessApi,
+} from "@/lib/presales-access-api";
 import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import SalesTargetSection from "./SalesTargetSection";
 import RenovationLeadLimitDashboard from "./RenovationLeadLimitDashboard";
@@ -490,6 +504,137 @@ function normalizedUserRole(u: Record<string, unknown>): string {
   return normalizeRole(String(candidate));
 }
 
+function PresalesAccessSection() {
+  const { notifySuccess, notifyError } = useGlobalNotifier();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const [meta, setMeta] = useState<{ updatedAt?: string | null; updatedBy?: string | null }>(
+    {},
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void presalesAccessApi
+      .get()
+      .then((res) => {
+        if (cancelled) return;
+        setEnabled(res.enabled === true);
+        setMeta({ updatedAt: res.updatedAt, updatedBy: res.updatedBy });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          notifyError(
+            e instanceof Error ? e.message : "Unable to load Presales access setting.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [notifyError]);
+
+  const handleToggle = async (next: boolean) => {
+    setSaving(true);
+    try {
+      const res = await presalesAccessApi.setEnabled(next);
+      setEnabled(res.enabled === true);
+      setMeta({ updatedAt: res.updatedAt, updatedBy: res.updatedBy });
+      // Super Admin keeps access; persist toggle value for UI consistency.
+      persistPresalesAccessFlags(flagsAfterSuperAdminToggle(res.enabled === true));
+      const token = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY);
+      if (token) {
+        try {
+          const me = await getMe(token);
+          persistPresalesAccessFlagsFromUser(
+            unwrapAuthUserPayload(me as Record<string, unknown>),
+          );
+        } catch {
+          /* keep local Super Admin flags */
+        }
+      }
+      notifySuccess(
+        res.enabled
+          ? "Admin & Sales Admin can access Presales leads & team."
+          : "Presales access for Admin & Sales Admin is turned off.",
+      );
+    } catch (e) {
+      notifyError(
+        e instanceof Error ? e.message : "Unable to update Presales access setting.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle icon="🔐">Presales Access</SectionTitle>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
+        Allow Admin &amp; Sales Admin to access Presales leads &amp; team. Super Admin always
+        keeps access. Global search is never filtered by this toggle.
+      </p>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "14px 16px",
+          borderRadius: 12,
+          border: `1px solid ${C.border}`,
+          background: C.surface,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+            Admin &amp; Sales Admin Presales access
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12, color: C.muted }}>
+            {loading
+              ? "Loading…"
+              : enabled
+                ? "ON — Admin / Sales Admin can see Presales leads and configure the team"
+                : "OFF — Admin / Sales Admin lose Presales lead visibility and team config"}
+          </div>
+          {!loading && (meta.updatedAt || meta.updatedBy) ? (
+            <div style={{ marginTop: 6, fontSize: 11, color: C.muted }}>
+              {meta.updatedBy ? `Updated by ${meta.updatedBy}` : "Updated"}
+              {meta.updatedAt ? ` · ${meta.updatedAt}` : ""}
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          disabled={loading || saving}
+          onClick={() => void handleToggle(!enabled)}
+          aria-pressed={enabled}
+          style={{
+            minWidth: 72,
+            height: 36,
+            borderRadius: 999,
+            border: "none",
+            cursor: loading || saving ? "wait" : "pointer",
+            fontWeight: 800,
+            fontSize: 12,
+            letterSpacing: "0.04em",
+            color: "#fff",
+            background: enabled ? "#16a34a" : "#94a3b8",
+            opacity: loading || saving ? 0.7 : 1,
+          }}
+        >
+          {saving ? "…" : enabled ? "ON" : "OFF"}
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 function AdminUserSection() {
   const { notifySuccess, notifyError } = useGlobalNotifier();
   const [tab, setTab] = useState<"admins" | "createAdmin" | "createUser">(
@@ -497,10 +642,19 @@ function AdminUserSection() {
   );
   const [viewerRole, setViewerRole] = useState("");
   const [viewerUserId, setViewerUserId] = useState(0);
+  const [canConfigurePresalesTeam, setCanConfigurePresalesTeam] = useState(true);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
+    setCanConfigurePresalesTeam(roleMayConfigurePresalesTeam(role));
+    const onAccessChange = () => {
+      setCanConfigurePresalesTeam(readCanConfigurePresalesTeam());
+    };
+    window.addEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    return () => {
+      window.removeEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    };
   }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -510,13 +664,11 @@ function AdminUserSection() {
     void getMe(token)
       .then((res) => {
         if (cancelled) return;
-        const raw = res as Record<string, unknown>;
-        const u =
-          raw.user && typeof raw.user === "object"
-            ? (raw.user as Record<string, unknown>)
-            : raw;
+        const u = unwrapAuthUserPayload(res as Record<string, unknown>);
         const id = Number(u.id ?? 0);
         if (Number.isFinite(id) && id > 0) setViewerUserId(id);
+        const flags = persistPresalesAccessFlagsFromUser(u);
+        setCanConfigurePresalesTeam(flags.canConfigurePresalesTeam);
       })
       .catch(() => {});
     return () => {
@@ -586,11 +738,18 @@ function AdminUserSection() {
     const allUsersReq = canManageAdmins
       ? adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>)
       : Promise.resolve([] as Array<Record<string, unknown>>);
+    const salesAdminsReq = adminPanelApi
+      .listUsersByRole("SALES_ADMIN")
+      .catch(() => [] as Array<Record<string, unknown>>);
+    const preSalesReq = canConfigurePresalesTeam
+      ? adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>)
+      : Promise.resolve([] as Array<Record<string, unknown>>);
     void Promise.all([
       adminPanelApi.listSalesManagersMerged().catch(() => [] as Array<Record<string, unknown>>),
-      adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
+      preSalesReq,
       allUsersReq,
-    ]).then(([sm, pm, all]) => {
+      salesAdminsReq,
+    ]).then(([sm, pm, all, salesAdminRows]) => {
       if (cancelled) return;
       setSalesManagers(sm);
       setPresalesManagers(
@@ -601,7 +760,18 @@ function AdminUserSection() {
         ),
       );
       const activeUsers = all.filter((u) => String(u.active ?? true) !== "false");
-      setSalesAdmins(activeUsers.filter((u) => normalizedUserRole(u) === "SALES_ADMIN"));
+      const fromAll = activeUsers.filter((u) => normalizedUserRole(u) === "SALES_ADMIN");
+      const fromRole = salesAdminRows.filter(
+        (u) =>
+          String(u.active ?? true) !== "false" &&
+          normalizedUserRole(u) === "SALES_ADMIN",
+      );
+      const salesAdminMap = new Map<string, Record<string, unknown>>();
+      for (const row of [...fromRole, ...fromAll]) {
+        const id = String(row.id ?? row.userId ?? "");
+        if (id) salesAdminMap.set(id, row);
+      }
+      setSalesAdmins([...salesAdminMap.values()]);
       setTerritoryDesignManagers(
         activeUsers.filter((u) => normalizedUserRole(u) === "TERRITORY_DESIGN_MANAGER"),
       );
@@ -610,7 +780,7 @@ function AdminUserSection() {
     return () => {
       cancelled = true;
     };
-  }, [canManageAdmins, viewerRole, tab]);
+  }, [canConfigurePresalesTeam, canManageAdmins, viewerRole, tab]);
 
   const ROLES = [
     {
@@ -626,7 +796,13 @@ function AdminUserSection() {
       options: ["TERRITORY_DESIGN_MANAGER", "DESIGN_MANAGER", "DESIGNER"],
     },
   ];
-  const allowedRoleGroups = isSalesAdmin ? ROLES.slice(0, 2) : ROLES;
+  const allowedRoleGroups = (isSalesAdmin ? ROLES.slice(0, 2) : ROLES)
+    .map((group) =>
+      group.label === "Presales Hierarchy" && !canConfigurePresalesTeam
+        ? { ...group, options: [] as string[] }
+        : group,
+    )
+    .filter((group) => group.options.length > 0);
   const parentConfig: Record<string, { label: string; options: Array<Record<string, unknown>> }> = {
     SALES_MANAGER: { label: "Sales Admin *", options: salesAdmins },
     SALES_EXECUTIVE: { label: "Sales Manager *", options: salesManagers },
@@ -651,6 +827,17 @@ function AdminUserSection() {
         : { ...prev, parentId: String(viewerUserId) },
     );
   }, [parentIsSelf, viewerUserId]);
+
+  useEffect(() => {
+    if (canConfigurePresalesTeam) return;
+    if (
+      userForm.role !== "PRESALES_MANAGER" &&
+      userForm.role !== "PRESALES_EXECUTIVE"
+    ) {
+      return;
+    }
+    setUserForm((prev) => ({ ...prev, role: "", parentId: "" }));
+  }, [canConfigurePresalesTeam, userForm.role]);
 
   return (
     <Card>
@@ -979,6 +1166,23 @@ function AdminUserSection() {
                   notifySuccess("User created successfully.");
                 })
                 .catch((e) => {
+                  if (
+                    isPresalesAccessDisabledError(e) ||
+                    (e instanceof AdminPanelApiError &&
+                      e.code === "PRESALES_ACCESS_DISABLED")
+                  ) {
+                    notifyError(presalesAccessDisabledMessage(e));
+                    return;
+                  }
+                  if (
+                    e instanceof AdminPanelApiError &&
+                    e.allowedParentRoles?.length
+                  ) {
+                    notifyError(
+                      `${e.message} Allowed parents: ${e.allowedParentRoles.join(", ")}.`,
+                    );
+                    return;
+                  }
                   notifyError(e instanceof Error ? e.message : "Failed to create user.");
                 });
             }}
@@ -4233,6 +4437,12 @@ interface Section {
 
 const SECTIONS: Section[] = [
   {
+    id: "presalesAccess",
+    label: "Presales Access",
+    icon: "🔐",
+    desc: "Toggle Admin / Sales Admin Presales access",
+  },
+  {
     id: "adminUser",
     label: "Admin & Users",
     icon: "👥",
@@ -4292,11 +4502,24 @@ const SECTIONS: Section[] = [
 export default function AdminPanelContent() {
   const [viewerRole, setViewerRole] = useState("");
   const [forceSection, setForceSection] = useState<string | null>(null);
+  const [canConfigurePresalesTeam, setCanConfigurePresalesTeam] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
     setViewerRole(normalizeRole(role));
+    setCanConfigurePresalesTeam(roleMayConfigurePresalesTeam(role));
+    const onAccessChange = () => {
+      setCanConfigurePresalesTeam(
+        roleMayConfigurePresalesTeam(
+          window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "",
+        ),
+      );
+    };
+    window.addEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    return () => {
+      window.removeEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    };
   }, []);
 
   // Prefetch original lead-limits as soon as Admin Panel opens (cache ready on scroll).
@@ -4326,11 +4549,17 @@ export default function AdminPanelContent() {
   const baseSections = isManagerScopedRole || isPresalesExecutive
     ? SECTIONS.filter((section) => section.id === "salesExec")
     : SECTIONS.filter((section) => {
+        if (section.id === "presalesAccess") return isSuperAdmin;
         if (section.id === "allUsers") return isSuperAdmin;
         if (section.id === "leadLimit") return canSeeLeadLimit;
         if (section.id === "salesTarget") return canSeeLeadLimit;
-        if (section.id === "managers" || section.id === "presalesExec") {
+        if (section.id === "managers") {
           return isSuperAdmin || isAdmin || isSalesAdmin;
+        }
+        if (section.id === "presalesExec") {
+          return (
+            (isSuperAdmin || isAdmin || isSalesAdmin) && canConfigurePresalesTeam
+          );
         }
         return true;
       });
@@ -4376,6 +4605,15 @@ export default function AdminPanelContent() {
       <div className="flex flex-col gap-6">
         {!isManagerScopedRole && !isPresalesExecutive ? (
           <>
+            {isSuperAdmin ? (
+              <LazySection
+                id="presalesAccess"
+                force={forceSection === "presalesAccess"}
+                minHeight={160}
+              >
+                <PresalesAccessSection />
+              </LazySection>
+            ) : null}
             <LazySection id="adminUser" force={forceSection === "adminUser"} minHeight={220}>
               <AdminUserSection />
             </LazySection>
@@ -4398,7 +4636,7 @@ export default function AdminPanelContent() {
             <LazySection id="salesExec" force={forceSection === "salesExec"} minHeight={220}>
               <SalesExecSection />
             </LazySection>
-            {isSuperAdmin || isAdmin || isSalesAdmin ? (
+            {(isSuperAdmin || isAdmin || isSalesAdmin) && canConfigurePresalesTeam ? (
               <LazySection id="presalesExec" force={forceSection === "presalesExec"} minHeight={220}>
                 <PresalesExecSection />
               </LazySection>

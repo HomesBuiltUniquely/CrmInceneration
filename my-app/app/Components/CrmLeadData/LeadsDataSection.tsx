@@ -3588,6 +3588,11 @@ export default function LeadsDataSection({
             hubByLeadType && Object.keys(hubByLeadType).length > 0,
           );
           const hubTotal = Number(hubCounts?.totalElements ?? 0);
+          const milestoneToolbarActive = Boolean(
+            milestoneStage.trim() ||
+              milestoneStageCategory.trim() ||
+              milestoneSubStage.trim(),
+          );
           const preferFilteredInventory = preferFilteredLeadInventoryOverHubCounts({
             dateField,
             dateFrom,
@@ -3598,6 +3603,9 @@ export default function LeadsDataSection({
               activeAssigneeScope.length > 0 ? activeAssigneeScope : undefined,
             search: debouncedSearch,
             reinquiry,
+            milestoneStage,
+            milestoneStageCategory,
+            milestoneSubStage,
             leadType: summaryLeadType,
           });
           const baseCounts =
@@ -3660,9 +3668,30 @@ export default function LeadsDataSection({
             lastAdminMilestoneCountsKeyRef.current = milestoneKey;
             onAdminMilestoneCountsSyncRef.current?.(milestoneMap, leadsWorkspace);
           }
-          const displayTotal = preferFilteredInventory
-            ? Math.max(journeyRows.length, ivrRaised.all || 0, summaryTotals.lead + summaryTotals.opportunity)
-            : Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
+          /**
+           * Phase cards stay on the full SE/SM pool (`ignoreMilestoneFilter`).
+           * Total Leads must follow Stage/Category/Sub Stage when those are set —
+           * otherwise the pill stays at the unfiltered pool (e.g. 221) while the
+           * table shows Discovery Won only. Also covers my/team views where the
+           * milestone table effect does not run.
+           */
+          const displayTotal = milestoneToolbarActive
+            ? journeyRows.filter((lead) =>
+                leadMatchesWorkspaceMilestoneFilter(
+                  lead,
+                  leadsWorkspace,
+                  milestoneStage,
+                  milestoneStageCategory,
+                  milestoneSubStage,
+                ),
+              ).length
+            : preferFilteredInventory
+              ? Math.max(
+                  journeyRows.length,
+                  ivrRaised.all || 0,
+                  summaryTotals.lead + summaryTotals.opportunity,
+                )
+              : Math.max(hubTotal, journeyRows.length, ivrRaised.all || 0);
           setVisibleFilteredTotal(displayTotal);
           setAdminPoolDisplayTotals({
             uniquePrimary: displayTotal,
@@ -4304,9 +4333,11 @@ export default function LeadsDataSection({
 
         // Sales hierarchy (e.g. Aman): Hub `/counts.totalElements` owns Total —
         // do not replace with incomplete merge page length (34 vs 37).
+        // When Stage/Category/date/search narrow the pool, prefer page inventory.
         if (
           leadsWorkspace === "sales" &&
           salesHierarchyFilterActive &&
+          !preferFilteredInventory &&
           !isIvrCallFilterKey(requestLeadType) &&
           (requestLeadType.trim().toLowerCase() || "all") === "all"
         ) {
@@ -4989,17 +5020,22 @@ export default function LeadsDataSection({
     hasMilestoneFilter && !adminMilestoneTableActive && !dedicatedFilterTableView;
   const journeyBadgeFromData =
     data != null ? journeyBadgeTotalFromPage(data) : 0;
+  /**
+   * Client-filtered milestone inventory length (SM/SE full pool), not a Hub page slice.
+   * Never prefer stale `visibleFilteredTotal` from an unfiltered heatmap pass.
+   */
+  const clientMilestoneFilteredTotal = !pagedFromApi
+    ? tableContent.length
+    : visibleFilteredTotal !== null
+      ? visibleFilteredTotal
+      : rows.length;
   const total =
     insightTableMode !== null
       ? rows.length
       : adminMilestoneTableActive
         ? (adminMilestoneInventory ?? []).length
         : clientSideMilestoneFilterActive
-          ? Number(
-              visibleFilteredTotal !== null
-                ? visibleFilteredTotal
-                : rows.length,
-            )
+          ? clientMilestoneFilteredTotal
           : ivrCallFilterActive
             ? Number(data?.totalElements ?? visibleFilteredTotal ?? rows.length)
             : (visibleFilteredTotal ??
@@ -5593,9 +5629,16 @@ export default function LeadsDataSection({
         adminTotalLeadsDisplay={
           (() => {
             const rk = normalizeRole(authRoleProp ?? currentRole);
-            return rk === "SUPER_ADMIN" || rk === "SALES_ADMIN"
-              ? (adminPoolDisplayTotals ?? undefined)
-              : undefined;
+            if (rk !== "SUPER_ADMIN" && rk !== "SALES_ADMIN") return undefined;
+            /**
+             * Milestone Stage/Category/Sub Stage: pill must follow filtered inventory,
+             * not stale heatmap `adminPoolDisplayTotals` from the full SE/SM pool.
+             */
+            if (adminMilestoneTableActive) {
+              const n = (adminMilestoneInventory ?? []).length;
+              return { uniquePrimary: n, totalRows: n };
+            }
+            return adminPoolDisplayTotals ?? undefined;
           })()
         }
         superAdminSearchPoolTotals={superAdminSearchPoolTotals ?? undefined}

@@ -11,9 +11,14 @@ import {
 } from "@/lib/auth/api";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import {
+  CRM_PRESALES_ACCESS_CHANGED_EVENT,
+  roleMaySeePresalesModule,
+} from "@/lib/presales-access";
+import {
   canAccessBookingTokenDashboard,
   canAccessCrmInsights,
   canAccessMeetingManagement,
+  canAccessRecordingCallLogs,
   isAdminRole,
 } from "@/lib/roleUtils";
 import { cn } from "@/lib/cn";
@@ -132,6 +137,7 @@ export default function QuickAccessSidebar({
   const [currentName, setCurrentName] = useState(profileName);
   const [currentRole, setCurrentRole] = useState(profileRole);
   const [currentInitials, setCurrentInitials] = useState(profileInitials);
+  const [accessTick, setAccessTick] = useState(0);
 
   const [hovered, setHovered] = useState(false);
   const isTouch = useTouchDevice();
@@ -150,6 +156,13 @@ export default function QuickAccessSidebar({
 
   useEffect(() => { setHovered(false); setIsMobileOpen(false); }, [pathname]);
   useEffect(() => () => { if (collapseTimer.current) clearTimeout(collapseTimer.current); }, []);
+  useEffect(() => {
+    const onAccessChange = () => setAccessTick((n) => n + 1);
+    window.addEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    return () => {
+      window.removeEventListener(CRM_PRESALES_ACCESS_CHANGED_EVENT, onAccessChange);
+    };
+  }, []);
 
   const filteredSections = useMemo(() => {
     const role = normalizeRole(currentRole || profileRole);
@@ -164,11 +177,14 @@ export default function QuickAccessSidebar({
     const isDesignRole = isTerritoryDesignManager || isDesignManager || isDesigner;
     const isSuperAdmin = role === "SUPER_ADMIN";
     const isHubAdmin = isAdminRole(role) || role === "SALES_ADMIN";
+    const canSeePresales = roleMaySeePresalesModule(role);
 
     return sections
       .filter((section) => {
         if (activeModuleId && section.id !== activeModuleId) return false;
-        if (section.id === "presales") return isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive;
+        if (section.id === "presales") {
+          return canSeePresales && (isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive);
+        }
         if (isDesignRole) return section.id === "design";
         if (isPresalesManager || isPresalesExecutive) return section.id === "presales";
         if (isSalesAdmin || isSalesManager || isSalesExecutive) return section.id === "crm";
@@ -188,11 +204,14 @@ export default function QuickAccessSidebar({
           if (item.id === "crm-booking-token") return canAccessBookingTokenDashboard(currentRole || profileRole);
           if (item.id === "crm-insights") return canAccessCrmInsights(currentRole || profileRole);
           if (item.id === "crm-meeting-management") return canAccessMeetingManagement(currentRole || profileRole);
+          if (item.id === "crm-recording-call-logs") {
+            return canAccessRecordingCallLogs(currentRole || profileRole);
+          }
           return true;
         }),
       }))
       .filter((section) => section.items.length > 0);
-  }, [activeModuleId, currentRole, profileRole, sections]);
+  }, [accessTick, activeModuleId, currentRole, profileRole, sections]);
 
   const hideSidebar = Boolean(activeModule) && moduleHydrated && !activeModuleId;
 

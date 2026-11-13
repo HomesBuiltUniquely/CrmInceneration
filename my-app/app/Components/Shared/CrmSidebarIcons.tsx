@@ -214,6 +214,21 @@ export function CrmSidebarIcon({ name, className }: CrmSidebarIconProps) {
           <path d="M7.5 17.5H10.5" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
         </svg>
       );
+    case "call-logs":
+      return (
+        <svg {...baseProps}>
+          <path
+            d="M8.2 5.8C8.6 5.2 9.4 4.9 10.1 5.1L11.4 5.5C12 5.7 12.3 6.4 12.1 7L11.6 8.6C11.5 9.1 11.7 9.6 12.1 9.9L13.6 11.1C14 11.4 14.5 11.5 15 11.3L16.5 10.7C17.1 10.5 17.8 10.7 18.1 11.3L18.8 12.5C19.2 13.2 19 14.1 18.4 14.6C16.6 16.1 14.1 16.6 11.9 15.7C9.9 14.9 8.2 13.4 7.1 11.5C6 9.5 5.8 7.1 6.6 4.9C6.9 4.2 7.7 3.9 8.4 4.2"
+            stroke="currentColor"
+            strokeWidth={SW}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path d="M15.2 5.5V8.2" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+          <path d="M17 6.2V7.5" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+          <path d="M19 5.2V8.5" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+        </svg>
+      );
     case "booking-token":
       return (
         <svg {...baseProps}>
@@ -485,6 +500,9 @@ export function resolveAppLauncherIcon(itemId: string, fallbackIcon?: string): s
     "crm-sales-managers": "briefcase",
     "crm-presales-executives": "headset",
     "crm-booking-token": "crm-booking-token-flaticon",
+    "crm-recording-call-logs": "call-logs",
+    "crm-meeting-management": "meeting",
+    "crm-insights": "chart",
     "design-designer-dashboard": "designer-dashboard-flaticon",
     "design-module": "design-module-flaticon",
     "design-create-user": "user-plus",
@@ -568,6 +586,14 @@ const ICON_TILE_TONES: Record<string, { idle: string; active: string }> = {
   headset: {
     idle: "from-[#ccfbf1] to-[#99f6e4] text-[#0f766e]",
     active: "from-[#0d9488] to-[#0f766e] text-white",
+  },
+  "call-logs": {
+    idle: "from-[#e0e7ff] to-[#c7d2fe] text-[#3730a3]",
+    active: "from-[#4f46e5] to-[#3730a3] text-white",
+  },
+  meeting: {
+    idle: "from-[#ede9fe] to-[#ddd6fe] text-[#6d28d9]",
+    active: "from-[#7c3aed] to-[#6d28d9] text-white",
   },
   "booking-token": {
     idle: "from-[#ccfbf1] to-[#99f6e4] text-[#0f766e]",

@@ -45,6 +45,10 @@ import {
   type DiscoveryPhaseSaveDraft,
 } from "@/lib/lead-discovery-field-sync";
 import {
+  activitiesMentionNoRenovationCapacity,
+  resolveRenovationAssignToast,
+} from "@/lib/renovation-capacity";
+import {
   buildPhaseFieldsForDesignModule,
   fetchConfigScopeSummary,
   syncCrmLeadToDesignModule,
@@ -725,6 +729,11 @@ async function postExternalIntakeLead(args: {
       typeof payload.floorPlanPublicLink === "string" &&
         payload.floorPlanPublicLink.trim(),
     ),
+    floorPlansCount: Array.isArray(payload.floor_plans)
+      ? payload.floor_plans.length
+      : Array.isArray(payload.floorPlans)
+        ? payload.floorPlans.length
+        : 0,
   });
 
   const res = await fetch("/api/crm/external-intake", {
@@ -3327,25 +3336,28 @@ export default function LeadDetailsApiClient({
     }));
 
     if (isPresalesRenovationSave) {
-      const mgr = mapped.stageBlock?.renovationSalesManager?.trim() || "";
-      const exec =
-        mapped.stageBlock?.renovationSalesExecutive?.trim() ||
-        mapped.assignee?.trim() ||
-        "";
-      const execMissing = !exec || /^[-–—]+$/.test(exec);
-      if (execMissing && !mgr) {
-        notifyError("Renovation team monthly limit reached; contact admin.");
-      } else {
-        notifySuccess(
-          execMissing
-            ? `Assigned to renovation team${mgr ? ` (Manager: ${mgr})` : ""}`
-            : `Assigned to ${exec}`,
-        );
+      let activityHintsNoCapacity = false;
+      try {
+        const actJson = await getLeadActivities(lt, leadId);
+        const activities = mapLeadActivitiesJson(actJson, lt, leadId);
+        activityHintsNoCapacity = activitiesMentionNoRenovationCapacity(activities);
+        setLead((prev) => ({ ...prev, activities }));
+      } catch {
+        /* ignore activity fetch */
       }
+      const toast = resolveRenovationAssignToast({
+        renovationAssigned: Boolean(mapped.stageBlock?.renovationAssigned),
+        assignee: mapped.assignee,
+        renovationSalesExecutive: mapped.stageBlock?.renovationSalesExecutive,
+        renovationSalesManager: mapped.stageBlock?.renovationSalesManager,
+        activityHintsNoCapacity,
+      });
+      if (toast.kind === "success") notifySuccess(toast.message);
+      else notifyError(toast.message);
     }
 
     void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
-    void refreshActivities();
+    if (!isPresalesRenovationSave) void refreshActivities();
   };
 
   const handleCompleteTaskApi = async (args: CompleteTaskApiPayload) => {
@@ -3771,27 +3783,26 @@ export default function LeadDetailsApiClient({
             console.warn("[lead:property-name] scope sync failed after complete task", syncErr);
           });
         }
-        if (
-          String(args.feedback ?? "").trim().toUpperCase() === "RENOVATION" ||
-          mapped.stageBlock?.renovationAssigned
-        ) {
-          const mgr = mapped.stageBlock?.renovationSalesManager?.trim() || "";
-          const exec =
-            mapped.stageBlock?.renovationSalesExecutive?.trim() ||
-            mapped.assignee?.trim() ||
-            "";
-          const execMissing = !exec || /^[-–—]+$/.test(exec);
-          if (execMissing && !mgr) {
-            notifyError(
-              "Renovation team monthly limit reached; contact admin.",
-            );
-          } else {
-            notifySuccess(
-              execMissing
-                ? `Assigned to renovation team${mgr ? ` (Manager: ${mgr})` : ""}`
-                : `Assigned to ${exec}`,
-            );
+        if (String(args.feedback ?? "").trim().toUpperCase() === "RENOVATION") {
+          let activityHintsNoCapacity = false;
+          try {
+            const actJson = await getLeadActivities(lt, leadId);
+            const activities = mapLeadActivitiesJson(actJson, lt, leadId);
+            activityHintsNoCapacity =
+              activitiesMentionNoRenovationCapacity(activities);
+            setLead((prev) => ({ ...prev, activities }));
+          } catch {
+            /* ignore activity fetch */
           }
+          const toast = resolveRenovationAssignToast({
+            renovationAssigned: Boolean(mapped.stageBlock?.renovationAssigned),
+            assignee: mapped.assignee,
+            renovationSalesExecutive: mapped.stageBlock?.renovationSalesExecutive,
+            renovationSalesManager: mapped.stageBlock?.renovationSalesManager,
+            activityHintsNoCapacity,
+          });
+          if (toast.kind === "success") notifySuccess(toast.message);
+          else notifyError(toast.message);
         } else if (meetingUpdateWarning) {
           notifyInfo(meetingUpdateWarning, 6000);
         } else {
