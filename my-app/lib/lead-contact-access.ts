@@ -1,6 +1,6 @@
 import { normalizeRole } from "@/lib/auth/api";
 
-/** Sales / presales frontline — masked phone, no phone/email edit. */
+/** Sales / presales frontline — masked phone, no phone edit. */
 export function isSalesOrPresalesExecutiveRole(role: string): boolean {
   const r = normalizeRole(role);
   return r === "SALES_EXECUTIVE" || r === "PRESALES_EXECUTIVE";
@@ -20,6 +20,16 @@ export function canEditLeadPhoneAndEmail(role: string): boolean {
     r === "MANAGER" ||
     r === "TEAM_LEAD"
   );
+}
+
+/**
+ * Roles that may edit lead email.
+ * Includes Sales Executive (phone stays locked / masked for SE).
+ */
+export function canEditLeadEmail(role: string): boolean {
+  const r = normalizeRole(role);
+  if (canEditLeadPhoneAndEmail(r)) return true;
+  return r === "SALES_EXECUTIVE";
 }
 
 export function shouldMaskLeadPhoneForRole(role: string): boolean {
