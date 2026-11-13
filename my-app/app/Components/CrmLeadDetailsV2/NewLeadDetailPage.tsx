@@ -1417,10 +1417,12 @@ function LeadProfileCard() {
     lead,
     leadId,
     canEditLeadPhoneEmail,
+    canEditLeadEmail,
     shouldMaskLeadPhone,
     onLeadContactSave,
     leadContactSaving,
   } = useLeadDetailV2();
+  const canUpdateLeadContact = canEditLeadPhoneEmail || canEditLeadEmail;
   const { notifyError } = useGlobalNotifier();
   const [editingContact, setEditingContact] = useState(false);
   const [contactDraft, setContactDraft] = useState({
@@ -1462,9 +1464,12 @@ function LeadProfileCard() {
 
   const contactDirty =
     editingContact &&
-    (contactDraft.name.trim() !== (lead.name ?? "").trim() ||
-      contactDraft.phone.trim() !== (lead.phone ?? "").trim() ||
-      contactDraft.email.trim() !== (lead.email ?? "").trim());
+    ((canEditLeadPhoneEmail &&
+      contactDraft.name.trim() !== (lead.name ?? "").trim()) ||
+      (canEditLeadPhoneEmail &&
+        contactDraft.phone.trim() !== (lead.phone ?? "").trim()) ||
+      (canEditLeadEmail &&
+        contactDraft.email.trim() !== (lead.email ?? "").trim()));
 
   useEffect(() => {
     if (!contactDirty) return;
@@ -1474,12 +1479,20 @@ function LeadProfileCard() {
         phone: lead.phone ?? "",
         email: lead.email ?? "",
       };
-      const patch = {
-        name: contactDraft.name.trim(),
-        phone: contactDraft.phone.trim(),
-        email: contactDraft.email.trim(),
+      const patch: Partial<{ name: string; phone: string; email: string }> = {
+        email: canEditLeadEmail
+          ? contactDraft.email.trim()
+          : before.email,
       };
-      const labels = discoveryFieldLabels(before, patch);
+      if (canEditLeadPhoneEmail) {
+        patch.name = contactDraft.name.trim();
+        patch.phone = contactDraft.phone.trim();
+      }
+      const labels = discoveryFieldLabels(before, {
+        name: patch.name ?? before.name,
+        phone: patch.phone ?? before.phone,
+        email: patch.email ?? before.email,
+      });
       if (labels.length === 0) {
         setEditingContact(false);
         return [];
@@ -1489,6 +1502,8 @@ function LeadProfileCard() {
       return labels;
     });
   }, [
+    canEditLeadEmail,
+    canEditLeadPhoneEmail,
     contactDirty,
     contactDraft.email,
     contactDraft.name,
@@ -1500,11 +1515,12 @@ function LeadProfileCard() {
   ]);
 
   const saveContactEdit = async () => {
-    const patch = {
-      name: contactDraft.name.trim(),
-      phone: contactDraft.phone.trim(),
-      email: contactDraft.email.trim(),
-    };
+    const patch: Partial<{ name: string; phone: string; email: string }> = {};
+    if (canEditLeadEmail) patch.email = contactDraft.email.trim();
+    if (canEditLeadPhoneEmail) {
+      patch.name = contactDraft.name.trim();
+      patch.phone = contactDraft.phone.trim();
+    }
     try {
       await onLeadContactSave(patch);
       setEditingContact(false);
@@ -1530,7 +1546,7 @@ function LeadProfileCard() {
       <div className="mb-4 flex items-start gap-3">
         <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-[#d9e0ea]" />
         <div className="min-w-0 flex-1 overflow-hidden">
-          {editingContact ? (
+          {editingContact && canEditLeadPhoneEmail ? (
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
                 Full name
@@ -1567,7 +1583,7 @@ function LeadProfileCard() {
             </>
           )}
         </div>
-        {canEditLeadPhoneEmail ? (
+        {canUpdateLeadContact ? (
           <div className="flex shrink-0 items-center gap-2">
             {editingContact ? (
               <>
@@ -1605,7 +1621,11 @@ function LeadProfileCard() {
               <button
                 type="button"
                 onClick={startContactEdit}
-                aria-label="Update name, phone and email"
+                aria-label={
+                  canEditLeadPhoneEmail
+                    ? "Update name, phone and email"
+                    : "Update email"
+                }
                 className={`inline-flex h-7 w-7 items-center justify-center text-[#6b7280] ${V2_BTN_GHOST_ICON}`}
               >
                 <svg
@@ -1634,16 +1654,22 @@ function LeadProfileCard() {
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
                 Phone
               </p>
-              <Input
-                value={contactDraft.phone}
-                onChange={(e) =>
-                  setContactDraft((prev) => ({
-                    ...prev,
-                    phone: e.target.value,
-                  }))
-                }
-                className={`mt-1 ${V2_INPUT}`}
-              />
+              {canEditLeadPhoneEmail ? (
+                <Input
+                  value={contactDraft.phone}
+                  onChange={(e) =>
+                    setContactDraft((prev) => ({
+                      ...prev,
+                      phone: e.target.value,
+                    }))
+                  }
+                  className={`mt-1 ${V2_INPUT}`}
+                />
+              ) : (
+                <div className="mt-1">
+                  <ProfileField label="" value={phoneDisplay} />
+                </div>
+              )}
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
@@ -1658,6 +1684,7 @@ function LeadProfileCard() {
                     email: e.target.value,
                   }))
                 }
+                readOnly={!canEditLeadEmail}
                 className={`mt-1 ${V2_INPUT}`}
               />
             </div>

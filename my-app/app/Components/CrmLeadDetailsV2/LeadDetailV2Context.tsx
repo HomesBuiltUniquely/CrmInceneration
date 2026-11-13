@@ -57,6 +57,8 @@ export type LeadDetailV2ContextValue = {
   ) => void | Promise<void>;
   connectionPhaseSaving: boolean;
   canEditLeadPhoneEmail: boolean;
+  /** Email write — includes Sales Executive on assigned leads (phone stays locked). */
+  canEditLeadEmail: boolean;
   shouldMaskLeadPhone: boolean;
   onLeadContactSave: (
     patch: Partial<Lead>,

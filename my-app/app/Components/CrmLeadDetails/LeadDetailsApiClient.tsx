@@ -176,7 +176,7 @@ import { isCrmLeadVerified, type ApiLead } from "@/lib/leads-filter";
 import { tryPersistAutoFollowUpDateForLead } from "@/lib/lead-follow-up-persist";
 import { openWhatsAppChat } from "@/lib/whatsapp-chat";
 import {
-  canEditLeadEmailAndPhone,
+  resolveLeadIdentityWriteAccess,
   stripUnauthorizedLeadIdentityFromPutBody,
 } from "@/lib/lead-identity-edit-access";
 import { adminPanelApi } from "@/lib/admin-panel-api";
@@ -1629,9 +1629,9 @@ export default function LeadDetailsApiClient({
     [baseDetail, lead.assignee],
   );
 
-  const canEditLeadEmailPhone = useMemo(
+  const identityWriteAccess = useMemo(
     () =>
-      canEditLeadEmailAndPhone({
+      resolveLeadIdentityWriteAccess({
         viewerRole: viewerRoleKey,
         lead: verifyLeadRecord,
         managerTeamNames: salesManagerTeamNames,
@@ -1639,6 +1639,13 @@ export default function LeadDetailsApiClient({
       }),
     [viewerRoleKey, verifyLeadRecord, salesManagerTeamNames, verifyViewerAliasSet],
   );
+  /** Full name + email + phone (SA / Admin / SM-on-team). */
+  const canEditLeadEmailPhone =
+    identityWriteAccess.name &&
+    identityWriteAccess.email &&
+    identityWriteAccess.phone;
+  /** Email only — includes Sales Executive on own assigned leads. */
+  const canEditLeadEmail = identityWriteAccess.email;
 
   const canVerifyCurrentLead = useMemo(() => {
     if (!canVerifyRole) return false;
@@ -2158,13 +2165,15 @@ export default function LeadDetailsApiClient({
     setSaveError(null);
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
-      if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
-      }
+      body = stripUnauthorizedLeadIdentityFromPutBody(
+        body,
+        baseDetail,
+        identityWriteAccess,
+      );
       // WhatsApp one-time name flow: don't commit name on general save unless
       // this viewer has privileged identity edit (SA / Admin / Super Admin / SM team).
       if (
-        !canEditLeadEmailPhone &&
+        !identityWriteAccess.name &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2226,23 +2235,28 @@ export default function LeadDetailsApiClient({
     validLeadType,
     verifyLeadRecord,
     viewerRoleKey,
-    canEditLeadEmailPhone,
+    identityWriteAccess,
     whatsappNameLockedFromServer,
   ]);
 
   const handleSaveContactDetails = useCallback(async () => {
     if (!validLeadType) return;
+    if (!identityWriteAccess.email && !identityWriteAccess.phone && !identityWriteAccess.name) {
+      throw new Error("You cannot edit contact details on this lead.");
+    }
     const lt = leadTypeParam as CrmLeadType;
     const previousLead = lead;
     setSavingSecondBox(true);
     setSecondBoxError(null);
     try {
       let body = mergeLeadIntoDetail(baseDetail, lead);
-      if (!canEditLeadEmailPhone) {
-        body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
-      }
+      body = stripUnauthorizedLeadIdentityFromPutBody(
+        body,
+        baseDetail,
+        identityWriteAccess,
+      );
       if (
-        !canEditLeadEmailPhone &&
+        !identityWriteAccess.name &&
         shouldShowWhatsappPresalesNameHint({
           leadType: lt,
           leadId,
@@ -2303,7 +2317,7 @@ export default function LeadDetailsApiClient({
     notifySuccess,
     verifyLeadRecord,
     viewerRoleKey,
-    canEditLeadEmailPhone,
+    identityWriteAccess,
     whatsappNameLockedFromServer,
   ]);
 
@@ -2395,7 +2409,11 @@ export default function LeadDetailsApiClient({
   const handleLeadContactSave = useCallback(
     async (patch: Partial<Lead>, options?: { silent?: boolean }) => {
       if (!validLeadType) return;
-      if (!canEditLeadEmailPhone) {
+      if (
+        !identityWriteAccess.email &&
+        !identityWriteAccess.phone &&
+        !identityWriteAccess.name
+      ) {
         throw new Error("You cannot edit name or contact on this lead.");
       }
       const lt = leadTypeParam as CrmLeadType;
@@ -2405,10 +2423,11 @@ export default function LeadDetailsApiClient({
       setSecondBoxError(null);
       try {
         let body = mergeLeadIntoDetail(baseDetail, mergedLead);
-        // Still strip if somehow unauthorized mid-request
-        if (!canEditLeadEmailPhone) {
-          body = stripUnauthorizedLeadIdentityFromPutBody(body, baseDetail);
-        }
+        body = stripUnauthorizedLeadIdentityFromPutBody(
+          body,
+          baseDetail,
+          identityWriteAccess,
+        );
         const updated = await putLeadDetail(lt, leadId, body);
         const stickyQuote = pickPersistedQuoteLink(updated, mergedLead);
         const stickyDetail = withStickyQuoteInDetail(updated, stickyQuote);
@@ -2437,7 +2456,7 @@ export default function LeadDetailsApiClient({
     },
     [
       baseDetail,
-      canEditLeadEmailPhone,
+      identityWriteAccess,
       lead,
       leadId,
       leadTypeParam,
@@ -4040,6 +4059,7 @@ export default function LeadDetailsApiClient({
       onConnectionPhaseSave: handleConnectionPhaseSave,
       connectionPhaseSaving: savingSecondBox,
       canEditLeadPhoneEmail: canEditLeadEmailPhone,
+      canEditLeadEmail,
       shouldMaskLeadPhone: shouldMaskLeadPhoneForRole(viewerRoleKey),
       onLeadContactSave: handleLeadContactSave,
       leadContactSaving: savingSecondBox,
@@ -4290,6 +4310,7 @@ export default function LeadDetailsApiClient({
             viewerRole={viewerRoleKey}
             onLeadChange={patchLead}
             canEditEmailPhone={canEditLeadEmailPhone}
+            canEditEmail={canEditLeadEmail}
             nameFieldLocked={nameFieldLocked}
             showWhatsappPresalesNameHint={showWhatsappPresalesNameHint}
             onWhatsappNameSave={handleWhatsappNameSave}
