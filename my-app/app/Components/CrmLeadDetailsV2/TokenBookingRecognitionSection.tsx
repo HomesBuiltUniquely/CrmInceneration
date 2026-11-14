@@ -127,6 +127,19 @@ function readViewerRoleKey(contextRole?: string): string {
   return normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
 }
 
+function readStorageRoleKey(): string {
+  if (typeof window === "undefined") return "";
+  return normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
+}
+
+/** PE / PM / PRE_SALES — never show old-lead token/booking recognition UI. */
+function shouldHideTokenBookingForPresales(contextRole?: string): boolean {
+  return (
+    isPresalesRole(readViewerRoleKey(contextRole)) ||
+    isPresalesRole(readStorageRoleKey())
+  );
+}
+
 export default function TokenBookingRecognitionSection({
   leadType,
   leadId,
@@ -134,8 +147,9 @@ export default function TokenBookingRecognitionSection({
   onSaved,
 }: Props) {
   const leadDetail = useOptionalLeadDetailV2();
-  const viewerRoleKey = readViewerRoleKey(leadDetail?.viewerRoleKey);
-  const hideForPresales = isPresalesRole(viewerRoleKey);
+  const hideForPresales = shouldHideTokenBookingForPresales(
+    leadDetail?.viewerRoleKey,
+  );
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);

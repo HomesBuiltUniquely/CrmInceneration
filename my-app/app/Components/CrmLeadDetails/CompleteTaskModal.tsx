@@ -715,6 +715,25 @@ export default function CompleteTaskModal({
               subStageName: "Renovation",
             });
           }
+          // PE/PM: always expose Data Conversion → Won → Assigned for verify handoff.
+          if (
+            presalesMode &&
+            !presalesLeadVerified &&
+            !presalesHandedOff &&
+            !mappings.some((m) =>
+              isPresalesVerifyHandoffSelection({
+                stage: m.stage,
+                category: m.stageCategory,
+                subStage: m.subStageName,
+              }),
+            )
+          ) {
+            mappings.push({
+              stage: "Data Conversion",
+              stageCategory: "Won",
+              subStageName: "Assigned",
+            });
+          }
           setFeedbackMappings(mappings);
           if (presalesMode) {
             const presetSub =
@@ -777,6 +796,8 @@ export default function CompleteTaskModal({
     lead.status,
     open,
     presalesMode,
+    presalesLeadVerified,
+    presalesHandedOff,
     userRole,
   ]);
 
