@@ -59,8 +59,11 @@ export function filterSidebarSections(
         if (item.id === "design-create-user") return isTerritoryDesignManager || isDesignManager;
         if (item.id === "crm-sales-managers") return isSalesAdmin || isSalesManager;
         if (item.id === "crm-presales-executives") return isPresalesManager;
+        if (item.id === "presales-executive-manage") return isPresalesManager;
+        if ((isPresalesManager || isPresalesExecutive) && item.id === "presales-dashboard") return false;
         if ((isSalesExecutive || isPresalesExecutive) && item.id === "crm-import-leads") return false;
         if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
+        if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
         if (isSalesExecutive && item.id === "crm-presales-executives") return false;
         if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
         if (item.id === "crm-booking-token") {
