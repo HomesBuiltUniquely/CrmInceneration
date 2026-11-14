@@ -1211,15 +1211,23 @@ export default function LeadDetailsApiClient({
     const roleKey = normalizeRole(
       window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "",
     );
-    // Presales roles: Verify lead hidden module-wide (footer + complete-task handoff).
-    setCanVerifyRole(roleKey === "SUPER_ADMIN");
+    // PE/PM can verify via Complete Task → Assigned (pincode + sales). Footer "Verify lead" stays hidden.
+    setCanVerifyRole(
+      roleKey === "PRESALES_EXECUTIVE" ||
+        roleKey === "PRESALES_MANAGER" ||
+        roleKey === "SUPER_ADMIN",
+    );
     setIsSuperAdmin(roleKey === "SUPER_ADMIN");
   }, []);
 
   useEffect(() => {
     if (!salesClosureAuthUser) return;
     const roleKey = normalizeRole(getRoleFromUser(salesClosureAuthUser));
-    setCanVerifyRole(roleKey === "SUPER_ADMIN");
+    setCanVerifyRole(
+      roleKey === "PRESALES_EXECUTIVE" ||
+        roleKey === "PRESALES_MANAGER" ||
+        roleKey === "SUPER_ADMIN",
+    );
     setIsSuperAdmin(roleKey === "SUPER_ADMIN");
   }, [salesClosureAuthUser]);
 
@@ -1641,14 +1649,36 @@ export default function LeadDetailsApiClient({
   const canEditLeadEmail = identityWriteAccess.email;
 
   const canVerifyCurrentLead = useMemo(() => {
-    // Product: hide Verify lead across the whole Presales module (PM / PE / PRE_SALES).
-    if (isPresalesRole(viewerRoleKey)) return false;
     if (!canVerifyRole) return false;
     // WhatsApp (and all sources): never show Verify once Hub marks verified (pin auto-verify included).
     if (isCrmLeadVerified(verifyLeadRecord)) return false;
     if (viewerRoleKey === "SUPER_ADMIN") return true;
+
+    const assigneeAliases = assigneeAliasNorms(verifyLeadRecord);
+    const isSelfAssigned = [...verifyViewerAliasSet].some((alias) =>
+      assigneeAliases.has(alias),
+    );
+    if (viewerRoleKey === "PRESALES_EXECUTIVE") {
+      return isSelfAssigned;
+    }
+    if (viewerRoleKey === "PRESALES_MANAGER") {
+      if (isSelfAssigned) return true;
+      const teamAliasSet = new Set(
+        verifyPresalesTeamNames.map((name) => name.trim().toLowerCase()).filter(Boolean),
+      );
+      for (const alias of assigneeAliases) {
+        if (teamAliasSet.has(alias)) return true;
+      }
+      return false;
+    }
     return false;
-  }, [canVerifyRole, verifyLeadRecord, viewerRoleKey]);
+  }, [
+    canVerifyRole,
+    verifyLeadRecord,
+    viewerRoleKey,
+    verifyViewerAliasSet,
+    verifyPresalesTeamNames,
+  ]);
 
   const canClosedLeadHeader = useMemo(
     () => canAccessClosedLeadHeaderActions(viewerRoleKey),
@@ -4326,10 +4356,12 @@ export default function LeadDetailsApiClient({
           onSave={handleSave}
           saving={saving}
           onVerify={
+            // Standalone "Verify lead" stays hidden for Presales; use Assigned in Complete Task.
             usePresalesCompleteTask &&
             canVerifyCurrentLead &&
             !presalesHandedOff &&
-            !inSalesPhase
+            !inSalesPhase &&
+            !isPresalesRole(viewerRoleKey)
               ? () => {
                   setCompleteTaskVerifyFocus(true);
                   setCompleteTaskOpen(true);

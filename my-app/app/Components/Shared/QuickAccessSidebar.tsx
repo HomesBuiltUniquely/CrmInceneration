@@ -203,9 +203,10 @@ export default function QuickAccessSidebar({
           if (item.id === "design-create-user") return (normalizeRole(currentRole || profileRole) === "TERRITORY_DESIGN_MANAGER") || (normalizeRole(currentRole || profileRole) === "DESIGN_MANAGER");
           if (item.id === "crm-sales-managers") return isSalesAdmin || isSalesManager;
           if (item.id === "crm-presales-executives") return isPresalesManager;
-          // PM: manage team executives (under Create Lead); hide Dashboard for this role.
+          // PM: manage team executives (under Create Lead).
           if (item.id === "presales-executive-manage") return isPresalesManager;
-          if (isPresalesManager && item.id === "presales-dashboard") return false;
+          // PM / PE: hide Dashboard from left menu.
+          if ((isPresalesManager || isPresalesExecutive) && item.id === "presales-dashboard") return false;
           if (isSalesExecutive && item.id === "crm-dashboard") return false;
           if ((isSalesExecutive || isPresalesExecutive) && item.id === "crm-import-leads") return false;
           if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
