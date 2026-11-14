@@ -249,7 +249,7 @@ export default function CrmFullscreenOverlayModal({
               onClick={() => void closePanel()}
               disabled={closing}
               aria-label={`Close ${title}`}
-              className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border border-[#e0e5ec] bg-white/95 text-[#475467] shadow-sm transition hover:bg-[#f8fafc] hover:text-[#101828] disabled:opacity-60"
+              className="absolute right-4 top-4 z-20 inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#e0e5ec] bg-white text-[#475467] shadow-md transition hover:bg-[#f8fafc] hover:text-[#101828] disabled:opacity-60"
             >
               <svg
                 viewBox="0 0 24 24"

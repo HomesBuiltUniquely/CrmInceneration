@@ -28,6 +28,15 @@ export function isSalesAssigneeRole(role: string): boolean {
   return r === "SALES_EXECUTIVE" || r === "SALES_MANAGER" || r === "SALES_ADMIN";
 }
 
+/**
+ * WhatsApp notify popup: only when new assignee is sales exec/manager
+ * (lead will be verified / handed to sales). Never for presales or Verify handoff.
+ */
+export function shouldPromptNotifyCustomer(newAssigneeRole: string): boolean {
+  const r = normalizeRole(newAssigneeRole);
+  return r === "SALES_EXECUTIVE" || r === "SALES_MANAGER";
+}
+
 /** Prefer Hub `assigneeRole`; fall back to verified → sales pool heuristic. */
 export function assigneeRoleFromLead(lead: ApiLead): string {
   const explicit = String(lead.assigneeRole ?? "").trim();

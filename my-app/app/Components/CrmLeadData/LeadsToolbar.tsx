@@ -621,7 +621,13 @@ export default function LeadsToolbar({
     if (salesManagerFilter) c += 1;
     if (salesExecFilter) c += 1;
     if (isPresalesWorkspace && showPresalesHierarchyFilters && presalesManagerFilter) c += 1;
-    if (isPresalesWorkspace && showPresalesHierarchyFilters && presalesExecFilter) c += 1;
+    if (
+      isPresalesWorkspace &&
+      (showPresalesHierarchyFilters || isPresalesManager) &&
+      presalesExecFilter
+    ) {
+      c += 1;
+    }
     if (dateFilterActive) c += 1;
     if (isPresalesWorkspace && reinquiry) c += 1;
     return c;
@@ -1106,27 +1112,29 @@ export default function LeadsToolbar({
                   />
                 </FilterControl>
               ) : null}
-              {isPresalesWorkspace && showPresalesHierarchyFilters ? (
+              {isPresalesWorkspace && (showPresalesHierarchyFilters || isPresalesManager) ? (
                 <>
-                  <FilterControl label="Presales Mgr">
-                    <InsightsDropdownFilter
-                      fullWidth
-                      icon="none"
-                      placeholder="All"
-                      ariaLabel="Presales Mgr"
-                      value={presalesManagerFilter}
-                      onChange={(next) => {
-                        onPresalesManagerFilterChange(next);
-                        if (next) onPresalesExecFilterChange("");
-                      }}
-                      options={stringOptions(presalesManagerOptions)}
-                    />
-                  </FilterControl>
+                  {showPresalesHierarchyFilters ? (
+                    <FilterControl label="Presales Mgr">
+                      <InsightsDropdownFilter
+                        fullWidth
+                        icon="none"
+                        placeholder="All"
+                        ariaLabel="Presales Mgr"
+                        value={presalesManagerFilter}
+                        onChange={(next) => {
+                          onPresalesManagerFilterChange(next);
+                          if (next) onPresalesExecFilterChange("");
+                        }}
+                        options={stringOptions(presalesManagerOptions)}
+                      />
+                    </FilterControl>
+                  ) : null}
                   <FilterControl label="Presales Exec">
                     <InsightsDropdownFilter
                       fullWidth
                       icon="none"
-                      placeholder="All"
+                      placeholder="All executives"
                       ariaLabel="Presales Exec"
                       value={presalesExecFilter}
                       onChange={onPresalesExecFilterChange}

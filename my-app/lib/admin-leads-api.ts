@@ -549,8 +549,7 @@ function milestoneCountsFromJourneyRows(
 
 /**
  * Milestone phase click for Super Admin / Sales Admin / Admin:
- * same inventory as journey heatmap (sales = filter mergeAll id-merge; blank→Fresh).
- * Hub `/admin/sales` alone under-counts Fresh (e.g. card 70 / 30 vs table 13).
+ * same inventory as journey heatmap (`/admin/sales|presales`).
  */
 export async function fetchAdminLeadsMilestoneFiltered(
   input: AdminLeadsFilterInput,
@@ -559,19 +558,9 @@ export async function fetchAdminLeadsMilestoneFiltered(
   subStage: string,
   headers?: HeadersInit,
 ): Promise<{ leads: ApiLead[]; total: number }> {
-  let inventory: ApiLead[];
-  if (input.workspace === "sales") {
-    try {
-      const merged = await fetchAllSalesFilterMergeLeads(input, headers);
-      inventory = mergeLeadsById(merged.leads);
-    } catch {
-      const admin = await fetchAllAdminLeads(input, headers);
-      inventory = mergeLeadsById(admin.leads);
-    }
-  } else {
-    const admin = await fetchAllAdminLeads(input, headers);
-    inventory = admin.leads;
-  }
+  const admin = await fetchAllAdminLeads(input, headers);
+  let inventory: ApiLead[] =
+    input.workspace === "sales" ? mergeLeadsById(admin.leads) : admin.leads;
   const vs = (input.verificationStatus ?? "").trim().toLowerCase();
   if (vs === "verified") {
     inventory = inventory.filter((lead) => isCrmLeadVerified(lead));
@@ -677,44 +666,22 @@ export async function fetchAdminLeadsHeatmapData(
 
   const promise = (async (): Promise<AdminLeadsHeatmapData> => {
     /**
-     * Sales journey inventory must come from filter mergeAll (includes walk-in /
-     * blank-assignee Fresh). Hub `/admin/sales` alone under-counts Fresh (e.g.
-     * global Fresh 9 while Kulwanth-filter shows Fresh 16).
-     *
-     * Run `/counts` in parallel with merge so Lead/Opportunity cards aren't
-     * blocked on a sequential counts round-trip before the heavy merge starts.
+     * Same pool as admin table: `/admin/sales` or `/admin/presales` + matching `/counts`.
+     * Do not use filter mergeAll for admin menus (guide §2 / §10).
      */
     let countsJson: AdminLeadsCountsResponse | null = null;
     let leads: ApiLead[] = [];
     let totalElements = 0;
 
-    if (input.workspace === "sales") {
-      try {
-        const [counts, merged] = await Promise.all([
-          fetchAdminLeadsCounts(poolInput, headers).catch(() => null),
-          fetchAllSalesFilterMergeLeads(poolInput, headers),
-        ]);
-        countsJson = counts;
-        leads = merged.leads;
-        totalElements = merged.totalElements;
-      } catch {
-        try {
-          countsJson = await fetchAdminLeadsCounts(poolInput, headers);
-        } catch {
-          countsJson = null;
-        }
-        const admin = await fetchAllAdminLeads(poolInput, headers);
-        leads = admin.leads;
-        totalElements = admin.totalElements;
-      }
-      const vs = (poolInput.verificationStatus ?? "").trim().toLowerCase();
-      if (vs === "verified") {
-        leads = leads.filter((lead) => isCrmLeadVerified(lead));
-      } else if (vs === "unverified") {
-        leads = leads.filter((lead) => !isCrmLeadVerified(lead));
-      }
-      totalElements = leads.length;
-    } else {
+    try {
+      const [counts, admin] = await Promise.all([
+        fetchAdminLeadsCounts(poolInput, headers).catch(() => null),
+        fetchAllAdminLeads(poolInput, headers),
+      ]);
+      countsJson = counts;
+      leads = admin.leads;
+      totalElements = admin.totalElements;
+    } catch {
       try {
         countsJson = await fetchAdminLeadsCounts(poolInput, headers);
       } catch {
@@ -723,6 +690,16 @@ export async function fetchAdminLeadsHeatmapData(
       const admin = await fetchAllAdminLeads(poolInput, headers);
       leads = admin.leads;
       totalElements = admin.totalElements;
+    }
+    const vs = (poolInput.verificationStatus ?? "").trim().toLowerCase();
+    if (vs === "verified") {
+      leads = leads.filter((lead) => isCrmLeadVerified(lead));
+      totalElements = leads.length;
+    } else if (vs === "unverified") {
+      leads = leads.filter((lead) => !isCrmLeadVerified(lead));
+      totalElements = leads.length;
+    } else if (Number(countsJson?.totalElements ?? 0) > 0) {
+      totalElements = Number(countsJson!.totalElements);
     }
 
     const pool = buildAdminPoolDualCounts(leads);
@@ -979,6 +956,11 @@ export function appendAdminLeadsFilters(qs: URLSearchParams, input: AdminLeadsFi
     crmMonthWindow: input.crmMonthWindow,
     expandMonthWindow: true,
   });
+  // Admin pool APIs filter on createdAt only — never assignedAt (guide §4 / §9).
+  if (qs.has("dateFrom") || qs.has("dateTo")) {
+    const df = (qs.get("dateField") ?? "").trim().toLowerCase();
+    if (!df || df === "assigned") qs.set("dateField", "created");
+  }
 
   const lt = (input.leadType ?? "all").trim().toLowerCase();
   if (lt && lt !== "all" && lt !== "verified") {
@@ -1064,7 +1046,8 @@ export function adminFilterInputFromQueryString(
 export async function fetchAdminLeadsPage(
   input: AdminLeadsFilterInput & { page: number; size: number },
   headers?: HeadersInit,
-  options?: { preserveAllRows?: boolean },
+  /** @deprecated Always preserves Hub rows — id-dedupe drops form+glead siblings vs totalElements. */
+  _options?: { preserveAllRows?: boolean },
 ): Promise<SpringPage<ApiLead>> {
   const qs = new URLSearchParams();
   qs.set("page", String(input.page));
@@ -1084,40 +1067,14 @@ export async function fetchAdminLeadsPage(
   const contentRaw = flattenAdminListContent(json.content);
   const totalRowCount = Number(json.totalElements ?? contentRaw.length);
   const uniquePrimaryTotal = Number(json.uniquePrimaryTotal);
+  const resolvedTotal =
+    totalRowCount > 0 ? totalRowCount : contentRaw.length;
 
-  if (options?.preserveAllRows) {
-    return {
-      content: contentRaw,
-      totalElements: contentRaw.length,
-      totalRowCount,
-      ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
-        ? { uniquePrimaryTotal }
-        : {}),
-      totalPages: Math.max(1, Number(json.totalPages ?? 1)),
-      number: Number(json.number ?? input.page),
-      size: Number(json.size ?? input.size),
-    };
-  }
-
-  const dedupedById = new Map<string, ApiLead>();
-  let noIdSeq = 0;
-  for (const lead of contentRaw) {
-    const leadIdentifier = leadStableIdentifier(lead);
-    const key = leadIdentifier || `__noid_${noIdSeq++}`;
-    if (!dedupedById.has(key)) dedupedById.set(key, lead);
-  }
-  const content = [...dedupedById.values()];
-  const resolvedTotalElements =
-    Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
-      ? uniquePrimaryTotal
-      : totalRowCount > 0
-        ? totalRowCount
-        : content.length;
-
+  // Guide §9/§11: do not id-dedupe — one row per lead record across 5 tables.
   return {
-    content,
-    totalElements: resolvedTotalElements,
-    totalRowCount: totalRowCount > 0 ? totalRowCount : resolvedTotalElements,
+    content: contentRaw,
+    totalElements: resolvedTotal,
+    totalRowCount: resolvedTotal,
     ...(Number.isFinite(uniquePrimaryTotal) && uniquePrimaryTotal >= 0
       ? { uniquePrimaryTotal }
       : {}),

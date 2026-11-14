@@ -59,6 +59,7 @@ function modulesForRole(roleRaw: string): QuickAccessParentItem[] {
 function firstHrefForModule(section: QuickAccessParentItem, roleRaw: string): string | undefined {
   const role = normalizeRole(roleRaw);
   const isSalesExecutive = role === "SALES_EXECUTIVE";
+  const isPresalesManager = role === "PRESALES_MANAGER";
 
   // CRM / Presales open My Leads by default (not Dashboard).
   if (section.id === "crm") {
@@ -73,6 +74,7 @@ function firstHrefForModule(section: QuickAccessParentItem, roleRaw: string): st
   for (const item of section.items) {
     if (!item.href) continue;
     if (isSalesExecutive && item.id === "crm-dashboard") continue;
+    if (isPresalesManager && item.id === "presales-dashboard") continue;
     return item.href;
   }
   return undefined;

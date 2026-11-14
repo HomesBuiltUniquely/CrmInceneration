@@ -6,7 +6,14 @@ export type AssignLeadPayload = {
   leadType: string;
   leadId: number;
   salesExecutiveId: number;
+  /** G/M/Website verified sales → presales only (min 3 chars). Optional otherwise. */
   reassignReason?: string;
+  /**
+   * Reassign popup: Yes → true, No → false.
+   * Omitted → Hub defaults to true (legacy). Alias `sendWhatsApp` also accepted upstream.
+   * When true and new assignee is sales on a verified lead: contact_us_msg + take_action_msg.
+   */
+  notifyCustomer?: boolean;
 };
 
 export type BulkAssignPayload = {
@@ -15,6 +22,7 @@ export type BulkAssignPayload = {
   assignmentMode: string;
   assignees: Array<{ userId: number; percentage?: number }>;
   reassignReason?: string;
+  notifyCustomer?: boolean;
 };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {

@@ -42,6 +42,7 @@ import {
   isPresalesExecutiveRole,
   isUserActive,
 } from "@/lib/user-active";
+import { fetchPresalesExecutivesForManager } from "@/lib/fetch-presales-executives-for-manager";
 
 /**
  * Defer mounting heavy admin sections until near the viewport (or forced via nav click).
@@ -2107,9 +2108,9 @@ function SalesExecSection() {
   const isPresalesManagerViewer = viewerRole === "PRESALES_MANAGER";
   const isTerritoryDesignManagerViewer = viewerRole === "TERRITORY_DESIGN_MANAGER";
   const isDesignManagerViewer = viewerRole === "DESIGN_MANAGER";
+  /** PM page is view/list only — create happens elsewhere; show executives from Hub APIs. */
   const canCreateTeamUsers =
     isSalesManagerViewer ||
-    isPresalesManagerViewer ||
     isTerritoryDesignManagerViewer ||
     isDesignManagerViewer;
   const isManagerViewer =
@@ -2139,47 +2140,56 @@ function SalesExecSection() {
 
   const load = () => {
     setLoading(true);
-    const loadPresalesUsers = () =>
-      Promise.all([
-        adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>),
-        adminPanelApi
-          .listUsersByRole("PRESALES_EXECUTIVE")
-          .catch(() => [] as Array<Record<string, unknown>>),
-        adminPanelApi.listUsersByRole("PRE_SALES").catch(() => [] as Array<Record<string, unknown>>),
-      ]).then(([listPreSalesRows, presalesExecutiveRows, preSalesRows]) => {
-        const merged = [...listPreSalesRows, ...presalesExecutiveRows, ...preSalesRows];
-        const byId = new Map<number, Record<string, unknown>>();
-        for (const row of merged) {
-          const id = Number(row.id ?? 0);
-          if (id > 0 && !byId.has(id)) byId.set(id, row);
-        }
-        return Array.from(byId.values());
-      });
-    const listReq = isPresalesManagerViewer
-      ? loadPresalesUsers()
-      : isTerritoryDesignManagerViewer
-        ? adminPanelApi.listDesignManagers()
-        : isDesignManagerViewer
-          ? adminPanelApi.listDesigners()
-          : isSalesManagerViewer
-            ? adminPanelApi
-                .listSalesExecutivesLegacyAll()
-                .catch(() => [] as Array<Record<string, unknown>>)
-            : adminPanelApi
-                .listSalesExecutivesLegacyAll()
-                .catch(() =>
-                  adminPanelApi
-                    .listSalesExecutives()
-                    .catch(() => [] as Array<Record<string, unknown>>),
-                );
+    if (isPresalesManagerViewer) {
+      // Hub auth users-by-role (+ admin/PreSales fallbacks) — same pool as leads PE filter.
+      void fetchPresalesExecutivesForManager(viewerUserId)
+        .then((rows) => {
+          setExecs(
+            rows.map((r) => ({
+              id: r.id,
+              name: String(r.fullName ?? r.name ?? r.username ?? ""),
+              email: String(r.email ?? ""),
+              phone: String(r.phone ?? ""),
+              branch: String(r.branch ?? ""),
+              manager:
+                viewerUserId > 0 && Number(r.managerId ?? 0) === viewerUserId && viewerName.trim()
+                  ? viewerName.trim()
+                  : (r.managerName?.trim() ||
+                    (Number(r.managerId ?? 0) > 0 ? String(r.managerId) : "") ||
+                    viewerName.trim() ||
+                    "—"),
+              managerId: Number(r.managerId ?? 0),
+              role: normalizeRole(String(r.role ?? "PRESALES_EXECUTIVE")),
+              status: r.active !== false,
+            })),
+          );
+          setAllUsers([]);
+        })
+        .catch(() => setExecs([]))
+        .finally(() => setLoading(false));
+      return;
+    }
+    const listReq = isTerritoryDesignManagerViewer
+      ? adminPanelApi.listDesignManagers()
+      : isDesignManagerViewer
+        ? adminPanelApi.listDesigners()
+        : isSalesManagerViewer
+          ? adminPanelApi
+              .listSalesExecutivesLegacyAll()
+              .catch(() => [] as Array<Record<string, unknown>>)
+          : adminPanelApi
+              .listSalesExecutivesLegacyAll()
+              .catch(() =>
+                adminPanelApi
+                  .listSalesExecutives()
+                  .catch(() => [] as Array<Record<string, unknown>>),
+              );
     const parentReq = !showCreate
       ? Promise.resolve([] as Array<Record<string, unknown>>)
       : isSalesManagerViewer
         ? Promise.resolve([] as Array<Record<string, unknown>>)
-        : isPresalesManagerViewer
-          ? adminPanelApi.listPreSales().catch(() => [] as Array<Record<string, unknown>>)
-          : isTerritoryDesignManagerViewer
-            ? Promise.resolve([] as Array<Record<string, unknown>>)
+        : isTerritoryDesignManagerViewer
+          ? Promise.resolve([] as Array<Record<string, unknown>>)
           : isDesignManagerViewer
             ? adminPanelApi.listDesignManagers().catch(() => [] as Array<Record<string, unknown>>)
             : adminPanelApi.listAllUsers().catch(() => [] as Array<Record<string, unknown>>);
@@ -2532,7 +2542,9 @@ function SalesExecSection() {
             ) : execs.length === 0 ? (
               <tr>
                 <td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.muted }}>
-                  No sales executives returned from the API.
+                  {isPresalesManagerViewer
+                    ? "No presales executives found under your team."
+                    : "No sales executives returned from the API."}
                 </td>
               </tr>
             ) : (
@@ -2593,14 +2605,18 @@ function SalesExecSection() {
                   )}
                 </td>
                 <td style={{ padding: "12px 14px" }}>
-                  <Btn
-                    color={C.danger}
-                    style={{ padding: "5px 14px", fontSize: 13 }}
-                    disabled={toggleBusyId === e.id}
-                    onClick={() => setDeleteCandidate(e)}
-                  >
-                    Delete
-                  </Btn>
+                  {isPresalesManagerViewer ? (
+                    <span style={{ fontSize: 12, color: C.muted }}>—</span>
+                  ) : (
+                    <Btn
+                      color={C.danger}
+                      style={{ padding: "5px 14px", fontSize: 13 }}
+                      disabled={toggleBusyId === e.id}
+                      onClick={() => setDeleteCandidate(e)}
+                    >
+                      Delete
+                    </Btn>
+                  )}
                 </td>
               </tr>
               ))
@@ -4565,6 +4581,13 @@ export default function AdminPanelContent() {
       });
   const sections = baseSections.map((section) => {
     if (section.id !== "salesExec") return section;
+    if (isPresalesManager) {
+      return {
+        ...section,
+        label: "Presales Executives",
+        desc: "View & manage executives under you",
+      };
+    }
     if (isTerritoryDesignManager) {
       return { ...section, label: "Design Team", desc: "Create and manage design users" };
     }

@@ -706,6 +706,7 @@ export function detailJsonToLead(detail: Record<string, unknown>, leadType: CrmL
       const vs = String(detail.verificationStatus ?? "").trim().toLowerCase();
       return vs === "verified" || vs === "true";
     })(),
+    assigneeRole: pickStr(detail, "assigneeRole", "assignee_role") || undefined,
     salesclouserfill: pickBool(
       detail,
       "salesclouserfill",

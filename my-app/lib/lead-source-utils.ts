@@ -143,9 +143,9 @@ function isPrimaryOrIngestOnlySource(
   }
 
   return identityKeys.some((id) => {
-    if (id === srcKey) return true;
+    // Hub appends repeated Google submissions (e.g. "Google Ads") to additionalLeadSources — that is a re-inquiry, not ingest metadata.
+    if (id === srcKey) return !isGoogleSourceFamily(srcKey);
     if (isMetaSourceFamily(id) && isMetaSourceFamily(srcKey)) return true;
-    if (isGoogleSourceFamily(id) && isGoogleSourceFamily(srcKey)) return true;
     return false;
   });
 }

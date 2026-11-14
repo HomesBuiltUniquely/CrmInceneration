@@ -240,9 +240,10 @@ export function defaultLeadsVerificationStatus(
   viewerRole?: string,
 ): string {
   if (explicit?.trim()) return explicit.trim();
-  if (workspace === "sales") return "verified";
   const r = normalizeRole(viewerRole ?? "");
+  // Admin Sales/Presales menus: omit verify filter — Hub `/admin/*` pools are by assignee role.
   if (isAdminRole(r) || r === "SALES_ADMIN") return "";
+  if (workspace === "sales") return "verified";
   return "unverified";
 }
 

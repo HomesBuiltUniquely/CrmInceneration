@@ -103,6 +103,11 @@ export interface Lead {
   stageBlock?: LeadStageBlock;
   /** Presales handoff — when true, presales users see read-only milestone actions. */
   verified?: boolean;
+  /**
+   * Hub-computed from assignee → users.role (not a DB column).
+   * Add/Form pipeline follows this; prefer over verified alone.
+   */
+  assigneeRole?: string;
   /** Backend `salesclouserfill` — true after Design Module confirms Sales Closure submit. */
   salesclouserfill?: boolean;
   /** Backend `paymentReceived` from Sales Closure (`FULL_10%`, `PARTIAL`, `TOKEN`). */
