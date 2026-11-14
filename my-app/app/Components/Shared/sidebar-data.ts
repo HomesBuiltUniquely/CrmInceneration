@@ -66,6 +66,13 @@ export const dashboardSidebarSections: QuickAccessParentItem[] = [
       },
       { id: "presales-my-leads", label: "My Leads", description: "Presales team pipeline & month totals", icon: "chart", href: "/presales-leads" },
       { id: "presales-create-lead", label: "Create Lead", description: "Add new lead manually", icon: "plus", href: "/create-lead" },
+      {
+        id: "presales-executive-manage",
+        label: "Presales Executive Manage",
+        description: "View & manage executives under you",
+        icon: "users",
+        href: "/presales-executives",
+      },
     ],
   },
   {

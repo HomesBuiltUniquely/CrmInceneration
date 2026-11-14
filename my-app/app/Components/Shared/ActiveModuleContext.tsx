@@ -14,23 +14,45 @@ import {
   CRM_ACTIVE_MODULE_KEY,
   CRM_ROLE_STORAGE_KEY,
   defaultModuleByRole,
+  normalizeRole,
 } from "@/lib/auth/api";
 
 export type CrmModuleId = "crm" | "presales" | "design" | "admin";
 
-/** Derive the correct sidebar module from the current pathname. */
-function moduleFromPathname(pathname: string): CrmModuleId | null {
+/**
+ * Derive the correct sidebar module from the current pathname.
+ * Shared routes (e.g. `/create-lead`) must not force `crm` for presales roles —
+ * that emptied the left menu (PM/PE only see the presales section).
+ */
+function moduleFromPathname(pathname: string, roleRaw = ""): CrmModuleId | null {
   const p = (pathname ?? "").toLowerCase();
+  const role = normalizeRole(roleRaw);
   if (p === "/presales-leads" || p.startsWith("/presales-leads/")) return "presales";
   if (p === "/presales-dashboard" || p.startsWith("/presales-dashboard/")) return "presales";
+  if (p === "/presales-executives" || p.startsWith("/presales-executives/")) return "presales";
   if (p === "/design-dashboard" || p.startsWith("/design-dashboard/")) return "design";
   if (p === "/appointment" || p.startsWith("/appointment/")) return "design";
+
+  // Shared create-lead: keep viewer in their home module (presales vs crm).
+  if (p === "/create-lead" || p.startsWith("/create-lead/")) {
+    if (
+      role === "PRESALES_MANAGER" ||
+      role === "PRESALES_EXECUTIVE" ||
+      role === "PRE_SALES"
+    ) {
+      return "presales";
+    }
+    // Dual-module admins: do not override the module they already selected.
+    if (role === "SUPER_ADMIN" || role === "ADMIN" || role === "SALES_ADMIN") {
+      return null;
+    }
+    return "crm";
+  }
+
   if (
     p === "/leads" ||
     p.startsWith("/leads/") ||
     p === "/" ||
-    p === "/create-lead" ||
-    p.startsWith("/create-lead/") ||
     p === "/import-leads" ||
     p.startsWith("/import-leads/") ||
     p === "/google-calendar" ||
@@ -101,7 +123,13 @@ export function ActiveModuleProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!hydrated) return;
     if (pathname === "/login" || pathname.startsWith("/login/")) return;
-    const fromPath = moduleFromPathname(pathname);
+    let role = "";
+    try {
+      role = window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "";
+    } catch {
+      role = "";
+    }
+    const fromPath = moduleFromPathname(pathname, role);
     if (!fromPath) return;
     setActiveModuleIdState((prev) => {
       if (prev === fromPath) return prev;

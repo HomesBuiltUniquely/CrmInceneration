@@ -181,13 +181,20 @@ export default function QuickAccessSidebar({
 
     return sections
       .filter((section) => {
-        if (activeModuleId && section.id !== activeModuleId) return false;
-        if (section.id === "presales") {
-          return canSeePresales && (isSuperAdmin || isHubAdmin || isPresalesManager || isPresalesExecutive);
+        // Role-locked viewers keep their module even on shared routes (e.g. /create-lead
+        // briefly marked as crm) — otherwise the left menu empties/hides.
+        if (isPresalesManager || isPresalesExecutive) {
+          return section.id === "presales" && canSeePresales;
         }
         if (isDesignRole) return section.id === "design";
-        if (isPresalesManager || isPresalesExecutive) return section.id === "presales";
-        if (isSalesAdmin || isSalesManager || isSalesExecutive) return section.id === "crm";
+        if (isSalesAdmin || isSalesManager || isSalesExecutive) {
+          if (activeModuleId && section.id !== activeModuleId) return false;
+          return section.id === "crm";
+        }
+        if (activeModuleId && section.id !== activeModuleId) return false;
+        if (section.id === "presales") {
+          return canSeePresales && (isSuperAdmin || isHubAdmin);
+        }
         return true;
       })
       .map((section) => ({
@@ -196,11 +203,15 @@ export default function QuickAccessSidebar({
           if (item.id === "design-create-user") return (normalizeRole(currentRole || profileRole) === "TERRITORY_DESIGN_MANAGER") || (normalizeRole(currentRole || profileRole) === "DESIGN_MANAGER");
           if (item.id === "crm-sales-managers") return isSalesAdmin || isSalesManager;
           if (item.id === "crm-presales-executives") return isPresalesManager;
+          // PM: manage team executives (under Create Lead); hide Dashboard for this role.
+          if (item.id === "presales-executive-manage") return isPresalesManager;
+          if (isPresalesManager && item.id === "presales-dashboard") return false;
           if (isSalesExecutive && item.id === "crm-dashboard") return false;
           if ((isSalesExecutive || isPresalesExecutive) && item.id === "crm-import-leads") return false;
           if ((isPresalesManager || isPresalesExecutive) && item.id === "crm-hub-calendar") return false;
           if (isSalesExecutive && item.id === "crm-presales-executives") return false;
           if (isPresalesExecutive && item.id === "crm-sales-managers") return false;
+          if (isPresalesExecutive && item.id === "presales-executive-manage") return false;
           if (item.id === "crm-booking-token") return canAccessBookingTokenDashboard(currentRole || profileRole);
           if (item.id === "crm-insights") return canAccessCrmInsights(currentRole || profileRole);
           if (item.id === "crm-meeting-management") return canAccessMeetingManagement(currentRole || profileRole);

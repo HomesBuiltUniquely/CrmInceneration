@@ -160,6 +160,19 @@ export function presalesTopLevelStage(lead: ApiLead): string {
 export function isLeadHandedOffToSales(
   lead: ApiLead | Lead | Record<string, unknown>,
 ): boolean {
+  // Prefer Hub assigneeRole (guide §8) — do not guess pipeline from verified alone.
+  if (lead && typeof lead === "object") {
+    const explicit = String(
+      (lead as Lead).assigneeRole ??
+        (lead as ApiLead).assigneeRole ??
+        (lead as Record<string, unknown>).assigneeRole ??
+        "",
+    ).trim();
+    if (explicit) {
+      if (isSalesRole(explicit)) return true;
+      if (isPresalesRole(explicit)) return false;
+    }
+  }
   if (lead && typeof lead === "object" && "verified" in lead) {
     const v = (lead as Lead).verified;
     if (v === true) return true;
