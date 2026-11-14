@@ -38,6 +38,8 @@ import DataCompletenessMeter from "./DataCompletenessMeter";
 import {
   canAccessRecordingCallLogs,
   canUsePaymentLinkIntegration,
+  canViewCustomerQuoteOpenCount,
+  canViewCustomerQuoteVersionsSent,
   isPresalesRole,
 } from "@/lib/roleUtils";
 import ScopeOfWorkCompletenessCard from "./ScopeOfWorkCompletenessCard";
@@ -195,6 +197,7 @@ export default function NewLeadDetailPage({
     useState<DealControlSectionId>("deal-overview");
   const [openActivityAfterMain, setOpenActivityAfterMain] = useState(false);
   const canSeeCallsRecordings = canAccessRecordingCallLogs(viewerRoleKey);
+  const canSeeQuoteOpenCount = canViewCustomerQuoteOpenCount(viewerRoleKey);
   const showCallsPanel = canSeeCallsRecordings && dealSection === "deal-calls";
 
   const openActivityPanel = useCallback(() => {
@@ -248,24 +251,29 @@ export default function NewLeadDetailPage({
                     <ActivityHistoryWithConnector
                       ref={activityPanelRef}
                       activities={lead.activities as ActivityItem[]}
-                      quoteOpenSummary={{
-                        openCount:
-                          lead.customerQuoteOpenCount ??
-                          lead.quoteSentInfo?.customerQuoteOpenCount ??
-                          0,
-                        lastOpenedAt:
-                          lead.lastCustomerQuoteOpenAt ??
-                          lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
-                          null,
-                        quoteId:
-                          lead.quoteId?.trim() ||
-                          lead.quoteSentInfo?.quoteId?.trim() ||
-                          null,
-                        quoteLink:
-                          lead.quoteLink?.trim() ||
-                          lead.quoteSentInfo?.quoteLink ||
-                          null,
-                      }}
+                      quoteOpenSummary={
+                        canSeeQuoteOpenCount
+                          ? {
+                              openCount:
+                                lead.customerQuoteOpenCount ??
+                                lead.quoteSentInfo?.customerQuoteOpenCount ??
+                                0,
+                              lastOpenedAt:
+                                lead.lastCustomerQuoteOpenAt ??
+                                lead.quoteSentInfo?.lastCustomerQuoteOpenAt ??
+                                null,
+                              quoteId:
+                                lead.quoteId?.trim() ||
+                                lead.quoteSentInfo?.quoteId?.trim() ||
+                                null,
+                              quoteLink:
+                                lead.quoteLink?.trim() ||
+                                lead.quoteSentInfo?.quoteLink ||
+                                null,
+                              customerName: lead.name?.trim() || null,
+                            }
+                          : undefined
+                      }
                     />
                   </div>
                 </aside>
@@ -1792,6 +1800,7 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
   const {
     lead,
     leadId,
+    viewerRoleKey,
     canShowGetQuote,
     quoteFetching,
     quoteSending,
@@ -1801,6 +1810,9 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
     onRetrySaveQuoteLink,
   } = useLeadDetailV2();
   const canInteract = !disabled;
+  const canSeeQuoteOpenCount = canViewCustomerQuoteOpenCount(viewerRoleKey);
+  const canSeeQuoteVersionsSent = canViewCustomerQuoteVersionsSent(viewerRoleKey);
+  const customerDisplayName = lead.name?.trim() || "customer";
   const quoteLinkValue = toCustomerQuoteLink(lead.quoteLink?.trim() || "");
   const quoteSentCount =
     lead.quoteSentCount ?? lead.quoteSentInfo?.quoteSentCount ?? 0;
@@ -1827,91 +1839,87 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
         className="mx-auto w-full max-w-[760px] overflow-hidden rounded-2xl border border-[#e5e9f0] bg-white shadow-[0_8px_30px_rgba(16,24,40,0.06)] scroll-mt-24"
       >
         <div className="border-b border-[#edf1f6] bg-gradient-to-r from-[#f7f3ff] via-[#fbf9ff] to-[#ffffff] px-5 py-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#7c3aed]">
                 Experience Phase
               </p>
               <p className="mt-1 text-[18px] font-extrabold tracking-[-0.01em] text-[#1f2937]">
                 Quote &amp; Proposal Desk
               </p>
-              {quoteSent ? (
-                <p className="mt-1.5 text-[12px] font-semibold text-emerald-700">
-                  Quote Sent to Customer
-                  {quoteId ? ` · #${quoteId}` : ""}
-                  {quoteSentCount > 1 ? ` · Sent ${quoteSentCount} times` : ""}
-                </p>
-              ) : null}
-              {quoteSent && customerQuoteOpenCount > 0 ? (
-                <p className="mt-1 text-[12px] font-medium text-[#475569]">
-                  Customer opened link {customerQuoteOpenCount}{" "}
-                  {customerQuoteOpenCount === 1 ? "time" : "times"}
+              {canSeeQuoteOpenCount && quoteSent ? (
+                <p className="mt-2 text-[13px] font-semibold text-[#334155]">
+                  {customerQuoteOpenCount <= 0
+                    ? `${customerDisplayName} hasn't opened the quote link yet`
+                    : customerQuoteOpenCount === 1
+                      ? `Opened once by ${customerDisplayName}`
+                      : `Opened ${customerQuoteOpenCount} times by ${customerDisplayName}`}
                 </p>
               ) : null}
             </div>
-            {canShowGetQuote && !quoteLinkValue ? (
-              <span className="inline-flex h-[42px] min-w-[160px] items-center justify-center rounded-xl border border-[#e9d5ff] bg-[#faf5ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#7c3aed]">
-                {quoteFetching || quoteLinkPersisting
-                  ? "Syncing quote…"
-                  : "Waiting for Design quote"}
-              </span>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="p-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_1fr] lg:items-start">
-            <CustomerQuoteSendsPanel
-              quoteSentInfo={lead.quoteSentInfo}
-              quoteSentCount={quoteSentCount}
-              quoteLink={quoteLinkValue}
-              quoteId={quoteId}
-              className="min-h-[120px] lg:sticky lg:top-4"
-            />
-            <div className="grid gap-3">
-              <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
-                <div>
-                  <PhaseFieldLabel className="mb-2">
-                    Quote Link (customer)
-                  </PhaseFieldLabel>
-                  {quoteLinkValue ? (
-                    <Input
-                      value={quoteLinkValue}
-                      readOnly
-                      className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
-                    />
-                  ) : (
-                    <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
-                      <span className="text-[12px] italic text-[#94a3b8]">
-                        Quote is not generated yet
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  disabled={
-                    !canInteract ||
-                    quoteSending ||
-                    quoteLinkPersisting ||
-                    !quoteLinkValue
-                  }
-                  onClick={() => void onSendQuote()}
-                  className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
-                >
-                  {quoteSending ? "Sending…" : "Send Quote"}
-                </button>
-              </div>
-
-              {designDiscountUrl ? (
-                <DesignStudioPass
+            <div className="flex shrink-0 flex-col items-end gap-2">
+              {canShowGetQuote && !quoteLinkValue ? (
+                <span className="inline-flex h-[42px] min-w-[160px] items-center justify-center rounded-xl border border-[#e9d5ff] bg-[#faf5ff] px-4 text-[12px] font-bold uppercase tracking-wide text-[#7c3aed]">
+                  {quoteFetching || quoteLinkPersisting
+                    ? "Syncing quote…"
+                    : "Waiting for Design quote"}
+                </span>
+              ) : null}
+              {canSeeQuoteVersionsSent ? (
+                <CustomerQuoteSendsPanel
+                  compact
+                  quoteSentInfo={lead.quoteSentInfo}
+                  quoteSentCount={quoteSentCount}
+                  quoteLink={quoteLinkValue}
                   quoteId={quoteId}
-                  href={designDiscountUrl}
-                  disabled={!canInteract}
                 />
               ) : null}
             </div>
           </div>
+        </div>
+
+        <div className="p-5">
+          <div className="grid gap-3 md:grid-cols-[1fr_170px] md:items-end">
+            <div>
+              <PhaseFieldLabel className="mb-2">
+                Quote Link (customer)
+              </PhaseFieldLabel>
+              {quoteLinkValue ? (
+                <Input
+                  value={quoteLinkValue}
+                  readOnly
+                  className="h-[46px] rounded-xl border-[#dfe6ef] bg-[#fbfcff] px-3 text-[13px] text-[#334155]"
+                />
+              ) : (
+                <div className="flex h-[46px] items-center rounded-xl border border-[#dfe6ef] bg-[#fbfcff] px-3">
+                  <span className="text-[12px] italic text-[#94a3b8]">
+                    Quote is not generated yet
+                  </span>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={
+                !canInteract ||
+                quoteSending ||
+                quoteLinkPersisting ||
+                !quoteLinkValue
+              }
+              onClick={() => void onSendQuote()}
+              className={`inline-flex h-[44px] min-w-[170px] items-center justify-center rounded-xl bg-[#1dde63] px-5 text-[12px] font-bold uppercase tracking-wide text-[#05220f] disabled:cursor-not-allowed disabled:opacity-60 ${V2_BTN_PRIMARY}`}
+            >
+              {quoteSending ? "Sending…" : "Send Quote"}
+            </button>
+          </div>
+
+          {designDiscountUrl ? (
+            <DesignStudioPass
+              quoteId={quoteId}
+              href={designDiscountUrl}
+              disabled={!canInteract}
+            />
+          ) : null}
         </div>
 
         <div className="border-t border-[#edf1f6] bg-[#fafcff] px-5 py-4">

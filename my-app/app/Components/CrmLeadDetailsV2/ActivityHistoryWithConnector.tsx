@@ -49,6 +49,7 @@ type PaymentSubFilter = "all" | "links" | "settlements";
 
 export type QuoteOpenSummary = {
   openCount: number;
+  customerName?: string | null;
   lastOpenedAt?: string | null;
   quoteId?: string | null;
   quoteLink?: string | null;
@@ -123,11 +124,13 @@ const MOCK_FILTER_COUNTS = {
 };
 
 function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayActivityItem | null {
-  const openCount = Math.max(0, Math.floor(Number(summary?.openCount) || 0));
+  if (!summary) return null;
+  const openCount = Math.max(0, Math.floor(Number(summary.openCount) || 0));
   if (openCount <= 0) return null;
-  const lastOpenedAt = summary?.lastOpenedAt?.trim() || "";
-  const quoteId = summary?.quoteId?.trim() || "";
-  const quoteLink = summary?.quoteLink?.trim() || "";
+  const who = summary.customerName?.trim() || "Customer";
+  const lastOpenedAt = summary.lastOpenedAt?.trim() || "";
+  const quoteId = summary.quoteId?.trim() || "";
+  const quoteLink = summary.quoteLink?.trim() || "";
   const timestamp = lastOpenedAt
     ? formatActivityDisplayTime(lastOpenedAt)
     : "—";
@@ -140,7 +143,10 @@ function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayA
   return {
     id: "quote-open-summary",
     kind: "quote_open",
-    title: `Customer opened quote link · ${openCount} ${openCount === 1 ? "time" : "times"}`,
+    title:
+      openCount === 1
+        ? `Opened once by ${who}`
+        : `Opened ${openCount} times by ${who}`,
     timestamp,
     author: "System",
     detail: detailParts.join("\n"),
@@ -148,7 +154,7 @@ function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayA
     quoteOpenCount: openCount,
     quoteId: quoteId || null,
     quoteLink: quoteLink || null,
-    motivateLine: "Customer engagement on the proposal — follow up while interest is warm.",
+    motivateLine: `${who} engaged with the proposal — follow up while interest is warm.`,
   };
 }
 
@@ -740,12 +746,14 @@ const ActivityHistoryWithConnector = forwardRef<
                   label={`Updates ${filterCounts.updates}`}
                   icon="🔄"
                 />
-                <FilterPill
-                  active={filter === "quote_opens"}
-                  onClick={() => setFilter("quote_opens")}
-                  label={`Quote opens ${filterCounts.quote_opens}`}
-                  icon="🔗"
-                />
+                {quoteOpenSummary ? (
+                  <FilterPill
+                    active={filter === "quote_opens"}
+                    onClick={() => setFilter("quote_opens")}
+                    label={`Quote opens ${filterCounts.quote_opens}`}
+                    icon="🔗"
+                  />
+                ) : null}
                 {filterCounts.booking_token > 0 ? (
                   <FilterPill
                     active={filter === "booking_token"}

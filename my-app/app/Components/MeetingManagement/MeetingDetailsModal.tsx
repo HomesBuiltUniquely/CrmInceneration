@@ -11,7 +11,10 @@ import {
   isQuoteSentSuccessfulProgress,
   meetingProgressTone,
 } from "@/lib/meeting-progress";
-import { canViewDesignerMeetingFeedback } from "@/lib/roleUtils";
+import {
+  canViewCustomerQuoteOpenCount,
+  canViewDesignerMeetingFeedback,
+} from "@/lib/roleUtils";
 import {
   ActivityHistorySheet,
   ActivityHistoryTrigger,
@@ -122,6 +125,7 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [filter, setFilter] = useState<HistoryFilter>("meeting");
   const [canViewFeedback, setCanViewFeedback] = useState(false);
+  const [canViewQuoteOpenCount, setCanViewQuoteOpenCount] = useState(false);
   const history = useMeetingActivityHistory(row.leadId, row.leadTypeCode);
 
   useEffect(() => {
@@ -132,6 +136,7 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
   useEffect(() => {
     const role = normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? "");
     setCanViewFeedback(canViewDesignerMeetingFeedback(role));
+    setCanViewQuoteOpenCount(canViewCustomerQuoteOpenCount(role));
   }, []);
 
   return (
@@ -154,8 +159,18 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
           <FieldSection title="Team and meeting">
             <Field label="Meeting level" value={textOrDash(row.meetingLevel)} />
             <Field label="Quote link" value={quoteLinkValue(row)} />
-            <Field label="Quote link opens" value={quoteOpenCountValue(row)} />
-            <Field label="Last quote open" value={textOrDash(row.lastCustomerQuoteOpenAt)} />
+            {canViewQuoteOpenCount ? (
+              <>
+                <Field
+                  label="Quote link opens"
+                  value={quoteOpenCountValue(row, row.customer)}
+                />
+                <Field
+                  label="Last quote open"
+                  value={textOrDash(row.lastCustomerQuoteOpenAt)}
+                />
+              </>
+            ) : null}
           </FieldSection>
           <ActivityHistoryTrigger
             open={historyOpen}
@@ -435,8 +450,10 @@ function quoteLinkValue(row: MeetingRecord): ReactNode {
   );
 }
 
-function quoteOpenCountValue(row: MeetingRecord): ReactNode {
+function quoteOpenCountValue(row: MeetingRecord, customerName?: string): ReactNode {
   const n = row.customerQuoteOpenCount ?? 0;
-  if (n <= 0) return "0";
-  return `${n} ${n === 1 ? "time" : "times"}`;
+  const who = customerName?.trim() || "customer";
+  if (n <= 0) return `${who} hasn't opened yet`;
+  if (n === 1) return `Opened once by ${who}`;
+  return `Opened ${n} times by ${who}`;
 }
