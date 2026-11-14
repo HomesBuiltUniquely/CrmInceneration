@@ -11,6 +11,7 @@ const HEADER_SWITCHER_PATHS = [
   "/Leads",
   "/presales-leads",
   "/presales-dashboard",
+  "/presales-executives",
   "/design-dashboard",
   "/appointment",
   "/admin-panel",

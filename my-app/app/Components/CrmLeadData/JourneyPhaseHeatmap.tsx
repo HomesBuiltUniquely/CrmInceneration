@@ -668,6 +668,15 @@ export default function JourneyPhaseHeatmap({
   const usePresalesSummaryUi = leadsWorkspace === "presales";
   /** Manager / Executive Total card + phases use full assigned pool (not this month only). */
   const presalesTotalAllTime = usePresalesSummaryUi && isPresalesRole(roleKeyUi);
+  /**
+   * Table/leads effect synced journey map (id-merge blank→Fresh).
+   * SM previously; SE/presales exec must use the same path or phase cards diverge
+   * from Lead/Opp/Total (mapLeadsToPhases dropped non-canonical stage labels).
+   */
+  const clientSyncedJourneyCounts =
+    !isAdminHeatmapViewer &&
+    adminMilestoneCounts != null &&
+    Object.keys(adminMilestoneCounts).length > 0;
 
   const presalesIdentity = useMemo(() => {
     const myAliases = new Set(
@@ -706,7 +715,13 @@ export default function JourneyPhaseHeatmap({
 
   const presalesMonthMetrics = useMemo(() => {
     if (isAdminHeatmapViewer && adminPresalesSummaryLocal) return adminPresalesSummaryLocal;
-    if (adminPresalesSummary && usesAdminLeadsApi(roleKeyUi)) return adminPresalesSummary;
+    // PE/PM Total card: prefer table-synced summary (no second full-pool download).
+    if (
+      adminPresalesSummary &&
+      (usesAdminLeadsApi(roleKeyUi) || isPresalesRole(roleKeyUi))
+    ) {
+      return adminPresalesSummary;
+    }
     // Summary counts must reflect full presales pool, not an insight-tile drill-down subset.
     const countPool = presalesTotalAllTime
       ? poolLeads
@@ -725,10 +740,22 @@ export default function JourneyPhaseHeatmap({
               leadAssignedToPresalesExecNameSet(l, execNorms),
           ).length
         : 0;
+    // Edge: synced phase map arrived before summary — derive Total from phase histogram.
+    if (totalMonth <= 0 && clientSyncedJourneyCounts && adminMilestoneCounts) {
+      const fromPhases = Object.values(adminMilestoneCounts).reduce(
+        (s, n) => s + (Number(n) || 0),
+        0,
+      );
+      if (fromPhases > 0) {
+        return { totalMonth: fromPhases, verifiedMonth: 0, teamVerifiedMonth: 0 };
+      }
+    }
     return { totalMonth, verifiedMonth, teamVerifiedMonth };
   }, [
     adminPresalesSummary,
     adminPresalesSummaryLocal,
+    adminMilestoneCounts,
+    clientSyncedJourneyCounts,
     isAdminHeatmapViewer,
     aggregateNormSet.size,
     poolLeads,
@@ -754,15 +781,6 @@ export default function JourneyPhaseHeatmap({
 
   const assigneeScopedAdminCounts =
     assigneeScope.length > 0 || summaryTotalsOverride != null;
-  /**
-   * Table/leads effect synced journey map (id-merge blank→Fresh).
-   * SM previously; SE/presales exec must use the same path or phase cards diverge
-   * from Lead/Opp/Total (mapLeadsToPhases dropped non-canonical stage labels).
-   */
-  const clientSyncedJourneyCounts =
-    !isAdminHeatmapViewer &&
-    adminMilestoneCounts != null &&
-    Object.keys(adminMilestoneCounts).length > 0;
   const adminCountsEffective = useMemo(() => {
     if (clientSyncedJourneyCounts) {
       return adminMilestoneCounts;
@@ -1075,6 +1093,23 @@ export default function JourneyPhaseHeatmap({
       return;
     }
 
+    /**
+     * PE/PM: Hub JWT + table BFF page already owns scope/counts. A parallel size=50000
+     * walk raced the table and left "Loading milestone counts…" stuck. Wait for sync;
+     * soft-timeout clears spinner if table fails.
+     */
+    if (trustPresalesUpstreamLeadScope(roleKeyUi) && assigneeScope.length === 0) {
+      setLoading(true);
+      setError("");
+      const timeoutId = window.setTimeout(() => {
+        setLoading(false);
+        setError((prev) => prev || "Counts are taking longer than usual — try refresh.");
+      }, 90_000);
+      return () => {
+        window.clearTimeout(timeoutId);
+      };
+    }
+
     let cancelled = false;
 
     async function loadMilestoneCounts() {
@@ -1285,12 +1320,14 @@ export default function JourneyPhaseHeatmap({
     clientSyncedJourneyCounts,
     milestoneFilterQuery,
     currentRole,
+    roleKeyUi,
     leadView,
     currentUserName,
     currentUserAliases,
     currentUserId,
     managerTeamNames,
     assigneeScopeKey,
+    assigneeScope.length,
     presalesTeamNames,
     aggregateNormKey,
     leadsWorkspace,

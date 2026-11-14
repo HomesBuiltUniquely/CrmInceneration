@@ -67,8 +67,10 @@ import {
   assigneeRoleFromLead,
   isPresalesAssigneeRole,
   requiresReassignReason,
+  shouldPromptNotifyCustomer,
   validateReassignReason,
 } from "@/lib/assignment-reassign";
+import { useAssignNotifyCustomerPrompt } from "@/app/Components/Shared/useAssignNotifyCustomerPrompt";
 import { crmLeadTypeToAssignmentLabel } from "@/lib/crm-lead-type-label";
 import { adminPanelApi } from "@/lib/admin-panel-api";
 import {
@@ -1697,6 +1699,7 @@ export default function LeadsDataSection({
   const [rowReassignReason, setRowReassignReason] = useState("");
   const [bulkReassignReason, setBulkReassignReason] = useState("");
   const { notifySuccess, notifyError, notifyInfo } = useGlobalNotifier();
+  const { confirmNotifyCustomer, notifyModal } = useAssignNotifyCustomerPrompt();
   const [managerTeamNames, setManagerTeamNames] = useState<string[]>([]);
   const [relativeTime, setRelativeTime] = useState<string>("Never");
   const [isMinimized, setIsMinimized] = useState(false);
@@ -2369,14 +2372,28 @@ export default function LeadsDataSection({
   );
   const clientScopeRoleKey = normalizeRole(authRoleProp ?? currentRole);
   const showPresalesHierarchyFilters = canUsePresalesHierarchyFilters(clientScopeRoleKey);
+  /** PM can filter to a team Presales Executive (same as SM → Sales Exec). */
+  const allowPresalesExecFilter =
+    showPresalesHierarchyFilters || clientScopeRoleKey === "PRESALES_MANAGER";
   const effectivePresalesManagerFilter = showPresalesHierarchyFilters ? presalesManagerFilter : "";
-  const effectivePresalesExecFilter = showPresalesHierarchyFilters ? presalesExecFilter : "";
+  const effectivePresalesExecFilter = allowPresalesExecFilter ? presalesExecFilter : "";
 
   useEffect(() => {
-    if (showPresalesHierarchyFilters) return;
+    if (allowPresalesExecFilter) {
+      // Admins keep both hierarchy picks; PM only uses Presales Exec — drop Mgr pick.
+      if (!showPresalesHierarchyFilters && presalesManagerFilter) {
+        setPresalesManagerFilter("");
+      }
+      return;
+    }
     if (presalesManagerFilter) setPresalesManagerFilter("");
     if (presalesExecFilter) setPresalesExecFilter("");
-  }, [showPresalesHierarchyFilters, presalesManagerFilter, presalesExecFilter]);
+  }, [
+    allowPresalesExecFilter,
+    showPresalesHierarchyFilters,
+    presalesManagerFilter,
+    presalesExecFilter,
+  ]);
   const managerTeamRoster =
     managerTeamNamesFromHeader.length > 0 ? managerTeamNamesFromHeader : managerTeamNames;
   /** Strict SM bucket: own team only — blocks other SM/SE leads (e.g. Razi) from this inbox. */
@@ -2938,10 +2955,11 @@ export default function LeadsDataSection({
         const queryAssignee = adminGlobalSearchAcrossPools ? "" : assigneeName;
         const stageForReq =
           stageOverride !== undefined ? stageOverride : milestoneStage;
-        // SM combined rebuilds my∪team per request — one large page avoids N× rebuilds.
+        // SM combined / PE-PM: one large page avoids N× BFF merge rebuilds (~20–30s each).
         const pageSize =
-          leadViewKey === "combined" &&
-          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")
+          (leadViewKey === "combined" &&
+            (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")) ||
+          trustPresalesUpstreamLeadScope(clientScopeRoleKey)
             ? 50_000
             : 500;
         const firstPage = await fetchMergedPage(
@@ -3109,6 +3127,8 @@ export default function LeadsDataSection({
        * filtering the current page content) or Lead/Opp/phase/Total cards diverge (e.g. 308 vs 287 vs 412).
        * Exception: SM combined — Hub my∪team + BFF page meta already match cards; downloading the
        * full inventory on every table load hung on "Loading leads…" then client canView emptied rows.
+       * Exception: PE/PM — Hub JWT + BFF presales-search already scopes the pool; N× mergeAll
+       * page walks (each ~20–30s) hung executives/managers on "Loading leads…" / missing counts.
        */
       const trustHubSmCombinedPaged =
         leadViewKey === "combined" &&
@@ -3117,11 +3137,17 @@ export default function LeadsDataSection({
         !useTeamPersonFetch &&
         activeAssigneeScope.length === 0 &&
         !superAdminPresalesPoolActive;
+      const trustHubPresalesPaged =
+        trustPresalesUpstreamLeadScope(clientScopeRoleKey) &&
+        !salesHierarchyFilterActive &&
+        !useTeamPersonFetch &&
+        activeAssigneeScope.length === 0 &&
+        !superAdminPresalesPoolActive;
       const requiresFullyVisiblePage =
         activeAssigneeScope.length > 1 ||
         salesHierarchyFilterActive ||
         useTeamPersonFetch ||
-        (requiresClientScopedDataset && !trustHubSmCombinedPaged) ||
+        (requiresClientScopedDataset && !trustHubSmCombinedPaged && !trustHubPresalesPaged) ||
         superAdminPresalesPoolActive;
 
       if (useTeamPersonFetch) {
@@ -3332,8 +3358,9 @@ export default function LeadsDataSection({
           stageOverride !== undefined ? "" : categoryForFetch;
         const subForReq = stageOverride !== undefined ? "" : subStageForFetch;
         const pageSize =
-          leadViewKey === "combined" &&
-          (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")
+          (leadViewKey === "combined" &&
+            (clientScopeRoleKey === "SALES_MANAGER" || clientScopeRoleKey === "MANAGER")) ||
+          trustPresalesUpstreamLeadScope(clientScopeRoleKey)
             ? 50_000
             : 500;
         const firstPage = await fetchMergedPage(
@@ -4075,6 +4102,18 @@ export default function LeadsDataSection({
   useEffect(() => {
     const roleKey = normalizeRole(authRoleProp ?? currentRole);
     if (usesAdminLeadsApi(roleKey)) return;
+    /**
+     * PE/PM: table `load()` already syncs Total / phase / Lead Types from one BFF page.
+     * A second full-pool walk raced the table and kept "Loading leads…" / counts spinning.
+     * Still run when assignee scope needs a client inventory rebuild.
+     */
+    if (
+      trustPresalesUpstreamLeadScope(roleKey) &&
+      activeAssigneeScope.length === 0 &&
+      !salesHierarchyFilterActive
+    ) {
+      return;
+    }
 
     let cancelled = false;
     void (async () => {
@@ -4231,6 +4270,8 @@ export default function LeadsDataSection({
     insightLeadView,
     isGlobalSearchActive,
     effectiveAssigneeScopeKey,
+    activeAssigneeScope.length,
+    salesHierarchyFilterActive,
     superAdminPresalesPoolActive,
     leadsWorkspace,
   ]);
@@ -4267,8 +4308,8 @@ export default function LeadsDataSection({
       leadsWorkspace,
       roleKeyForLoad,
       insightModeActive: false,
-      /** Bust caches: SM bucket allowlist (block other SM/SE leaks e.g. Razi). */
-      tablePagination: "exclude-lost-before-slice-v9-sm-bucket-allowlist",
+      /** Bust caches: PE/PM trust Hub paged (avoid stale full-inventory hang caches). */
+      tablePagination: "exclude-lost-before-slice-v10-presales-hub-paged",
     });
     const cached = opts?.forceNetwork ? null : readLeadsListCache(cacheKey);
 
@@ -4435,7 +4476,8 @@ export default function LeadsDataSection({
             if (
               roleKeyForLoad === "SALES_MANAGER" ||
               roleKeyForLoad === "MANAGER" ||
-              roleKeyForLoad === "SALES_EXECUTIVE"
+              roleKeyForLoad === "SALES_EXECUTIVE" ||
+              trustPresalesUpstreamLeadScope(roleKeyForLoad)
             ) {
               setAdminPoolDisplayTotals({
                 uniquePrimary: badgeTotal,
@@ -4443,6 +4485,18 @@ export default function LeadsDataSection({
                   Number(pageJson.totalRowCount ?? 0),
                   badgeTotal,
                 ),
+              });
+            }
+            // PE/PM: BFF page meta owns Total + phase counts (no second full-pool walk).
+            if (
+              trustPresalesUpstreamLeadScope(roleKeyForLoad) &&
+              leadsWorkspace === "presales" &&
+              badgeTotal >= 0
+            ) {
+              onAdminPresalesSummarySyncRef.current?.({
+                totalMonth: badgeTotal,
+                verifiedMonth: 0,
+                teamVerifiedMonth: 0,
               });
             }
           }
@@ -4496,14 +4550,17 @@ export default function LeadsDataSection({
           }
         }
         /**
-         * SM/SE/PE: insight effect owns Lead Types from the id-merged full journey.
+         * SM/SE: insight effect owns Lead Types from the id-merged full journey.
          * Never merge paged `sourceCounts` — that inflated SE My Assigned (341) above
          * Lead+Opp Total (108) when duplicates raced with the table page.
+         * PE/PM: Hub JWT scope + BFF merge meta is authoritative — apply sourceCounts
+         * so Lead Types populate without a competing full-pool download.
          */
         if (
           usePageMetaForUi &&
           pageJson.sourceCounts &&
-          !requiresClientScopedDataset
+          (!requiresClientScopedDataset ||
+            trustPresalesUpstreamLeadScope(roleKeyForLoad))
         ) {
           const sourceCounts = pageJson.sourceCounts;
           if (preferFilteredInventory) {
@@ -5195,22 +5252,40 @@ export default function LeadsDataSection({
   const buildAssignmentPayloadForGroup = (
     groupLeadType: string,
     groupLeads: LeadRowModel[],
+    notifyCustomer?: boolean,
   ) => {
     const assignees = selectedAssigneeIds.map((userId) => ({
       userId,
       percentage: assignmentMode === "MANUAL" ? Number(manualPercentages[userId] ?? 0) : undefined,
     }));
-    const payload = {
+    const payload: {
+      leadType: string;
+      leadIds: number[];
+      assignmentMode: string;
+      assignees: Array<{ userId: number; percentage?: number }>;
+      reassignReason?: string;
+      notifyCustomer?: boolean;
+    } = {
       leadType: toAssignmentLeadType(groupLeadType),
       leadIds: groupLeads.map((lead) => Number(lead.id)),
       assignmentMode,
       assignees,
     };
     if (bulkAssignNeedsReason && bulkReassignReason.trim()) {
-      return { ...payload, reassignReason: bulkReassignReason.trim() };
+      payload.reassignReason = bulkReassignReason.trim();
+    }
+    if (typeof notifyCustomer === "boolean") {
+      payload.notifyCustomer = notifyCustomer;
     }
     return payload;
   };
+
+  const bulkNeedsNotifyPrompt = useMemo(() => {
+    return selectedAssigneeIds.some((id) => {
+      const u = assigneeUsers.find((row) => row.userId === id);
+      return Boolean(u && shouldPromptNotifyCustomer(u.role));
+    });
+  }, [selectedAssigneeIds, assigneeUsers]);
 
   const validateBulkAssignForm = (): string | null => {
     if (selectedLeads.length === 0) return "Select at least one lead.";
@@ -5269,11 +5344,17 @@ export default function LeadsDataSection({
         setAssignmentError(validationErr);
         return;
       }
+      let notifyCustomer: boolean | undefined;
+      if (bulkNeedsNotifyPrompt) {
+        const choice = await confirmNotifyCustomer();
+        if (choice === null) return;
+        notifyCustomer = choice;
+      }
       setIsExecuteLoading(true);
       const grouped = groupRowsByLeadType(selectedLeads);
       for (const [, leads] of grouped.entries()) {
         const res = await assignmentApi.bulkAssignExecute(
-          buildAssignmentPayloadForGroup(leads[0]!.leadType, leads),
+          buildAssignmentPayloadForGroup(leads[0]!.leadType, leads, notifyCustomer),
         );
         if (res.success === false) {
           setAssignmentError(typeof res.message === "string" ? res.message : "Bulk assign failed.");
@@ -5281,6 +5362,7 @@ export default function LeadsDataSection({
         }
       }
       clearSelection();
+      setShowAssignModal(false);
       await load();
       notifySuccess(
         hasMixedLeadTypes
@@ -5354,20 +5436,28 @@ export default function LeadsDataSection({
       return;
     }
     const newUser = rowAssignUsers.find((u) => u.userId === rowAssignUserId);
-    const needsReason =
-      newUser &&
-      requiresReassignReason({
-        leadType: rowAssignLead.leadType,
-        verified: rowAssignLead.verified,
-        currentAssigneeRole: rowAssignLead.currentAssigneeRole,
-        newAssigneeRole: newUser.role,
-      });
+    if (!newUser) {
+      setRowAssignError("Please select an assignee.");
+      return;
+    }
+    const needsReason = requiresReassignReason({
+      leadType: rowAssignLead.leadType,
+      verified: rowAssignLead.verified,
+      currentAssigneeRole: rowAssignLead.currentAssigneeRole,
+      newAssigneeRole: newUser.role,
+    });
     if (needsReason) {
       const reasonErr = validateReassignReason(rowReassignReason);
       if (reasonErr) {
         setRowAssignError(reasonErr);
         return;
       }
+    }
+    let notifyCustomer: boolean | undefined;
+    if (shouldPromptNotifyCustomer(newUser.role)) {
+      const choice = await confirmNotifyCustomer();
+      if (choice === null) return;
+      notifyCustomer = choice;
     }
     try {
       setRowAssignSubmitting(true);
@@ -5377,6 +5467,7 @@ export default function LeadsDataSection({
         leadId: Number(rowAssignLead.id),
         salesExecutiveId: rowAssignUserId,
         ...(needsReason ? { reassignReason: rowReassignReason.trim() } : {}),
+        ...(typeof notifyCustomer === "boolean" ? { notifyCustomer } : {}),
       });
       if (res.success === false) {
         const msg = typeof res.message === "string" ? res.message : "Assign failed.";
@@ -5688,15 +5779,29 @@ export default function LeadsDataSection({
               : assigneeOptions
         }
         presalesExecOptions={
-          presalesExecs.length
-            ? presalesExecs.map((u) => userName(u)).filter(Boolean)
-            : assigneeUsers
-                .filter((u) => u.role === "PRESALES_EXECUTIVE" || u.role === "PRE_SALES")
-                .map((u) => u.name).length
-              ? assigneeUsers
-                  .filter((u) => u.role === "PRESALES_EXECUTIVE" || u.role === "PRE_SALES")
-                  .map((u) => u.name)
-              : assigneeOptions
+          (() => {
+            const fromHierarchy = presalesExecs
+              .map((u) => userName(u))
+              .filter(Boolean);
+            if (clientScopeRoleKey === "PRESALES_MANAGER") {
+              // PM: team executives only (hierarchy under managerId ∪ header roster).
+              const fromHeader = (presalesTeamExecDisplayNames ?? [])
+                .map((n) => n.trim())
+                .filter(Boolean);
+              const merged = Array.from(
+                new Map(
+                  [...fromHierarchy, ...fromHeader].map((n) => [n.toLowerCase(), n]),
+                ).values(),
+              );
+              return merged.length > 0 ? merged : fromHierarchy;
+            }
+            if (fromHierarchy.length > 0) return fromHierarchy;
+            const fromAssignees = assigneeUsers
+              .filter((u) => u.role === "PRESALES_EXECUTIVE" || u.role === "PRE_SALES")
+              .map((u) => u.name)
+              .filter(Boolean);
+            return fromAssignees.length > 0 ? fromAssignees : assigneeOptions;
+          })()
         }
         assigneeOptions={assigneeOptions}
         pipelineNested={pipelineNested}
@@ -6338,6 +6443,7 @@ export default function LeadsDataSection({
           )}
         </button>
       </div>
+      {notifyModal}
     </>
   );
 }

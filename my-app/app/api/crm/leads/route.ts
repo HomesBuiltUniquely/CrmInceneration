@@ -41,6 +41,132 @@ import {
   resolveEffectiveDateField,
 } from "@/lib/crm-date-field-filter";
 import { hubLeadTypeForFilterKey } from "@/lib/ivr-lead-source";
+import { milestoneCountsFromLeads } from "@/lib/admin-leads-api";
+
+/**
+ * Coalesce concurrent identical presales merges (table + heatmap + insight)
+ * so PE/PM do not rebuild Hub inventory 3× and hang on "Loading leads…".
+ */
+const PRESALES_MERGE_TTL_MS = 8_000;
+const presalesMergeCache = new Map<
+  string,
+  { at: number; leads: ApiLead[] }
+>();
+const presalesMergeInflight = new Map<string, Promise<ApiLead[]>>();
+
+function presalesMergeCacheKey(req: NextRequest, url: URL, sort: string, search: string): string {
+  const auth =
+    req.headers.get("authorization") ??
+    req.headers.get("cookie") ??
+    "";
+  const filterBits = [
+    sort,
+    search,
+    url.searchParams.get("dateFrom") ?? "",
+    url.searchParams.get("dateTo") ?? "",
+    url.searchParams.get("dateField") ?? "",
+    url.searchParams.get("crmMonthWindow") ?? "",
+    url.searchParams.get("assignee") ?? "",
+    url.searchParams.get("assigneeAliasSet") ?? "",
+    url.searchParams.get("milestoneStage") ?? "",
+    url.searchParams.get("milestoneStageCategory") ?? "",
+    url.searchParams.get("milestoneSubStage") ?? "",
+    url.searchParams.get("verificationStatus") ?? "",
+    url.searchParams.get("reinquiry") ?? "",
+    url.searchParams.get("leadType") ?? "all",
+    url.searchParams.get("newCrmGlobalSearch") ?? "",
+  ].join("|");
+  return `${auth.slice(0, 120)}::${filterBits}`;
+}
+
+async function loadPresalesMergedInventory(opts: {
+  req: NextRequest;
+  url: URL;
+  effDates: { from: string; to: string };
+  sort: string;
+  search: string;
+  usePresalesSearchPool: boolean;
+  isNewCrmGlobalSearchMode: boolean;
+  leadTypeParam: string;
+  viewerRoleKey: string;
+}): Promise<ApiLead[]> {
+  const key = presalesMergeCacheKey(opts.req, opts.url, opts.sort, opts.search);
+  const hit = presalesMergeCache.get(key);
+  if (hit && Date.now() - hit.at < PRESALES_MERGE_TTL_MS) {
+    return hit.leads;
+  }
+  const existing = presalesMergeInflight.get(key);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const presalesPerType = 1000;
+    const presalesMaxPages = 200;
+    const presalesRows = await fetchPresalesSearchLeads(
+      opts.req,
+      opts.url,
+      opts.effDates,
+      opts.sort,
+      opts.search,
+      opts.usePresalesSearchPool,
+      opts.isNewCrmGlobalSearchMode,
+    );
+    const [walkInResult, whatsappResult] = await Promise.all([
+      fetchWalkInLeadsForMerge({
+        req: opts.req,
+        sort: opts.sort,
+        search: opts.search,
+        effDates: opts.effDates,
+        extraParams: buildDedicatedMergeExtraParams(
+          opts.url,
+          opts.effDates,
+          "walkinlead",
+          opts.leadTypeParam,
+          opts.viewerRoleKey,
+          opts.usePresalesSearchPool,
+        ),
+        perType: presalesPerType,
+        maxPages: presalesMaxPages,
+      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
+      fetchWhatsappLeadsForMerge({
+        req: opts.req,
+        sort: opts.sort,
+        search: opts.search,
+        effDates: opts.effDates,
+        extraParams: buildDedicatedMergeExtraParams(
+          opts.url,
+          opts.effDates,
+          "whatsapplead",
+          opts.leadTypeParam,
+          opts.viewerRoleKey,
+          opts.usePresalesSearchPool,
+        ),
+        perType: presalesPerType,
+        maxPages: presalesMaxPages,
+      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
+    ]);
+    const byId = new Map<string, ApiLead>();
+    mergeUniqueLeadsIntoMap(byId, presalesRows, "formlead");
+    mergeUniqueLeadsIntoMap(byId, walkInResult.leads, "walkinlead");
+    mergeUniqueLeadsIntoMap(byId, whatsappResult.leads, "whatsapplead");
+    const merged = filterAndSortMergedLeads(
+      [...byId.values()],
+      opts.url,
+      opts.effDates,
+      opts.usePresalesSearchPool,
+      opts.search,
+      opts.usePresalesSearchPool &&
+        opts.search.length > 0 &&
+        opts.isNewCrmGlobalSearchMode,
+    );
+    presalesMergeCache.set(key, { at: Date.now(), leads: merged });
+    return merged;
+  })().finally(() => {
+    presalesMergeInflight.delete(key);
+  });
+
+  presalesMergeInflight.set(key, promise);
+  return promise;
+}
 
 /** Toolbar dates win; otherwise `crmMonthWindow=current` expands to this calendar month (server TZ). */
 function effectiveDateRangeFromRequest(url: URL): { from: string; to: string } {
@@ -740,9 +866,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (mergeAll && usePresalesSearchPool && !isDedicatedFilterLeadType(leadTypeParam)) {
-    const presalesPerType = 1000;
-    const presalesMaxPages = 200;
-    const presalesRows = await fetchPresalesSearchLeads(
+    const merged = await loadPresalesMergedInventory({
       req,
       url,
       effDates,
@@ -750,55 +874,12 @@ export async function GET(req: NextRequest) {
       search,
       usePresalesSearchPool,
       isNewCrmGlobalSearchMode,
-    );
-    const [walkInResult, whatsappResult] = await Promise.all([
-      fetchWalkInLeadsForMerge({
-        req,
-        sort,
-        search,
-        effDates,
-        extraParams: buildDedicatedMergeExtraParams(
-          url,
-          effDates,
-          "walkinlead",
-          leadTypeParam,
-          viewerRoleKey,
-          usePresalesSearchPool,
-        ),
-        perType: presalesPerType,
-        maxPages: presalesMaxPages,
-      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
-      fetchWhatsappLeadsForMerge({
-        req,
-        sort,
-        search,
-        effDates,
-        extraParams: buildDedicatedMergeExtraParams(
-          url,
-          effDates,
-          "whatsapplead",
-          leadTypeParam,
-          viewerRoleKey,
-          usePresalesSearchPool,
-        ),
-        perType: presalesPerType,
-        maxPages: presalesMaxPages,
-      }).catch(() => ({ leads: [] as ApiLead[], accessDenied: false })),
-    ]);
-    const byId = new Map<string, ApiLead>();
-    mergeUniqueLeadsIntoMap(byId, presalesRows, "formlead");
-    mergeUniqueLeadsIntoMap(byId, walkInResult.leads, "walkinlead");
-    mergeUniqueLeadsIntoMap(byId, whatsappResult.leads, "whatsapplead");
-    const merged = filterAndSortMergedLeads(
-      [...byId.values()],
-      url,
-      effDates,
-      usePresalesMilestoneFilters,
-      search,
-      usePresalesSearchPool && search.length > 0 && isNewCrmGlobalSearchMode,
-    );
+      leadTypeParam,
+      viewerRoleKey,
+    });
     const excludeLostPath = readExcludeLostPathParam(url);
     const summaryTotals = computeSummaryTotals(merged);
+    const milestoneCounts = milestoneCountsFromLeads(merged, "presales");
     const paged = paginateLeadsForTableInventory(
       merged,
       Number.parseInt(page, 10) || 0,
@@ -823,6 +904,7 @@ export async function GET(req: NextRequest) {
         computeSourceCounts(merged),
       ),
       summaryTotals,
+      milestoneCounts,
     };
     return NextResponse.json(body);
   }

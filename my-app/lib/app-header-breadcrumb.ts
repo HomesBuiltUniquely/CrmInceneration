@@ -16,19 +16,36 @@ const MODULE_PREFIX: Record<CrmModuleId, string> = {
 const PAGE_LABEL_OVERRIDES: Record<string, string> = {
   "/Leads": "Lead Managment",
   "/presales-leads": "Lead Managment",
+  "/presales-executives": "Presales Executive Manage",
 };
 
 function normalizePath(pathname: string): string {
   return (pathname ?? "").split("?")[0]?.split("#")[0] ?? "/";
 }
 
-export function inferModuleFromPathname(pathname: string): CrmModuleId {
+export function inferModuleFromPathname(
+  pathname: string,
+  roleRaw = "",
+): CrmModuleId {
   const path = normalizePath(pathname).toLowerCase();
   if (path === "/presales-leads" || path.startsWith("/presales-leads/")) return "presales";
   if (path === "/presales-dashboard" || path.startsWith("/presales-dashboard/")) return "presales";
+  if (path === "/presales-executives" || path.startsWith("/presales-executives/")) return "presales";
   if (path === "/design-dashboard" || path.startsWith("/design-dashboard/")) return "design";
   if (path === "/appointment" || path.startsWith("/appointment/")) return "design";
   if (path === "/admin-panel" || path.startsWith("/admin-panel/")) return "admin";
+  // Shared create-lead: breadcrumb follows role home module for PM/PE.
+  if (path === "/create-lead" || path.startsWith("/create-lead/")) {
+    const r = (roleRaw ?? "").trim().toUpperCase().replace(/\s+/g, "_");
+    if (
+      r === "PRESALES_MANAGER" ||
+      r === "PRESALES_EXECUTIVE" ||
+      r === "PRE_SALES" ||
+      r === "PRE_SALES_MANAGER"
+    ) {
+      return "presales";
+    }
+  }
   return "crm";
 }
 
