@@ -1654,13 +1654,16 @@ export default function LeadDetailsApiClient({
     if (isCrmLeadVerified(verifyLeadRecord)) return false;
     if (viewerRoleKey === "SUPER_ADMIN") return true;
 
+    // PE: Assigned (Data Conversion) → pincode + sales picker must stay available.
+    // Lead list is already PE-scoped; name-only matching was hiding the handoff panel.
+    if (viewerRoleKey === "PRESALES_EXECUTIVE") {
+      return true;
+    }
+
     const assigneeAliases = assigneeAliasNorms(verifyLeadRecord);
     const isSelfAssigned = [...verifyViewerAliasSet].some((alias) =>
       assigneeAliases.has(alias),
     );
-    if (viewerRoleKey === "PRESALES_EXECUTIVE") {
-      return isSelfAssigned;
-    }
     if (viewerRoleKey === "PRESALES_MANAGER") {
       if (isSelfAssigned) return true;
       const teamAliasSet = new Set(
