@@ -36,6 +36,21 @@ export default function BookingCelebrationHost() {
   }, []);
 
   if (!viewer) return null;
+
+  const defer =
+    typeof window !== 'undefined' &&
+    (() => {
+      try {
+        const primary = localStorage.getItem('hw-cele-primary-app');
+        const ts = Number(localStorage.getItem('hw-cele-primary-ts') || 0);
+        return primary === 'hallway' && Date.now() - ts < 90_000;
+      } catch {
+        return false;
+      }
+    })();
+
+  if (defer) return null;
+
   return (
     <BookingCelebration
       apiBase={hallwayBase()}

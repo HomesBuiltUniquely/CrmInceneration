@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 /** Short enough to stay out of the way, long enough to read the name and amount. */
 export const CELEBRATION_VISIBLE_MS = 6000;
@@ -68,6 +68,8 @@ export default function BookingCelebration({
   const [paused, setPaused] = useState(false);
   const [congratsState, setCongratsState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [isLeaderTab, setIsLeaderTab] = useState(false);
+  const [coordinatorLeader, setCoordinatorLeader] = useState(true);
+  const [cardReady, setCardReady] = useState(false);
   const [tabVisible, setTabVisible] = useState(
     () => typeof document !== 'undefined' && document.visibilityState === 'visible'
   );
@@ -143,6 +145,52 @@ export default function BookingCelebration({
   }, [apiBase]);
 
   useEffect(() => {
+    if (!enabled || typeof window === 'undefined') return;
+    let channel: BroadcastChannel | null = null;
+    let beat: number | null = null;
+    const tab = tabId.current;
+  let lastLeader: { tabId: string; ts: number } | null = null;
+    const claim = () => {
+      const now = Date.now();
+      const stale = !lastLeader || now - lastLeader.ts > CELEBRATION_LEADER_STALE_MS;
+      const mine = lastLeader?.tabId === tab;
+      if (mine || stale) {
+        lastLeader = { tabId: tab, ts: now };
+        setCoordinatorLeader(true);
+        try {
+          channel?.postMessage({ type: 'claim', tabId: tab, ts: now });
+        } catch {
+          /* ignore */
+        }
+      } else {
+        setCoordinatorLeader(false);
+      }
+    };
+    try {
+      channel = new BroadcastChannel('hw-celebration-coord-v1');
+      channel.onmessage = (event) => {
+        const data = event.data;
+        if (data?.type === 'claim') {
+          lastLeader = { tabId: data.tabId, ts: data.ts };
+          claim();
+        }
+      };
+    } catch {
+      setCoordinatorLeader(true);
+    }
+    claim();
+    beat = window.setInterval(claim, 3000);
+    return () => {
+      if (beat != null) window.clearInterval(beat);
+      try {
+        channel?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [enabled]);
+
+  useEffect(() => {
     if (!enabled || identityKeys.length === 0) return;
     const lockKey = 'hw-cele-leader';
     const claim = () => {
@@ -176,8 +224,10 @@ export default function BookingCelebration({
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
+  const canDeliver = enabled && Boolean(viewerQuery) && isLeaderTab && coordinatorLeader && tabVisible;
+
   useEffect(() => {
-    if (!enabled || !viewerQuery || !isLeaderTab || !tabVisible) return;
+    if (!canDeliver) return;
 
     const base = hallwayOrigin(apiBase);
     let source: EventSource | null = null;
@@ -280,18 +330,30 @@ export default function BookingCelebration({
       }
       source = null;
     };
-  }, [apiBase, enabled, enqueue, isLeaderTab, tabVisible, viewerQuery]);
+  }, [apiBase, canDeliver, enqueue, viewerQuery]);
 
   const currentId = current?.id || '';
 
-  // Claim + mark seen as soon as the popup appears so switching modules never re-shows it.
+  useEffect(() => {
+    setCardReady(false);
+  }, [currentId]);
+
+  useLayoutEffect(() => {
+    if (!currentId) return;
+    const frame = window.requestAnimationFrame(() => setCardReady(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [currentId]);
+
   useEffect(() => {
     if (!currentId) return;
     if (claimedIds.current.has(currentId)) return;
     claimedIds.current.add(currentId);
+  }, [currentId]);
+
+  useEffect(() => {
+    if (!currentId || !cardReady) return;
     playCelebrationSound();
-    void markSeen(currentId, false).catch(() => undefined);
-  }, [currentId, markSeen, playCelebrationSound]);
+  }, [cardReady, currentId, playCelebrationSound]);
 
   useEffect(() => {
     if (!currentId || paused || congratsState === 'sending') return;
