@@ -91,7 +91,7 @@ import {
 } from "@/lib/booking-payment-link-api";
 import type { OfflinePaymentMethodId, PaymentChannelChoice } from "@/lib/booking-payment-display";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
-import { canUsePaymentLinkIntegration } from "@/lib/roleUtils";
+import { canUsePaymentLinkIntegration, isPresalesRole } from "@/lib/roleUtils";
 
 type Props = {
   open: boolean;
@@ -853,11 +853,13 @@ export default function BookingDoneModal({
             onBookingDateChange={bumpPaymentDraft}
           />
 
-          <TokenBookingRecognitionSection
-            leadType={leadType}
-            leadId={leadId}
-            compact
-          />
+          {!isPresalesRole(viewerRole) ? (
+            <TokenBookingRecognitionSection
+              leadType={leadType}
+              leadId={leadId}
+              compact
+            />
+          ) : null}
 
           {canUsePaymentLinks && linkPaid ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-900">
