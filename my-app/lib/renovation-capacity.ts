@@ -3,7 +3,19 @@ export const NO_RENOVATION_CAPACITY_TOAST =
   "No renovation capacity. Raise a limit in Admin Panel → Lead Limits → Renovation, then retry.";
 
 export function textMentionsNoRenovationCapacity(text: string): boolean {
-  return /no\s+renovation\s+capacity/i.test(text);
+  return /no\s+renovation\s+capacity|renovation\s+(pool\s+)?limit|renovation\s+capacity/i.test(
+    text,
+  );
+}
+
+export function isRenovationCapacityError(err: unknown): boolean {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : "";
+  return textMentionsNoRenovationCapacity(message);
 }
 
 /** Detect Hub “Renovation Assignment” failure text on activity rows. */

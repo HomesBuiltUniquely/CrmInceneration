@@ -23,6 +23,14 @@ type Props = {
   handoffLabel?: string;
   /** Modal title — e.g. "Verify WhatsApp Lead" for whatsapplead. */
   title?: string;
+  /**
+   * `verify` = Assigned + optional sales exec (default).
+   * `renovation` = Renovation handoff — pincode only; Hub assigns renovation pool.
+   */
+  mode?: "verify" | "renovation";
+  /** Override subtitle under the title. */
+  description?: string;
+  pincodeMissingMessage?: string;
 };
 
 function HandoffIcon() {
@@ -59,7 +67,11 @@ export default function PresalesVerifyPanel({
   pincodeMissing = false,
   handoffLabel,
   title = "Verify & hand off to sales",
+  mode = "verify",
+  description,
+  pincodeMissingMessage,
 }: Props) {
+  const renovationMode = mode === "renovation";
   const salesFooterMessage = salesExecutivesLoading
     ? "Loading…"
     : salesExecutivesError
@@ -67,6 +79,17 @@ export default function PresalesVerifyPanel({
       : salesExecutiveOptions.length === 0
         ? "List unavailable — verify with pincode only."
         : "";
+  const steps = renovationMode
+    ? ["Pincode", "Note & save"]
+    : ["Pincode", "Assign", "Note & verify"];
+  const subtitle =
+    description?.trim() ||
+    (renovationMode
+      ? "Pincode required · renovation pool assigns owner · sales stage Fresh Lead"
+      : "Pincode required · sales exec optional · moves to Data Conversion → Won → Assigned");
+  const pinMissingText =
+    pincodeMissingMessage?.trim() ||
+    (renovationMode ? "Required for Renovation handoff." : "Required for verify.");
 
   return (
     <section
@@ -98,10 +121,7 @@ export default function PresalesVerifyPanel({
             ) : null}
           </div>
           <p className="mt-0.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
-            Pincode required · sales exec optional · moves to{" "}
-            <span className="text-[var(--crm-text-secondary)]">
-              Data Conversion → Won → Assigned
-            </span>
+            {subtitle}
           </p>
         </div>
       </div>
@@ -111,7 +131,7 @@ export default function PresalesVerifyPanel({
           className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-[var(--crm-text-muted)]"
           aria-hidden="true"
         >
-          {["Pincode", "Assign", "Note & verify"].map((label, i) => (
+          {steps.map((label, i) => (
             <span key={label} className="inline-flex items-center gap-1.5">
               {i > 0 ? (
                 <span className="text-[var(--crm-border-strong)]">›</span>
@@ -126,7 +146,13 @@ export default function PresalesVerifyPanel({
           ))}
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start">
+        <div
+          className={
+            renovationMode
+              ? "grid grid-cols-1 gap-3 sm:items-start"
+              : "grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start"
+          }
+        >
           <div className="flex min-w-0 flex-col">
             <div className="mb-1 flex min-h-[28px] flex-col justify-end">
               <FieldLabel required>Pincode</FieldLabel>
@@ -148,45 +174,47 @@ export default function PresalesVerifyPanel({
               ].join(" ")}
             >
               {showErrors && pincodeMissing
-                ? "Required for verify."
+                ? pinMissingText
                 : "Property / service area pincode."}
             </p>
           </div>
 
-          <div className="flex min-w-0 flex-col">
-            <div className="mb-1 flex min-h-[28px] flex-col justify-end">
-              <FieldLabel>
-                Sales executive{" "}
-                <span className="font-normal text-[var(--crm-text-muted)]">
-                  (optional)
-                </span>
-              </FieldLabel>
+          {renovationMode ? null : (
+            <div className="flex min-w-0 flex-col">
+              <div className="mb-1 flex min-h-[28px] flex-col justify-end">
+                <FieldLabel>
+                  Sales executive{" "}
+                  <span className="font-normal text-[var(--crm-text-muted)]">
+                    (optional)
+                  </span>
+                </FieldLabel>
+              </div>
+              <Select
+                value={salesExecutiveId}
+                onChange={(e) => onSalesExecutiveIdChange(e.target.value)}
+                disabled={salesExecutivesLoading}
+                className="h-[38px] rounded-[10px] py-2 text-[13px]"
+              >
+                <option value="">No assignment</option>
+                {salesExecutiveOptions.map((u) => (
+                  <option key={u.id} value={String(u.id)}>
+                    {salesExecutiveLabel(u)}
+                  </option>
+                ))}
+              </Select>
+              <p
+                className={[
+                  "mt-1 text-[10px] leading-tight",
+                  FIELD_FOOTER_MIN_H,
+                  salesFooterMessage && !salesExecutivesLoading
+                    ? "text-[var(--crm-warning-text)]"
+                    : "text-[var(--crm-text-muted)]",
+                ].join(" ")}
+              >
+                {salesFooterMessage || "\u00a0"}
+              </p>
             </div>
-            <Select
-              value={salesExecutiveId}
-              onChange={(e) => onSalesExecutiveIdChange(e.target.value)}
-              disabled={salesExecutivesLoading}
-              className="h-[38px] rounded-[10px] py-2 text-[13px]"
-            >
-              <option value="">No assignment</option>
-              {salesExecutiveOptions.map((u) => (
-                <option key={u.id} value={String(u.id)}>
-                  {salesExecutiveLabel(u)}
-                </option>
-              ))}
-            </Select>
-            <p
-              className={[
-                "mt-1 text-[10px] leading-tight",
-                FIELD_FOOTER_MIN_H,
-                salesFooterMessage && !salesExecutivesLoading
-                  ? "text-[var(--crm-warning-text)]"
-                  : "text-[var(--crm-text-muted)]",
-              ].join(" ")}
-            >
-              {salesFooterMessage || "\u00a0"}
-            </p>
-          </div>
+          )}
         </div>
       </div>
     </section>

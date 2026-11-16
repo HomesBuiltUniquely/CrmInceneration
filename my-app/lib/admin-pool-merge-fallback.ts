@@ -18,7 +18,7 @@ function mergeQueryFromAdminParams(
   qs.set("mergeAll", "1");
   if (!qs.get("milestoneScope")) qs.set("milestoneScope", "crm");
   if (pool === "presales") qs.set("leadPool", "presales");
-  else qs.delete("leadPool");
+  else qs.set("leadPool", "sales");
   qs.set("page", "0");
   qs.set("size", "50000");
   if (!qs.get("sort")) qs.set("sort", "updatedAt,desc");

@@ -46,6 +46,8 @@ import {
 } from "@/lib/lead-discovery-field-sync";
 import {
   activitiesMentionNoRenovationCapacity,
+  isRenovationCapacityError,
+  NO_RENOVATION_CAPACITY_TOAST,
   resolveRenovationAssignToast,
 } from "@/lib/renovation-capacity";
 import {
@@ -1626,8 +1628,12 @@ export default function LeadDetailsApiClient({
         ...(baseDetail as ApiLead),
         assignee: lead.assignee || (baseDetail as ApiLead).assignee,
         salesOwner: (baseDetail as ApiLead).salesOwner,
+        verified: lead.verified ?? (baseDetail as ApiLead).verified,
+        // Need renovationAssigned for Verify hide + handed-off after Renovation handoff.
+        stageBlock: lead.stageBlock ?? (baseDetail as ApiLead).stageBlock,
+        stage: (baseDetail as ApiLead).stage,
       }) as ApiLead,
-    [baseDetail, lead.assignee],
+    [baseDetail, lead.assignee, lead.stageBlock, lead.verified],
   );
 
   const identityWriteAccess = useMemo(
@@ -3267,6 +3273,8 @@ export default function LeadDetailsApiClient({
     const persistedSubStage = isFreshData
       ? ""
       : (args.presalesMilestoneSubStage.trim() || args.feedback.trim());
+    const isPresalesRenovationSave =
+      persistedSubStage.trim().toUpperCase() === "RENOVATION";
 
     if (
       !isCrmLeadVerified(verifyLeadRecord) &&
@@ -3280,7 +3288,8 @@ export default function LeadDetailsApiClient({
       throw new Error(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
     }
 
-    const noFollowUpNeeded = isLostCategory(persistedCategory);
+    const noFollowUpNeeded =
+      isLostCategory(persistedCategory) || isPresalesRenovationSave;
     const followUpDate = noFollowUpNeeded
       ? ""
       : (args.nextCallDateLocal.trim() || lead.followUpDate);
@@ -3312,25 +3321,33 @@ export default function LeadDetailsApiClient({
           : undefined,
       possessionDate: args.possessionDate,
       clearFollowUp: noFollowUpNeeded,
+      pincode: args.pincode?.trim() || undefined,
     };
     const body =
       lt === "whatsapplead" || lt === "walkinlead"
         ? buildMinimalPresalesMilestonePutBody(lt, nextPresalesStage, putFields)
         : buildPresalesCompleteTaskPutBody(baseDetail, lt, nextPresalesStage, putFields);
 
-    const putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
+    let putResponse: Record<string, unknown>;
+    try {
+      putResponse = await putPresalesMilestoneDetail(lt, leadId, body);
+    } catch (err) {
+      if (isPresalesRenovationSave && isRenovationCapacityError(err)) {
+        notifyError(NO_RENOVATION_CAPACITY_TOAST);
+        throw new Error(NO_RENOVATION_CAPACITY_TOAST);
+      }
+      throw err;
+    }
 
     let detailJson = presalesMilestonePersistedInDetail(putResponse, nextPresalesStage)
       ? putResponse
       : await getLeadDetail(lt, leadId);
     const hubPersisted = presalesMilestonePersistedInDetail(detailJson, nextPresalesStage);
-    const isPresalesRenovationSave =
-      persistedSubStage.trim().toUpperCase() === "RENOVATION";
 
-    if (!hubPersisted && usesPresalesMilestoneClientOverlay(lt)) {
+    if (!hubPersisted && usesPresalesMilestoneClientOverlay(lt) && !isPresalesRenovationSave) {
       setStoredPresalesMilestone(lt, leadId, nextPresalesStage);
       detailJson = applyStoredPresalesMilestoneToDetail(detailJson, lt, leadId);
-      if (!isPresalesRenovationSave) notifySuccess("Milestone saved");
+      notifySuccess("Milestone saved");
     } else if (!hubPersisted) {
       throw new Error(
         lt === "whatsapplead"
@@ -3348,6 +3365,41 @@ export default function LeadDetailsApiClient({
       });
     }
 
+    if (isPresalesRenovationSave) {
+      // Full refresh — verified, renovation owner, sales Fresh Lead, handoff badges.
+      clearStoredPresalesMilestone(lt, leadId);
+      await load({ quiet: true });
+      let activityHintsNoCapacity = false;
+      try {
+        const actJson = await getLeadActivities(lt, leadId);
+        const activities = mapLeadActivitiesJson(actJson, lt, leadId);
+        activityHintsNoCapacity = activitiesMentionNoRenovationCapacity(activities);
+        setLead((prev) => ({ ...prev, activities }));
+      } catch {
+        /* ignore activity fetch */
+      }
+      const refreshed = detailJsonToLead(
+        await getLeadDetail(lt, leadId).catch(() => detailJson),
+        lt,
+      );
+      const toast = resolveRenovationAssignToast({
+        renovationAssigned: Boolean(refreshed.stageBlock?.renovationAssigned),
+        assignee: refreshed.assignee,
+        renovationSalesExecutive: refreshed.stageBlock?.renovationSalesExecutive,
+        renovationSalesManager: refreshed.stageBlock?.renovationSalesManager,
+        activityHintsNoCapacity,
+      });
+      if (toast.kind === "success") notifySuccess(toast.message);
+      else notifyError(toast.message);
+      dispatchCrmLeadsInvalidate({
+        leadTypes: [lt],
+        reason: "presales-renovation-handoff",
+      });
+      void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
+      void refreshActivities();
+      return;
+    }
+
     setBaseDetail(detailJson);
     const mapped = detailJsonToLead(detailJson, lt);
     setLead((prev) => ({
@@ -3358,29 +3410,8 @@ export default function LeadDetailsApiClient({
       lostReason: mapped.lostReason || args.lostReason?.trim() || prev.lostReason,
     }));
 
-    if (isPresalesRenovationSave) {
-      let activityHintsNoCapacity = false;
-      try {
-        const actJson = await getLeadActivities(lt, leadId);
-        const activities = mapLeadActivitiesJson(actJson, lt, leadId);
-        activityHintsNoCapacity = activitiesMentionNoRenovationCapacity(activities);
-        setLead((prev) => ({ ...prev, activities }));
-      } catch {
-        /* ignore activity fetch */
-      }
-      const toast = resolveRenovationAssignToast({
-        renovationAssigned: Boolean(mapped.stageBlock?.renovationAssigned),
-        assignee: mapped.assignee,
-        renovationSalesExecutive: mapped.stageBlock?.renovationSalesExecutive,
-        renovationSalesManager: mapped.stageBlock?.renovationSalesManager,
-        activityHintsNoCapacity,
-      });
-      if (toast.kind === "success") notifySuccess(toast.message);
-      else notifyError(toast.message);
-    }
-
     void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
-    if (!isPresalesRenovationSave) void refreshActivities();
+    void refreshActivities();
   };
 
   const handleCompleteTaskApi = async (args: CompleteTaskApiPayload) => {
@@ -3926,6 +3957,8 @@ export default function LeadDetailsApiClient({
   };
 
   const handleMarkAsWon = useCallback(() => {
+    // Immediate lock — hide/open alone can race before React re-renders.
+    if (bookingDoneOpenRef.current) return;
     const validationError = validateClosedLeadQuickAction({
       role: viewerRoleKey,
       lead,
@@ -3937,6 +3970,7 @@ export default function LeadDetailsApiClient({
     if (!validLeadType) return;
 
     // Milestone updates after payment handoff — open popup on lead details (no full-page navigation).
+    bookingDoneOpenRef.current = true;
     setBookingDoneOpen(true);
   }, [lead, leadId, leadType, notifyError, validLeadType, viewerRoleKey]);
 
@@ -4018,7 +4052,7 @@ export default function LeadDetailsApiClient({
       canShowGetQuote,
       canStageRollback: isSuperAdmin,
       canClosedLeadHeader,
-      showMarkAsWon,
+      showMarkAsWon: showMarkAsWon && !bookingDoneOpen,
       createdTimelineOptions,
       createdTimelineLoading,
       selectedTimelineValue,

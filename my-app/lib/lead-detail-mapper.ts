@@ -795,6 +795,8 @@ export type PresalesCompleteTaskPutFields = {
   bookingType?: string;
   possessionDate?: string;
   clearFollowUp?: boolean;
+  /** Required for Data Conversion / Won / Renovation handoff (Hub verify-equivalent). */
+  pincode?: string;
 };
 
 function applyPresalesCompleteTaskPutFields(
@@ -827,6 +829,14 @@ function applyPresalesCompleteTaskPutFields(
   } else if (fields.followUpDate !== undefined) {
     body.followUpDate = fields.followUpDate;
     body.nextFollowUp = fields.followUpDate;
+  }
+  const pin = fields.pincode?.trim() ?? "";
+  if (pin) {
+    body.pincode = pin;
+    body.propertyPincode = pin;
+    body.pinCode = pin;
+    body.propertyPin = pin;
+    body.zip = pin;
   }
 }
 

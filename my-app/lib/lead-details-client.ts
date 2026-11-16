@@ -37,6 +37,27 @@ type ParsedApiError = {
   payload: Record<string, unknown> | null;
 };
 
+/** Lead PUT/PATCH/GET failures — preserves Hub status for FE retry UX (e.g. Renovation pincode). */
+export class LeadApiRequestError extends Error {
+  readonly status: number;
+  readonly payload: Record<string, unknown> | null;
+
+  constructor(
+    message: string,
+    status: number,
+    payload: Record<string, unknown> | null = null,
+  ) {
+    super(message);
+    this.name = "LeadApiRequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export function isLeadApiRequestError(err: unknown): err is LeadApiRequestError {
+  return err instanceof LeadApiRequestError;
+}
+
 function isRateLimitMessage(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
@@ -228,6 +249,23 @@ function normalizePresalesMilestonePayload(
     normalizedBody.dynamicFields = dfo;
   }
 
+  // Renovation handoff may send pincode on the same PUT (parity with Verify Lead).
+  const pin = String(
+    normalizedBody.pincode ??
+      normalizedBody.propertyPincode ??
+      normalizedBody.pinCode ??
+      normalizedBody.propertyPin ??
+      normalizedBody.zip ??
+      "",
+  ).trim();
+  if (pin) {
+    normalizedBody.pincode = pin;
+    normalizedBody.propertyPincode = pin;
+    normalizedBody.pinCode = pin;
+    normalizedBody.propertyPin = pin;
+    normalizedBody.zip = pin;
+  }
+
   return applyScheduleDatesToHubPayload(normalizedBody);
 }
 
@@ -269,7 +307,11 @@ async function parseApiError(response: Response): Promise<ParsedApiError> {
 
 async function buildApiError(res: Response, fallback: string): Promise<Error> {
   const parsed = await parseApiError(res);
-  return new Error(parsed.message || fallback);
+  return new LeadApiRequestError(
+    parsed.message || fallback,
+    parsed.status,
+    parsed.payload,
+  );
 }
 
 export async function getLeadDetail(leadType: CrmLeadType, id: string): Promise<Record<string, unknown>> {
