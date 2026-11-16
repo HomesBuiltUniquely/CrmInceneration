@@ -1622,19 +1622,34 @@ export default function LeadDetailsApiClient({
     };
   }, [viewerRoleKey]);
 
-  const verifyLeadRecord = useMemo<ApiLead>(
-    () =>
-      ({
-        ...(baseDetail as ApiLead),
-        assignee: lead.assignee || (baseDetail as ApiLead).assignee,
-        salesOwner: (baseDetail as ApiLead).salesOwner,
-        verified: lead.verified ?? (baseDetail as ApiLead).verified,
-        // Need renovationAssigned for Verify hide + handed-off after Renovation handoff.
-        stageBlock: lead.stageBlock ?? (baseDetail as ApiLead).stageBlock,
-        stage: (baseDetail as ApiLead).stage,
-      }) as ApiLead,
-    [baseDetail, lead.assignee, lead.stageBlock, lead.verified],
-  );
+  const verifyLeadRecord = useMemo<ApiLead>(() => {
+    const detail = baseDetail as Record<string, unknown>;
+    const stageBlock = lead.stageBlock ?? detail.stageBlock;
+    const stageFromDetail =
+      detail.stage && typeof detail.stage === "object" && !Array.isArray(detail.stage)
+        ? (detail.stage as Record<string, unknown>)
+        : null;
+    const renovationAssigned =
+      lead.stageBlock?.renovationAssigned === true ||
+      (stageBlock &&
+        typeof stageBlock === "object" &&
+        !Array.isArray(stageBlock) &&
+        (stageBlock as { renovationAssigned?: boolean }).renovationAssigned === true) ||
+      stageFromDetail?.renovationAssigned === true;
+    return {
+      ...(baseDetail as ApiLead),
+      assignee: lead.assignee || (baseDetail as ApiLead).assignee,
+      salesOwner: (baseDetail as ApiLead).salesOwner,
+      verified: lead.verified ?? (baseDetail as ApiLead).verified,
+      // Hub detail / Lead UI carry renovationAssigned on stageBlock (not on ApiLead type).
+      ...(stageBlock ? { stageBlock } : {}),
+      ...(renovationAssigned ? { renovationAssigned: true } : {}),
+      stage: {
+        ...((baseDetail as ApiLead).stage ?? {}),
+        ...(renovationAssigned ? { renovationAssigned: true } : {}),
+      },
+    } as ApiLead;
+  }, [baseDetail, lead.assignee, lead.stageBlock, lead.verified]);
 
   const identityWriteAccess = useMemo(
     () =>
