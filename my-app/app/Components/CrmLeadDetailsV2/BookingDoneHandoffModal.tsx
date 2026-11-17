@@ -22,6 +22,8 @@ import {
   readPaymentProofs,
 } from "@/lib/booking-done-payment-storage";
 import {
+  fetchBookingDoneRecords,
+  isBookingAlreadyExistsError,
   submitBookingDone,
   uploadBookingPaymentProofs,
 } from "@/lib/booking-done-api";
@@ -114,6 +116,8 @@ export default function BookingDoneHandoffModal({
   const [completedSubstage, setCompletedSubstage] = useState("");
   const [celebrationMode, setCelebrationMode] = useState<"new-tab" | "same-tab">("new-tab");
   const openedInNewTabRef = useRef(false);
+  const submitLockRef = useRef(false);
+  const createdRecordIdRef = useRef<string | null>(null);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [leadIdentifier, setLeadIdentifier] = useState("");
@@ -174,6 +178,9 @@ export default function BookingDoneHandoffModal({
       setError("");
       setCelebrating(false);
       setCompletedRecordId("");
+      setSubmitting(false);
+      submitLockRef.current = false;
+      createdRecordIdRef.current = null;
     }
   }, [open]);
 
@@ -259,6 +266,7 @@ export default function BookingDoneHandoffModal({
   }, [completedRecordId, completedSubstage, onClose, onComplete]);
 
   const handleConfirm = async () => {
+    if (submitLockRef.current || submitting || celebrating) return;
     setError("");
     const validation = validateBookingDoneHandoff({
       leadType,
@@ -274,8 +282,9 @@ export default function BookingDoneHandoffModal({
       setError("Invalid lead type.");
       return;
     }
+    const crmLeadType = leadType;
     const payload = buildBookingDoneSubmitPayload({
-      leadType,
+      leadType: crmLeadType,
       leadId,
       hubLeadId,
       selectedQuote,
@@ -285,39 +294,85 @@ export default function BookingDoneHandoffModal({
       return;
     }
 
+    submitLockRef.current = true;
     // Reserve a new tab while the confirm click is still a user gesture (avoids popup blockers).
     const pendingTab = window.open("about:blank", "_blank", "noopener,noreferrer");
 
     setSubmitting(true);
     try {
-      const record = await submitBookingDone(leadType, leadId, payload);
-      const draftProofs = readPaymentProofs(leadType, leadId);
-      if (draftProofs.length > 0) {
-        const files = await paymentProofsToFiles(draftProofs);
-        if (files.length > 0) {
-          await uploadBookingPaymentProofs(leadType, leadId, record.id, files);
+      let recordId = createdRecordIdRef.current;
+      if (!recordId) {
+        try {
+          const record = await submitBookingDone(crmLeadType, leadId, payload);
+          recordId = record.id;
+          createdRecordIdRef.current = recordId;
+        } catch (err) {
+          if (isBookingAlreadyExistsError(err)) {
+            let existingId = err.existingRecordId?.trim() || "";
+            if (!existingId) {
+              try {
+                const { records } = await fetchBookingDoneRecords(crmLeadType, leadId);
+                existingId = records[0]?.id?.trim() || "";
+              } catch {
+                existingId = "";
+              }
+            }
+            if (existingId) {
+              createdRecordIdRef.current = existingId;
+              recordId = existingId;
+            } else {
+              if (pendingTab && !pendingTab.closed) pendingTab.close();
+              setError(
+                err.message ||
+                  "A booking deal already exists for this lead. Open Booking & Token — do not create again.",
+              );
+              return;
+            }
+          } else {
+            throw err;
+          }
         }
       }
-      clearBookingDoneDraft(leadType, leadId);
-      const substage = await persistClosedWonCustomerMilestoneFromPayment(
-        leadType,
-        leadId,
-        payload.paymentKind,
-      );
 
-      const tabOpened = navigateBookingTokenTab(record.id, pendingTab);
+      try {
+        const draftProofs = readPaymentProofs(crmLeadType, leadId);
+        if (draftProofs.length > 0) {
+          const files = await paymentProofsToFiles(draftProofs);
+          if (files.length > 0) {
+            await uploadBookingPaymentProofs(crmLeadType, leadId, recordId, files);
+          }
+        }
+      } catch {
+        /* deal exists — continue to open */
+      }
+      clearBookingDoneDraft(crmLeadType, leadId);
+      let substage = "";
+      try {
+        substage = await persistClosedWonCustomerMilestoneFromPayment(
+          crmLeadType,
+          leadId,
+          payload.paymentKind,
+        );
+      } catch {
+        /* non-fatal after create */
+      }
+
+      const tabOpened = navigateBookingTokenTab(recordId, pendingTab);
       openedInNewTabRef.current = tabOpened;
       if (!tabOpened && pendingTab && !pendingTab.closed) {
         pendingTab.close();
       }
 
-      setCompletedRecordId(record.id);
+      setCompletedRecordId(recordId);
       setCompletedSubstage(substage);
       setCelebrationMode(tabOpened ? "new-tab" : "same-tab");
       setCelebrating(true);
     } catch (err) {
       if (pendingTab && !pendingTab.closed) pendingTab.close();
       setError(err instanceof Error ? err.message : "Unable to submit Booking Done record.");
+      if (!createdRecordIdRef.current) {
+        submitLockRef.current = false;
+      }
     } finally {
       setSubmitting(false);
     }

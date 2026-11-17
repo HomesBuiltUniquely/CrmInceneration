@@ -6,7 +6,7 @@ import {
   isBookingDoneNotDeployedResponse,
 } from "@/lib/booking-done-upstream";
 import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
-import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
+import { buildProxyErrorBody, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
 async function proxyBookingDoneToHub(
@@ -63,10 +63,21 @@ async function proxyBookingDoneToHub(
     );
   }
 
-  return proxyJsonError(
-    lastStatus,
-    lastPayload ?? { text: "", json: null, contentType: "application/json" },
-    method === "GET" ? "Unable to load booking records." : "Unable to submit Booking Done record.",
+  const payload = lastPayload ?? { text: "", json: null, contentType: "application/json" };
+  const errorBody = buildProxyErrorBody({
+    payload,
+    fallbackMessage:
+      method === "GET"
+        ? "Unable to load booking records."
+        : "Unable to submit Booking Done record.",
+  });
+  // Keep Hub fields (recordId / existingRecordId / code) so FE can open the deal on 400.
+  return NextResponse.json(
+    {
+      ...(payload.json ?? {}),
+      ...errorBody,
+    },
+    { status: lastStatus },
   );
 }
 

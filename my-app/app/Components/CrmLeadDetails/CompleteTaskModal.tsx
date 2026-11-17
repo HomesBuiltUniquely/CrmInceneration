@@ -47,9 +47,17 @@ import {
   sortMappingsByNestedPipelineOrder,
 } from "@/lib/complete-task-pipeline";
 import {
+  isPresalesRenovationHandoffSelection,
+  isPresalesRenovationPincodeError,
   isPresalesVerifyHandoffSelection,
+  PRESALES_RENOVATION_PINCODE_REQUIRED_MESSAGE,
   PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE,
 } from "@/lib/presales-milestone-ui";
+import { isLeadApiRequestError } from "@/lib/lead-details-client";
+import {
+  isRenovationCapacityError,
+  NO_RENOVATION_CAPACITY_TOAST,
+} from "@/lib/renovation-capacity";
 import { normalizeStageKey } from "@/lib/milestone-progress";
 import PresalesVerifyPanel, {
   type PresalesSalesExecutiveOption,
@@ -190,6 +198,8 @@ export type PresalesCompleteTaskApiPayload = {
   configuration?: string;
   bookingType?: string;
   possessionDate?: string;
+  /** Required for Data Conversion / Won / Renovation handoff (Hub verify-equivalent). */
+  pincode?: string;
 };
 
 export type CompleteTaskApiPayload = {
@@ -956,8 +966,37 @@ export default function CompleteTaskModal({
     path.trim() === "Closed Won" &&
     (feedback.trim() === "Booking Done (Booking)" ||
       feedback.trim() === "Token Done");
+  const renovationFeedbackLocked = isRenovationFeedbackLocked(
+    lead.stageBlock?.renovationAssigned,
+    lead.stageBlock?.milestoneStage,
+    lead.stageBlock?.milestoneSubStage,
+    lead.stageBlock?.milestoneStageCategory,
+    lead.stageBlock?.presalesMilestoneStage,
+    lead.stageBlock?.presalesMilestoneSubStage,
+    lead.stageBlock?.presalesMilestoneCategory,
+  );
+  /** Data Conversion / Won / Renovation — Complete Task PUT handoff (never Verify API). */
+  const isPresalesRenovationSelected = Boolean(
+    presalesMode &&
+      !presalesLeadVerified &&
+      !presalesHandedOff &&
+      selectedFeedbackOption &&
+      !renovationFeedbackLocked &&
+      isRenovationFeedbackOptionPath({
+        stage: selectedFeedbackOption.stage,
+        stageCategory: selectedFeedbackOption.stageCategory,
+        subStageName: selectedFeedbackOption.subStageName,
+        presalesMode: true,
+      }) &&
+      isPresalesRenovationHandoffSelection({
+        stage: selectedFeedbackOption.stage,
+        category: selectedFeedbackOption.stageCategory,
+        subStage: selectedFeedbackOption.subStageName,
+        feedbackLabel: feedback,
+      }),
+  );
   const noFollowUpRequired = presalesMode
-    ? isLostCategory(path) || verifyHandoffMode
+    ? isLostCategory(path) || verifyHandoffMode || isPresalesRenovationSelected
     : reasonRequired || isClosedWonCustomer;
 
   const nextCallDateMissing =
@@ -966,7 +1005,9 @@ export default function CompleteTaskModal({
     !noFollowUpRequired &&
     !verifyHandoffMode &&
     nextCallDate.trim().length === 0;
-  const verifyPincodeMissing = verifyHandoffMode && verifyPincode.trim().length === 0;
+  const verifyPincodeMissing =
+    (verifyHandoffMode || isPresalesRenovationSelected) &&
+    verifyPincode.trim().length === 0;
   const resoneMissing = Boolean(
     (onApiComplete || presalesMode) && reasonRequired && lostReason.trim().length === 0,
   );
@@ -1307,16 +1348,6 @@ export default function CompleteTaskModal({
     }
   };
 
-  const renovationFeedbackLocked = isRenovationFeedbackLocked(
-    lead.stageBlock?.renovationAssigned,
-    lead.stageBlock?.milestoneStage,
-    lead.stageBlock?.milestoneSubStage,
-    lead.stageBlock?.milestoneStageCategory,
-    lead.stageBlock?.presalesMilestoneStage,
-    lead.stageBlock?.presalesMilestoneSubStage,
-    lead.stageBlock?.presalesMilestoneCategory,
-  );
-
   const handleFeedbackSelect = async (value: string) => {
     const option = feedbackOptions.find((o) => o.label === value);
     // Renovation: confirm popup before committing selection (no PUT until Save).
@@ -1575,6 +1606,12 @@ export default function CompleteTaskModal({
       const substageToSave = selected?.subStageName.trim() || feedback.trim();
       const stageToSave = (selected?.stage ?? status).trim();
       const catToSave = (selected?.stageCategory ?? path).trim();
+      const renovationHandoff = isPresalesRenovationHandoffSelection({
+        stage: stageToSave,
+        category: catToSave,
+        subStage: substageToSave,
+        feedbackLabel: feedback,
+      });
       if (
         !presalesLeadVerified &&
         !presalesHandedOff &&
@@ -1586,6 +1623,11 @@ export default function CompleteTaskModal({
         })
       ) {
         setApiError(PRESALES_VERIFY_LEAD_REQUIRED_MESSAGE);
+        return;
+      }
+      if (renovationHandoff && !verifyPincode.trim()) {
+        setShowErrors(true);
+        setApiError(PRESALES_RENOVATION_PINCODE_REQUIRED_MESSAGE);
         return;
       }
       setApiBusy(true);
@@ -1610,10 +1652,27 @@ export default function CompleteTaskModal({
             needsLeadPropertyGate,
           ),
           possessionDate: (needsLeadPropertyGate || isHoldSubstageSelected) ? modalPossessionDate.trim() : undefined,
+          pincode: renovationHandoff ? verifyPincode.trim() : undefined,
         });
         onClose();
       } catch (e) {
-        setApiError(e instanceof Error ? e.message : "Could not save");
+        const message = e instanceof Error ? e.message : "Could not save";
+        if (
+          renovationHandoff &&
+          ((isLeadApiRequestError(e) && e.status === 400) ||
+            isPresalesRenovationPincodeError(message))
+        ) {
+          setShowErrors(true);
+          setApiError(
+            isPresalesRenovationPincodeError(message)
+              ? message
+              : PRESALES_RENOVATION_PINCODE_REQUIRED_MESSAGE,
+          );
+        } else if (renovationHandoff && isRenovationCapacityError(e)) {
+          setApiError(NO_RENOVATION_CAPACITY_TOAST);
+        } else {
+          setApiError(message);
+        }
       } finally {
         setApiBusy(false);
       }
@@ -1922,21 +1981,28 @@ export default function CompleteTaskModal({
                     <strong className="font-medium text-[var(--crm-text-secondary)]">
                       Data Conversion
                     </strong>
-                    . Data Conversion Won substages are listed below;{" "}
+                    .{" "}
                     <strong className="font-medium text-[var(--crm-text-secondary)]">
                       Assigned
                     </strong>{" "}
-                    hands off via verify (pincode), not a normal save.
+                    uses Verify Lead (pincode + sales pool).{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Renovation
+                    </strong>{" "}
+                    hands off via Complete Task (pincode; renovation pool assigns owner).
                   </p>
                 ) : null}
                 {presalesDataConversionWonVisible && !presalesOnFreshData ? (
                   <p className="mt-1.5 text-[11px] leading-snug text-[var(--crm-text-muted)]">
-                    Data Conversion Won substages are available. Choose{" "}
+                    Data Conversion Won substages are available.{" "}
                     <strong className="font-medium text-[var(--crm-text-secondary)]">
                       Assigned
                     </strong>{" "}
-                    to open verify and hand off to sales, or pick another Won/Lost
-                    substage to update the milestone.
+                    opens Verify Lead.{" "}
+                    <strong className="font-medium text-[var(--crm-text-secondary)]">
+                      Renovation
+                    </strong>{" "}
+                    saves with pincode and assigns from the renovation pool — no Verify click.
                   </p>
                 ) : null}
               </div>
@@ -1958,6 +2024,26 @@ export default function CompleteTaskModal({
                   salesExecutiveLabel={salesExecutiveLabel}
                   showErrors={showErrors}
                   pincodeMissing={verifyPincodeMissing}
+                />
+              ) : null}
+
+              {isPresalesRenovationSelected && !verifyHandoffMode ? (
+                <PresalesVerifyPanel
+                  mode="renovation"
+                  title="Renovation handoff"
+                  handoffLabel={
+                    feedback.trim() || "Data Conversion → Won → Renovation"
+                  }
+                  description="Pincode required · renovation pool assigns owner · sales stage Fresh Lead"
+                  pincode={verifyPincode}
+                  onPincodeChange={setVerifyPincode}
+                  salesExecutiveId={verifySalesExecutiveId}
+                  onSalesExecutiveIdChange={setVerifySalesExecutiveId}
+                  salesExecutiveOptions={salesExecutiveOptions}
+                  salesExecutiveLabel={salesExecutiveLabel}
+                  showErrors={showErrors}
+                  pincodeMissing={verifyPincodeMissing}
+                  pincodeMissingMessage="Required for Renovation handoff."
                 />
               ) : null}
 

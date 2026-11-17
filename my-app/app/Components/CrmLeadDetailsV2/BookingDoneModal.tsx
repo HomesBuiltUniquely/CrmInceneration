@@ -34,6 +34,7 @@ import {
   bookingPaymentKindLabel,
   calculateBookingTenPercent,
   classifyBookingPayment,
+  type BookingPaymentKind,
 } from "@/lib/booking-done-payment-rules";
 import {
   parsePaymentAmountInput,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/booking-done-payment-storage";
 import {
   fetchBookingDoneRecords,
+  isBookingAlreadyExistsError,
   submitBookingDone,
   uploadBookingPaymentProofs,
 } from "@/lib/booking-done-api";
@@ -203,6 +205,10 @@ export default function BookingDoneModal({
   const [linkDeliveryActive, setLinkDeliveryActive] = useState(false);
   const pendingAttemptRef = useRef<PaymentLinkAttempt | null>(null);
   const dismissTimerRef = useRef<number | null>(null);
+  /** Sync lock — React `submitting` alone can miss a double-click before re-render. */
+  const submitLockRef = useRef(false);
+  /** After first 201, never POST booking-done again in this modal session. */
+  const createdRecordIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setViewerRole(normalizeRole(window.localStorage.getItem(CRM_ROLE_STORAGE_KEY) ?? ""));
@@ -258,6 +264,8 @@ export default function BookingDoneModal({
       setPaidRecordId("");
       setLinkDeliveryActive(false);
       pendingAttemptRef.current = null;
+      submitLockRef.current = false;
+      createdRecordIdRef.current = null;
       return;
     }
 
@@ -484,7 +492,45 @@ export default function BookingDoneModal({
     bumpPaymentDraft();
   }, [bumpPaymentDraft, canUsePaymentLinks, channel, leadId, leadType, open, tenPercentAmount]);
 
+  async function resolveExistingBookingRecordId(hint?: string | null): Promise<string> {
+    const fromHint = hint?.trim() || "";
+    if (fromHint) return fromHint;
+    if (!isCrmLeadType(leadType)) return "";
+    try {
+      const { records } = await fetchBookingDoneRecords(leadType, leadId);
+      return records[0]?.id?.trim() || "";
+    } catch {
+      return "";
+    }
+  }
+
+  async function finishHandoffToBookingToken(
+    recordId: string,
+    kind: BookingPaymentKind,
+  ) {
+    if (!isCrmLeadType(leadType)) return;
+    const crmLeadType = leadType;
+    createdRecordIdRef.current = recordId;
+    try {
+      const draftProofs = readPaymentProofs(crmLeadType, leadId);
+      if (draftProofs.length > 0) {
+        const files = await paymentProofsToFiles(draftProofs);
+        if (files.length > 0) {
+          await uploadBookingPaymentProofs(crmLeadType, leadId, recordId, files);
+        }
+      }
+      await persistClosedWonCustomerMilestoneFromPayment(crmLeadType, leadId, kind);
+    } catch {
+      // Deal already exists — still open Booking & Token; never re-POST create.
+    }
+    clearBookingDoneDraft(crmLeadType, leadId);
+    onHandoffComplete?.();
+    onClose();
+    window.location.assign(bookingTokenUrl(recordId));
+  }
+
   async function handleConfirmSubmit() {
+    if (submitLockRef.current || submitting || handoffComplete) return;
     setHandoffError("");
     const validation = validateBookingDoneHandoff({
       leadType,
@@ -500,12 +546,13 @@ export default function BookingDoneModal({
       setHandoffError("Invalid lead type.");
       return;
     }
+    const crmLeadType = leadType;
     if (canUsePaymentLinks && !offlineMethod) {
       setHandoffError("Select Cash, Cheque, Bank Transfer, or DD.");
       return;
     }
     const payload = buildBookingDoneSubmitPayload({
-      leadType,
+      leadType: crmLeadType,
       leadId,
       hubLeadId,
       selectedQuote,
@@ -515,39 +562,52 @@ export default function BookingDoneModal({
       return;
     }
 
+    submitLockRef.current = true;
     setSubmitting(true);
     try {
-      const record = await submitBookingDone(
-        leadType,
-        leadId,
-        canUsePaymentLinks
-          ? {
-              ...payload,
-              paymentChannel: "OFFLINE",
-              paymentMethod: offlineMethod,
+      let recordId = createdRecordIdRef.current;
+      if (!recordId) {
+        try {
+          const record = await submitBookingDone(
+            crmLeadType,
+            leadId,
+            canUsePaymentLinks
+              ? {
+                  ...payload,
+                  paymentChannel: "OFFLINE",
+                  paymentMethod: offlineMethod,
+                }
+              : payload,
+          );
+          recordId = record.id;
+          createdRecordIdRef.current = recordId;
+        } catch (err) {
+          if (isBookingAlreadyExistsError(err)) {
+            const existingId = await resolveExistingBookingRecordId(err.existingRecordId);
+            if (existingId) {
+              await finishHandoffToBookingToken(existingId, payload.paymentKind);
+              return;
             }
-          : payload,
-      );
-      const draftProofs = readPaymentProofs(leadType, leadId);
-      if (draftProofs.length > 0) {
-        const files = await paymentProofsToFiles(draftProofs);
-        if (files.length > 0) {
-          await uploadBookingPaymentProofs(leadType, leadId, record.id, files);
+            setHandoffError(
+              err.message ||
+                "A booking deal already exists for this lead. Open Booking & Token — do not create again.",
+            );
+            onHandoffComplete?.();
+            return;
+          }
+          throw err;
         }
       }
-      clearBookingDoneDraft(leadType, leadId);
-      await persistClosedWonCustomerMilestoneFromPayment(
-        leadType,
-        leadId,
-        payload.paymentKind,
-      );
-      onHandoffComplete?.();
-      onClose();
-      window.location.assign(bookingTokenUrl(record.id));
+
+      await finishHandoffToBookingToken(recordId, payload.paymentKind);
     } catch (err) {
       setHandoffError(
         err instanceof Error ? err.message : "Unable to submit Booking Done record.",
       );
+      // Keep lock if create already succeeded so Confirm cannot POST again.
+      if (!createdRecordIdRef.current) {
+        submitLockRef.current = false;
+      }
     } finally {
       setSubmitting(false);
     }

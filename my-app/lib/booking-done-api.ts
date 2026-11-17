@@ -175,6 +175,69 @@ function parseApiError(text: string, fallback: string): string {
   return fallback;
 }
 
+function asTrimmedId(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+/** Hub/BFF may put the open deal id on several keys when create is rejected. */
+export function extractBookingDoneExistingRecordId(
+  json: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!json) return null;
+  const direct = [
+    json.recordId,
+    json.existingRecordId,
+    json.bookingTokenRecordId,
+    json.dealId,
+    json.id,
+  ];
+  for (const value of direct) {
+    const id = asTrimmedId(value);
+    if (id) return id;
+  }
+  for (const key of ["record", "existingRecord", "deal", "data"] as const) {
+    const nested = json[key];
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const id = asTrimmedId((nested as Record<string, unknown>).id);
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+export class BookingDoneApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly existingRecordId: string | null;
+
+  constructor(
+    message: string,
+    status: number,
+    opts?: { code?: string; existingRecordId?: string | null },
+  ) {
+    super(message);
+    this.name = "BookingDoneApiError";
+    this.status = status;
+    this.code = opts?.code;
+    this.existingRecordId = opts?.existingRecordId?.trim() || null;
+  }
+}
+
+/** Second Booking Done for same lead — open existing deal; do not POST create again. */
+export function isBookingAlreadyExistsError(err: unknown): err is BookingDoneApiError {
+  if (!(err instanceof BookingDoneApiError)) return false;
+  if (err.status !== 400 && err.status !== 409) return false;
+  if (err.existingRecordId) return true;
+  if (err.code && /already.?exist|duplicate|EXISTING|DEAL_EXISTS/i.test(err.code)) {
+    return true;
+  }
+  return /already\s+exists|already\s+have|duplicate|existing\s+deal|use\s+(pay|convert)|open\s+existing/i.test(
+    err.message,
+  );
+}
+
 export async function submitBookingDone(
   leadType: CrmLeadType,
   leadId: string,
@@ -201,7 +264,24 @@ export async function submitBookingDone(
   });
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(parseApiError(text, "Unable to submit Booking Done record."));
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = text.trim() ? (JSON.parse(text) as Record<string, unknown>) : null;
+    } catch {
+      parsed = null;
+    }
+    const code =
+      (typeof parsed?.code === "string" && parsed.code.trim()) ||
+      (typeof parsed?.errorCode === "string" && parsed.errorCode.trim()) ||
+      undefined;
+    throw new BookingDoneApiError(
+      parseApiError(text, "Unable to submit Booking Done record."),
+      res.status,
+      {
+        code,
+        existingRecordId: extractBookingDoneExistingRecordId(parsed),
+      },
+    );
   }
   return JSON.parse(text) as BookingTokenRecord;
 }
