@@ -495,6 +495,7 @@ export default function BookingDoneModal({
   async function resolveExistingBookingRecordId(hint?: string | null): Promise<string> {
     const fromHint = hint?.trim() || "";
     if (fromHint) return fromHint;
+    if (!isCrmLeadType(leadType)) return "";
     try {
       const { records } = await fetchBookingDoneRecords(leadType, leadId);
       return records[0]?.id?.trim() || "";
