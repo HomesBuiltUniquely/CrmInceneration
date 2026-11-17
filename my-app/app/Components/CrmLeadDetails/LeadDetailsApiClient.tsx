@@ -3408,7 +3408,7 @@ export default function LeadDetailsApiClient({
       else notifyError(toast.message);
       dispatchCrmLeadsInvalidate({
         leadTypes: [lt],
-        reason: "presales-renovation-handoff",
+        reason: "presales-milestone",
       });
       void postManualActivity(lt, leadId, "NOTE", args.note).catch(() => undefined);
       void refreshActivities();
