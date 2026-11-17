@@ -114,6 +114,42 @@ export function canUseNewLeadDetailUi(
   return isSalesRole(r) || isAdminRole(r);
 }
 
+/**
+ * Customer quote link open-count — frontline signal for follow-up.
+ * Visible to all Hub CRM roles (sales, admin, TDM, presales).
+ */
+export function canViewCustomerQuoteOpenCount(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    isAdminRole(r) ||
+    isSalesRole(r) ||
+    isPresalesRole(r) ||
+    r === "TERRITORY_DESIGN_MANAGER" ||
+    r === "DESIGN_MANAGER"
+  );
+}
+
+/**
+ * Which quote versions were emailed to the customer — audit / management view.
+ * SUPER_ADMIN, ADMIN, SALES_ADMIN, SALES_MANAGER, TERRITORY_DESIGN_MANAGER.
+ */
+export function canViewCustomerQuoteVersionsSent(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    r === "SUPER_ADMIN" ||
+    r === "ADMIN" ||
+    r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "TERRITORY_DESIGN_MANAGER" ||
+    r === "DESIGN_MANAGER"
+  );
+}
+
+/** @deprecated Prefer {@link canViewCustomerQuoteOpenCount} / {@link canViewCustomerQuoteVersionsSent}. */
+export function canViewQuoteEngagementMetrics(role: string): boolean {
+  return canViewCustomerQuoteVersionsSent(role);
+}
+
 /** Hub `GET /v1/Leads/crm-pipeline?role=` value for the signed-in viewer. */
 export function crmPipelineRoleParam(role: string): string {
   const r = normalizeRole(role);
