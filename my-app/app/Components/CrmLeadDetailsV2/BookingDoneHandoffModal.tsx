@@ -282,8 +282,9 @@ export default function BookingDoneHandoffModal({
       setError("Invalid lead type.");
       return;
     }
+    const crmLeadType = leadType;
     const payload = buildBookingDoneSubmitPayload({
-      leadType,
+      leadType: crmLeadType,
       leadId,
       hubLeadId,
       selectedQuote,
@@ -302,7 +303,7 @@ export default function BookingDoneHandoffModal({
       let recordId = createdRecordIdRef.current;
       if (!recordId) {
         try {
-          const record = await submitBookingDone(leadType, leadId, payload);
+          const record = await submitBookingDone(crmLeadType, leadId, payload);
           recordId = record.id;
           createdRecordIdRef.current = recordId;
         } catch (err) {
@@ -310,7 +311,7 @@ export default function BookingDoneHandoffModal({
             let existingId = err.existingRecordId?.trim() || "";
             if (!existingId) {
               try {
-                const { records } = await fetchBookingDoneRecords(leadType, leadId);
+                const { records } = await fetchBookingDoneRecords(crmLeadType, leadId);
                 existingId = records[0]?.id?.trim() || "";
               } catch {
                 existingId = "";
@@ -334,21 +335,21 @@ export default function BookingDoneHandoffModal({
       }
 
       try {
-        const draftProofs = readPaymentProofs(leadType, leadId);
+        const draftProofs = readPaymentProofs(crmLeadType, leadId);
         if (draftProofs.length > 0) {
           const files = await paymentProofsToFiles(draftProofs);
           if (files.length > 0) {
-            await uploadBookingPaymentProofs(leadType, leadId, recordId, files);
+            await uploadBookingPaymentProofs(crmLeadType, leadId, recordId, files);
           }
         }
       } catch {
         /* deal exists — continue to open */
       }
-      clearBookingDoneDraft(leadType, leadId);
+      clearBookingDoneDraft(crmLeadType, leadId);
       let substage = "";
       try {
         substage = await persistClosedWonCustomerMilestoneFromPayment(
-          leadType,
+          crmLeadType,
           leadId,
           payload.paymentKind,
         );

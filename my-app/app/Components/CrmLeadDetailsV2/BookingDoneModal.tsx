@@ -508,20 +508,22 @@ export default function BookingDoneModal({
     recordId: string,
     kind: BookingPaymentKind,
   ) {
+    if (!isCrmLeadType(leadType)) return;
+    const crmLeadType = leadType;
     createdRecordIdRef.current = recordId;
     try {
-      const draftProofs = readPaymentProofs(leadType, leadId);
+      const draftProofs = readPaymentProofs(crmLeadType, leadId);
       if (draftProofs.length > 0) {
         const files = await paymentProofsToFiles(draftProofs);
         if (files.length > 0) {
-          await uploadBookingPaymentProofs(leadType, leadId, recordId, files);
+          await uploadBookingPaymentProofs(crmLeadType, leadId, recordId, files);
         }
       }
-      await persistClosedWonCustomerMilestoneFromPayment(leadType, leadId, kind);
+      await persistClosedWonCustomerMilestoneFromPayment(crmLeadType, leadId, kind);
     } catch {
       // Deal already exists — still open Booking & Token; never re-POST create.
     }
-    clearBookingDoneDraft(leadType, leadId);
+    clearBookingDoneDraft(crmLeadType, leadId);
     onHandoffComplete?.();
     onClose();
     window.location.assign(bookingTokenUrl(recordId));
@@ -544,12 +546,13 @@ export default function BookingDoneModal({
       setHandoffError("Invalid lead type.");
       return;
     }
+    const crmLeadType = leadType;
     if (canUsePaymentLinks && !offlineMethod) {
       setHandoffError("Select Cash, Cheque, Bank Transfer, or DD.");
       return;
     }
     const payload = buildBookingDoneSubmitPayload({
-      leadType,
+      leadType: crmLeadType,
       leadId,
       hubLeadId,
       selectedQuote,
@@ -566,7 +569,7 @@ export default function BookingDoneModal({
       if (!recordId) {
         try {
           const record = await submitBookingDone(
-            leadType,
+            crmLeadType,
             leadId,
             canUsePaymentLinks
               ? {
