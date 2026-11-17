@@ -6,8 +6,11 @@ import {
   crmFloorPlanOpenProxyPath,
 } from "@/lib/crm-floor-plan-proxy";
 import {
+  fileToFloorPlanBase64,
+  floorPlanContentType,
   floorPlanDisplayFileName,
   formatFloorPlanUploadError,
+  isFloorPlanMultipartParseError,
   normalizeFloorPlanS3Key,
   pickFloorPlanPublicLink,
   type FloorPlanFileRef,
@@ -892,6 +895,9 @@ export async function fetchNewCrmQuotePayloads(
 export type FloorPlanUploadResponse = FloorPlanMetaResponse & {
   userMessage?: string;
   debugMessage?: string;
+  error?: string;
+  type?: string;
+  fallbackPath?: string;
 };
 
 function proxyFloorPlanFilePath(
@@ -1086,24 +1092,58 @@ export async function leadPreservingServerFloorPlan<T extends FloorPlanCarrier>(
   }
 }
 
-/** `POST /api/crm/lead/{leadType}/{id}/floor-plan` → adds files. Does not replace the ones already saved. */
-export async function uploadLeadFloorPlan(
+function floorPlanUploadErrorMessage(data: FloorPlanUploadResponse): string {
+  return (
+    data.error?.trim() ||
+    data.userMessage?.trim() ||
+    data.debugMessage?.trim() ||
+    ""
+  );
+}
+
+async function postFloorPlanJson(
   leadType: CrmLeadType,
   id: string,
-  fileOrFiles: File | File[],
-): Promise<LeadFloorPlanState> {
-  const files = (Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles]).filter(
-    (file) => file instanceof File && file.size > 0,
+  files: File[],
+): Promise<{ res: Response; data: FloorPlanUploadResponse }> {
+  const payloadFiles = await Promise.all(
+    files.map(async (file) => ({
+      fileName: file.name || "floor-plan.bin",
+      contentType: floorPlanContentType(file),
+      base64: await fileToFloorPlanBase64(file),
+    })),
   );
-  if (files.length === 0) throw new Error("Choose a floor plan to upload.");
-  for (const file of files) {
-    const validationError = validateFloorPlanFile(file);
-    if (validationError) throw new Error(`${file.name}: ${validationError}`);
-  }
 
+  const res = await fetch(`/api/crm/lead/${leadType}/${id}/floor-plan/json`, {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ files: payloadFiles }),
+    cache: "no-store",
+  });
+
+  let data: FloorPlanUploadResponse = {};
+  try {
+    data = (await res.json()) as FloorPlanUploadResponse;
+  } catch {
+    data = {};
+  }
+  return { res, data };
+}
+
+/**
+ * Legacy multipart path — kept for rare fallback only.
+ * Prefer JSON; on MultipartException / parse failure the caller retries JSON once.
+ */
+async function postFloorPlanMultipart(
+  leadType: CrmLeadType,
+  id: string,
+  files: File[],
+): Promise<{ res: Response; data: FloorPlanUploadResponse }> {
   const formData = new FormData();
-  // CRM FloorPlanController only accepts parts named `file` or `files`.
-  // Pass filename explicitly — some Android WebViews omit it.
   if (files.length === 1) {
     const f = files[0]!;
     formData.append("file", f, f.name || "floor-plan.bin");
@@ -1113,7 +1153,6 @@ export async function uploadLeadFloorPlan(
     }
   }
 
-  // Only Authorization — never set Content-Type (browser must add multipart boundary).
   const headers = new Headers();
   const auth = new Headers(getCrmAuthHeaders()).get("Authorization");
   if (auth) headers.set("Authorization", auth);
@@ -1132,13 +1171,46 @@ export async function uploadLeadFloorPlan(
   } catch {
     data = {};
   }
+  return { res, data };
+}
+
+/**
+ * `POST /api/crm/lead/{leadType}/{id}/floor-plan/json` (preferred).
+ * Adds files; does not replace ones already saved. Avoids Tomcat multipart parse 400s via Vercel.
+ */
+export async function uploadLeadFloorPlan(
+  leadType: CrmLeadType,
+  id: string,
+  fileOrFiles: File | File[],
+): Promise<LeadFloorPlanState> {
+  const files = (Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles]).filter(
+    (file) => file instanceof File && file.size > 0,
+  );
+  if (files.length === 0) throw new Error("Choose a floor plan to upload.");
+  for (const file of files) {
+    const validationError = validateFloorPlanFile(file);
+    if (validationError) throw new Error(`${file.name}: ${validationError}`);
+  }
+
+  let { res, data } = await postFloorPlanJson(leadType, id, files);
+
+  // Older CRM builds may lack /floor-plan/json — try multipart once, then JSON again on parse error.
+  if (!res.ok && (res.status === 404 || res.status === 405)) {
+    const multipart = await postFloorPlanMultipart(leadType, id, files);
+    const multipartMessage = floorPlanUploadErrorMessage(multipart.data);
+    if (
+      !multipart.res.ok &&
+      isFloorPlanMultipartParseError(multipartMessage, multipart.data.type)
+    ) {
+      ({ res, data } = await postFloorPlanJson(leadType, id, files));
+    } else {
+      res = multipart.res;
+      data = multipart.data;
+    }
+  }
 
   if (!res.ok || data.success === false) {
-    const upstream =
-      data.error?.trim() ||
-      data.userMessage?.trim() ||
-      data.debugMessage?.trim() ||
-      "";
+    const upstream = floorPlanUploadErrorMessage(data);
     if (upstream) {
       throw new Error(formatFloorPlanUploadError(upstream));
     }

@@ -1,16 +1,30 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { AnimatePresence, motion } from "framer-motion";
 import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
-import { formatMeetingValue, MEETING_TIME_ZONE, type MeetingRecord } from "@/lib/meeting-management-data";
+import {
+  formatInr,
+  formatMeetingValue,
+  MEETING_TIME_ZONE,
+  type MeetingRecord,
+} from "@/lib/meeting-management-data";
 import {
   isMeetingQuotePendingProgress,
   isMeetingSuccessfulProgress,
   isQuoteSentSuccessfulProgress,
   meetingProgressTone,
 } from "@/lib/meeting-progress";
+import {
+  emptyQuoteTimeline,
+  formatQuoteTimelineWhen,
+  latestQuoteVersionLabel,
+  loadQuoteTimeline,
+  type QuoteTimeline,
+  type QuoteTimelineSend,
+  type QuoteTimelineVersion,
+} from "@/lib/quote-timeline-api";
 import { canViewDesignerMeetingFeedback } from "@/lib/roleUtils";
 import {
   ActivityHistorySheet,
@@ -20,6 +34,9 @@ import {
   type HistoryFilter,
 } from "./MeetingActivityHistory";
 import { focusRing } from "./motion";
+
+const INVISIBLE_SCROLL =
+  "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 const STATUS_TONE = {
   SCHEDULED: "bg-[#E6EDFF] text-[#1B3FA8]",
@@ -264,7 +281,11 @@ function ProgressPill({ row }: { row: MeetingRecord }) {
 }
 
 function LeadJourney({ row }: { row: MeetingRecord }) {
-  const steps = journeySteps(row);
+  const timeline = useQuoteTimeline(row.leadId, row.leadTypeCode);
+  const steps = useMemo(
+    () => journeySteps(row, timeline.data),
+    [row, timeline.data],
+  );
   const done = steps.filter((step) => step.state === "done").length;
   return (
     <aside className="flex h-full min-h-[420px] w-full flex-col rounded-[14px] bg-[#0F3D2B] p-4 text-white">
@@ -272,14 +293,16 @@ function LeadJourney({ row }: { row: MeetingRecord }) {
         <h2 className="text-[13px] font-bold tracking-[0.08em]">LEAD JOURNEY</h2>
         <p className="text-[12px] font-semibold text-[#D7E8DE]">{done} of 6 steps</p>
       </div>
-      <ol className="relative mt-4 flex flex-1 flex-col justify-between gap-3">
+      <ol className={`relative mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain pr-0.5 ${INVISIBLE_SCROLL}`}>
         <span className="absolute bottom-3 left-[11px] top-3 border-l border-dashed border-white/40" aria-hidden />
         {steps.map((step) => (
           <li key={step.title} className="relative flex gap-3">
             <StepMark state={step.state} />
-            <div className="min-w-0 pt-0.5">
+            <div className="min-w-0 flex-1 pt-0.5">
               <p className="text-[13px] font-bold leading-tight">{step.title}</p>
-              {step.detail ? <p className="mt-0.5 text-[12px] font-medium text-[#D7E8DE]">{step.detail}</p> : null}
+              {step.detail ? (
+                <p className="mt-0.5 text-[12px] font-medium leading-snug text-[#D7E8DE]">{step.detail}</p>
+              ) : null}
               {step.tag ? (
                 <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-[#E3F3EA] px-2 py-0.5 text-[11px] font-bold text-[#0B6B45]">
                   <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
@@ -288,12 +311,157 @@ function LeadJourney({ row }: { row: MeetingRecord }) {
                   {step.tag}
                 </span>
               ) : null}
+              {step.extra}
             </div>
           </li>
         ))}
       </ol>
+      {timeline.loading ? (
+        <p className="mt-3 text-[11px] font-medium text-[#D7E8DE]/80">Syncing quote timeline…</p>
+      ) : null}
     </aside>
   );
+}
+
+function useQuoteTimeline(leadId?: number, leadType?: string) {
+  const [data, setData] = useState<QuoteTimeline>(() => emptyQuoteTimeline());
+  const [loading, setLoading] = useState(false);
+  const ready = leadId != null && leadId > 0 && Boolean(leadType?.trim());
+
+  useEffect(() => {
+    if (!ready || leadId == null || !leadType?.trim()) {
+      setData(emptyQuoteTimeline());
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void loadQuoteTimeline(leadId, leadType.trim())
+      .then((next) => {
+        if (!cancelled) setData(next);
+      })
+      .catch(() => {
+        if (!cancelled) setData(emptyQuoteTimeline());
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadId, leadType, ready]);
+
+  return { ready, loading, data };
+}
+
+function QuoteGeneratedDetail({ timeline }: { timeline: QuoteTimeline }) {
+  const label = latestQuoteVersionLabel(timeline);
+  const when = formatQuoteTimelineWhen(
+    timeline.latestQuoteGeneratedAt || timeline.latestVersion?.generatedAt,
+  );
+  if (!label && !when) return null;
+  return (
+    <div className="mt-1.5 rounded-[10px] border border-white/15 bg-white/[0.06] px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-bold leading-tight text-white">{label || "Latest version"}</p>
+        {timeline.latestVersion?.quotedAmount ? (
+          <p className="shrink-0 text-[11px] font-semibold text-[#B8F0D0]">
+            {formatInr(timeline.latestVersion.quotedAmount)}
+          </p>
+        ) : null}
+      </div>
+      {when ? <p className="mt-0.5 text-[11px] font-medium text-[#D7E8DE]">{when}</p> : null}
+    </div>
+  );
+}
+
+function QuoteSentFlow({ timeline }: { timeline: QuoteTimeline }) {
+  const rows = quoteSentFlowRows(timeline);
+  if (rows.length === 0 && timeline.quoteSentCount <= 0) return null;
+  const openCount = timeline.customerQuoteOpenCount;
+  return (
+    <div className="mt-1.5 min-w-0">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 rounded-full bg-[#E3F3EA] px-2 py-0.5 text-[11px] font-bold text-[#0B6B45]">
+          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" aria-hidden>
+            <path d="M3.5 8.2l2.6 2.6 6-6.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          Sent{timeline.quoteSentCount > 1 ? ` · ${timeline.quoteSentCount}×` : ""}
+        </span>
+        {openCount > 0 ? (
+          <span className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-[#D7E8DE]">
+            Opened {openCount} {openCount === 1 ? "time" : "times"}
+          </span>
+        ) : null}
+      </div>
+      {rows.length > 0 ? (
+        <div
+          className={`mt-2 max-h-[112px] space-y-1.5 overflow-y-auto overscroll-contain pr-0.5 ${INVISIBLE_SCROLL}`}
+          aria-label="Quote send history"
+        >
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              className="rounded-[10px] border border-white/12 bg-gradient-to-r from-white/[0.09] to-white/[0.03] px-2.5 py-1.5"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-bold leading-tight text-white">{row.title}</p>
+                  <p className="mt-0.5 truncate text-[11px] font-medium text-[#D7E8DE]">{row.subtitle}</p>
+                </div>
+                {row.meta ? (
+                  <p className="shrink-0 text-right text-[10px] font-semibold uppercase tracking-wide text-[#B8F0D0]">
+                    {row.meta}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type SentFlowRow = { key: string; title: string; subtitle: string; meta?: string };
+
+function quoteSentFlowRows(timeline: QuoteTimeline): SentFlowRow[] {
+  if (timeline.sends.length > 0) {
+    return timeline.sends.map((send, index) => sentRowFromSend(send, index));
+  }
+  const sentVersions = timeline.versions.filter((version) => version.sentToCustomer || version.sentCount > 0);
+  return sentVersions.map((version, index) => sentRowFromVersion(version, index));
+}
+
+function sentRowFromSend(send: QuoteTimelineSend, index: number): SentFlowRow {
+  const when = formatQuoteTimelineWhen(send.sentAt);
+  const who = [send.sentBy, send.recipient].filter(Boolean).join(" → ");
+  return {
+    key: `send-${send.quoteId || send.versionNumber}-${send.sentAt}-${index}`,
+    title: send.versionLabel || (send.versionNumber > 0 ? `Version ${send.versionNumber}` : "Quote sent"),
+    subtitle: [when, who].filter(Boolean).join(" · ") || "Sent to customer",
+    meta: "Sent",
+  };
+}
+
+function sentRowFromVersion(version: QuoteTimelineVersion, index: number): SentFlowRow {
+  const when = formatQuoteTimelineWhen(version.lastSentAt || version.firstSentAt);
+  const opens =
+    version.openCount > 0
+      ? `${version.openCount} open${version.openCount === 1 ? "" : "s"}`
+      : undefined;
+  return {
+    key: `version-${version.quoteId || version.versionNumber}-${index}`,
+    title: version.versionLabel || `Version ${version.versionNumber}`,
+    subtitle: [
+      when,
+      version.sentCount > 1 ? `Sent ${version.sentCount}×` : null,
+      version.quotedAmount > 0 ? formatInr(version.quotedAmount) : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "Sent to customer",
+    meta: opens,
+  };
 }
 
 function StepMark({ state }: { state: "done" | "current" | "pending" }) {
@@ -314,13 +482,28 @@ function StepMark({ state }: { state: "done" | "current" | "pending" }) {
   return <span className="relative z-[1] inline-flex h-6 w-6 shrink-0 rounded-full border border-dashed border-white/55 bg-[#0F3D2B]" />;
 }
 
-function journeySteps(row: MeetingRecord): Array<{ title: string; state: "done" | "current" | "pending"; detail?: string; tag?: string }> {
+type JourneyStep = {
+  title: string;
+  state: "done" | "current" | "pending";
+  detail?: string;
+  tag?: string;
+  extra?: ReactNode;
+};
+
+function journeySteps(row: MeetingRecord, timeline?: QuoteTimeline): JourneyStep[] {
   const progress = row.progress ?? "SCHEDULED";
   const successDone = isMeetingSuccessfulProgress(progress) || row.meetingSuccessful === true;
   const visitDone = progress === "IN_PROGRESS" || successDone;
-  const quoteDone = row.quoteGenerated === true || successDone;
+  const timelineHasQuote =
+    Boolean(timeline?.latestVersion) ||
+    (timeline?.versions.length ?? 0) > 0 ||
+    Boolean(timeline?.latestQuoteGeneratedAt);
+  const quoteDone = row.quoteGenerated === true || timelineHasQuote || successDone;
   const followDone =
-    isQuoteSentSuccessfulProgress(progress) || row.quoteFollow === true || row.quoteSent === true;
+    isQuoteSentSuccessfulProgress(progress) ||
+    row.quoteFollow === true ||
+    row.quoteSent === true ||
+    (timeline?.quoteSentCount ?? 0) > 0;
   const quotePending = successDone && !followDone && isMeetingQuotePendingProgress(progress);
   const doneFlags = [true, visitDone, successDone, quoteDone, followDone, false];
   const currentIndex = doneFlags.findIndex((done) => !done);
@@ -344,14 +527,44 @@ function journeySteps(row: MeetingRecord): Array<{ title: string; state: "done" 
         ? "Yes · Quote sent"
         : "Yes"
     : undefined;
-  const steps: Array<{ title: string; detail?: string; tag?: string }> = [
+
+  const versionLabel = timeline ? latestQuoteVersionLabel(timeline) : "";
+  const generatedWhen = formatQuoteTimelineWhen(
+    timeline?.latestQuoteGeneratedAt || timeline?.latestVersion?.generatedAt,
+  );
+  const hasGeneratedMeta = Boolean(versionLabel || generatedWhen);
+
+  const steps: Array<Omit<JourneyStep, "state">> = [
     { title: "Meeting scheduled", detail: scheduledDetail || undefined },
     { title: visitTitle, detail: visitDetail },
     { title: "Meeting successful", detail: successDetail },
-    { title: "Quote generated", detail: quoteDone ? "Yes" : undefined },
+    {
+      title: "Quote generated",
+      detail:
+        quoteDone && !hasGeneratedMeta
+          ? "Yes"
+          : undefined,
+      extra:
+        quoteDone && timeline && hasGeneratedMeta ? (
+          <QuoteGeneratedDetail timeline={timeline} />
+        ) : undefined,
+    },
     {
       title: "Quote follow-up",
-      tag: followDone ? "Quote sent" : quotePending ? "Quote pending" : undefined,
+      tag: followDone
+        ? timeline &&
+          (timeline.quoteSentCount > 0 ||
+            timeline.sends.length > 0 ||
+            timeline.versions.some((v) => v.sentToCustomer || v.sentCount > 0))
+          ? undefined
+          : "Quote sent"
+        : quotePending
+          ? "Quote pending"
+          : undefined,
+      extra:
+        followDone && timeline ? (
+          <QuoteSentFlow timeline={timeline} />
+        ) : undefined,
     },
     { title: "Converted to booking", detail: "Booking done · Pending" },
   ];

@@ -13,9 +13,9 @@ function floorPlanUpstreamUrl(leadType: string, id: string): string {
 }
 
 /**
- * Forward the browser multipart bytes as-is.
- * Re-parsing into a new FormData on Vercel/Node often drops or renames the file
- * part, and CRM then returns 400 "Floor plan file is required."
+ * Legacy multipart upload.
+ * Prefer `POST .../floor-plan/json` from the web CRM (avoids Tomcat multipart 400s via Vercel).
+ * Forward browser multipart bytes as-is — do not re-parse into FormData.
  */
 function upstreamMultipartHeaders(req: NextRequest, contentType: string): Headers {
   const headers = new Headers(upstreamAuthHeaders(req));
