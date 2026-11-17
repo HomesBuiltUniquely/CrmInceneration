@@ -1,6 +1,7 @@
 import { normalizeRole } from "@/lib/auth/api";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import {
+  appendLeadPoolQuery,
   appendWorkspaceMilestoneFilterQuery,
   leadMatchesWorkspaceMilestoneFilter,
 } from "@/lib/crm-workspace";
@@ -485,6 +486,7 @@ export async function fetchAllSalesFilterMergeLeads(
     workspace: "sales",
     crmMilestoneScope: true,
   });
+  appendLeadPoolQuery(qs, "sales");
   if (!qs.get("sort")) {
     qs.set("sort", (input.sort ?? "updatedAt,desc").trim() || "updatedAt,desc");
   }

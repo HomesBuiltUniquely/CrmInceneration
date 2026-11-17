@@ -30,7 +30,13 @@ import { isLostPathLead, paginateLeadsForTableInventory, readExcludeLostPathPara
 import { computeLeadTypeCountsFromRows, normalizeLeadTypeKey } from "@/lib/primary-source-leads";
 import { isCrmLeadReinquiry } from "@/lib/lead-source-utils";
 import { isPresalesRole } from "@/lib/roleUtils";
-import { leadMatchesWorkspaceMilestoneFilter, isDedicatedFilterLeadType, defaultVerificationForLeadTypeFilter, type CrmWorkspace } from "@/lib/crm-workspace";
+import {
+  leadMatchesWorkspaceMilestoneFilter,
+  isDedicatedFilterLeadType,
+  defaultVerificationForLeadTypeFilter,
+  filterLeadsForSalesClientInbox,
+  type CrmWorkspace,
+} from "@/lib/crm-workspace";
 import {
   filterLeadsByAssigneeScope,
   parseAssigneeAliasSetQuery,
@@ -1094,13 +1100,21 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const merged = filterAndSortMergedLeads(
+  let merged = filterAndSortMergedLeads(
     [...byId.values()],
     url,
     effDates,
     usePresalesMilestoneFilters,
     search,
   );
+
+  // CRM `/Leads` mergeAll (admin SA path) used Hub `/v1/leads/filter` without a sales
+  // pool gate — unverified / PRESALES_EXECUTIVE rows inflated Lead + Total counts and
+  // showed up in the table with a blue "Sales" badge. Keep global search cross-pool.
+  if (!includePresalesInGlobalSearch) {
+    const vs = (url.searchParams.get("verificationStatus") ?? "").trim();
+    merged = filterLeadsForSalesClientInbox(merged, vs);
+  }
 
   const excludeLostPath = readExcludeLostPathParam(url);
   /** Total Leads = full merge incl. lost; table pager may still exclude lost on default inbox. */

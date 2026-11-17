@@ -156,10 +156,35 @@ export function presalesTopLevelStage(lead: ApiLead): string {
   return stage || "Fresh Data";
 }
 
+function readRenovationAssignedFlag(
+  lead: ApiLead | Lead | Record<string, unknown>,
+): boolean {
+  if (!lead || typeof lead !== "object") return false;
+  const asLead = lead as Lead;
+  if (asLead.stageBlock?.renovationAssigned === true) return true;
+  const r = lead as Record<string, unknown>;
+  const stageBlock = r.stageBlock;
+  if (stageBlock && typeof stageBlock === "object" && !Array.isArray(stageBlock)) {
+    if ((stageBlock as Record<string, unknown>).renovationAssigned === true) return true;
+  }
+  const stage = r.stage;
+  if (stage && typeof stage === "object" && !Array.isArray(stage)) {
+    if ((stage as Record<string, unknown>).renovationAssigned === true) return true;
+  }
+  return r.renovationAssigned === true;
+}
+
 /** Lead has been verified / assigned to sales — presales UI should not show on detail or sales dashboard. */
 export function isLeadHandedOffToSales(
   lead: ApiLead | Lead | Record<string, unknown>,
 ): boolean {
+  // Presales Renovation handoff: verified + renovationAssigned ≡ completed handoff
+  // (parity with Verify → Assigned), even if Hub still echoes a presales assigneeRole.
+  const verified =
+    (lead && typeof lead === "object" && "verified" in lead && (lead as Lead).verified === true) ||
+    isCrmLeadVerified(lead as ApiLead);
+  if (verified && readRenovationAssignedFlag(lead)) return true;
+
   // Prefer Hub assigneeRole (guide §8) — do not guess pipeline from verified alone.
   if (lead && typeof lead === "object") {
     const explicit = String(

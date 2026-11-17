@@ -241,7 +241,9 @@ export function defaultLeadsVerificationStatus(
 ): string {
   if (explicit?.trim()) return explicit.trim();
   const r = normalizeRole(viewerRole ?? "");
-  // Admin Sales/Presales menus: omit verify filter — Hub `/admin/*` pools are by assignee role.
+  // Admin Sales/Presales menus: omit Hub verify param — `/admin/*` is assignee-role scoped.
+  // Sales `/Leads` mergeAll still applies `filterLeadsForSalesClientInbox` in the BFF so
+  // unverified / presales-assigned rows never inflate CRM Lead + Total counts.
   if (isAdminRole(r) || r === "SALES_ADMIN") return "";
   if (workspace === "sales") return "verified";
   return "unverified";
@@ -383,10 +385,10 @@ export function defaultVerificationForLeadTypeFilter(
   return defaultLeadsVerificationStatus(workspace, explicit, viewerRole);
 }
 
-/** Presales routes use Hub `presales-search` (JWT-scoped), not sales filter merge only. */
+/** Presales routes use Hub `presales-search`; sales `/Leads` merge marks `leadPool=sales`. */
 export function appendLeadPoolQuery(qs: URLSearchParams, workspace: CrmWorkspace): void {
   if (workspace === "presales") qs.set("leadPool", "presales");
-  else qs.delete("leadPool");
+  else qs.set("leadPool", "sales");
 }
 
 /** Lead detail UI: `?workspace=presales` + session backup from list routes. */
