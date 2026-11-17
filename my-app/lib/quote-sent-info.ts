@@ -3,6 +3,11 @@
  * Source of truth for Quote Sent tile — not quoteLink / Meeting Successful / "Quote link set".
  */
 
+import {
+  parseCustomerQuoteSends,
+  type CustomerQuoteSendRecord,
+} from "@/lib/customer-quote-sends";
+
 export type QuoteSentInfo = {
   quoteSentToCustomer?: boolean;
   quoteSentAt?: string | null;
@@ -16,6 +21,7 @@ export type QuoteSentInfo = {
   customerQuoteOpenCount?: number;
   lastCustomerQuoteOpenAt?: string | null;
   customerQuoteOpenAsOfQuoteId?: string | null;
+  customerQuoteSends?: CustomerQuoteSendRecord[];
 };
 
 export type QuoteSentLeadFields = {
@@ -88,6 +94,9 @@ export function parseQuoteSentInfo(raw: unknown): QuoteSentInfo | null {
     obj.customerQuoteOpenAsOfQuoteId,
     obj.customer_quote_open_as_of_quote_id,
   );
+  const customerQuoteSends = parseCustomerQuoteSends(
+    obj.customerQuoteSends ?? obj.customer_quote_sends,
+  );
 
   const empty =
     quoteSentToCustomer === undefined &&
@@ -116,6 +125,7 @@ export function parseQuoteSentInfo(raw: unknown): QuoteSentInfo | null {
     customerQuoteOpenCount: customerQuoteOpenCount > 0 ? customerQuoteOpenCount : undefined,
     lastCustomerQuoteOpenAt,
     customerQuoteOpenAsOfQuoteId,
+    customerQuoteSends: customerQuoteSends.length > 0 ? customerQuoteSends : undefined,
   };
 }
 

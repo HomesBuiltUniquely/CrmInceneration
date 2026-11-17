@@ -19,6 +19,25 @@ export default function BookingCelebrationHost() {
     name: string;
     aliases: string[];
   } | null>(null);
+  const [consume, setConsume] = useState(true);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('hw-cele-surface', 'crm');
+    } catch {
+      /* ignore */
+    }
+    const sync = () => {
+      try {
+        setConsume(sessionStorage.getItem('hw-cele-surface') === 'crm');
+      } catch {
+        setConsume(true);
+      }
+    };
+    sync();
+    const id = window.setInterval(sync, 1500);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('crm_token');
@@ -36,6 +55,7 @@ export default function BookingCelebrationHost() {
   }, []);
 
   if (!viewer) return null;
+
   return (
     <BookingCelebration
       apiBase={hallwayBase()}
@@ -43,6 +63,7 @@ export default function BookingCelebrationHost() {
       viewerKey={viewer.key}
       viewerAliases={viewer.aliases}
       viewerName={viewer.name}
+      enabled={consume}
     />
   );
 }
