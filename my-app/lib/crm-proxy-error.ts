@@ -42,11 +42,16 @@ export function buildProxyErrorBody(args: {
   const debugMessage =
     normalizeMessage(payload.json?.debugMessage) || normalizeMessage(payload.text);
 
+  const type = normalizeMessage(payload.json?.type);
+  const fallbackPath = normalizeMessage(payload.json?.fallbackPath);
+
   return {
     success: false,
     userMessage,
     error: userMessage,
     ...(debugMessage ? { debugMessage } : {}),
+    ...(type ? { type } : {}),
+    ...(fallbackPath ? { fallbackPath } : {}),
   };
 }
 

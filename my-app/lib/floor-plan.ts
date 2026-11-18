@@ -53,6 +53,46 @@ export function validateFloorPlanFile(file: File): string | null {
   return null;
 }
 
+/** MIME for JSON floor-plan upload when `File.type` is empty (common on Android). */
+export function floorPlanContentType(file: File): string {
+  const typed = file.type?.trim();
+  if (typed) return typed;
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  return "application/octet-stream";
+}
+
+/** Data-URL or raw base64 — CRM accepts both on `/floor-plan/json`. */
+export function fileToFloorPlanBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      if (!result) {
+        reject(new Error(`Could not read ${file.name || "floor plan"}`));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => reject(new Error(`Could not read ${file.name || "floor plan"}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** True when Hub/Tomcat rejected multipart parse (retry with JSON). */
+export function isFloorPlanMultipartParseError(raw: string, type?: string | null): boolean {
+  const kind = (type ?? "").trim().toLowerCase();
+  if (kind.includes("multipartexception")) return true;
+  const lower = raw.trim().toLowerCase();
+  return (
+    lower.includes("failed to parse multipart") ||
+    lower.includes("multipartexception") ||
+    lower.includes("parse multipart servlet request")
+  );
+}
+
 export function isFloorPlanImageKey(key: string): boolean {
   const u = key.trim().toLowerCase();
   return /\.(jpe?g|png)(\?|#|$)/.test(u);
@@ -354,6 +394,9 @@ export function formatFloorPlanUploadError(raw: string): string {
   const t = raw.trim();
   if (!t) return "Unable to upload floor plan. Please try again.";
   const lower = t.toLowerCase();
+  if (isFloorPlanMultipartParseError(t)) {
+    return "Floor plan upload failed (server multipart). Please try again.";
+  }
   if (lower.includes("aws s3 bucket not configured") || lower.includes("s3 bucket not configured")) {
     return "Floor plan storage is not configured on the server (AWS S3). Contact your administrator.";
   }
