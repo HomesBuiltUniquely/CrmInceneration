@@ -109,7 +109,16 @@ export function MeetingsPage({
       if (filters.designerIds.length && !filters.designerIds.includes(row.assignee)) return false;
       if (filters.salesIds.length && !filters.salesIds.includes(row.assignedSalesName ?? "")) return false;
       if (filters.branchIds.length && !filters.branchIds.some((branch) => sameBranch(row.branch, branch))) return false;
-      if (!meetingProgressMatchesFilter(row.progress, progressFilter)) return false;
+      if (
+        !meetingProgressMatchesFilter(row.progress, progressFilter, {
+          meetingLabel: row.meetingLabel,
+          meetingLevel: row.meetingLevel,
+          milestoneSubStage: row.milestoneSubStage,
+          meetingStatus: row.meetingStatus,
+        })
+      ) {
+        return false;
+      }
       if (filters.quoteDelayed && !isQuoteDelayed(row)) return false;
       if (
         filters.meetingSuccessful &&
@@ -339,12 +348,14 @@ type StatusMenuItem = {
 
 const PROGRESS_MENU_DOT: Record<MeetingProgress, string> = {
   SCHEDULED: "bg-[#2563EB]",
+  SCHEDULED_DRR: "bg-[#2563EB]",
   IN_PROGRESS: "bg-[#D97706]",
   MEETING_ABANDONED: "bg-[#DC2626]",
   MEETING_SUCCESSFUL_QUOTE_PENDING: "bg-[#10B981]",
   MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF: "bg-[#EA580C]",
   QUOTE_SENT_SUCCESSFUL: "bg-[#15803D]",
   MEETING_SUCCESSFUL: "bg-[#0B6B45]",
+  MEETING_SUCCESSFUL_DRR: "bg-[#0B6B45]",
 };
 
 const STATUS_MENU_ITEMS: StatusMenuItem[] = [
