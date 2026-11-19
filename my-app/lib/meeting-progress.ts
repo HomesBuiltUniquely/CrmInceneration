@@ -147,7 +147,7 @@ export function isQuoteSentSuccessfulProgress(progress?: string | null): boolean
 /** Filter chip options shown in Meeting Management (includes umbrella MEETING_SUCCESSFUL). */
 export const MEETING_PROGRESS_FILTER_OPTIONS: Array<{ id: MeetingProgress; label: string }> = [
   { id: "SCHEDULED", label: DEFAULT_LABELS.SCHEDULED },
-  { id: "SCHEDULED_DRR", label: "Meeting Scheduled (DRR)" },
+  { id: "SCHEDULED_DRR", label: "Scheduled (DRR)" },
   { id: "IN_PROGRESS", label: DEFAULT_LABELS.IN_PROGRESS },
   { id: "MEETING_ABANDONED", label: DEFAULT_LABELS.MEETING_ABANDONED },
   { id: "MEETING_SUCCESSFUL_QUOTE_PENDING", label: DEFAULT_LABELS.MEETING_SUCCESSFUL_QUOTE_PENDING },
