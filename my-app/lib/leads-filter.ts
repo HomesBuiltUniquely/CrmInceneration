@@ -26,7 +26,11 @@ import {
 } from "@/lib/presales-milestone";
 import type { CrmWorkspace } from "@/lib/crm-workspace";
 import { readLeadCreatedAtRaw } from "@/lib/lead-follow-up-insights";
-import { formatFollowUpDueDateLabel, resolveEffectiveFollowUpDateRaw } from "@/lib/follow-up-date";
+import {
+  formatFollowUpDueDateLabel,
+  parseFollowUpTimestampMs,
+  resolveEffectiveFollowUpDateRaw,
+} from "@/lib/follow-up-date";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 
 export const CRM_LEAD_TYPES = [
@@ -227,11 +231,72 @@ export function readLeadUpdatedAtRaw(lead: ApiLead): string {
   return readLeadCreatedAtRaw(lead);
 }
 
+function parseLeadTimestampMs(raw: string | null | undefined): number {
+  const ms = parseFollowUpTimestampMs(raw);
+  return ms ?? 0;
+}
+
+/**
+ * Newest-first list ordering for dashboards (SE / SM / SA / Admin / Super Admin).
+ * Uses max(updated, created, assigned) so:
+ * - reinquiries that bump `updatedAt` rise to the top
+ * - new creates that only have `createdAt` (or space-separated Hub datetimes) still sort correctly
+ * - rows with no parseable stamp surface at the top of the inbox instead of sinking to 0
+ */
 export function parseLeadSortTimestamp(lead: ApiLead): number {
-  const raw = readLeadUpdatedAtRaw(lead);
-  if (!raw) return 0;
-  const t = Date.parse(raw);
-  return Number.isNaN(t) ? 0 : t;
+  const updatedMs = parseLeadTimestampMs(
+    String(
+      pickLeadScalar(lead, [
+        "updatedAt",
+        "updated_at",
+        "updatedOn",
+        "updated_on",
+        "modifiedAt",
+        "modified_at",
+        "lastModified",
+        "last_modified",
+        "lastUpdated",
+        "last_updated",
+      ]) ?? "",
+    ).trim(),
+  );
+  const createdMs = parseLeadTimestampMs(readLeadCreatedAtRaw(lead));
+  const assignedMs = parseLeadTimestampMs(
+    String(
+      pickLeadScalar(lead, ["assignedAt", "assigned_at", "assignedOn", "assigned_on"]) ?? "",
+    ).trim(),
+  );
+  // Re-inquiry often resets follow-up to latest enquiry + 2h even when Hub leaves
+  // a stale `updatedAt`. Infer enquiry ≈ followUp − 2h, but only when that lookback
+  // is recent (not a long-term manual follow-up floating the row).
+  let reinquiryTouchMs = 0;
+  if (hasReinquiry(lead)) {
+    const followUpMs = parseLeadTimestampMs(
+      String(
+        pickLeadScalar(lead, [
+          "followUpDate",
+          "nextFollowUp",
+          "follow_up_date",
+          "FollowUpDate",
+        ]) ?? "",
+      ).trim(),
+    );
+    if (followUpMs > 0) {
+      const estimatedEnquiryMs = followUpMs - 2 * 60 * 60 * 1000;
+      const now = Date.now();
+      if (
+        estimatedEnquiryMs > Math.max(updatedMs, createdMs, assignedMs) &&
+        estimatedEnquiryMs <= now + 60_000 &&
+        estimatedEnquiryMs >= now - 7 * 24 * 60 * 60 * 1000
+      ) {
+        reinquiryTouchMs = estimatedEnquiryMs;
+      }
+    }
+  }
+  const best = Math.max(updatedMs, createdMs, assignedMs, reinquiryTouchMs);
+  if (best > 0) return best;
+  // New / freshly synced rows with missing stamps must still appear at the top.
+  return Date.now();
 }
 
 export function normalizeLeadSortFields(lead: ApiLead): ApiLead {

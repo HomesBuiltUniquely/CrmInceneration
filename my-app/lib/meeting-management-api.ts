@@ -754,12 +754,13 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
   const slotEnded = Boolean(date && !quoteLead && hasSlotEnd && indiaWallUtcMs(date, endMin) < nowMs);
   let status: MeetingStatus = "SCHEDULED";
   if (!quoteLead && when) status = slotProgress(date, startMin, endMin);
+  // Soft-cancel: Progress must be CANCELLED even if older Hub still sends progress=SCHEDULED.
   const progress = quoteLead
     ? undefined
-    : apiProgress
-      ?? (meetingStatus === "CANCELLED"
-        ? "SCHEDULED"
-        : meetingSuccessful === true
+    : meetingStatus === "CANCELLED"
+      ? "CANCELLED"
+      : apiProgress
+        ?? (meetingSuccessful === true
           ? quoteSent
             ? "QUOTE_SENT_SUCCESSFUL"
             : "MEETING_SUCCESSFUL_QUOTE_PENDING"
@@ -798,7 +799,10 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     locationTone: code ? locationTone(code) : "blue",
     status,
     progress,
-    progressLabel: progressLabel || undefined,
+    progressLabel:
+      meetingStatus === "CANCELLED"
+        ? progressLabel || "Cancelled"
+        : progressLabel || undefined,
     meetingStatus,
     cancelledAt: cancelledAtRaw ? formatStamp(cancelledAtRaw) : undefined,
     value,

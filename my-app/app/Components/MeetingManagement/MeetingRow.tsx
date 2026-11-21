@@ -77,7 +77,10 @@ export function MeetingRow({
   onReschedule: () => void;
 }) {
   void now;
-  const progress = meetingProgressTone(row.progress, row.progressLabel);
+  const progress = meetingProgressTone(
+    row.meetingStatus === "CANCELLED" ? "CANCELLED" : row.progress,
+    row.meetingStatus === "CANCELLED" ? row.progressLabel || "Cancelled" : row.progressLabel,
+  );
   const delay = row.quoteDelayed === true;
   const dateLabel = row.dayOffset === 0 ? "Today" : row.dayOffset === 1 ? "Tomorrow" : format(new Date(`${row.date}T00:00:00`), "d MMM yyyy");
   const dateGreen = row.dayOffset === 0 || row.dayOffset === 1;

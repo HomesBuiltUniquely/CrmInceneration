@@ -1,6 +1,7 @@
 /** Board `progress` codes from `GET /v1/meetings/board`. */
 export const MEETING_PROGRESS_CODES = [
   "SCHEDULED",
+  "CANCELLED",
   "IN_PROGRESS",
   "MEETING_ABANDONED",
   "MEETING_SUCCESSFUL_QUOTE_PENDING",
@@ -15,6 +16,7 @@ export type MeetingProgress = (typeof MEETING_PROGRESS_CODES)[number];
 /** Codes that appear as row badges (not the filter-only umbrella). */
 export const MEETING_PROGRESS_ROW_CODES = [
   "SCHEDULED",
+  "CANCELLED",
   "IN_PROGRESS",
   "MEETING_ABANDONED",
   "MEETING_SUCCESSFUL_QUOTE_PENDING",
@@ -34,6 +36,7 @@ export type MeetingProgressTone = {
 
 const DEFAULT_LABELS: Record<MeetingProgressRow, string> = {
   SCHEDULED: "Scheduled",
+  CANCELLED: "Cancelled",
   IN_PROGRESS: "In Progress",
   MEETING_ABANDONED: "Meeting Never Happened",
   MEETING_SUCCESSFUL_QUOTE_PENDING: "Meeting Successful · Quote pending",
@@ -48,6 +51,13 @@ const TONES: Record<MeetingProgressRow, MeetingProgressTone> = {
     dot: "#1D4ED8",
     label: DEFAULT_LABELS.SCHEDULED,
     pill: "bg-[#E0ECFF] text-[#1E40AF]",
+  },
+  CANCELLED: {
+    bg: "#FEE2E2",
+    text: "#B91C1C",
+    dot: "#DC2626",
+    label: DEFAULT_LABELS.CANCELLED,
+    pill: "bg-[#FEE2E2] text-[#B91C1C]",
   },
   IN_PROGRESS: {
     bg: "#FEF3C7",
@@ -101,7 +111,10 @@ export function coerceMeetingProgressRow(
   progress?: string | null,
   progressLabel?: string | null,
 ): MeetingProgressRow {
+  const label = (progressLabel ?? "").trim().toLowerCase();
+  if (label.includes("cancel")) return "CANCELLED";
   const code = normalizeMeetingProgressCode(progress ?? "");
+  if (code === "CANCELLED") return "CANCELLED";
   if (code === LEGACY_SUCCESSFUL) return "MEETING_SUCCESSFUL_QUOTE_PENDING";
   if (code && (MEETING_PROGRESS_ROW_CODES as readonly string[]).includes(code)) {
     return code as MeetingProgressRow;
@@ -145,6 +158,7 @@ export function isQuoteSentSuccessfulProgress(progress?: string | null): boolean
 /** Filter chip options shown in Meeting Management (includes umbrella MEETING_SUCCESSFUL). */
 export const MEETING_PROGRESS_FILTER_OPTIONS: Array<{ id: MeetingProgress; label: string }> = [
   { id: "SCHEDULED", label: DEFAULT_LABELS.SCHEDULED },
+  { id: "CANCELLED", label: DEFAULT_LABELS.CANCELLED },
   { id: "IN_PROGRESS", label: DEFAULT_LABELS.IN_PROGRESS },
   { id: "MEETING_ABANDONED", label: DEFAULT_LABELS.MEETING_ABANDONED },
   { id: "MEETING_SUCCESSFUL_QUOTE_PENDING", label: DEFAULT_LABELS.MEETING_SUCCESSFUL_QUOTE_PENDING },

@@ -9,17 +9,17 @@ import {
   type AdminLeadListEnvelope,
 } from "@/lib/admin-leads-api";
 import { pickPrimarySourceRows } from "@/lib/primary-source-leads";
+import { parseLeadSortTimestamp, type ApiLead } from "@/lib/leads-filter";
 
 function rowUpdatedAtMs(row: unknown): number {
   if (!row || typeof row !== "object") return 0;
   const rec = row as Record<string, unknown>;
   const lead =
     rec.lead && typeof rec.lead === "object" && !Array.isArray(rec.lead)
-      ? (rec.lead as Record<string, unknown>)
+      ? (rec.lead as ApiLead)
       : null;
-  const raw = String(lead?.updatedAt ?? lead?.updated_at ?? "").trim();
-  const ms = Date.parse(raw);
-  return Number.isNaN(ms) ? 0 : ms;
+  if (!lead) return 0;
+  return parseLeadSortTimestamp(lead);
 }
 
 export async function GET(req: NextRequest) {

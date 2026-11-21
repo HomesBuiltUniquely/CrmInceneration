@@ -506,7 +506,8 @@ type JourneyStep = {
 };
 
 function journeySteps(row: MeetingRecord, timeline?: QuoteTimeline): JourneyStep[] {
-  const progress = row.progress ?? "SCHEDULED";
+  const progress =
+    row.meetingStatus === "CANCELLED" ? "CANCELLED" : (row.progress ?? "SCHEDULED");
   const successDone = isMeetingSuccessfulProgress(progress) || row.meetingSuccessful === true;
   const visitDone = progress === "IN_PROGRESS" || successDone;
   const timelineHasQuote =

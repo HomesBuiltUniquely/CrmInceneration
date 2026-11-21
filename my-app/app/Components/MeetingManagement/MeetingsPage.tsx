@@ -339,6 +339,7 @@ type StatusMenuItem = {
 
 const PROGRESS_MENU_DOT: Record<MeetingProgress, string> = {
   SCHEDULED: "bg-[#2563EB]",
+  CANCELLED: "bg-[#DC2626]",
   IN_PROGRESS: "bg-[#D97706]",
   MEETING_ABANDONED: "bg-[#DC2626]",
   MEETING_SUCCESSFUL_QUOTE_PENDING: "bg-[#10B981]",
