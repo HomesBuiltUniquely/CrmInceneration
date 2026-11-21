@@ -7,6 +7,7 @@ import { CRM_ROLE_STORAGE_KEY, normalizeRole } from "@/lib/auth/api";
 import {
   formatInr,
   formatMeetingValue,
+  meetingDetailsSubtitleLevel,
   MEETING_TIME_ZONE,
   type MeetingRecord,
 } from "@/lib/meeting-management-data";
@@ -604,7 +605,8 @@ function ecName(branch?: string): string {
 }
 
 function subtitle(row: MeetingRecord): string {
-  return [row.meetingType, row.meetingLevel, row.leadType].map((part) => (part && part !== "—" ? part : "")).filter(Boolean).join(" · ") || "—";
+  const level = meetingDetailsSubtitleLevel(row) ?? row.meetingLevel;
+  return [row.meetingType, level, row.leadType].map((part) => (part && part !== "—" ? part : "")).filter(Boolean).join(" · ") || "—";
 }
 
 function untilLine(row: MeetingRecord): string {

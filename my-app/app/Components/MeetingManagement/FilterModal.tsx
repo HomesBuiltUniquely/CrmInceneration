@@ -13,7 +13,7 @@ import {
   toDateKey,
   type DatePresetId,
 } from "@/lib/meeting-date-range";
-import { MEETING_PROGRESS_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
+import { MEETING_PROGRESS_PANEL_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
 import { EASE, focusRing, hoverLift } from "./motion";
 import type { MeetingFilterState } from "./useMeetingFilters";
 
@@ -217,7 +217,7 @@ export function FilterModal({
                   <div>
                     <p className="text-[13px] font-semibold text-[#334155]">Progress</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {MEETING_PROGRESS_FILTER_OPTIONS.map((option) => {
+                      {MEETING_PROGRESS_PANEL_FILTER_OPTIONS.map((option) => {
                         const selected = (draft.progress ?? []).includes(option.id);
                         return (
                           <motion.button

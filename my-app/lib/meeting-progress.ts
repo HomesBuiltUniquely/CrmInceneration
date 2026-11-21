@@ -2,6 +2,7 @@
 export const MEETING_PROGRESS_CODES = [
   "SCHEDULED",
   "CANCELLED",
+  "SCHEDULED_DRR",
   "IN_PROGRESS",
   "MEETING_ABANDONED",
   "MEETING_SUCCESSFUL_QUOTE_PENDING",
@@ -9,6 +10,7 @@ export const MEETING_PROGRESS_CODES = [
   "QUOTE_SENT_SUCCESSFUL",
   /** Filter-only umbrella: any successful (pending + PNF + quote sent). */
   "MEETING_SUCCESSFUL",
+  "MEETING_SUCCESSFUL_DRR",
 ] as const;
 
 export type MeetingProgress = (typeof MEETING_PROGRESS_CODES)[number];
@@ -159,28 +161,143 @@ export function isQuoteSentSuccessfulProgress(progress?: string | null): boolean
 export const MEETING_PROGRESS_FILTER_OPTIONS: Array<{ id: MeetingProgress; label: string }> = [
   { id: "SCHEDULED", label: DEFAULT_LABELS.SCHEDULED },
   { id: "CANCELLED", label: DEFAULT_LABELS.CANCELLED },
+  { id: "SCHEDULED_DRR", label: "Scheduled (DRR)" },
   { id: "IN_PROGRESS", label: DEFAULT_LABELS.IN_PROGRESS },
   { id: "MEETING_ABANDONED", label: DEFAULT_LABELS.MEETING_ABANDONED },
   { id: "MEETING_SUCCESSFUL_QUOTE_PENDING", label: DEFAULT_LABELS.MEETING_SUCCESSFUL_QUOTE_PENDING },
   { id: "MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF", label: DEFAULT_LABELS.MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF },
   { id: "QUOTE_SENT_SUCCESSFUL", label: DEFAULT_LABELS.QUOTE_SENT_SUCCESSFUL },
   { id: "MEETING_SUCCESSFUL", label: "Any Meeting Successful" },
+  { id: "MEETING_SUCCESSFUL_DRR", label: "Meeting Successful (DRR)" },
 ];
+
+/** Progress checkboxes in the Filter panel — DRR codes stay on the ALL status menu only. */
+export const MEETING_PROGRESS_PANEL_FILTER_OPTIONS = MEETING_PROGRESS_FILTER_OPTIONS.filter(
+  (option) => option.id !== "SCHEDULED_DRR" && option.id !== "MEETING_SUCCESSFUL_DRR",
+);
+
+/** True when meetingLabel / meetingLevel / milestone is Design Refinement Round. */
+export function isDesignRefinementMeetingLabel(label?: string | null): boolean {
+  const raw = (label ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("design refinement") ||
+    raw === "design_refinement" ||
+    raw === "drr" ||
+    raw.includes("meeting scheduled(drr)") ||
+    raw.includes("meeting scheduled (drr)") ||
+    raw.includes("refinement round")
+  );
+}
+
+/** Open DRR calendar booking (for Meeting Scheduled (DRR) filter only). */
+export function isScheduledDrrMeeting(row: {
+  meetingLabel?: string | null;
+  meetingLevel?: string | null;
+  milestoneSubStage?: string | null;
+  meetingStatus?: string | null;
+  progress?: string | null;
+}): boolean {
+  const isDrr =
+    isDesignRefinementMeetingLabel(row.meetingLabel) ||
+    isDesignRefinementMeetingLabel(row.meetingLevel) ||
+    isDesignRefinementMeetingLabel(row.milestoneSubStage);
+  if (!isDrr) return false;
+  if (row.meetingStatus === "CANCELLED" || row.meetingStatus === "RESCHEDULED") return false;
+  if (isMeetingSuccessfulProgress(row.progress)) return false;
+  if (normalizeMeetingProgressCode(row.progress ?? "") === "MEETING_ABANDONED") return false;
+  return row.meetingStatus === "SCHEDULED" || row.meetingStatus == null || row.progress === "SCHEDULED";
+}
+
+/** Successful DRR visit (for Meeting Successful (DRR) filter only). */
+export function isSuccessfulDrrMeeting(row: {
+  meetingLabel?: string | null;
+  meetingLevel?: string | null;
+  milestoneSubStage?: string | null;
+  meetingStatus?: string | null;
+  progress?: string | null;
+}): boolean {
+  const isDrr =
+    isDesignRefinementMeetingLabel(row.meetingLabel) ||
+    isDesignRefinementMeetingLabel(row.meetingLevel) ||
+    isDesignRefinementMeetingLabel(row.milestoneSubStage);
+  if (!isDrr) return false;
+  if (row.meetingStatus === "CANCELLED") return false;
+  return isMeetingSuccessfulProgress(row.progress);
+}
+
+/** CRM Progress column for DRR rows — filters stay separate. */
+export function drrProgressDisplayLabel(row: {
+  meetingLabel?: string | null;
+  meetingLevel?: string | null;
+  milestoneSubStage?: string | null;
+  meetingStatus?: string | null;
+  progress?: string | null;
+}): string | undefined {
+  if (isSuccessfulDrrMeeting(row)) return "Meeting Successful (DRR)";
+  if (isScheduledDrrMeeting(row)) return "Scheduled (DRR)";
+  return undefined;
+}
 
 /** True when a row matches the selected progress filters (umbrella expands). */
 export function meetingProgressMatchesFilter(
   rowProgress: string | undefined,
   selected: MeetingProgress[],
+  row?: {
+    meetingLabel?: string | null;
+    meetingLevel?: string | null;
+    milestoneSubStage?: string | null;
+    meetingStatus?: string | null;
+  },
 ): boolean {
   if (selected.length === 0) return true;
   const code = normalizeMeetingProgressCode(rowProgress ?? "") ?? "SCHEDULED";
   for (const want of selected) {
+    if (want === "SCHEDULED_DRR") {
+      if (isScheduledDrrMeeting({ ...row, progress: rowProgress })) return true;
+      continue;
+    }
+    if (want === "MEETING_SUCCESSFUL_DRR") {
+      if (isSuccessfulDrrMeeting({ ...row, progress: rowProgress })) return true;
+      continue;
+    }
     if (want === "MEETING_SUCCESSFUL") {
       if (isMeetingSuccessfulProgress(code)) return true;
       continue;
+    }
+    if (
+      want === "MEETING_SUCCESSFUL_QUOTE_PENDING" ||
+      want === "MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF" ||
+      want === "QUOTE_SENT_SUCCESSFUL"
+    ) {
+      if (isSuccessfulDrrMeeting({ ...row, progress: rowProgress })) continue;
     }
     if (code === want) return true;
     if (want === "MEETING_SUCCESSFUL_QUOTE_PENDING" && code === LEGACY_SUCCESSFUL) return true;
   }
   return false;
+}
+
+/** Drop SCHEDULED_DRR before calling Hub (Hub has no such progress code). */
+export function hubProgressQueryCodes(selected: MeetingProgress[]): MeetingProgress[] {
+  const withoutDrr = selected.filter(
+    (code) => code !== "SCHEDULED_DRR" && code !== "MEETING_SUCCESSFUL_DRR",
+  );
+  const hasSuccessfulDrr = selected.includes("MEETING_SUCCESSFUL_DRR");
+  const successfulHubCodes: MeetingProgressRow[] = [
+    "MEETING_SUCCESSFUL_QUOTE_PENDING",
+    "MEETING_SUCCESSFUL_QUOTE_NOT_SENT_PNF",
+    "QUOTE_SENT_SUCCESSFUL",
+  ];
+  if (withoutDrr.length === 0) {
+    // Narrow Hub to successful rows; client keeps only DRR successful.
+    if (hasSuccessfulDrr) return successfulHubCodes;
+    if (selected.includes("SCHEDULED_DRR")) return [];
+    return [];
+  }
+  const next = [...withoutDrr];
+  if (hasSuccessfulDrr && !next.some((code) => isMeetingSuccessfulProgress(code))) {
+    next.push(...successfulHubCodes);
+  }
+  return [...new Set(next)];
 }

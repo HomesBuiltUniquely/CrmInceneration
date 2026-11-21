@@ -711,9 +711,25 @@ export function formatInr(value: number): string {
   }).format(Math.round(value));
 }
 
+function isDesignRefinementMeetingText(value?: string | null): boolean {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (!raw) return false;
+  return (
+    raw.includes("design refinement") ||
+    raw.includes("refinement round") ||
+    /\bdrr\b/.test(raw) ||
+    raw.includes("meeting scheduled(drr)") ||
+    raw.includes("meeting scheduled (drr)")
+  );
+}
+
 /** Appointment `meetingLabel`: CRM stores `quote_meeting`; Design stores labels like `first-cut`. */
 export function meetingLevelLabel(raw: string, sourceCode?: string): string {
-  const key = (raw.trim() || (sourceCode === "CRM" ? "quote_meeting" : "")).toLowerCase().replace(/[\s-]+/g, "_");
+  const trimmed = raw.trim();
+  if (isDesignRefinementMeetingText(trimmed)) {
+    return "Design Refinement Round";
+  }
+  const key = (trimmed || (sourceCode === "CRM" ? "quote_meeting" : "")).toLowerCase().replace(/[\s-]+/g, "_");
   if (!key) return "—";
   if (key === "quote_meeting") return "Quote meeting";
   return key
@@ -721,6 +737,22 @@ export function meetingLevelLabel(raw: string, sourceCode?: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+/** Header middle segment for Meeting details — DRR only. */
+export function meetingDetailsSubtitleLevel(row: {
+  meetingLabel?: string | null;
+  meetingLevel?: string | null;
+  milestoneSubStage?: string | null;
+}): string | null {
+  if (
+    isDesignRefinementMeetingText(row.meetingLabel) ||
+    isDesignRefinementMeetingText(row.meetingLevel) ||
+    isDesignRefinementMeetingText(row.milestoneSubStage)
+  ) {
+    return "Meeting Scheduled(DRR)";
+  }
+  return null;
 }
 
 const ACTIVE_MEETING_STATUS = new Set<MeetingStatus>(["SCHEDULED", "IN PROGRESS", "RESCHEDULED"]);

@@ -101,6 +101,8 @@ import {
   resolveLeadPropertyGateField,
 } from "@/lib/milestone-advance-gates";
 import {
+  DESIGN_REFINEMENT_REVISIT_SUBSTAGE,
+  isDesignRefinementSchedulingSubstage,
   isMeetingCancelledSubstage,
   isMeetingRescheduledSubstage,
   isMeetingScheduleSubstage,
@@ -3594,6 +3596,9 @@ export default function LeadDetailsApiClient({
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
+            ...(isDesignRefinementSchedulingSubstage(args.feedback)
+              ? { meetingLabel: DESIGN_REFINEMENT_REVISIT_SUBSTAGE }
+              : {}),
           };
           if (args.meetingAppointment.startTime && args.meetingAppointment.endTime) {
             apptBody.startTime = args.meetingAppointment.startTime;
