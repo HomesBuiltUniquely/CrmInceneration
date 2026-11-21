@@ -42,6 +42,7 @@ export type MeetingRecord = {
    */
   progress?:
     | "SCHEDULED"
+    | "CANCELLED"
     | "IN_PROGRESS"
     | "MEETING_ABANDONED"
     | "MEETING_SUCCESSFUL"
@@ -842,7 +843,10 @@ export function meetingBoardStats(rows: MeetingRecord[]) {
     (row) => row.status === "COMPLETED" && row.date.startsWith(monthPrefix),
   ).length;
   const completed = rows.filter((row) => row.status === "COMPLETED").length;
-  const cancelled = rows.filter((row) => row.status === "CANCELLED").length;
+  // Soft-cancel keeps the appointment row; count board meetingStatus, not slot clock status.
+  const cancelled = rows.filter(
+    (row) => row.meetingStatus === "CANCELLED" || row.status === "CANCELLED" || row.progress === "CANCELLED",
+  ).length;
   const quoted = rows.filter((row) => row.quoteSent).length;
   const meetingsDone = rows.filter((row) => {
     const endedAt = meetingSlotEndMs(row);
