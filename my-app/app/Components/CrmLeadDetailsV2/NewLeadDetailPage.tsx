@@ -60,6 +60,7 @@ import {
 import { useLeadDetailV2 } from "./LeadDetailV2Context";
 import {
   extractQuoteIdFromUrl,
+  pickDesignLeadIdQueryParam,
   resolveDesignDiscountQuoteUrl,
   toCustomerQuoteLink,
 } from "@/lib/crm-quote-links";
@@ -1822,14 +1823,17 @@ function ExperiencePhaseContent({ disabled = false }: { disabled?: boolean }) {
     0;
   const quoteSent = lead.quoteSentToCustomer === true || quoteSentCount > 0;
   const quoteId =
-    lead.quoteId?.trim() ||
-    lead.quoteSentInfo?.quoteId?.trim() ||
     extractQuoteIdFromUrl(quoteLinkValue) ||
+    lead.quoteSentInfo?.quoteId?.trim() ||
+    lead.quoteId?.trim() ||
     "";
   const designDiscountUrl = resolveDesignDiscountQuoteUrl({
     quoteLink: quoteLinkValue,
     quoteId,
-    hubLeadId: lead.leadId?.trim() || leadId,
+    hubLeadId: pickDesignLeadIdQueryParam(leadId, lead.leadId),
+    internalQuoteUrl:
+      (lead as { internalQuoteUrl?: string }).internalQuoteUrl ??
+      (lead.quoteSentInfo as { internalQuoteUrl?: string } | undefined)?.internalQuoteUrl,
   });
 
   return (

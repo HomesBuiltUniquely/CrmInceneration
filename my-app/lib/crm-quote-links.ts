@@ -132,11 +132,12 @@ export function resolveDesignDiscountQuoteUrl(args: {
     );
   }
   const quoteId =
-    (args.quoteId ?? "").trim() || extractQuoteIdFromUrl(args.quoteLink ?? "");
+    extractQuoteIdFromUrl(args.quoteLink ?? "") || (args.quoteId ?? "").trim();
   if (!quoteId) return "";
   return buildDesignQuotePageUrl(quoteId, {
     internal: Boolean(hubLeadId),
     hubLeadId: hubLeadId || undefined,
+    audienceCrm: true,
   });
 }
 
@@ -174,6 +175,7 @@ export function extractInternalQuoteLink(resp: unknown): string {
     return buildDesignQuotePageUrl(quoteId, {
       internal: Boolean(hubLeadId),
       hubLeadId: hubLeadId || undefined,
+      audienceCrm: true,
     });
   }
   return "";
@@ -333,17 +335,31 @@ function appendCrmAuthParams(urlStr: string): string {
 
 export function buildDesignQuotePageUrl(
   quoteId: string,
-  options?: { internal?: boolean; hubLeadId?: string },
+  options?: { internal?: boolean; hubLeadId?: string; audienceCrm?: boolean },
 ): string {
   const id = quoteId.trim();
   if (!id) return "";
   const base = `https://design.hubinterior.com/quote/${encodeURIComponent(id)}`;
   const hubLeadId = options?.hubLeadId?.trim();
   if (options?.internal && hubLeadId) {
-    const raw = `${base}?internal=1&leadId=${encodeURIComponent(hubLeadId)}`;
+    const audience =
+      options.audienceCrm !== false ? "&audience=crm" : "";
+    const raw = `${base}?internal=1&leadId=${encodeURIComponent(hubLeadId)}${audience}`;
     return appendCrmAuthParams(raw);
   }
   return base;
+}
+
+/** Prefer Hub numeric route id for Design `leadId=` query (not ML-/AL- business id). */
+export function pickDesignLeadIdQueryParam(
+  routeLeadId?: string | null,
+  businessLeadId?: string | null,
+): string {
+  const route = (routeLeadId ?? "").trim();
+  if (/^\d+$/.test(route)) return route;
+  const business = (businessLeadId ?? "").trim();
+  if (/^\d+$/.test(business)) return business;
+  return business || route;
 }
 
 /** "Version 2 (Current)" and "Version 2" are the same save. */

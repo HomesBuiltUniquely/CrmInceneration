@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { BASE_URL } from "@/lib/base-url";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { isCrmLeadType, leadUpdatePutPaths } from "@/lib/crm-lead-endpoints";
-import { toCustomerQuoteLink } from "@/lib/crm-quote-links";
+import { extractQuoteIdFromUrl, toCustomerQuoteLink } from "@/lib/crm-quote-links";
 
 const EXTERNAL_LEAD_INGEST_API_KEY =
   process.env.EXTERNAL_LEAD_INGEST_API_KEY?.trim() ?? "";
@@ -26,6 +26,18 @@ function hubAuthHeaders(): Record<string, string> {
     headers.Authorization = dev.startsWith("Bearer ") ? dev : `Bearer ${dev}`;
   }
   return headers;
+}
+
+function hubBases(): string[] {
+  return Array.from(
+    new Set(
+      [
+        (process.env.NEXT_PUBLIC_API || "").trim().replace(/\/+$/, ""),
+        (process.env.HUB_API_BASE_URL || "").trim().replace(/\/+$/, ""),
+        BASE_URL,
+      ].filter(Boolean),
+    ),
+  );
 }
 
 function normalizeLeadType(raw: unknown): CrmLeadType | null {
@@ -60,6 +72,57 @@ function normalizeLeadType(raw: unknown): CrmLeadType | null {
   return isCrmLeadType(mapped) ? mapped : null;
 }
 
+function parseVersion(raw: unknown): number | undefined {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return undefined;
+}
+
+/** Hub: update quote_sent_info after Design Share to CRM (version + latest quote id). */
+async function notifyHubQuoteSharedFromDesign(args: {
+  leadType: CrmLeadType;
+  crmLeadId: number;
+  quoteId: string;
+  quoteLink: string;
+  quoteVersionNumber?: number;
+}): Promise<{ ok: boolean; status?: number; detail?: string }> {
+  const headers = hubAuthHeaders();
+  if (!headers.Authorization) {
+    return { ok: false, detail: "CRM_DEV_BEARER_TOKEN missing" };
+  }
+  const body = {
+    leadType: args.leadType,
+    leadId: String(args.crmLeadId),
+    quoteId: args.quoteId,
+    quoteLink: args.quoteLink,
+    customerQuoteUrl: args.quoteLink,
+    quoteVersionNumber: args.quoteVersionNumber,
+    generatedAt: new Date().toISOString(),
+    generatedBy: "Design Quote Sync",
+  };
+  let lastStatus = 0;
+  let lastText = "";
+  for (const hubBase of hubBases()) {
+    for (const path of ["/v1/quote/shared-from-design", "/api/crm/quote/shared-from-design"]) {
+      try {
+        const res = await fetch(`${hubBase}${path}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+        lastStatus = res.status;
+        lastText = await res.text().catch(() => "");
+        if (res.ok) return { ok: true, status: res.status };
+      } catch (error) {
+        lastText = error instanceof Error ? error.message : String(error);
+        lastStatus = 502;
+      }
+    }
+  }
+  return { ok: false, status: lastStatus, detail: lastText.slice(0, 300) };
+}
+
 /**
  * Design Module → CRM callback after "Share this to CRM".
  * Auth: x-external-api-key (same as EXTERNAL_LEAD_INGEST_API_KEY).
@@ -82,7 +145,12 @@ export async function POST(req: NextRequest) {
   const quoteLink = toCustomerQuoteLink(
     String(body.quoteLink ?? body.customerQuoteUrl ?? body.customerLink ?? "").trim(),
   );
-  const quoteId = String(body.quoteId ?? "").trim();
+  const quoteId =
+    String(body.quoteId ?? "").trim() || extractQuoteIdFromUrl(quoteLink);
+  const internalQuoteUrl = String(body.internalQuoteUrl ?? body.internalLink ?? "").trim();
+  const quoteVersionNumber = parseVersion(
+    body.crmSharedVersionNumber ?? body.quoteVersionNumber ?? body.versionNumber,
+  );
 
   if (!Number.isFinite(crmLeadId) || crmLeadId < 1) {
     return NextResponse.json({ ok: false, message: "crmLeadId is required" }, { status: 400 });
@@ -106,22 +174,17 @@ export async function POST(req: NextRequest) {
     proposalLink: quoteLink,
   };
   if (quoteId) payload.quoteId = quoteId;
+  if (internalQuoteUrl) payload.hubInternalQuoteUrl = internalQuoteUrl;
 
   const paths = leadUpdatePutPaths(leadType, crmLeadId);
   const headers = hubAuthHeaders();
-  const hubBases = Array.from(
-    new Set(
-      [
-        (process.env.NEXT_PUBLIC_API || "").trim().replace(/\/+$/, ""),
-        (process.env.HUB_API_BASE_URL || "").trim().replace(/\/+$/, ""),
-        BASE_URL,
-      ].filter(Boolean),
-    ),
-  );
   let lastStatus = 500;
   let lastText = "";
+  let putOk = false;
+  let usedPath = "";
+  let usedHub = "";
 
-  for (const hubBase of hubBases) {
+  for (const hubBase of hubBases()) {
     for (let i = 0; i < paths.length; i += 1) {
       const url = `${hubBase}${paths[i]}`;
       try {
@@ -134,14 +197,10 @@ export async function POST(req: NextRequest) {
         lastStatus = res.status;
         lastText = await res.text().catch(() => "");
         if (res.ok) {
-          return NextResponse.json({
-            ok: true,
-            crmLeadId,
-            leadType,
-            quoteLink,
-            path: paths[i],
-            hubBase,
-          });
+          putOk = true;
+          usedPath = paths[i];
+          usedHub = hubBase;
+          break;
         }
         if (i < paths.length - 1 && (res.status === 404 || res.status === 405)) continue;
         break;
@@ -151,15 +210,41 @@ export async function POST(req: NextRequest) {
         break;
       }
     }
+    if (putOk) break;
   }
 
-  return NextResponse.json(
-    {
-      ok: false,
-      message: "Failed to save quoteLink on Hub lead",
-      status: lastStatus,
-      detail: lastText.slice(0, 300),
-    },
-    { status: 502 },
-  );
+  if (!putOk) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Failed to save quoteLink on Hub lead",
+        status: lastStatus,
+        detail: lastText.slice(0, 300),
+      },
+      { status: 502 },
+    );
+  }
+
+  const hubQuoteMeta =
+    quoteId
+      ? await notifyHubQuoteSharedFromDesign({
+          leadType,
+          crmLeadId,
+          quoteId,
+          quoteLink,
+          quoteVersionNumber,
+        })
+      : { ok: false as const, detail: "quoteId missing" };
+
+  return NextResponse.json({
+    ok: true,
+    crmLeadId,
+    leadType,
+    quoteLink,
+    quoteId: quoteId || undefined,
+    internalQuoteUrl: internalQuoteUrl || undefined,
+    path: usedPath,
+    hubBase: usedHub,
+    hubQuoteMeta,
+  });
 }
