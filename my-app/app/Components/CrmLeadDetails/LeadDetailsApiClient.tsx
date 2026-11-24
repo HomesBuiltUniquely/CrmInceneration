@@ -481,6 +481,22 @@ function buildExternalIntakeScheduleFromAppointment(args: {
         : undefined;
   return { appointmentDate, appointmentSlot, scheduleTimezone, designerName, rescheduleCount };
 }
+function crmDrrAppointmentFields(feedback: string, lead: Lead): {
+  meetingLabel?: string;
+  milestoneSubStage?: string;
+} {
+  const current = lead.stageBlock?.milestoneSubStage || lead.status || "";
+  if (
+    isDesignRefinementSchedulingSubstage(feedback) ||
+    isDesignRefinementSchedulingSubstage(current)
+  ) {
+    return {
+      meetingLabel: DESIGN_REFINEMENT_REVISIT_SUBSTAGE,
+      milestoneSubStage: DESIGN_REFINEMENT_REVISIT_SUBSTAGE,
+    };
+  }
+  return {};
+}
 
 async function postExternalIntakeLead(args: {
   lead: Lead;
@@ -499,6 +515,8 @@ async function postExternalIntakeLead(args: {
     scheduleTimezone: string;
     designerName?: string;
     rescheduleCount?: number;
+    meetingLabel?: string;
+    milestoneSubStage?: string;
   };
 }): Promise<void> {
   const pickText = (value: unknown): string => {
@@ -678,6 +696,12 @@ async function postExternalIntakeLead(args: {
     if (typeof args.schedule.rescheduleCount === "number" && args.schedule.rescheduleCount > 0) {
       payload.rescheduleCount = args.schedule.rescheduleCount;
     }
+    if (args.schedule.meetingLabel?.trim()) {
+      payload.meetingLabel = args.schedule.meetingLabel.trim();
+    }
+    if (args.schedule.milestoneSubStage?.trim()) {
+      payload.milestoneSubStage = args.schedule.milestoneSubStage.trim();
+    }
 
     const floorPlanPublicLink =
       args.lead.floorPlanPublicLink?.trim() ||
@@ -707,6 +731,12 @@ async function postExternalIntakeLead(args: {
     altPhone: pickText(args.lead.altPhone) || pickText(args.baseDetail.altPhone),
   });
   Object.assign(payload, phaseFields);
+  if (args.schedule?.meetingLabel?.trim()) {
+    payload.meetingLabel = args.schedule.meetingLabel.trim();
+  }
+  if (args.schedule?.milestoneSubStage?.trim()) {
+    payload.milestoneSubStage = args.schedule.milestoneSubStage.trim();
+  }
 
   if (!payload.externalLeadId) {
     console.warn(
@@ -777,6 +807,8 @@ async function postDesignModuleCrmLeadUpsert(args: {
     appointmentDate?: string;
     appointmentSlot?: string;
     scheduleTimezone?: string;
+    meetingLabel?: string;
+    milestoneSubStage?: string;
   };
 }): Promise<void> {
   if (!args.leadIdentifier.trim() || !Number.isFinite(args.leadId)) {
@@ -820,6 +852,12 @@ async function postDesignModuleCrmLeadUpsert(args: {
         altPhone: args.lead.altPhone,
       }),
     );
+  }
+  if (args.schedule?.meetingLabel?.trim()) {
+    body.meetingLabel = args.schedule.meetingLabel.trim();
+  }
+  if (args.schedule?.milestoneSubStage?.trim()) {
+    body.milestoneSubStage = args.schedule.milestoneSubStage.trim();
   }
 
   const res = await fetch("/api/crm/design-module/crm-lead/upsert", {
@@ -3596,9 +3634,7 @@ export default function LeadDetailsApiClient({
             description: `Meeting with ${crmLeadTypeToApiLabel(lt)} - Lead ID: ${leadIdNum}`,
             leadType: crmLeadTypeToApiLabel(lt),
             leadId: leadIdNum,
-            ...(isDesignRefinementSchedulingSubstage(args.feedback)
-              ? { meetingLabel: DESIGN_REFINEMENT_REVISIT_SUBSTAGE }
-              : {}),
+            ...crmDrrAppointmentFields(args.feedback, lead),
           };
           if (args.meetingAppointment.startTime && args.meetingAppointment.endTime) {
             apptBody.startTime = args.meetingAppointment.startTime;
@@ -3648,12 +3684,15 @@ export default function LeadDetailsApiClient({
           }
           const meetingDesignerName = args.meetingAppointment.designerName;
           designerName = meetingDesignerName?.trim() || lead.designerName;
-          const schedule = buildExternalIntakeScheduleFromAppointment({
-            meetingDate: args.meetingAppointment.date,
-            appt,
-            designerName: args.meetingAppointment.designerName,
-            rescheduleCount: apptRescheduleCount,
-          });
+          const schedule = {
+            ...buildExternalIntakeScheduleFromAppointment({
+              meetingDate: args.meetingAppointment.date,
+              appt,
+              designerName: args.meetingAppointment.designerName,
+              rescheduleCount: apptRescheduleCount,
+            }),
+            ...crmDrrAppointmentFields(args.feedback, lead),
+          };
           void (async () => {
             try {
               const enrichedLead: Lead = {
