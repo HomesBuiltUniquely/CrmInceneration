@@ -23,6 +23,23 @@ import {
   pickQuoteSentMotivateLine,
 } from "@/lib/quote-sent-motivate";
 import {
+  fetchCallEventsByLead,
+  fetchCallRecordingsByLead,
+} from "@/lib/recording-call-logs/api";
+import { formatDurationLabel, formatWhenLabel } from "@/lib/recording-call-logs/format";
+import {
+  callEventsToRows,
+  recordingsToRows,
+} from "@/lib/recording-call-logs/stats";
+import type {
+  ActivityListRow,
+  CallDirection,
+  HubCallRecording,
+} from "@/lib/recording-call-logs/types";
+import RecordingPlayerModal, {
+  type RecordingPlayerTarget,
+} from "@/app/Components/Shared/RecordingPlayerModal";
+import {
   classifyPaymentActivityBucket,
   detectPaymentReceivedKind,
   formatBookingPaymentActivityDetail,
@@ -43,9 +60,43 @@ export type ActivityHistoryHandle = {
   openPanel: (activityId?: string) => void;
 };
 
-type ActivityKind = "note" | "update" | "call" | "booking_token" | "payment" | "quote_open";
-type FilterId = "all" | "calls" | "notes" | "updates" | "quote_opens" | "booking_token" | "payments";
+type ActivityKind =
+  | "note"
+  | "update"
+  | "call"
+  | "call_log"
+  | "recording"
+  | "booking_token"
+  | "payment"
+  | "quote_open";
+type FilterId =
+  | "all"
+  | "calls"
+  | "call_log"
+  | "recordings"
+  | "notes"
+  | "updates"
+  | "quote_opens"
+  | "booking_token"
+  | "payments";
 type PaymentSubFilter = "all" | "links" | "settlements";
+type CallLogHubView = "hub" | "crm_app_calls" | "phone_call_log";
+type PhoneCallDirectionFilter =
+  | "all"
+  | "incoming"
+  | "outgoing"
+  | "missed"
+  | "client_rejected"
+  | "sales_rejected";
+
+type PhoneCallDirectionCounts = {
+  total: number;
+  incoming: number;
+  outgoing: number;
+  missed: number;
+  clientRejected: number;
+  salesRejected: number;
+};
 
 export type QuoteOpenSummary = {
   openCount: number;
@@ -73,6 +124,10 @@ type DisplayActivityItem = {
   quoteOpenCount?: number;
   quoteId?: string | null;
   quoteLink?: string | null;
+  sortAt?: number;
+  recordingId?: number;
+  hasHubRecording?: boolean;
+  callDirection?: CallDirection;
 };
 
 const MOCK_ACTIVITIES: DisplayActivityItem[] = [
@@ -114,6 +169,8 @@ const MOCK_ACTIVITIES: DisplayActivityItem[] = [
 const MOCK_FILTER_COUNTS = {
   all: 29,
   calls: 1,
+  call_log: 0,
+  recordings: 0,
   notes: 3,
   updates: 25,
   quote_opens: 0,
@@ -122,6 +179,106 @@ const MOCK_FILTER_COUNTS = {
   payment_links: 0,
   payment_settlements: 0,
 };
+
+function parseSortMs(value: string | null | undefined): number {
+  if (!value?.trim()) return 0;
+  const t = Date.parse(value.trim());
+  return Number.isFinite(t) ? t : 0;
+}
+
+function isListableRecording(r: HubCallRecording): boolean {
+  if (r.status === "rejected_filter") return false;
+  const code = (r.errorCode || "").toUpperCase();
+  if (
+    ["NOT_A_LEAD", "STAFF_NUMBER", "AMBIGUOUS_LEAD", "NOT_CONNECTED", "FILTER_REJECTED"].includes(
+      code,
+    )
+  ) {
+    return false;
+  }
+  if (r.leadId <= 0 || r.leadType.toLowerCase() === "unknown") return false;
+  return true;
+}
+
+function mapCallLogRow(row: ActivityListRow): DisplayActivityItem {
+  const when = formatWhenLabel(row.startedAt);
+  const duration = formatDurationLabel(row.durationSec);
+  const title = `${row.direction} · ${row.phoneMasked}`;
+  const detail = [when, duration, row.executive !== "—" ? row.executive : null]
+    .filter(Boolean)
+    .join(" · ");
+  return {
+    id: row.id,
+    kind: "call_log",
+    title,
+    timestamp: row.startedAt ? formatActivityDisplayTime(row.startedAt) : when,
+    author: row.executive,
+    detail,
+    sortAt: parseSortMs(row.startedAt),
+    recordingId: row.recordingId,
+    hasHubRecording: Boolean(row.hasRecording && row.recordingId),
+    callDirection: row.direction,
+  };
+}
+
+function mapRecordingRow(row: ActivityListRow): DisplayActivityItem {
+  const when = formatWhenLabel(row.startedAt);
+  const duration = formatDurationLabel(row.durationSec);
+  const title = `${row.direction} recording · ${row.phoneMasked}`;
+  const detail = [when, duration, row.executive !== "—" ? row.executive : null]
+    .filter(Boolean)
+    .join(" · ");
+  return {
+    id: row.id,
+    kind: "recording",
+    title,
+    timestamp: row.startedAt ? formatActivityDisplayTime(row.startedAt) : when,
+    author: row.executive,
+    detail,
+    sortAt: parseSortMs(row.startedAt),
+    recordingId: row.recordingId,
+    hasHubRecording: Boolean(row.recordingId),
+    callDirection: row.direction,
+  };
+}
+
+function sortActivitiesChronologically(items: DisplayActivityItem[]): DisplayActivityItem[] {
+  return [...items].sort((a, b) => (b.sortAt ?? 0) - (a.sortAt ?? 0));
+}
+
+function countPhoneCallDirections(items: DisplayActivityItem[]): PhoneCallDirectionCounts {
+  const counts: PhoneCallDirectionCounts = {
+    total: items.length,
+    incoming: 0,
+    outgoing: 0,
+    missed: 0,
+    clientRejected: 0,
+    salesRejected: 0,
+  };
+  for (const item of items) {
+    const d = item.callDirection;
+    if (d === "Incoming") counts.incoming += 1;
+    else if (d === "Outgoing") counts.outgoing += 1;
+    else if (d === "Missed") counts.missed += 1;
+    else if (d === "Client rejected") counts.clientRejected += 1;
+    else if (d === "Sales rejected") counts.salesRejected += 1;
+  }
+  return counts;
+}
+
+function matchesPhoneDirection(
+  direction: CallDirection | undefined,
+  filter: PhoneCallDirectionFilter,
+): boolean {
+  if (filter === "all") return true;
+  if (!direction) return false;
+  if (filter === "incoming") return direction === "Incoming";
+  if (filter === "outgoing") return direction === "Outgoing";
+  if (filter === "missed") return direction === "Missed";
+  if (filter === "client_rejected") return direction === "Client rejected";
+  if (filter === "sales_rejected") return direction === "Sales rejected";
+  return false;
+}
 
 function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayActivityItem | null {
   if (!summary) return null;
@@ -155,6 +312,7 @@ function buildQuoteOpenActivity(summary: QuoteOpenSummary | undefined): DisplayA
     quoteId: quoteId || null,
     quoteLink: quoteLink || null,
     motivateLine: `${who} engaged with the proposal — follow up while interest is warm.`,
+    sortAt: parseSortMs(summary.lastOpenedAt ?? ""),
   };
 }
 
@@ -303,6 +461,7 @@ function mapApiActivity(activity: ActivityItem): DisplayActivityItem {
         : isPaymentStage && paymentKind
           ? pickPaymentReceivedMotivateLine(paymentKind, `${activity.id}-stage`)
           : undefined,
+    sortAt: parseSortMs(activity.timestamp),
   };
 }
 
@@ -423,19 +582,82 @@ function activityListKey(activities: ActivityItem[] | undefined): string {
 
 const ActivityHistoryWithConnector = forwardRef<
   ActivityHistoryHandle,
-  { activities?: ActivityItem[]; quoteOpenSummary?: QuoteOpenSummary }
->(function ActivityHistoryWithConnector({ activities, quoteOpenSummary }, ref) {
+  {
+    activities?: ActivityItem[];
+    quoteOpenSummary?: QuoteOpenSummary;
+    leadType?: string;
+    leadId?: string;
+    loadHubCalls?: boolean;
+  }
+>(function ActivityHistoryWithConnector(
+  { activities, quoteOpenSummary, leadType, leadId, loadHubCalls },
+  ref,
+) {
   const activitiesKey = activityListKey(activities);
   const hasApiActivities = Boolean(activities && activities.length > 0);
+  const numericLeadId = Number(leadId);
+
+  const [hubCallLogs, setHubCallLogs] = useState<DisplayActivityItem[]>([]);
+  const [hubRecordings, setHubRecordings] = useState<DisplayActivityItem[]>([]);
+  const [playerTarget, setPlayerTarget] = useState<RecordingPlayerTarget | null>(null);
+
+  useEffect(() => {
+    if (!loadHubCalls || !leadType?.trim() || !Number.isFinite(numericLeadId) || numericLeadId <= 0) {
+      setHubCallLogs([]);
+      setHubRecordings([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [ev, rec] = await Promise.all([
+          fetchCallEventsByLead({ leadType, leadId: numericLeadId }).catch(() => []),
+          fetchCallRecordingsByLead({ leadType, leadId: numericLeadId }).catch(() => []),
+        ]);
+        if (cancelled) return;
+        const events = callEventsToRows(ev);
+        const listableRecs = rec.filter(isListableRecording);
+        const recRows = recordingsToRows(listableRecs);
+        const callSource = events.length > 0 ? events : recRows;
+        setHubCallLogs(callSource.map(mapCallLogRow));
+        setHubRecordings(recRows.map(mapRecordingRow));
+      } catch {
+        if (!cancelled) {
+          setHubCallLogs([]);
+          setHubRecordings([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHubCalls, leadType, numericLeadId]);
+
+  const crmActivities = useMemo(() => {
+    if (hasApiActivities && activities) return activities.map(mapApiActivity);
+    return MOCK_ACTIVITIES;
+  }, [activities, activitiesKey, hasApiActivities]);
 
   const displayActivities = useMemo(() => {
-    const base =
-      hasApiActivities && activities ? activities.map(mapApiActivity) : MOCK_ACTIVITIES;
+    const crmForTimeline = loadHubCalls
+      ? crmActivities.filter((item) => item.kind !== "call")
+      : crmActivities;
+    const merged = sortActivitiesChronologically([...crmForTimeline, ...hubCallLogs]);
     const quoteOpen = buildQuoteOpenActivity(quoteOpenSummary);
-    if (!quoteOpen) return base;
+    if (!quoteOpen) return merged;
     // Keep summary at top so sales see opens next to recent quote-sent events.
-    return [quoteOpen, ...base.filter((item) => item.id !== quoteOpen.id)];
-  }, [activities, activitiesKey, hasApiActivities, quoteOpenSummary]);
+    return [quoteOpen, ...merged.filter((item) => item.id !== quoteOpen.id)];
+  }, [crmActivities, hubCallLogs, loadHubCalls, quoteOpenSummary]);
+
+  const openRecordingPlayer = useCallback((item: DisplayActivityItem) => {
+    if (!item.recordingId) return;
+    setPlayerTarget({
+      recordingId: item.recordingId,
+      title: item.kind === "recording" ? item.title : item.callDirection || "Call recording",
+      subtitle: item.detail,
+      durationSec: undefined,
+    });
+  }, []);
 
   const summaryItems = useMemo(
     () =>
@@ -457,9 +679,11 @@ const ActivityHistoryWithConnector = forwardRef<
               ? ("payment" as const)
               : item.isPaymentFailed
                 ? ("payment_failed" as const)
-                : item.kind === "call"
+                : item.kind === "call" || item.kind === "call_log"
                   ? ("phone" as const)
-                  : item.kind === "note"
+                  : item.kind === "recording"
+                    ? ("phone" as const)
+                    : item.kind === "note"
                     ? ("user-plus" as const)
                     : ("calendar" as const),
       })),
@@ -468,36 +692,26 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const filterCounts = useMemo(
     () =>
-      hasApiActivities
-        ? displayActivities.reduce(
-            (acc, item) => {
-              acc.all += 1;
-              if (item.kind === "call") acc.calls += 1;
-              if (item.kind === "note") acc.notes += 1;
-              if (item.kind === "update") acc.updates += 1;
-              if (item.kind === "quote_open") acc.quote_opens += 1;
-              if (item.kind === "booking_token") acc.booking_token += 1;
-              if (item.kind === "payment") {
-                acc.payments += 1;
-                if (item.paymentBucket === "link") acc.payment_links += 1;
-                else acc.payment_settlements += 1;
-              }
-              return acc;
-            },
-            {
-              all: 0,
-              calls: 0,
-              notes: 0,
-              updates: 0,
-              quote_opens: 0,
-              booking_token: 0,
-              payments: 0,
-              payment_links: 0,
-              payment_settlements: 0,
-            },
-          )
+      hasApiActivities || hubCallLogs.length > 0 || hubRecordings.length > 0
+        ? {
+            all: displayActivities.length,
+            calls: crmActivities.filter((item) => item.kind === "call").length,
+            call_log: hubCallLogs.length,
+            recordings: hubRecordings.length,
+            notes: crmActivities.filter((item) => item.kind === "note").length,
+            updates: crmActivities.filter((item) => item.kind === "update").length,
+            quote_opens: displayActivities.filter((item) => item.kind === "quote_open").length,
+            booking_token: crmActivities.filter((item) => item.kind === "booking_token").length,
+            payments: crmActivities.filter((item) => item.kind === "payment").length,
+            payment_links: crmActivities.filter(
+              (item) => item.kind === "payment" && item.paymentBucket === "link",
+            ).length,
+            payment_settlements: crmActivities.filter(
+              (item) => item.kind === "payment" && item.paymentBucket === "settlement",
+            ).length,
+          }
         : MOCK_FILTER_COUNTS,
-    [displayActivities, hasApiActivities],
+    [crmActivities, displayActivities, hasApiActivities, hubCallLogs.length, hubRecordings.length],
   );
 
   const panelRef = useRef<HTMLDivElement>(null);
@@ -518,32 +732,80 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [paymentSubFilter, setPaymentSubFilter] = useState<PaymentSubFilter>("all");
+  const [callLogHubView, setCallLogHubView] = useState<CallLogHubView>("hub");
+  const [phoneCallDirectionFilter, setPhoneCallDirectionFilter] =
+    useState<PhoneCallDirectionFilter>("all");
   const [selectedId, setSelectedId] = useState(displayActivities[0]?.id ?? "");
 
-  const filteredActivities = useMemo(
-    () =>
-      displayActivities.filter((item) => {
-        if (filter === "all") return true;
-        if (filter === "calls") return item.kind === "call";
-        if (filter === "notes") return item.kind === "note";
-        if (filter === "quote_opens") return item.kind === "quote_open";
-        if (filter === "booking_token") return item.kind === "booking_token";
-        if (filter === "payments") {
-          if (item.kind !== "payment") return false;
-          if (paymentSubFilter === "links") return item.paymentBucket === "link";
-          if (paymentSubFilter === "settlements") return item.paymentBucket === "settlement";
-          return true;
-        }
-        return item.kind === "update";
-      }),
-    [displayActivities, filter, paymentSubFilter],
+  const crmAppCallActivities = useMemo(
+    () => crmActivities.filter((item) => item.kind === "call"),
+    [crmActivities],
+  );
+
+  const phoneCallDirectionCounts = useMemo(
+    () => countPhoneCallDirections(hubCallLogs),
+    [hubCallLogs],
+  );
+
+  const filteredActivities = useMemo(() => {
+    if (filter === "call_log") {
+      if (callLogHubView === "hub") return [];
+      if (callLogHubView === "crm_app_calls") return crmAppCallActivities;
+      return hubCallLogs.filter((item) =>
+        matchesPhoneDirection(item.callDirection, phoneCallDirectionFilter),
+      );
+    }
+    if (filter === "recordings") return hubRecordings;
+    return displayActivities.filter((item) => {
+      if (filter === "all") return true;
+      if (filter === "calls") return item.kind === "call";
+      if (filter === "notes") return item.kind === "note";
+      if (filter === "quote_opens") return item.kind === "quote_open";
+      if (filter === "booking_token") return item.kind === "booking_token";
+      if (filter === "payments") {
+        if (item.kind !== "payment") return false;
+        if (paymentSubFilter === "links") return item.paymentBucket === "link";
+        if (paymentSubFilter === "settlements") return item.paymentBucket === "settlement";
+        return true;
+      }
+      return item.kind === "update";
+    });
+  }, [
+    callLogHubView,
+    crmAppCallActivities,
+    displayActivities,
+    filter,
+    hubCallLogs,
+    hubRecordings,
+    paymentSubFilter,
+    phoneCallDirectionFilter,
+  ]);
+
+  const showCallLogHub = filter === "call_log" && callLogHubView === "hub" && loadHubCalls;
+
+  const openCallLogHub = useCallback(() => {
+    setFilter("call_log");
+    setCallLogHubView("hub");
+    setPhoneCallDirectionFilter("all");
+  }, []);
+
+  useEffect(() => {
+    if (filter !== "call_log" && loadHubCalls) {
+      setCallLogHubView("hub");
+      setPhoneCallDirectionFilter("all");
+    }
+  }, [filter, loadHubCalls]);
+
+  const allSelectable = useMemo(
+    () => [...displayActivities, ...hubRecordings.filter((r) => !displayActivities.some((d) => d.id === r.id))],
+    [displayActivities, hubRecordings],
   );
 
   const selected =
     filteredActivities.find((a) => a.id === selectedId) ||
-    displayActivities.find((a) => a.id === selectedId) ||
+    allSelectable.find((a) => a.id === selectedId) ||
     filteredActivities[0] ||
-    displayActivities[0];
+    allSelectable[0];
 
   // Only reset when the activity list content changes — not on every render.
   useEffect(() => {
@@ -555,10 +817,11 @@ const ActivityHistoryWithConnector = forwardRef<
 
   // Keep detail in sync when the active filter hides the current selection.
   useEffect(() => {
+    if (showCallLogHub) return;
     if (!filteredActivities.length) return;
     if (filteredActivities.some((item) => item.id === selectedId)) return;
     setSelectedId(filteredActivities[0].id);
-  }, [filteredActivities, selectedId]);
+  }, [filteredActivities, selectedId, showCallLogHub]);
 
   const selectActivity = useCallback((activityId: string) => {
     setSelectedId(activityId);
@@ -569,7 +832,11 @@ const ActivityHistoryWithConnector = forwardRef<
 
   const openPanel = useCallback(
     (activityId?: string) => {
-      if (activityId && displayActivities.some((item) => item.id === activityId)) {
+      if (
+        activityId &&
+        (displayActivities.some((item) => item.id === activityId) ||
+          hubRecordings.some((item) => item.id === activityId))
+      ) {
         setFilter("all");
         setSelectedId(activityId);
       }
@@ -577,7 +844,7 @@ const ActivityHistoryWithConnector = forwardRef<
       setPanelEntered(false);
       setOpen(true);
     },
-    [displayActivities],
+    [displayActivities, hubRecordings],
   );
 
   useImperativeHandle(ref, () => ({ openPanel }), [openPanel]);
@@ -728,12 +995,30 @@ const ActivityHistoryWithConnector = forwardRef<
                   onClick={() => setFilter("all")}
                   label={`All ${filterCounts.all}`}
                 />
-                <FilterPill
-                  active={filter === "calls"}
-                  onClick={() => setFilter("calls")}
-                  label={`Calls ${filterCounts.calls}`}
-                  icon="📞"
-                />
+                {!loadHubCalls ? (
+                  <FilterPill
+                    active={filter === "calls"}
+                    onClick={() => setFilter("calls")}
+                    label={`App-clicked calls ${filterCounts.calls}`}
+                    icon="📞"
+                  />
+                ) : null}
+                {loadHubCalls ? (
+                  <>
+                    <FilterPill
+                      active={filter === "call_log"}
+                      onClick={openCallLogHub}
+                      label={`Call log ${filterCounts.call_log}`}
+                      icon="📋"
+                    />
+                    <FilterPill
+                      active={filter === "recordings"}
+                      onClick={() => setFilter("recordings")}
+                      label={`Recording ${filterCounts.recordings}`}
+                      icon="🎧"
+                    />
+                  </>
+                ) : null}
                 <FilterPill
                   active={filter === "notes"}
                   onClick={() => setFilter("notes")}
@@ -775,6 +1060,37 @@ const ActivityHistoryWithConnector = forwardRef<
                 ) : null}
               </div>
 
+              {filter === "call_log" && loadHubCalls && callLogHubView === "phone_call_log" ? (
+                <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] bg-[#fafbfc] px-5 py-2">
+                  {(
+                    [
+                      { id: "all" as const, label: `All ${phoneCallDirectionCounts.total}` },
+                      { id: "incoming" as const, label: `Incoming ${phoneCallDirectionCounts.incoming}` },
+                      { id: "outgoing" as const, label: `Outgoing ${phoneCallDirectionCounts.outgoing}` },
+                      {
+                        id: "missed" as const,
+                        label: `Missed (not answered) ${phoneCallDirectionCounts.missed}`,
+                      },
+                      {
+                        id: "client_rejected" as const,
+                        label: `Client rejected ${phoneCallDirectionCounts.clientRejected}`,
+                      },
+                      {
+                        id: "sales_rejected" as const,
+                        label: `Sales rejected ${phoneCallDirectionCounts.salesRejected}`,
+                      },
+                    ] as const
+                  ).map((chip) => (
+                    <FilterPill
+                      key={chip.id}
+                      active={phoneCallDirectionFilter === chip.id}
+                      onClick={() => setPhoneCallDirectionFilter(chip.id)}
+                      label={chip.label}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
               {filter === "payments" ? (
                 <div className="flex flex-wrap gap-2 border-b border-[#eef1f5] bg-[#fafbfc] px-5 py-2">
                   <FilterPill
@@ -799,28 +1115,87 @@ const ActivityHistoryWithConnector = forwardRef<
 
               <div className="grid min-h-0 flex-1 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="flex min-h-0 flex-col border-b border-[#eef1f5] lg:border-b-0 lg:border-r">
-                  <div className="flex shrink-0 items-center justify-between gap-2 px-4 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
-                      {filteredActivities.length} In{" "}
-                      {filter === "all"
-                        ? "All"
-                        : filter === "payments"
-                          ? paymentSubFilter === "links"
-                            ? "Payment links"
-                            : paymentSubFilter === "settlements"
-                              ? "Payments received"
-                              : "Payments"
-                          : filter === "booking_token"
-                            ? "Booking & Token"
-                            : filter === "quote_opens"
-                              ? "Quote opens"
-                              : filter}
-                    </p>
+                  <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {filter === "call_log" && loadHubCalls && callLogHubView !== "hub" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCallLogHubView("hub");
+                            setPhoneCallDirectionFilter("all");
+                          }}
+                          className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-bold text-[#2563eb] ${V2_BTN_GHOST_ICON}`}
+                        >
+                          ← Call types
+                        </button>
+                      ) : null}
+                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
+                        {showCallLogHub
+                          ? "Choose a call list"
+                          : `${filteredActivities.length} In ${
+                              filter === "all"
+                                ? "All"
+                                : filter === "payments"
+                                  ? paymentSubFilter === "links"
+                                    ? "Payment links"
+                                    : paymentSubFilter === "settlements"
+                                      ? "Payments received"
+                                      : "Payments"
+                                  : filter === "booking_token"
+                                    ? "Booking & Token"
+                                    : filter === "quote_opens"
+                                      ? "Quote opens"
+                                      : filter === "call_log"
+                                        ? callLogHubView === "crm_app_calls"
+                                          ? "App-clicked calls"
+                                          : "Phone call log"
+                                        : filter === "recordings"
+                                          ? "Recording"
+                                          : filter === "calls"
+                                            ? "Hub app calls"
+                                            : filter
+                            }`}
+                      </p>
+                    </div>
                     <p className="text-[10px] font-medium text-[#94a3b8]">
-                      Click once to view details
+                      {showCallLogHub
+                        ? "Tap a card to open the list"
+                        : "Click once to view details"}
                     </p>
                   </div>
+                  {showCallLogHub ? (
+                    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                      <CallLogHubCards
+                        crmAppCallCount={filterCounts.calls}
+                        phoneTotalCount={phoneCallDirectionCounts.total}
+                        onOpenCrmAppCalls={() => {
+                          setCallLogHubView("crm_app_calls");
+                          setSelectedId(crmAppCallActivities[0]?.id ?? "");
+                        }}
+                        onOpenPhoneCallLog={() => {
+                          setCallLogHubView("phone_call_log");
+                          setPhoneCallDirectionFilter("all");
+                          setSelectedId(hubCallLogs[0]?.id ?? "");
+                        }}
+                      />
+                    </div>
+                  ) : (
                   <ul className="min-h-0 flex-1 overflow-y-auto">
+                    {filter === "call_log" && callLogHubView === "crm_app_calls" ? (
+                      <li className="border-b border-[#eef1f5] bg-[#fef2f2] px-4 py-3">
+                        <CallLogDrillIntro variant="crm_app" />
+                      </li>
+                    ) : null}
+                    {filter === "call_log" && callLogHubView === "phone_call_log" ? (
+                      <li className="border-b border-[#eef1f5] bg-[#fdf2f8] px-4 py-3">
+                        <CallLogDrillIntro variant="phone" />
+                      </li>
+                    ) : null}
+                    {filteredActivities.length === 0 ? (
+                      <li className="px-4 py-12 text-center text-[12px] font-medium text-[#8A94A6]">
+                        No items in this list yet.
+                      </li>
+                    ) : null}
                     {filteredActivities.map((item) => {
                       const isQuote = Boolean(item.isQuoteSent);
                       const isQuoteOpen = Boolean(item.isQuoteOpen);
@@ -927,14 +1302,27 @@ const ActivityHistoryWithConnector = forwardRef<
                                 ? "Payment link"
                                 : item.kind === "payment"
                                   ? "Payment"
-                                  : item.kind;
+                                  : item.kind === "call"
+                                    ? "App-clicked call"
+                                    : item.kind === "call_log"
+                                      ? "Phone call log"
+                                      : item.kind === "recording"
+                                        ? "Recording"
+                                        : item.kind;
+                      const showPlay =
+                        item.hasHubRecording &&
+                        item.recordingId &&
+                        (item.kind === "call_log" || item.kind === "recording");
                       return (
                       <li key={item.id}>
+                        <div
+                          className={`flex w-full items-stretch border-b ${rowClass}`}
+                        >
                         <button
                           type="button"
                           onClick={() => selectActivity(item.id)}
                           aria-pressed={selectedRow}
-                          className={`w-full border-b px-4 py-3 text-left ${rowClass}`}
+                          className="min-w-0 flex-1 px-4 py-3 text-left"
                         >
                           <div className="flex items-start gap-3">
                             <KindBadge
@@ -977,17 +1365,48 @@ const ActivityHistoryWithConnector = forwardRef<
                             </div>
                           </div>
                         </button>
+                        {showPlay ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openRecordingPlayer(item);
+                            }}
+                            className={`mr-3 inline-flex h-9 w-9 shrink-0 self-center items-center justify-center rounded-full text-[#1D4ED8] hover:bg-[#EFF6FF] ${V2_BTN_GHOST_ICON}`}
+                            title="Play recording"
+                            aria-label="Play recording"
+                          >
+                            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+                              <path d="M8 5.5v13l11-6.5L8 5.5z" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        </div>
                       </li>
                       );
                     })}
                   </ul>
+                  )}
                 </div>
 
                 <div ref={detailPaneRef} className="min-h-0 overflow-y-auto p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#9ca3af]">
                     Event Detail
                   </p>
-                  {selected ? (
+                  {showCallLogHub ? (
+                    <p className="mt-4 text-[12px] leading-relaxed text-[#64748b]">
+                      Pick a row on the left. Each shows a count only — tap to read what it
+                      means and open the full list.
+                    </p>
+                  ) : filter === "call_log" && callLogHubView === "crm_app_calls" ? (
+                    <div className="mt-3">
+                      <CallLogDrillIntro variant="crm_app" />
+                    </div>
+                  ) : filter === "call_log" && callLogHubView === "phone_call_log" ? (
+                    <div className="mt-3">
+                      <CallLogDrillIntro variant="phone" />
+                    </div>
+                  ) : selected ? (
                     <div className="mt-3">
                       <div className="flex items-start justify-between gap-2">
                         <KindBadge
@@ -1009,6 +1428,18 @@ const ActivityHistoryWithConnector = forwardRef<
                       <p className="mt-3 text-[14px] font-bold leading-snug text-[#111827]">
                         {selected.title}
                       </p>
+                      {selected.hasHubRecording && selected.recordingId ? (
+                        <button
+                          type="button"
+                          onClick={() => openRecordingPlayer(selected)}
+                          className={`mt-3 inline-flex items-center gap-2 rounded-lg border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-2 text-[12px] font-bold text-[#1D4ED8] ${V2_BTN_GHOST_ICON}`}
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                            <path d="M8 5.5v13l11-6.5L8 5.5z" />
+                          </svg>
+                          Play recording
+                        </button>
+                      ) : null}
                       {selected.isQuoteOpen ? (
                         <div className="mt-3 rounded-lg border border-indigo-200 bg-[#eef2ff] px-3 py-2.5">
                           <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-indigo-700">
@@ -1243,11 +1674,108 @@ const ActivityHistoryWithConnector = forwardRef<
       </article>
 
       {modal}
+
+      <RecordingPlayerModal target={playerTarget} onClose={() => setPlayerTarget(null)} />
     </>
   );
 });
 
 export default ActivityHistoryWithConnector;
+
+function CallLogHubCards({
+  crmAppCallCount,
+  phoneTotalCount,
+  onOpenCrmAppCalls,
+  onOpenPhoneCallLog,
+}: {
+  crmAppCallCount: number;
+  phoneTotalCount: number;
+  onOpenCrmAppCalls: () => void;
+  onOpenPhoneCallLog: () => void;
+}) {
+  return (
+    <div className="space-y-3 pt-1">
+      <CallLogHubCountRow
+        tone="crm"
+        title="App-clicked calls"
+        count={crmAppCallCount}
+        onClick={onOpenCrmAppCalls}
+      />
+      <CallLogHubCountRow
+        tone="phone"
+        title="Phone call log"
+        count={phoneTotalCount}
+        onClick={onOpenPhoneCallLog}
+      />
+    </div>
+  );
+}
+
+function CallLogHubCountRow({
+  tone,
+  title,
+  count,
+  onClick,
+}: {
+  tone: "crm" | "phone";
+  title: string;
+  count: number;
+  onClick: () => void;
+}) {
+  const styles =
+    tone === "crm"
+      ? "border-[#FECACA] bg-[#FEF2F2] hover:border-[#F87171] text-[#B91C1C]"
+      : "border-[#FBCFE8] bg-[#FDF2F8] hover:border-[#F472B6] text-[#BE185D]";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3.5 text-left transition ${styles} ${V2_BTN_LIST_ITEM}`}
+    >
+      <span className="text-[14px] font-bold text-[#111827]">{title}</span>
+      <span className="inline-flex items-center gap-2">
+        <span
+          className={`inline-flex h-8 min-w-8 items-center justify-center rounded-full bg-white px-2 text-[13px] font-bold tabular-nums ${tone === "crm" ? "text-[#DC2626]" : "text-[#DB2777]"}`}
+        >
+          {count}
+        </span>
+        <span className="text-[16px] opacity-80" aria-hidden="true">
+          →
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function CallLogDrillIntro({ variant }: { variant: "crm_app" | "phone" }) {
+  if (variant === "crm_app") {
+    return (
+      <div>
+        <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#B91C1C]">
+          App-clicked calls
+        </p>
+        <p className="mt-1 text-[12px] leading-relaxed text-[#475569]">
+          Each entry is recorded when someone taps the{" "}
+          <span className="font-semibold text-[#334155]">Call</span> button in Hub CRM on web or
+          mobile. You will see who called, the number, and when — not full phone-SIM duration.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#BE185D]">
+        Phone call log
+      </p>
+      <p className="mt-1 text-[12px] leading-relaxed text-[#475569]">
+        Calls synced from the executive&apos;s company SIM for this lead.{" "}
+        <span className="font-semibold text-[#334155]">Missed</span> means the sales
+        person did not answer. <span className="font-semibold text-[#334155]">Client rejected</span>{" "}
+        is when the customer declined the call — not counted as missed.
+      </p>
+    </div>
+  );
+}
 
 function FilterPill({
   active,
@@ -1339,6 +1867,21 @@ function KindBadge({
       </span>
     );
   }
+  if (kind === "call_log") {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#fce7f3] text-[10px] font-bold uppercase text-[#be185d]">
+        L
+      </span>
+    );
+  }
+  if (kind === "recording") {
+    return (
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[#e0e7ff] text-[10px] font-bold uppercase text-[#4338ca]">
+        R
+      </span>
+    );
+  }
+
   const styles =
     kind === "note"
       ? "bg-[#fef3c7] text-[#d97706]"
