@@ -391,11 +391,15 @@ function mergeUniqueLeadsIntoMap(
   for (const lead of leads) {
     const id = leadStableIdentifier(lead);
     if (!id) continue;
-    if (byId.has(id)) continue;
-    byId.set(id, {
+    const next: ApiLead = {
       ...lead,
       leadType: normalizeLeadTypeKey(lead.leadType ?? fallbackLeadType),
-    });
+    };
+    const existing = byId.get(id);
+    // Keep newest touch so reinquiry / later sync wins over the first-seen sibling.
+    if (!existing || parseLeadSortTimestamp(next) >= parseLeadSortTimestamp(existing)) {
+      byId.set(id, next);
+    }
   }
 }
 
@@ -508,11 +512,14 @@ async function fetchPresalesSearchLeads(
         .trim()
         .toLowerCase()}`;
       const key = id || fallbackKey;
-      if (byId.has(key)) continue;
       const typed = CRM_LEAD_TYPES.includes(lt as (typeof CRM_LEAD_TYPES)[number])
         ? (lt as (typeof CRM_LEAD_TYPES)[number])
         : "formlead";
-      byId.set(key, { ...lead, leadType: typed });
+      const next: ApiLead = { ...lead, leadType: typed };
+      const existing = byId.get(key);
+      if (!existing || parseLeadSortTimestamp(next) >= parseLeadSortTimestamp(existing)) {
+        byId.set(key, next);
+      }
     }
     const totalPages = Math.max(1, parseTotalPages(pageData));
     if (pageNum + 1 >= totalPages) break;
@@ -1071,11 +1078,13 @@ export async function GET(req: NextRequest) {
     for (const lead of chunks[i]) {
       const id = leadStableIdentifier(lead);
       if (!id) continue;
-      if (!byId.has(id)) {
-        byId.set(id, {
-          ...lead,
-          leadType: normalizeLeadTypeKey(lead.leadType ?? sourceType),
-        });
+      const next: ApiLead = {
+        ...lead,
+        leadType: normalizeLeadTypeKey(lead.leadType ?? sourceType),
+      };
+      const existing = byId.get(id);
+      if (!existing || parseLeadSortTimestamp(next) >= parseLeadSortTimestamp(existing)) {
+        byId.set(id, next);
       }
     }
   }
@@ -1095,8 +1104,11 @@ export async function GET(req: NextRequest) {
     );
     for (const lead of presalesRows) {
       const id = leadStableIdentifier(lead);
-      if (!id || byId.has(id)) continue;
-      byId.set(id, lead);
+      if (!id) continue;
+      const existing = byId.get(id);
+      if (!existing || parseLeadSortTimestamp(lead) >= parseLeadSortTimestamp(existing)) {
+        byId.set(id, lead);
+      }
     }
   }
 

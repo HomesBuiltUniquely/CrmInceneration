@@ -10,7 +10,7 @@ import {
   type BookingDatePresetId,
 } from "@/lib/booking-token-date-filter";
 import type { DatePresetId } from "@/lib/meeting-date-range";
-import { MEETING_PROGRESS_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
+import { MEETING_PROGRESS_PANEL_FILTER_OPTIONS, type MeetingProgress } from "@/lib/meeting-progress";
 import type { FilterDraft, FilterOption } from "./FilterModal";
 import { focusRing } from "./motion";
 
@@ -149,7 +149,7 @@ export function MeetingHeaderMenus({
             </FilterField>
             <FilterField label="Progress">
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[#E3E8EE] p-1.5">
-                {MEETING_PROGRESS_FILTER_OPTIONS.map((option) => {
+                {MEETING_PROGRESS_PANEL_FILTER_OPTIONS.map((option) => {
                   const selected = (value.progress ?? []).includes(option.id);
                   return (
                     <label

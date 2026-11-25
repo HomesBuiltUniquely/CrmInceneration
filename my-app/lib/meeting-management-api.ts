@@ -11,7 +11,11 @@ import { crmLeadTypeToApiLabel } from "@/lib/crm-lead-type-label";
 import { meetingTypeDisplay } from "@/lib/lead-detail-v2-display";
 import { resolveQuoteAmount } from "@/lib/lead-quote-options";
 import { CRM_LEAD_TYPES, readSalesStageFieldsFromLead, type ApiLead, type CrmLeadType } from "@/lib/leads-filter";
-import { pipelineSubStageLabel } from "@/lib/milestone-substage-map";
+import {
+  DESIGN_REFINEMENT_REVISIT_SUBSTAGE,
+  isDesignRefinementSchedulingSubstage,
+  pipelineSubStageLabel,
+} from "@/lib/milestone-substage-map";
 import { isQuoteSentLead } from "@/lib/lead-milestone-insight-tiles";
 import { extractQuoteSentFields } from "@/lib/quote-sent-info";
 import { salesInsightCountLeads } from "@/lib/sales-admin-insight-tiles";
@@ -33,6 +37,9 @@ import {
   type MeetingStatus,
 } from "@/lib/meeting-management-data";
 import {
+  drrProgressDisplayLabel,
+  hubProgressQueryCodes,
+  isDesignRefinementMeetingLabel,
   isMeetingSuccessfulProgress,
   MEETING_PROGRESS_CODES,
   normalizeMeetingProgressCode,
@@ -131,6 +138,8 @@ function boardProgress(row: Record<string, unknown>): MeetingRecord["progress"] 
     if (code === "MEETING_SUCCESSFUL") return "MEETING_SUCCESSFUL_QUOTE_PENDING";
     return undefined;
   }
+  if (code === "SCHEDULED_DRR") return "SCHEDULED";
+  if (code === "MEETING_SUCCESSFUL_DRR") return "MEETING_SUCCESSFUL_QUOTE_PENDING";
   return code;
 }
 
@@ -337,8 +346,7 @@ function toRecord(
   const salesEmail = readString(row, "salesEmail", "salesUserEmail", "sales_user_email", "createdByEmail");
   const sourceCode = sourceCodeOf(readString(row, "source", "Source"));
   const appointmentSource = sourceLabel(sourceCode);
-  const meetingLabel = readString(row, "meetingLabel", "meeting_label", "designMilestone", "design_milestone");
-  const meetingLevel = meetingLevelLabel(meetingLabel, sourceCode);
+  const rawMeetingLabel = readString(row, "meetingLabel", "meeting_label", "designMilestone", "design_milestone");
   const scheduledAtRaw = readString(row, "createdAt", "CreatedAt", "created_at");
   const updatedAtRaw = readString(row, "updatedAt", "UpdatedAt", "updated_at", "rescheduledAt");
   const scheduledAtMs = Math.max(Date.parse(scheduledAtRaw) || 0, Date.parse(updatedAtRaw) || 0);
@@ -357,6 +365,13 @@ function toRecord(
   const value = quoteSent && quotation > 0 ? quotation : budget > 0 ? budget : quotation > 0 ? quotation : 0;
   const stageFields = lead ? readSalesStageFieldsFromLead(lead) : { milestoneStage: "", milestoneStageCategory: "", milestoneSubStage: "" };
   const milestoneSubStage = pipelineSubStageLabel(stageFields.milestoneSubStage);
+  const meetingLabel =
+    isDesignRefinementMeetingLabel(rawMeetingLabel) || isDesignRefinementSchedulingSubstage(milestoneSubStage)
+      ? rawMeetingLabel && isDesignRefinementMeetingLabel(rawMeetingLabel)
+        ? rawMeetingLabel
+        : DESIGN_REFINEMENT_REVISIT_SUBSTAGE
+      : rawMeetingLabel;
+  const meetingLevel = meetingLevelLabel(meetingLabel, sourceCode);
   const milestoneBlob = `${stageFields.milestoneStage} ${stageFields.milestoneStageCategory}`.toLowerCase();
   const experienceOrDesign = milestoneBlob.includes("experience") || milestoneBlob.includes("design");
   const offset = meetingOffset(when.date);
@@ -754,12 +769,13 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
   const slotEnded = Boolean(date && !quoteLead && hasSlotEnd && indiaWallUtcMs(date, endMin) < nowMs);
   let status: MeetingStatus = "SCHEDULED";
   if (!quoteLead && when) status = slotProgress(date, startMin, endMin);
+  // Soft-cancel: Progress must be CANCELLED even if older Hub still sends progress=SCHEDULED.
   const progress = quoteLead
     ? undefined
-    : apiProgress
-      ?? (meetingStatus === "CANCELLED"
-        ? "SCHEDULED"
-        : meetingSuccessful === true
+    : meetingStatus === "CANCELLED"
+      ? "CANCELLED"
+      : apiProgress
+        ?? (meetingSuccessful === true
           ? quoteSent
             ? "QUOTE_SENT_SUCCESSFUL"
             : "MEETING_SUCCESSFUL_QUOTE_PENDING"
@@ -798,7 +814,17 @@ function mapBoardRow(row: Record<string, unknown>, index: number, quoteLead: boo
     locationTone: code ? locationTone(code) : "blue",
     status,
     progress,
-    progressLabel: progressLabel || undefined,
+    progressLabel:
+      meetingStatus === "CANCELLED"
+        ? progressLabel || "Cancelled"
+        : drrProgressDisplayLabel({
+            meetingLabel,
+            meetingLevel: quoteLead && !meetingLabel ? "—" : meetingLevelLabel(meetingLabel, sourceCode),
+            meetingStatus,
+            progress,
+          }) ||
+          progressLabel ||
+          undefined,
     meetingStatus,
     cancelledAt: cancelledAtRaw ? formatStamp(cancelledAtRaw) : undefined,
     value,
@@ -908,7 +934,10 @@ export function meetingBoardQueryFromSearchParams(params: URLSearchParams): Meet
   if (designers.length) query.designerNames = designers;
   if (sales.length) query.salesNames = sales;
   if (branches.length) query.branches = branches;
-  if (progress.length) query.progress = progress;
+  if (progress.length) {
+    const hubProgress = hubProgressQueryCodes(progress);
+    if (hubProgress.length) query.progress = hubProgress;
+  }
   if (params.get("meetingSuccessful") === "1") {
     query.progress = [...new Set([...(query.progress ?? []), "MEETING_SUCCESSFUL" as MeetingProgress])];
   }

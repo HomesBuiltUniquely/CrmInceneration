@@ -652,7 +652,11 @@ function dedupeAdminPoolLeads(leads: ApiLead[]): ApiLead[] {
   for (const lead of leads) {
     const leadIdentifier = leadStableIdentifier(lead);
     const key = leadIdentifier || `__noid_${noIdSeq++}`;
-    if (!byId.has(key)) byId.set(key, lead);
+    const existing = byId.get(key);
+    // Keep the newest touch (reinquiry / re-assign) — first-wins buried latest rows.
+    if (!existing || parseLeadSortTimestamp(lead) >= parseLeadSortTimestamp(existing)) {
+      byId.set(key, lead);
+    }
   }
   return [...byId.values()];
 }
