@@ -33,7 +33,6 @@ import TokenBookingRecognitionSection from "./TokenBookingRecognitionSection";
 import DealControlSidebar, {
   type DealControlSectionId,
 } from "./DealControlSidebar";
-import LeadCallsRecordingsPanel from "./LeadCallsRecordingsPanel";
 import DataCompletenessMeter from "./DataCompletenessMeter";
 import {
   canAccessRecordingCallLogs,
@@ -196,27 +195,13 @@ export default function NewLeadDetailPage({
   const canUsePaymentLinks = canUsePaymentLinkIntegration(viewerRoleKey);
   const [dealSection, setDealSection] =
     useState<DealControlSectionId>("deal-overview");
-  const [openActivityAfterMain, setOpenActivityAfterMain] = useState(false);
   const canSeeCallsRecordings = canAccessRecordingCallLogs(viewerRoleKey);
   const canSeeQuoteOpenCount = canViewCustomerQuoteOpenCount(viewerRoleKey);
-  const showCallsPanel = canSeeCallsRecordings && dealSection === "deal-calls";
 
   const openActivityPanel = useCallback(() => {
-    if (dealSection === "deal-calls") {
-      setDealSection("deal-activity");
-      setOpenActivityAfterMain(true);
-      return;
-    }
     setDealSection("deal-activity");
     activityPanelRef.current?.openPanel();
-  }, [dealSection]);
-
-  useEffect(() => {
-    if (!openActivityAfterMain || showCallsPanel) return;
-    setOpenActivityAfterMain(false);
-    const t = window.setTimeout(() => activityPanelRef.current?.openPanel(), 0);
-    return () => window.clearTimeout(t);
-  }, [openActivityAfterMain, showCallsPanel]);
+  }, []);
 
   return (
     <main className="min-h-screen bg-[#eef1f5] px-3 py-4 font-sans md:px-4">
@@ -225,7 +210,6 @@ export default function NewLeadDetailPage({
           <DealControlSidebar
             activeSectionId={dealSection}
             onActivityClick={openActivityPanel}
-            onCallsClick={() => setDealSection("deal-calls")}
             onMainSectionClick={(sectionId) => setDealSection(sectionId)}
           />
           <section className="rounded-xl border border-[#e1e6ed] bg-[#f3f5f8] p-3">
@@ -233,16 +217,7 @@ export default function NewLeadDetailPage({
             {canUsePaymentLinks ? (
               <LeadPaymentLinkBanner leadType={leadType} leadId={leadId} />
             ) : null}
-            {showCallsPanel ? (
-              <div className="mt-3">
-                <LeadCallsRecordingsPanel
-                  leadType={leadType}
-                  leadId={leadId}
-                  onBack={() => setDealSection("deal-overview")}
-                />
-              </div>
-            ) : (
-              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,270px)_minmax(0,1fr)]">
                 <aside className="min-w-0 space-y-3">
                   <div id="deal-overview" className="min-w-0 scroll-mt-24">
                     <LeadProfileCard />
@@ -252,6 +227,9 @@ export default function NewLeadDetailPage({
                     <ActivityHistoryWithConnector
                       ref={activityPanelRef}
                       activities={lead.activities as ActivityItem[]}
+                      leadType={leadType}
+                      leadId={leadId}
+                      loadHubCalls={canSeeCallsRecordings}
                       quoteOpenSummary={
                         canSeeQuoteOpenCount
                           ? {
@@ -340,7 +318,6 @@ export default function NewLeadDetailPage({
                   ) : null}
                 </section>
               </div>
-            )}
           </section>
         </div>
       </div>
