@@ -28,6 +28,7 @@
 10. [Fetch flow (step by step)](#10-fetch-flow-step-by-step)
 11. [Filter pipeline (all layers)](#11-filter-pipeline-all-layers)
 12. [Counting — every number on screen](#12-counting--every-number-on-screen)
+13. [Sales Executive follow-up day modals](#13-sales-executive-follow-up-day-modals)
 13. [Creating and importing leads](#13-creating-and-importing-leads)
 14. [Assignment, verify, and handoff](#14-assignment-verify-and-handoff)
 15. [Complete Task and milestone updates](#15-complete-task-and-milestone-updates)
@@ -639,6 +640,27 @@ sequenceDiagram
   LDS->>LDS: canViewLeadByRole, assignee scope, milestone
   LDS-->>U: Table + Total pill + heatmap sync
 ```
+
+---
+
+## 13. Sales Executive follow-up day modals
+
+**Role:** `SALES_EXECUTIVE` on `/Leads` only ([`SalesExecutiveFollowUpDayHost.tsx`](../app/Components/CrmLeadData/SalesExecutiveFollowUpDayHost.tsx)). Hallway login lands SE on `/Leads` — morning popup on first visit that day.
+
+**Data:** `GET /api/crm/sales-executive/follow-up-day` — BFF merge pool + brief builders; signed `snapshotToken` for evening progress. Modal opens only after API success.
+
+| Popup | Purpose | When | Title |
+|-------|---------|------|--------|
+| **Morning plan** | Timeline + overdue bar + start today | First `/Leads` visit until morning dismiss | `Hi, {name} — today's follow-ups` |
+| **Evening report** | Donut completed/total, pending from snapshot | From 18:00 local until evening dismiss | `Hi, {name} — today's follow-up report` |
+
+Titles are **not** time-of-day greetings (`se-followup-modal-titles.ts`).
+
+Evening: `left` = snapshot items still due today (become overdue after midnight); `meta.allOutstandingFromSnapshot` when none completed.
+
+**Inactive user:** API `409 USER_INACTIVE` → no popup.
+
+**Hub phase 2:** [HUB_SALES_EXECUTIVE_FOLLOWUP_DAY_HANDOFF.md](./HUB_SALES_EXECUTIVE_FOLLOWUP_DAY_HANDOFF.md).
 
 ---
 

@@ -158,6 +158,8 @@ export type InsightCountOpts = {
   leadView: "default" | "my" | "team";
   dateFrom?: string;
   dateTo?: string;
+  /** SE evening CTA: restrict to morning snapshot keys still due today. */
+  pendingSnapshotLeadKeys?: ReadonlySet<string> | null;
 };
 
 /** Admin / super-admin pool tiles use full-pool manager semantics. */
@@ -399,6 +401,8 @@ export type InsightTableMode =
   | null
   | "followUpActive"
   | "followUpClosure"
+  | "followUpToday"
+  | "followUpTodayPending"
   | "overdue"
   | "overdueActive"
   | "overdueClosure"
@@ -473,8 +477,12 @@ export function filterLeadsForInsightMode(
       return true;
     }
 
-    if (mode === "followUpActive" || mode === "followUpClosure") {
-      const segment: FollowUpMilestoneSegment = mode === "followUpActive" ? "active" : "closure";
+    if (
+      mode === "followUpActive" ||
+      mode === "followUpClosure" ||
+      mode === "followUpToday" ||
+      mode === "followUpTodayPending"
+    ) {
       if (!isFollowUpDueLocalToday(fu)) return false;
       let assigneeOk = true;
       if (opts.viewerRole === "SALES_EXECUTIVE") assigneeOk = leadAssignedToSelf(lead, me);
@@ -482,6 +490,21 @@ export function filterLeadsForInsightMode(
         assigneeOk = leadAssignedToTeamMember(lead, teamSet);
       else if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my") assigneeOk = leadAssignedToSelf(lead, me);
       if (!assigneeOk) return false;
+      if (mode === "followUpToday") return true;
+      if (mode === "followUpTodayPending") {
+        const keys = opts.pendingSnapshotLeadKeys;
+        if (keys && keys.size > 0) {
+          const id = String((lead as ApiLead).id ?? "").trim();
+          const lt = String((lead as ApiLead).leadType ?? "formlead")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, "") || "formlead";
+          const leadKey = `${lt}:${id}`;
+          if (!keys.has(leadKey)) return false;
+        }
+        return true;
+      }
+      const segment: FollowUpMilestoneSegment = mode === "followUpActive" ? "active" : "closure";
       if (!matchesFollowUpMilestoneSegment(lead, segment)) return false;
       return true;
     }

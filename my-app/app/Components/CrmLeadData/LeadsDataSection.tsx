@@ -93,8 +93,10 @@ import {
   filterLeadsForInsightMode,
   isFirstCallDelayedLead,
   normalizeInsightCountOpts,
+  readEffectiveFollowUpDateRaw,
   type InsightTableMode,
 } from "@/lib/lead-follow-up-insights";
+import { parseFollowUpTimestampMs } from "@/lib/follow-up-date";
 import {
   computeAutoFollowUpDateToPersist,
   persistAutoFollowUpDatesForLeads,
@@ -121,6 +123,12 @@ import {
   type SalesManagerBucketScope,
 } from "@/lib/sales-manager-lead-scope";
 import { computeMilestoneTileCounts } from "@/lib/lead-milestone-insight-tiles";
+import {
+  CRM_SE_FOLLOWUP_START_EVENT,
+  type SeFollowUpStartDetail,
+  readSeFollowUpViewerKey,
+} from "@/lib/sales-executive-followup-day";
+import { readTodaySnapshotLeadKeySet } from "@/lib/sales-executive-followup-day-client";
 import {
   filterLeadsByAssigneeScope,
   formatAssigneeAliasSetQuery,
@@ -1644,6 +1652,24 @@ export default function LeadsDataSection({
   useEffect(() => {
     onInsightTableModeChange?.(insightTableMode);
   }, [insightTableMode, onInsightTableModeChange]);
+
+  useEffect(() => {
+    const onSeFollowUpStart = (event: Event) => {
+      const detail = (event as CustomEvent<SeFollowUpStartDetail>).detail;
+      const mode: InsightTableMode =
+        detail?.scope === "todayPending" ? "followUpTodayPending" : "followUpToday";
+      setInsightTableMode(mode);
+      setPage(0);
+      window.requestAnimationFrame(() => {
+        document.getElementById("crm-se-followup-table-anchor")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    };
+    window.addEventListener(CRM_SE_FOLLOWUP_START_EVENT, onSeFollowUpStart);
+    return () => window.removeEventListener(CRM_SE_FOLLOWUP_START_EVENT, onSeFollowUpStart);
+  }, []);
   const [viewerRole, setViewerRole] = useState(() =>
     typeof window === "undefined"
       ? ""
@@ -5040,12 +5066,26 @@ export default function LeadsDataSection({
     leadView: roleKeyForInsight === "SALES_ADMIN" ? "default" : insightLeadView,
     dateFrom,
     dateTo,
+    pendingSnapshotLeadKeys:
+      insightTableMode === "followUpTodayPending"
+        ? readTodaySnapshotLeadKeySet(readSeFollowUpViewerKey())
+        : null,
   });
-  const insightFilteredContent = filterLeadsForInsightMode(
+  let insightFilteredContent = filterLeadsForInsightMode(
     tableContent,
     insightTableMode,
     insightOpts,
   );
+  if (
+    insightTableMode === "followUpToday" ||
+    insightTableMode === "followUpTodayPending"
+  ) {
+    insightFilteredContent = [...insightFilteredContent].sort(
+      (a, b) =>
+        (parseFollowUpTimestampMs(readEffectiveFollowUpDateRaw(a)) ?? 0) -
+        (parseFollowUpTimestampMs(readEffectiveFollowUpDateRaw(b)) ?? 0),
+    );
+  }
   const baseRows = insightFilteredContent.map((lead) => {
     const sourceLt = asCrmLeadType(
       lead.leadType,
@@ -5617,7 +5657,11 @@ export default function LeadsDataSection({
         ? currentRole === "SALES_MANAGER"
           ? "Closure follow up date — team (Experience & Design → Closed)"
           : "Closure follow up date (Experience & Design → Closed)"
-        : insightTableMode === "overdueActive"
+        : insightTableMode === "followUpToday"
+          ? "Today's follow-up (Discovery · Connection · Experience & Design → Closed)"
+          : insightTableMode === "followUpTodayPending"
+            ? "Pending for today — will go overdue tonight if not completed"
+            : insightTableMode === "overdueActive"
           ? "Lead Overdue (Discovery · Connection)"
           : insightTableMode === "overdueClosure"
             ? "Opportunity Overdue (Experience & Design → Closed)"
@@ -5654,6 +5698,8 @@ export default function LeadsDataSection({
   const insightBannerFollowUpNote =
     insightTableMode === "followUpActive" ||
     insightTableMode === "followUpClosure" ||
+    insightTableMode === "followUpToday" ||
+    insightTableMode === "followUpTodayPending" ||
     insightTableMode === "overdue" ||
     insightTableMode === "overdueActive" ||
     insightTableMode === "overdueClosure" ||
@@ -5978,6 +6024,7 @@ export default function LeadsDataSection({
           ) : null}
         </div>
       ) : null}
+      <div id="crm-se-followup-table-anchor" className="scroll-mt-4" />
       <LeadsTable
         rows={visibleRows}
         loading={loading}

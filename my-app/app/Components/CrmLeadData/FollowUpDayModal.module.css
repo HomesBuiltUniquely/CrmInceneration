@@ -1,0 +1,374 @@
+/* Option G — gap-aware timeline (light / dark aligned with followup-popup-option-g.html) */
+.root {
+  --se-pop-bg: #fff;
+  --se-pop-surf: #f1f2f6;
+  --se-pop-tx: #32261c;
+  --se-pop-mut: #7a6b5f;
+  --se-pop-bd: #e8dfd6;
+  --se-pop-red: #ef0101;
+  --se-pop-ys: #fbf5d6;
+  --se-pop-cy: #00b0ed;
+  --se-pop-cs: #e0f5fd;
+  --se-pop-backdrop: rgba(50, 38, 28, 0.45);
+}
+
+:global(.dark) .root {
+  --se-pop-bg: #1e1712;
+  --se-pop-surf: #2a2019;
+  --se-pop-tx: #f3ece6;
+  --se-pop-mut: #a8998c;
+  --se-pop-bd: #40332a;
+  --se-pop-red: #ff3b3b;
+  --se-pop-ys: rgba(235, 212, 87, 0.16);
+  --se-pop-cy: #2fc3f5;
+  --se-pop-cs: rgba(0, 176, 237, 0.18);
+  --se-pop-backdrop: rgba(0, 0, 0, 0.6);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 115;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--se-pop-backdrop);
+}
+
+.pop {
+  width: 100%;
+  max-width: 400px;
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--se-pop-bg);
+  border: 1px solid var(--se-pop-bd);
+  border-radius: 22px;
+  padding: 20px;
+  color: var(--se-pop-tx);
+  font-family: var(--font-sans), "Segoe UI", system-ui, sans-serif;
+}
+
+.hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.gr {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--se-pop-tx);
+}
+
+.sb {
+  font-size: 12px;
+  color: var(--se-pop-mut);
+  margin: 2px 0 0;
+}
+
+.closeBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: var(--se-pop-surf);
+  color: var(--se-pop-tx);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.closeBtn:focus-visible {
+  outline: 2px solid var(--se-pop-cy);
+  outline-offset: 2px;
+}
+
+.quote {
+  background: var(--se-pop-ys);
+  border-radius: 12px;
+  padding: 9px 12px;
+  font-size: 12px;
+  margin: 14px 0;
+  color: var(--se-pop-tx);
+}
+
+.tl {
+  position: relative;
+  padding-left: 24px;
+}
+
+.tl::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--se-pop-bd);
+}
+
+.nd {
+  position: relative;
+  padding: 6px 0 8px;
+}
+
+.ndGap {
+  padding: 2px 0 8px;
+}
+
+.dt {
+  position: absolute;
+  left: -24px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--se-pop-bg);
+  background: var(--se-pop-red);
+}
+
+.dtNow {
+  background: var(--se-pop-cy);
+  box-shadow: 0 0 0 4px var(--se-pop-cs);
+}
+
+.tm {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--se-pop-red);
+}
+
+.tmNow {
+  color: var(--se-pop-cy);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.nm {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--se-pop-tx);
+}
+
+.sub {
+  font-size: 11px;
+  color: var(--se-pop-mut);
+}
+
+.tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--se-pop-surf);
+  color: var(--se-pop-mut);
+  flex-shrink: 0;
+}
+
+.gapPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--se-pop-cs);
+  color: var(--se-pop-cy);
+}
+
+.ov {
+  background: var(--se-pop-surf);
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.ov b {
+  color: var(--se-pop-red);
+}
+
+.ovMuted {
+  color: var(--se-pop-mut);
+}
+
+.cta {
+  display: block;
+  width: 100%;
+  height: 46px;
+  border: none;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 14px;
+  background: var(--se-pop-red);
+  color: #fff;
+  cursor: pointer;
+}
+
+.cta:focus-visible {
+  outline: 2px solid var(--se-pop-cy);
+  outline-offset: 2px;
+}
+
+.cta:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.status {
+  margin: 14px 0;
+  font-size: 13px;
+  color: var(--se-pop-mut);
+}
+
+.err {
+  margin: 14px 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  background: var(--se-pop-surf);
+  color: var(--se-pop-red);
+}
+
+.retry {
+  margin-top: 8px;
+  border: none;
+  background: none;
+  color: var(--se-pop-cy);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.skel {
+  height: 72px;
+  border-radius: 12px;
+  background: var(--se-pop-surf);
+  margin: 14px 0;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* —— Evening report (distinct from morning timeline) —— */
+.eveProgress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.eveStatsTitle {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--se-pop-tx);
+}
+
+.eveStatsSub {
+  font-size: 12px;
+  color: var(--se-pop-mut);
+  margin: 4px 0 0;
+}
+
+.eveStatsSub b {
+  color: var(--se-pop-red);
+  font-weight: 600;
+}
+
+.warnBanner {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(239, 1, 1, 0.1);
+  color: var(--se-pop-red);
+}
+
+:global(.dark) .warnBanner {
+  background: rgba(255, 59, 59, 0.14);
+}
+
+.evList {
+  margin-top: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.evRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--se-pop-bd);
+}
+
+.evRow:last-child {
+  border-bottom: none;
+}
+
+.evTime {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--se-pop-red);
+}
+
+.tagOpp {
+  background: rgba(139, 92, 246, 0.14);
+  color: #6d28d9;
+}
+
+:global(.dark) .tagOpp {
+  background: rgba(167, 139, 250, 0.2);
+  color: #c4b5fd;
+}
+
+.donutDone {
+  stroke: #16a34a;
+}
+
+:global(.dark) .donutDone {
+  stroke: #34d399;
+}
+
+.donutLeft {
+  stroke: var(--se-pop-red);
+}
+
+.donutTrack {
+  stroke: rgba(239, 1, 1, 0.14);
+}
+
+.donutLabel {
+  fill: var(--se-pop-tx);
+  font-size: 15px;
+  font-weight: 700;
+}

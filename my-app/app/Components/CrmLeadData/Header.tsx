@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { InsightTableMode } from "@/lib/lead-follow-up-insights";
 import JourneyPhaseHeatmap from "./JourneyPhaseHeatmap";
 import LeadsDataSection from "./LeadsDataSection";
+import SalesExecutiveFollowUpDayHost from "./SalesExecutiveFollowUpDayHost";
 import TopNav from "./TopNav";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import SlimScrollArea from "@/app/Components/Shared/SlimScrollArea";
@@ -696,6 +697,11 @@ export default function Header() {
         </div>
         <SlimScrollArea contentId="crm-leads-scroll-root" className="xl:h-screen">
           <TopNav search={search} onSearchChange={setSearch} />
+          {currentRole === "SALES_EXECUTIVE" &&
+          leadsWorkspace === "sales" &&
+          !isPresalesLeadsPage ? (
+            <SalesExecutiveFollowUpDayHost enabled={authResolved} displayName={currentUserName} />
+          ) : null}
           {!authResolved ? (
             <div className="mx-auto mt-2 max-w-[1400px] rounded-2xl border border-[var(--crm-border)] bg-[var(--crm-surface)] px-6 py-5 text-[13px] text-[var(--crm-text-muted)]">
               Loading your role access...
