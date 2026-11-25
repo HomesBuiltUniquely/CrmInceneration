@@ -1289,8 +1289,12 @@ export default function CompleteTaskModal({
           isMeetingRescheduledSubstage(option.subStageName) ||
           isMeetingRescheduledSubstage(option.label),
       );
+      const keepDrr =
+        isDesignRefinementSchedulingSubstage(fb) ||
+        isDesignRefinementSchedulingSubstage(lead.stageBlock?.milestoneSubStage || "") ||
+        isDesignRefinementSchedulingSubstage(lead.status || "");
       setRescheduleAppointmentId(choice.appointmentId);
-      setFeedback(rescheduleOption?.label || fb);
+      setFeedback(keepDrr ? fb : rescheduleOption?.label || fb);
       setHubMeetingOpen(true);
       setHubMeetingError("");
       setApiError("");
