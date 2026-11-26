@@ -9,6 +9,10 @@ import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import type { CrmLeadType } from "@/lib/leads-filter";
 
+/**
+ * Legacy multipart initial payment-proof upload.
+ * Prefer `POST .../payment-proofs/json` from the web CRM (avoids Tomcat multipart 400s via Vercel).
+ */
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ leadType: string; leadId: string; recordId: string }> },

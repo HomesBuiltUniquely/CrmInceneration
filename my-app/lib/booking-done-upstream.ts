@@ -21,6 +21,17 @@ export function bookingDoneUpstreamCandidates(
   return [...new Set(paths)];
 }
 
+/** Preferred JSON + base64 payment-proof upload (same path candidates + `/json`). */
+export function bookingDonePaymentProofsJsonUpstreamCandidates(
+  leadType: CrmLeadType,
+  leadId: string,
+  recordId: string,
+): string[] {
+  return bookingDoneUpstreamCandidates(leadType, leadId, recordId).map(
+    (url) => `${url.replace(/\/$/, "")}/json`,
+  );
+}
+
 /** Hub PATCH …/booking-done/recognition (old-lead token / 10% date backfill). */
 export function bookingDoneRecognitionUpstreamCandidates(
   leadType: CrmLeadType,
