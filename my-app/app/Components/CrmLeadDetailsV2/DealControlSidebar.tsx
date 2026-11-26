@@ -7,26 +7,23 @@ import {
   isEmptySpaceDoubleClickTarget,
   requestLeadDetailOverlayClose,
 } from "@/lib/lead-detail-overlay-close";
-import { canAccessRecordingCallLogs } from "@/lib/roleUtils";
 
 export type DealControlSectionId =
   | "deal-overview"
   | "deal-blockers"
   | "deal-property"
-  | "deal-calls"
   | "deal-activity";
 
 type NavItem = {
   id: DealControlSectionId;
   label: string;
-  icon: "overview" | "blockers" | "property" | "calls" | "activity";
+  icon: "overview" | "blockers" | "property" | "activity";
 };
 
 const navItems: NavItem[] = [
   { id: "deal-overview", label: "Overview", icon: "overview" },
   { id: "deal-blockers", label: "Blockers", icon: "blockers" },
   { id: "deal-property", label: "Property Details", icon: "property" },
-  { id: "deal-calls", label: "Calls & Recordings", icon: "calls" },
   { id: "deal-activity", label: "Activity", icon: "activity" },
 ];
 
@@ -62,12 +59,6 @@ function NavIcon({ type, active }: { type: NavItem["icon"]; active: boolean }) {
           <path d="M5 21V7l8-4v18" />
           <path d="M19 21V11l-6-4" />
           <path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01" />
-        </svg>
-      );
-    case "calls":
-      return (
-        <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.81.36 1.6.68 2.35a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.75.32 1.54.55 2.35.68A2 2 0 0 1 22 16.92z" />
         </svg>
       );
     case "activity":
@@ -114,20 +105,14 @@ function TeamMemberRow({
 
 export default function DealControlSidebar({
   onActivityClick,
-  onCallsClick,
   onMainSectionClick,
   activeSectionId: controlledActiveSectionId,
 }: {
   onActivityClick?: () => void;
-  onCallsClick?: () => void;
   onMainSectionClick?: (sectionId: DealControlSectionId) => void;
   activeSectionId?: DealControlSectionId;
 }) {
-  const { lead, viewerRoleKey } = useLeadDetailV2();
-  const canSeeCallsRecordings = canAccessRecordingCallLogs(viewerRoleKey);
-  const visibleNavItems = canSeeCallsRecordings
-    ? navItems
-    : navItems.filter((item) => item.id !== "deal-calls");
+  const { lead } = useLeadDetailV2();
   const [activeSectionId, setActiveSectionId] = useState<DealControlSectionId>(
     controlledActiveSectionId ?? "deal-overview",
   );
@@ -146,22 +131,15 @@ export default function DealControlSidebar({
         onActivityClick?.();
         return;
       }
-      if (sectionId === "deal-calls") {
-        onCallsClick?.();
-        return;
-      }
       onMainSectionClick?.(sectionId);
-      // Allow main content to remount before scrolling when leaving Calls panel.
       requestAnimationFrame(() => {
         document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     },
-    [onActivityClick, onCallsClick, onMainSectionClick],
+    [onActivityClick, onMainSectionClick],
   );
 
   useEffect(() => {
-    if (controlledActiveSectionId === "deal-calls") return;
-
     const sectionElements = navItems
       .filter((item) => scrollSectionIds.has(item.id))
       .map((item) => document.getElementById(item.id))
@@ -199,7 +177,8 @@ export default function DealControlSidebar({
         requestLeadDetailOverlayClose();
       }}
       title="Double-click empty space to close"
-    >      <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+    >
+      <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
         <div className="shrink-0" data-no-dblclick-close>
           <div className="flex items-center gap-2.5">
             <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#1ed760] text-white">
@@ -215,7 +194,7 @@ export default function DealControlSidebar({
         </div>
 
         <nav className="mt-5 min-h-0 flex-1 space-y-1 overflow-y-auto" aria-label="Deal sections">
-          {visibleNavItems.map((item) => {
+          {navItems.map((item) => {
             const isActive = activeSectionId === item.id;
             return (
               <button
@@ -238,7 +217,8 @@ export default function DealControlSidebar({
           })}
         </nav>
 
-        <div className="mt-4 shrink-0 space-y-3 border-t border-[#e5e7eb] pt-4" data-no-dblclick-close>          <TeamMemberRow
+        <div className="mt-4 shrink-0 space-y-3 border-t border-[#e5e7eb] pt-4" data-no-dblclick-close>
+          <TeamMemberRow
             role="CRM"
             name={assigneeName}
             avatar={
