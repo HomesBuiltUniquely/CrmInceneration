@@ -11,6 +11,7 @@
   --se-pop-cs: #e0f5fd;
   --se-pop-ps: #ede9fe;
   --se-pop-pt: #5b3fd1;
+  --se-pop-hub-secondary: #ddcdc1;
   --se-pop-backdrop: rgba(50, 38, 28, 0.45);
 }
 
@@ -26,6 +27,7 @@
   --se-pop-cs: rgba(0, 176, 237, 0.18);
   --se-pop-ps: rgba(139, 92, 246, 0.22);
   --se-pop-pt: #b7a4ff;
+  --se-pop-hub-secondary: #ddcdc1;
   --se-pop-backdrop: rgba(0, 0, 0, 0.6);
 }
 
@@ -447,11 +449,7 @@
 }
 
 .donutDone {
-  stroke: #16a34a;
-}
-
-:global(.dark) .donutDone {
-  stroke: #34d399;
+  stroke: var(--se-pop-hub-secondary);
 }
 
 .donutLeft {
