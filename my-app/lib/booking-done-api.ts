@@ -1,4 +1,11 @@
 import type { BookingPaymentKind } from "@/lib/booking-done-payment-rules";
+import {
+  filesToPaymentProofJson,
+  isPaymentMultipartParseError,
+  paymentProofUploadErrorMessage,
+  resolvePaymentFallbackFetchPath,
+  type PaymentProofUploadErrorBody,
+} from "@/lib/booking-payment-proof-upload";
 import type { CrmLeadType } from "@/lib/leads-filter";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 
@@ -362,6 +369,77 @@ export async function saveBookingTokenRecognition(
 
 const MAX_PAYMENT_PROOFS = 10;
 
+function paymentProofsJsonBffPath(
+  leadType: CrmLeadType,
+  leadId: string,
+  recordId: string,
+): string {
+  return `${bookingDoneBffPath(leadType, leadId)}/${encodeURIComponent(recordId)}/payment-proofs/json`;
+}
+
+function paymentProofsMultipartBffPath(
+  leadType: CrmLeadType,
+  leadId: string,
+  recordId: string,
+): string {
+  return `${bookingDoneBffPath(leadType, leadId)}/${encodeURIComponent(recordId)}/payment-proofs`;
+}
+
+async function postBookingPaymentProofsJson(
+  path: string,
+  files: Awaited<ReturnType<typeof filesToPaymentProofJson>>,
+): Promise<{ res: Response; text: string; data: PaymentProofUploadErrorBody }> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ files }),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let data: PaymentProofUploadErrorBody = {};
+  try {
+    data = JSON.parse(text) as PaymentProofUploadErrorBody;
+  } catch {
+    data = {};
+  }
+  return { res, text, data };
+}
+
+async function postBookingPaymentProofsMultipart(
+  leadType: CrmLeadType,
+  leadId: string,
+  recordId: string,
+  files: File[],
+): Promise<{ res: Response; text: string; data: PaymentProofUploadErrorBody }> {
+  const form = new FormData();
+  for (const file of files) {
+    form.append("files", file, file.name);
+  }
+  const res = await fetch(paymentProofsMultipartBffPath(leadType, leadId, recordId), {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    body: form,
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let data: PaymentProofUploadErrorBody = {};
+  try {
+    data = JSON.parse(text) as PaymentProofUploadErrorBody;
+  } catch {
+    data = {};
+  }
+  return { res, text, data };
+}
+
+/**
+ * `POST .../payment-proofs/json` (preferred). Avoids Tomcat multipart parse 400s via Vercel.
+ * Falls back to legacy multipart once if JSON route is missing; on MultipartException retries JSON via `fallbackPath`.
+ */
 export async function uploadBookingPaymentProofs(
   leadType: CrmLeadType,
   leadId: string,
@@ -373,24 +451,40 @@ export async function uploadBookingPaymentProofs(
   }
 
   const batch = files.slice(0, MAX_PAYMENT_PROOFS);
-  const form = new FormData();
-  for (const file of batch) {
-    form.append("files", file, file.name);
+  const defaultJsonPath = paymentProofsJsonBffPath(leadType, leadId, recordId);
+  const proofFiles = await filesToPaymentProofJson(batch);
+
+  let { res, text, data } = await postBookingPaymentProofsJson(defaultJsonPath, proofFiles);
+
+  if (!res.ok && (res.status === 404 || res.status === 405)) {
+    const multipart = await postBookingPaymentProofsMultipart(
+      leadType,
+      leadId,
+      recordId,
+      batch,
+    );
+    const multipartMessage = paymentProofUploadErrorMessage(multipart.data, multipart.text);
+    if (
+      !multipart.res.ok &&
+      isPaymentMultipartParseError(multipartMessage, multipart.data.type)
+    ) {
+      const retryPath = resolvePaymentFallbackFetchPath(
+        multipart.data.fallbackPath,
+        defaultJsonPath,
+      );
+      ({ res, text, data } = await postBookingPaymentProofsJson(retryPath, proofFiles));
+    } else {
+      res = multipart.res;
+      text = multipart.text;
+      data = multipart.data;
+    }
   }
 
-  const res = await fetch(
-    `${bookingDoneBffPath(leadType, leadId)}/${encodeURIComponent(recordId)}/payment-proofs`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: getCrmAuthHeaders(),
-      body: form,
-      cache: "no-store",
-    },
-  );
-  const text = await res.text();
   if (!res.ok) {
-    throw new Error(parseApiError(text, "Unable to upload payment proofs."));
+    throw new Error(
+      paymentProofUploadErrorMessage(data, text) ||
+        parseApiError(text, "Unable to upload payment proofs."),
+    );
   }
   const parsed = JSON.parse(text) as { uploadedCount?: number };
   return {

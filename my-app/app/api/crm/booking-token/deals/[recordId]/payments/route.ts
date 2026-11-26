@@ -4,6 +4,10 @@ import { upstreamAuthHeaders } from "@/lib/crm-proxy-auth";
 import { proxyJsonError, readUpstreamPayload } from "@/lib/crm-proxy-error";
 import { bookingPaymentSubmitUpstreamUrl } from "@/lib/booking-payment-upstream";
 
+/**
+ * Legacy multipart Save payment.
+ * Prefer `POST .../payments/json` from the web CRM (avoids Tomcat multipart 400s via Vercel).
+ */
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ recordId: string }> },
