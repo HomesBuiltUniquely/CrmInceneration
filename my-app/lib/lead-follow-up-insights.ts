@@ -139,6 +139,50 @@ function leadAssignedToSelf(lead: ApiLead, meNorm: string): boolean {
   return assigneeAliasNorms(lead).has(meNorm);
 }
 
+/** SE follow-up counts — matches LeadsDataSection `leadAssignedToSelf` (user id + aliases). */
+export function leadAssignedToSeInsightScope(lead: ApiLead, opts: InsightCountOpts): boolean {
+  const userId = Number(opts.assigneeUserId ?? 0);
+  if (Number.isFinite(userId) && userId > 0) {
+    const r = lead as Record<string, unknown>;
+    const assigneeObj =
+      r.assignee && typeof r.assignee === "object" && !Array.isArray(r.assignee)
+        ? (r.assignee as Record<string, unknown>)
+        : null;
+    const salesOwnerObj =
+      r.salesOwner && typeof r.salesOwner === "object" && !Array.isArray(r.salesOwner)
+        ? (r.salesOwner as Record<string, unknown>)
+        : null;
+    const idCandidates = [
+      r.assigneeId,
+      r.assignedToId,
+      r.salesExecutiveId,
+      r.salesOwnerId,
+      r.userId,
+      assigneeObj?.id,
+      salesOwnerObj?.id,
+    ];
+    if (idCandidates.some((v) => Number(v ?? 0) === userId)) return true;
+  }
+  const me = opts.currentUserName.trim().toLowerCase();
+  const aliasSet = new Set(
+    [me, ...(opts.assigneeAliasNorms ?? []).map((a) => a.trim().toLowerCase())].filter(Boolean),
+  );
+  if (aliasSet.size === 0) return false;
+  for (const alias of assigneeAliasNorms(lead)) {
+    if (aliasSet.has(alias)) return true;
+  }
+  return false;
+}
+
+function seAssigneeOk(lead: ApiLead, opts: InsightCountOpts, me: string): boolean {
+  if (opts.viewerRole.trim().toUpperCase() === "SALES_EXECUTIVE") {
+    if (opts.assigneeUserId || (opts.assigneeAliasNorms?.length ?? 0) > 0) {
+      return leadAssignedToSeInsightScope(lead, opts);
+    }
+  }
+  return leadAssignedToSelf(lead, me);
+}
+
 /** True when this lead’s assignee is one of the manager’s team executives (any alias matches). */
 function leadAssignedToTeamMember(lead: ApiLead, teamNorms: Set<string>): boolean {
   if (teamNorms.size === 0) return false;
@@ -160,6 +204,9 @@ export type InsightCountOpts = {
   dateTo?: string;
   /** SE evening CTA: restrict to morning snapshot keys still due today. */
   pendingSnapshotLeadKeys?: ReadonlySet<string> | null;
+  /** Same assignee scope as `/Leads` tiles (id + all aliases). */
+  assigneeUserId?: number;
+  assigneeAliasNorms?: string[];
 };
 
 /** Admin / super-admin pool tiles use full-pool manager semantics. */
@@ -288,7 +335,7 @@ export function computeFollowUpInsightCounts(
     const fu = readEffectiveFollowUpDateRaw(lead);
 
     if (opts.viewerRole === "SALES_EXECUTIVE") {
-      if (leadAssignedToSelf(lead, me)) {
+      if (seAssigneeOk(lead, opts, me)) {
         const firstCallAt = String((lead.firstCallAt ?? "") as string).trim();
         if (
           firstCallAt &&
@@ -459,7 +506,7 @@ export function filterLeadsForInsightMode(
       if (!inDateRangeByField(firstCallAt, opts.dateFrom, opts.dateTo)) {
         return false;
       }
-      if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_EXECUTIVE") return seAssigneeOk(lead, opts, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
         return leadAssignedToTeamMember(lead, teamSet);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my")
@@ -469,7 +516,7 @@ export function filterLeadsForInsightMode(
 
     if (mode === "callDelayed") {
       if (!isFirstCallDelayedLead(lead)) return false;
-      if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_EXECUTIVE") return seAssigneeOk(lead, opts, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
         return leadAssignedToTeamMember(lead, teamSet);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my")
@@ -485,7 +532,7 @@ export function filterLeadsForInsightMode(
     ) {
       if (!isFollowUpDueLocalToday(fu)) return false;
       let assigneeOk = true;
-      if (opts.viewerRole === "SALES_EXECUTIVE") assigneeOk = leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_EXECUTIVE") assigneeOk = seAssigneeOk(lead, opts, me);
       else if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
         assigneeOk = leadAssignedToTeamMember(lead, teamSet);
       else if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "my") assigneeOk = leadAssignedToSelf(lead, me);
@@ -512,7 +559,7 @@ export function filterLeadsForInsightMode(
     if (mode === "overdue" || mode === "overdueActive" || mode === "overdueClosure") {
       if (isLostSegmentLead(lead)) return false;
       if (!isFollowUpOverdueLocal(fu)) return false;
-      if (opts.viewerRole === "SALES_EXECUTIVE") return leadAssignedToSelf(lead, me);
+      if (opts.viewerRole === "SALES_EXECUTIVE") return seAssigneeOk(lead, opts, me);
       if (opts.viewerRole === "SALES_MANAGER" && opts.leadView === "team")
         return (
           leadAssignedToTeamMember(lead, teamSet) &&

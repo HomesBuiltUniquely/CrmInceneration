@@ -38,6 +38,12 @@ function minutesFromFollowUpMs(ms: number): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+function allTodayRowsSorted(rows: FollowUpBriefRow[]): FollowUpBriefRow[] {
+  return [...rows]
+    .filter((r) => Number.isFinite(r.followUpMs))
+    .sort((a, b) => a.followUpMs - b.followUpMs);
+}
+
 function formatDur(mins: number): string {
   const h = Math.floor(mins / 60);
   const r = mins % 60;
@@ -128,21 +134,39 @@ function ProgressDonut({ completed, total }: { completed: number; total: number 
 }
 
 function MorningTimeline({ rows, now }: { rows: FollowUpBriefRow[]; now: Date }) {
+  const sorted = useMemo(() => allTodayRowsSorted(rows), [rows]);
+  const nowMs = now.getTime();
   const nowMins = minutesLocal(now);
-  const upcoming = useMemo(
-    () =>
-      [...rows]
-        .filter((r) => Number.isFinite(r.followUpMs) && minutesFromFollowUpMs(r.followUpMs) >= nowMins)
-        .sort((a, b) => a.followUpMs - b.followUpMs),
-    [nowMins, rows],
-  );
+  const past = sorted.filter((r) => r.followUpMs < nowMs);
+  const upcoming = sorted.filter((r) => r.followUpMs >= nowMs);
 
-  if (upcoming.length === 0 && rows.length === 0) {
+  if (sorted.length === 0) {
     return <p className={styles.status}>No follow-ups scheduled for today.</p>;
   }
 
-  let prevMins = nowMins;
   const nodes: ReactNode[] = [];
+
+  for (const row of past) {
+    nodes.push(
+      <div key={row.leadKey} className={styles.nd}>
+        <div className={styles.dt} aria-hidden />
+        <div className={styles.row}>
+          <div className="min-w-0">
+            <span className={styles.tm}>{row.timeLabel}</span>
+            <div className={styles.nm}>{row.name}</div>
+            <div className={styles.sub}>{row.stageLabel}</div>
+          </div>
+          <span
+            className={
+              row.segment === "closure" ? `${styles.tag} ${styles.tagOpp}` : styles.tag
+            }
+          >
+            {segmentTag(row.segment)}
+          </span>
+        </div>
+      </div>,
+    );
+  }
 
   nodes.push(
     <div key="now" className={styles.nd}>
@@ -151,6 +175,7 @@ function MorningTimeline({ rows, now }: { rows: FollowUpBriefRow[]; now: Date })
     </div>,
   );
 
+  let prevMins = nowMins;
   for (const row of upcoming) {
     const itemMins = minutesFromFollowUpMs(row.followUpMs);
     const gap = itemMins - prevMins;
@@ -248,20 +273,17 @@ function EveningBody({
   );
 }
 
-function MorningBody({
-  quote,
+function MorningScrollBody({
   rows,
   now,
   counts,
 }: {
-  quote: string;
   rows: FollowUpBriefRow[];
   now: Date;
   counts: FollowUpDayApiResponse["counts"] | undefined;
 }) {
   return (
     <>
-      {quote ? <div className={styles.quote}>{quote}</div> : null}
       <MorningTimeline rows={rows} now={now} />
       {(counts?.overdueTotal ?? 0) > 0 ? (
         <div className={styles.ov}>
@@ -305,13 +327,48 @@ export default function FollowUpDayModal({
   const counts = apiPayload?.counts;
   const ready = Boolean(apiPayload?.ok) && !loading && !error;
   const title = followUpModalTitle(variant, firstName);
-  const subtitle =
-    variant === "morning"
-      ? `${counts?.totalDue ?? 0} follow-ups due today`
-      : "Your follow-up report for today";
-
-  const morningCtaCount = counts?.totalDue ?? 0;
+  const morningTotalDue = counts?.totalDue ?? 0;
+  const morningSubtitle = `${morningTotalDue} follow-ups due today`;
+  const morningCtaCount = morningTotalDue;
+  const morningRows = apiPayload?.firstUp ?? [];
   const pending = apiPayload?.pending ?? [];
+
+  const headerBlock = (
+    <div className={styles.hd}>
+      <div className="min-w-0">
+        <h2 id="se-followup-day-title" className={styles.gr}>
+          {title}
+        </h2>
+        <p className={styles.sb}>
+          {variant === "morning" ? morningSubtitle : "Your follow-up report for today"}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        className={styles.closeBtn}
+        aria-label="Close"
+      >
+        <CloseIcon />
+      </button>
+    </div>
+  );
+
+  const loadingBlock = (
+    <div role="status" aria-busy="true">
+      <p className={styles.status}>Loading today&apos;s follow-ups…</p>
+      <div className={styles.skel} />
+    </div>
+  );
+
+  const errorBlock = (
+    <div>
+      <p className={styles.err}>{error}</p>
+      <button type="button" className={styles.retry} onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
 
   return (
     <div
@@ -319,56 +376,33 @@ export default function FollowUpDayModal({
       onClick={onClose}
       role="presentation"
     >
-      <div
-        className={styles.pop}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="se-followup-day-title"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className={styles.hd}>
-          <div className="min-w-0">
-            <h2 id="se-followup-day-title" className={styles.gr}>
-              {title}
-            </h2>
-            <p className={styles.sb}>{subtitle}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className={styles.closeBtn}
-            aria-label="Close"
-          >
-            <CloseIcon />
-          </button>
-        </div>
-
-        {loading ? (
-          <div role="status" aria-busy="true">
-            <p className={styles.status}>Loading today&apos;s follow-ups…</p>
-            <div className={styles.skel} />
-          </div>
-        ) : error ? (
-          <div>
-            <p className={styles.err}>{error}</p>
-            <button type="button" className={styles.retry} onClick={onRetry}>
-              Retry
-            </button>
-          </div>
-        ) : ready ? (
-          <>
-            {variant === "morning" ? (
-              <MorningBody
-                quote={quote}
-                rows={apiPayload?.firstUp ?? []}
-                now={now}
-                counts={counts}
-              />
-            ) : counts ? (
-              <EveningBody counts={counts} pending={pending} />
+      {variant === "morning" ? (
+        <div
+          className={`${styles.pop} ${styles.popMorning}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="se-followup-day-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className={styles.mornTop}>
+            {headerBlock}
+            {loading || error || !ready ? null : quote ? (
+              <div className={styles.quote}>{quote}</div>
             ) : null}
+          </div>
 
-            {variant === "morning" ? (
+          <div className={styles.mornList}>
+            {loading
+              ? loadingBlock
+              : error
+                ? errorBlock
+                : ready ? (
+                    <MorningScrollBody rows={morningRows} now={now} counts={counts} />
+                  ) : null}
+          </div>
+
+          {ready && !loading && !error ? (
+            <div className={styles.mornFoot}>
               <button
                 type="button"
                 className={styles.cta}
@@ -379,7 +413,26 @@ export default function FollowUpDayModal({
               >
                 Start follow-ups ({morningCtaCount})
               </button>
-            ) : (
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div
+          className={styles.pop}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="se-followup-day-title"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {headerBlock}
+
+          {loading ? (
+            loadingBlock
+          ) : error ? (
+            errorBlock
+          ) : ready && counts ? (
+            <>
+              <EveningBody counts={counts} pending={pending} />
               <button
                 type="button"
                 className={styles.cta}
@@ -388,10 +441,10 @@ export default function FollowUpDayModal({
               >
                 Follow up now
               </button>
-            )}
-          </>
-        ) : null}
-      </div>
+            </>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }

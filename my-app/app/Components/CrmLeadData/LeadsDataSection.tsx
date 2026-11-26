@@ -4255,6 +4255,12 @@ export default function LeadsDataSection({
           leadView: insightLeadViewForRole,
           dateFrom,
           dateTo,
+          ...(roleKey === "SALES_EXECUTIVE"
+            ? {
+                assigneeUserId: currentUserId,
+                assigneeAliasNorms: currentUserAliases,
+              }
+            : {}),
         };
         const insights = computeFollowUpInsightCounts(insightPool, insightCountOpts);
         const milestoneTiles = computeMilestoneTileCounts(insightPool, insightCountOpts);

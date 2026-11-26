@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const dueToday = filterLeadsDueTodayAll(pool, displayName);
+  const dueToday = filterLeadsDueTodayAll(pool, viewer);
   const meta: {
     degraded?: boolean;
     reason?: string;
@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
   } = {};
 
   if (variant === "morning") {
-    const brief = buildMorningFollowUpBrief(pool, displayName, now, 80);
+    const brief = buildMorningFollowUpBrief(pool, viewer, now, dueToday.length);
     const snapshot = buildSnapshotFromDueTodayLeads(dueToday, now);
     const snapshotToken = signFollowUpSnapshotToken({
       ...snapshot,

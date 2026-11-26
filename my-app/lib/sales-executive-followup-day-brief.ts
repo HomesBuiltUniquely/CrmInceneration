@@ -120,6 +120,18 @@ export function formatFollowUpTimeLabel(
   return { label, pastDue };
 }
 
+export function seInsightOptsFromViewer(viewer: SeFollowUpViewerContext): InsightCountOpts {
+  return normalizeInsightCountOpts({
+    viewerRole: "SALES_EXECUTIVE",
+    currentUserName: viewer.displayName,
+    assigneeUserId: viewer.userId,
+    assigneeAliasNorms: viewer.aliasNorms,
+    managerTeamNames: [],
+    leadView: "default",
+  });
+}
+
+/** @deprecated Prefer seInsightOptsFromViewer for BFF parity with toolbar tiles. */
 function seInsightOpts(currentUserName: string): InsightCountOpts {
   return normalizeInsightCountOpts({
     viewerRole: "SALES_EXECUTIVE",
@@ -207,9 +219,13 @@ export function postProcessSalesExecutiveFollowUpPool(
 
 export function filterLeadsDueTodayAll(
   leads: ApiLead[],
-  currentUserName: string,
+  viewerOrName: SeFollowUpViewerContext | string,
 ): ApiLead[] {
-  return filterLeadsForInsightMode(leads, "followUpToday", seInsightOpts(currentUserName));
+  const opts =
+    typeof viewerOrName === "string"
+      ? seInsightOpts(viewerOrName)
+      : seInsightOptsFromViewer(viewerOrName);
+  return filterLeadsForInsightMode(leads, "followUpToday", opts);
 }
 
 function rowFromLead(lead: ApiLead, now = new Date()): FollowUpBriefRow {
@@ -256,13 +272,16 @@ export function buildSnapshotFromDueTodayLeads(
 
 export function buildMorningFollowUpBrief(
   leads: ApiLead[],
-  currentUserName: string,
+  viewerOrName: SeFollowUpViewerContext | string,
   now = new Date(),
   previewLimit = 5,
 ): MorningFollowUpBrief {
-  const opts = seInsightOpts(currentUserName);
+  const opts =
+    typeof viewerOrName === "string"
+      ? seInsightOpts(viewerOrName)
+      : seInsightOptsFromViewer(viewerOrName);
   const counts = computeFollowUpInsightCounts(leads, opts);
-  const dueToday = filterLeadsDueTodayAll(leads, currentUserName).sort(
+  const dueToday = filterLeadsDueTodayAll(leads, viewerOrName).sort(
     (a, b) =>
       (parseFollowUpTimestampMs(readEffectiveFollowUpDateRaw(a)) ?? 0) -
       (parseFollowUpTimestampMs(readEffectiveFollowUpDateRaw(b)) ?? 0),

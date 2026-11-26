@@ -9,6 +9,8 @@
   --se-pop-ys: #fbf5d6;
   --se-pop-cy: #00b0ed;
   --se-pop-cs: #e0f5fd;
+  --se-pop-ps: #ede9fe;
+  --se-pop-pt: #5b3fd1;
   --se-pop-backdrop: rgba(50, 38, 28, 0.45);
 }
 
@@ -22,6 +24,8 @@
   --se-pop-ys: rgba(235, 212, 87, 0.16);
   --se-pop-cy: #2fc3f5;
   --se-pop-cs: rgba(0, 176, 237, 0.18);
+  --se-pop-ps: rgba(139, 92, 246, 0.22);
+  --se-pop-pt: #b7a4ff;
   --se-pop-backdrop: rgba(0, 0, 0, 0.6);
 }
 
@@ -47,6 +51,102 @@
   padding: 20px;
   color: var(--se-pop-tx);
   font-family: var(--font-sans), "Segoe UI", system-ui, sans-serif;
+}
+
+/* Morning Option G v3 — fixed header + scroll list + fixed footer */
+.popMorning {
+  max-width: 540px;
+  height: min(720px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 0;
+}
+
+.mornTop {
+  flex: none;
+  padding: 24px 28px 0;
+}
+
+.mornTop .hd {
+  margin: 0;
+}
+
+.mornTop .gr {
+  font-size: 19px;
+}
+
+.mornTop .sb {
+  margin: 3px 0 0;
+}
+
+.mornTop .closeBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.mornTop .quote {
+  margin: 16px 0 8px;
+  padding: 11px 14px;
+  font-size: 13px;
+}
+
+.mornList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 28px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--se-pop-bd) transparent;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 16px),
+    transparent 100%
+  );
+}
+
+.mornList::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mornList::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mornList::-webkit-scrollbar-thumb {
+  background: var(--se-pop-bd);
+  border-radius: 6px;
+}
+
+.mornList::-webkit-scrollbar-thumb:hover {
+  background: var(--se-pop-mut);
+}
+
+.mornList .ov {
+  margin: 8px 0 0;
+  padding: 10px 14px;
+}
+
+.mornFoot {
+  flex: none;
+  padding: 14px 28px 24px;
+  border-top: 1px solid var(--se-pop-bd);
+}
+
+.mornFoot .cta {
+  margin-top: 0;
+  height: 48px;
 }
 
 .hd {
@@ -342,13 +442,8 @@
 }
 
 .tagOpp {
-  background: rgba(139, 92, 246, 0.14);
-  color: #6d28d9;
-}
-
-:global(.dark) .tagOpp {
-  background: rgba(167, 139, 250, 0.2);
-  color: #c4b5fd;
+  background: var(--se-pop-ps);
+  color: var(--se-pop-pt);
 }
 
 .donutDone {
