@@ -12,6 +12,15 @@ export function bookingPaymentSubmitUpstreamUrl(recordId: string): string {
   return `${BASE_URL}/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payments`;
 }
 
+/** Preferred JSON + base64 upload — avoids Tomcat multipart parse via Vercel. */
+export function bookingPaymentSubmitJsonUpstreamCandidates(recordId: string): string[] {
+  const id = encodeURIComponent(recordId);
+  return [
+    `${BASE_URL}/api/crm/booking-token/deals/${id}/payments/json`,
+    `${BASE_URL}/v1/booking-token/deals/${id}/payments/json`,
+  ];
+}
+
 /** Hub PATCH …/deals/{recordId}/quote — optional standalone quote rebind. */
 export function bookingDealQuoteUpstreamCandidates(recordId: string): string[] {
   const id = encodeURIComponent(recordId);

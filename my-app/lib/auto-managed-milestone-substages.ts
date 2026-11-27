@@ -13,13 +13,18 @@ export const AUTO_MANAGED_MILESTONE_SUBSTAGES = [
   "Refund Processed",
 ] as const;
 
-const AUTO_MANAGED_NORM = new Set(
-  AUTO_MANAGED_MILESTONE_SUBSTAGES.map((s) => s.trim().toUpperCase()),
-);
-
+/**
+ * Must use `pipelineSubStageLabel` — it strips category suffixes like `(Booking)`.
+ * Otherwise `"Booking Done (Booking)"` → `"BOOKING DONE"` never matched the set
+ * and still appeared in Complete Task on Closed.
+ */
 function normSubstage(label: string): string {
   return pipelineSubStageLabel(label).trim().toUpperCase();
 }
+
+const AUTO_MANAGED_NORM = new Set(
+  AUTO_MANAGED_MILESTONE_SUBSTAGES.map((s) => normSubstage(s)),
+);
 
 /** True when substage must not appear in Complete Task feedback dropdown. */
 export function isAutoManagedMilestoneSubstage(subStageName: string): boolean {

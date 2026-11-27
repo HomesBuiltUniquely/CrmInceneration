@@ -1,5 +1,12 @@
 import type { DealRow } from "@/app/Components/BookingToken/types";
 import type { FinanceReviewStatus } from "@/app/Components/BookingToken/types";
+import {
+  filesToPaymentProofJson,
+  isPaymentMultipartParseError,
+  paymentProofUploadErrorMessage,
+  resolvePaymentFallbackFetchPath,
+  type PaymentProofUploadErrorBody,
+} from "@/lib/booking-payment-proof-upload";
 import { getCrmAuthHeaders } from "@/lib/crm-client-auth";
 import { formatQuoteAmount } from "@/lib/crm-quote-links";
 
@@ -247,6 +254,117 @@ export type BookingPaymentSubmitResponse = PaymentHistoryEntry & {
   canConvertToBooking?: boolean;
 };
 
+function paymentsJsonBffPath(recordId: string): string {
+  return `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payments/json`;
+}
+
+function paymentsMultipartBffPath(recordId: string): string {
+  return `/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payments`;
+}
+
+function buildPaymentJsonBody(
+  input: {
+    amount: number;
+    notes?: string;
+    paymentMethod?: string;
+    paymentChannel?: string;
+    files: Awaited<ReturnType<typeof filesToPaymentProofJson>>;
+  } & BookingPaymentQuoteFields,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    amount: input.amount,
+    files: input.files,
+  };
+  if (input.notes?.trim()) body.notes = input.notes.trim();
+  if (input.paymentMethod?.trim()) body.paymentMethod = input.paymentMethod.trim();
+  if (input.paymentChannel?.trim()) body.paymentChannel = input.paymentChannel.trim();
+  if (input.quoteId?.trim()) body.quoteId = input.quoteId.trim();
+  if (input.quoteVersionLabel?.trim()) body.quoteVersionLabel = input.quoteVersionLabel.trim();
+  if (input.quoteAmount != null && Number.isFinite(input.quoteAmount)) {
+    body.quoteAmount = input.quoteAmount;
+  }
+  if (input.tenPercentAmount != null && Number.isFinite(input.tenPercentAmount)) {
+    body.tenPercentAmount = input.tenPercentAmount;
+  }
+  if (input.quoteVerifyUrl?.trim()) body.quoteVerifyUrl = input.quoteVerifyUrl.trim();
+  return body;
+}
+
+async function postBookingPaymentJson(
+  path: string,
+  body: Record<string, unknown>,
+): Promise<{ res: Response; text: string; data: PaymentProofUploadErrorBody }> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let data: PaymentProofUploadErrorBody = {};
+  try {
+    data = JSON.parse(text) as PaymentProofUploadErrorBody;
+  } catch {
+    data = {};
+  }
+  return { res, text, data };
+}
+
+async function postBookingPaymentMultipart(
+  recordId: string,
+  input: {
+    amount: number;
+    notes?: string;
+    files: File[];
+    paymentMethod?: string;
+    paymentChannel?: string;
+  } & BookingPaymentQuoteFields,
+): Promise<{ res: Response; text: string; data: PaymentProofUploadErrorBody }> {
+  const form = new FormData();
+  form.append("amount", String(input.amount));
+  if (input.notes?.trim()) form.append("notes", input.notes.trim());
+  if (input.paymentMethod?.trim()) form.append("paymentMethod", input.paymentMethod.trim());
+  if (input.paymentChannel?.trim()) form.append("paymentChannel", input.paymentChannel.trim());
+  if (input.quoteId?.trim()) form.append("quoteId", input.quoteId.trim());
+  if (input.quoteVersionLabel?.trim()) {
+    form.append("quoteVersionLabel", input.quoteVersionLabel.trim());
+  }
+  if (input.quoteAmount != null && Number.isFinite(input.quoteAmount)) {
+    form.append("quoteAmount", String(input.quoteAmount));
+  }
+  if (input.tenPercentAmount != null && Number.isFinite(input.tenPercentAmount)) {
+    form.append("tenPercentAmount", String(input.tenPercentAmount));
+  }
+  if (input.quoteVerifyUrl?.trim()) form.append("quoteVerifyUrl", input.quoteVerifyUrl.trim());
+  for (const file of input.files) {
+    form.append("files", file, file.name);
+  }
+
+  const res = await fetch(paymentsMultipartBffPath(recordId), {
+    method: "POST",
+    credentials: "include",
+    headers: getCrmAuthHeaders(),
+    body: form,
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let data: PaymentProofUploadErrorBody = {};
+  try {
+    data = JSON.parse(text) as PaymentProofUploadErrorBody;
+  } catch {
+    data = {};
+  }
+  return { res, text, data };
+}
+
+/**
+ * `POST .../payments/json` (preferred). Avoids Tomcat multipart parse 400s via Vercel.
+ * Falls back to legacy multipart once if JSON route is missing; on MultipartException retries JSON via `fallbackPath`.
+ */
 export async function submitBookingPayment(
   recordId: string,
   input: {
@@ -257,46 +375,36 @@ export async function submitBookingPayment(
     paymentChannel?: string;
   } & BookingPaymentQuoteFields,
 ): Promise<BookingPaymentSubmitResponse> {
-  const form = new FormData();
-  form.append("amount", String(input.amount));
-  if (input.notes?.trim()) {
-    form.append("notes", input.notes.trim());
-  }
-  if (input.paymentMethod?.trim()) {
-    form.append("paymentMethod", input.paymentMethod.trim());
-  }
-  if (input.paymentChannel?.trim()) {
-    form.append("paymentChannel", input.paymentChannel.trim());
-  }
-  if (input.quoteId?.trim()) {
-    form.append("quoteId", input.quoteId.trim());
-  }
-  if (input.quoteVersionLabel?.trim()) {
-    form.append("quoteVersionLabel", input.quoteVersionLabel.trim());
-  }
-  if (input.quoteAmount != null && Number.isFinite(input.quoteAmount)) {
-    form.append("quoteAmount", String(input.quoteAmount));
-  }
-  if (input.tenPercentAmount != null && Number.isFinite(input.tenPercentAmount)) {
-    form.append("tenPercentAmount", String(input.tenPercentAmount));
-  }
-  if (input.quoteVerifyUrl?.trim()) {
-    form.append("quoteVerifyUrl", input.quoteVerifyUrl.trim());
-  }
-  for (const file of input.files) {
-    form.append("files", file, file.name);
+  const defaultJsonPath = paymentsJsonBffPath(recordId);
+  const proofFiles = await filesToPaymentProofJson(input.files);
+  const jsonBody = buildPaymentJsonBody({ ...input, files: proofFiles });
+
+  let { res, text, data } = await postBookingPaymentJson(defaultJsonPath, jsonBody);
+
+  if (!res.ok && (res.status === 404 || res.status === 405)) {
+    const multipart = await postBookingPaymentMultipart(recordId, input);
+    const multipartMessage = paymentProofUploadErrorMessage(multipart.data, multipart.text);
+    if (
+      !multipart.res.ok &&
+      isPaymentMultipartParseError(multipartMessage, multipart.data.type)
+    ) {
+      const retryPath = resolvePaymentFallbackFetchPath(
+        multipart.data.fallbackPath,
+        defaultJsonPath,
+      );
+      ({ res, text, data } = await postBookingPaymentJson(retryPath, jsonBody));
+    } else {
+      res = multipart.res;
+      text = multipart.text;
+      data = multipart.data;
+    }
   }
 
-  const res = await fetch(`/api/crm/booking-token/deals/${encodeURIComponent(recordId)}/payments`, {
-    method: "POST",
-    credentials: "include",
-    headers: getCrmAuthHeaders(),
-    body: form,
-    cache: "no-store",
-  });
-  const text = await res.text();
   if (!res.ok) {
-    throw new Error(parseApiError(text, "Unable to record payment."));
+    throw new Error(
+      paymentProofUploadErrorMessage(data, text) ||
+        parseApiError(text, "Unable to record payment."),
+    );
   }
   return JSON.parse(text) as BookingPaymentSubmitResponse;
 }
