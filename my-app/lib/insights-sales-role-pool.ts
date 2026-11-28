@@ -132,6 +132,17 @@ export async function fetchInsightsSalesManagerMyTeamLeads(
   return mergeInsightsLeadsByStableId([...myRows, ...teamRows]);
 }
 
+/** Sales Executive Insights inventory — Hub `roleView=my` only (self scope). */
+export async function fetchInsightsSalesExecutiveMyLeads(
+  input: InsightsSalesRolePoolInput = {},
+): Promise<ApiLead[]> {
+  const headers = getCrmAuthHeaders();
+  const base = buildBaseInsightsQs(input);
+  const qMy = new URLSearchParams(base);
+  qMy.set("roleView", "my");
+  return fetchInsightsLeadsAllPages(qMy, headers);
+}
+
 /** Same id-stable row count as CRM mergeAll `totalElements` (My Leads Total Leads for SM). */
 export function countInsightsLeadRowsById(leads: ApiLead[]): number {
   return mergeInsightsLeadsByStableId(leads).length;

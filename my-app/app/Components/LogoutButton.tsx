@@ -1,13 +1,10 @@
 "use client";
 
 import {
-  CRM_DESIGNER_ID_STORAGE_KEY,
-  CRM_DESIGNER_NAME_STORAGE_KEY,
-  CRM_ROLE_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
-  CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { clearCrmSessionStorage } from "@/lib/auth/hallway-handoff";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import { useState } from "react";
 
@@ -26,11 +23,7 @@ export default function LogoutButton({ className = "" }: Props) {
         await apiLogout(token);
       }
     } finally {
-      localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
-      localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
-      localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
-      localStorage.removeItem(CRM_DESIGNER_NAME_STORAGE_KEY);
-      localStorage.removeItem(CRM_DESIGNER_ID_STORAGE_KEY);
+      clearCrmSessionStorage();
       redirectToHallwayPortal();
       setBusy(false);
     }

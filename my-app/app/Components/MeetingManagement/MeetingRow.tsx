@@ -112,7 +112,6 @@ export function MeetingRow({
           </span>
           <span className="min-w-0">
             <span className="block truncate text-[14px] font-bold leading-tight text-[#0F172A]">{row.customer}</span>
-            <span className="block truncate text-[13px] font-normal leading-tight text-[#5B6778]">{row.phone || "—"}</span>
           </span>
         </div>
       </td>

@@ -1,8 +1,65 @@
 import { BASE_URL } from "@/lib/base-url";
 
 export const CRM_TOKEN_STORAGE_KEY = "crm_token";
+/** ISO expiry from Hub login (`expiresAt`) — 24h TTL. */
+export const CRM_TOKEN_EXPIRES_AT_STORAGE_KEY = "crm_token_expires_at";
 export const CRM_ROLE_STORAGE_KEY = "crm_role";
 export const CRM_USER_NAME_STORAGE_KEY = "crm_user_name";
+
+const DEFAULT_TOKEN_TTL_MS = 86_400_000;
+
+/** Resolve Hub login expiry fields → ISO string. */
+export function resolveExpiresAtIso(args: {
+  expiresAt?: unknown;
+  issuedAt?: unknown;
+  expiresInMs?: unknown;
+  expiresInHours?: unknown;
+}): string | null {
+  if (typeof args.expiresAt === "string" && args.expiresAt.trim()) {
+    const t = Date.parse(args.expiresAt.trim());
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  if (typeof args.expiresAt === "number" && Number.isFinite(args.expiresAt)) {
+    const ms = args.expiresAt < 1e12 ? args.expiresAt * 1000 : args.expiresAt;
+    return new Date(ms).toISOString();
+  }
+
+  let ttlMs = DEFAULT_TOKEN_TTL_MS;
+  if (typeof args.expiresInMs === "number" && Number.isFinite(args.expiresInMs) && args.expiresInMs > 0) {
+    ttlMs = args.expiresInMs;
+  } else if (
+    typeof args.expiresInHours === "number" &&
+    Number.isFinite(args.expiresInHours) &&
+    args.expiresInHours > 0
+  ) {
+    ttlMs = args.expiresInHours * 3_600_000;
+  }
+
+  let issuedMs = Date.now();
+  if (typeof args.issuedAt === "number" && Number.isFinite(args.issuedAt)) {
+    issuedMs = args.issuedAt < 1e12 ? args.issuedAt * 1000 : args.issuedAt;
+  } else if (typeof args.issuedAt === "string" && args.issuedAt.trim()) {
+    const parsed = Date.parse(args.issuedAt.trim());
+    if (Number.isFinite(parsed)) issuedMs = parsed;
+  }
+
+  return new Date(issuedMs + ttlMs).toISOString();
+}
+
+export function persistTokenExpiry(args: {
+  expiresAt?: unknown;
+  issuedAt?: unknown;
+  expiresInMs?: unknown;
+  expiresInHours?: unknown;
+}): void {
+  if (typeof window === "undefined") return;
+  const iso = resolveExpiresAtIso(args);
+  if (iso) {
+    window.localStorage.setItem(CRM_TOKEN_EXPIRES_AT_STORAGE_KEY, iso);
+  } else {
+    window.localStorage.removeItem(CRM_TOKEN_EXPIRES_AT_STORAGE_KEY);
+  }
+}
 /**
  * The login credential (username typed at the login form).
  * Distinct from crm_user_name which holds the display name (fullName).
@@ -36,6 +93,10 @@ export function getSalesExecEndpointForVerify(): string {
 export type LoginResult = {
   token: string;
   user: Record<string, unknown>;
+  expiresAt?: string;
+  issuedAt?: number;
+  expiresInMs?: number;
+  expiresInHours?: number;
 };
 
 export function normalizeRole(value: unknown): string {
@@ -186,16 +247,25 @@ export async function login(
   if (typeof token !== "string" || typeof user !== "object" || user === null) {
     throw new Error("Unexpected login response from server");
   }
-  return { token, user: user as Record<string, unknown> };
+  return {
+    token,
+    user: user as Record<string, unknown>,
+    expiresAt: typeof data.expiresAt === "string" ? data.expiresAt : undefined,
+    issuedAt: typeof data.issuedAt === "number" ? data.issuedAt : undefined,
+    expiresInMs: typeof data.expiresInMs === "number" ? data.expiresInMs : undefined,
+    expiresInHours: typeof data.expiresInHours === "number" ? data.expiresInHours : undefined,
+  };
 }
 
 /** Thrown when `GET /api/auth/me` fails; includes HTTP status for callers. */
 export class GetMeError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  readonly errorCode: string;
+  constructor(message: string, status: number, errorCode = "") {
     super(message);
     this.name = "GetMeError";
     this.status = status;
+    this.errorCode = errorCode;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -213,7 +283,9 @@ export async function getMe(token: string): Promise<Record<string, unknown>> {
       typeof data.message === "string" && data.message.trim()
         ? data.message.trim()
         : "Failed to load current user";
-    throw new GetMeError(message, res.status);
+    const errorCode =
+      typeof data.errorCode === "string" ? data.errorCode.trim() : "";
+    throw new GetMeError(message, res.status, errorCode);
   }
   return data;
 }
@@ -261,6 +333,19 @@ export async function validateToken(
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  const data = await res.json().catch(() => ({}));
-  return data as Record<string, unknown>;
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    return {
+      valid: false,
+      errorCode:
+        typeof data.errorCode === "string" ? data.errorCode : "SESSION_EXPIRED",
+      message:
+        typeof data.message === "string" && data.message.trim()
+          ? data.message.trim()
+          : "Session expired. Please login again.",
+      status: res.status,
+      ...data,
+    };
+  }
+  return data;
 }

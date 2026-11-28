@@ -9,6 +9,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { clearCrmSessionStorage } from "@/lib/auth/hallway-handoff";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import {
   CRM_PRESALES_ACCESS_CHANGED_EVENT,
@@ -296,9 +297,7 @@ export default function QuickAccessSidebar({
     setLogoutBusy(true);
     try { const t = window.localStorage.getItem(CRM_TOKEN_STORAGE_KEY); if (t) await apiLogout(t); }
     finally {
-      window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
-      window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
-      window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      clearCrmSessionStorage();
       clearActiveModule?.();
       redirectToHallwayPortal();
       setLogoutBusy(false);

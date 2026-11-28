@@ -59,15 +59,27 @@ export function canUseBookingTokenGlobalSearch(role: string): boolean {
 }
 
 /**
- * CRM Insights — org leads only (not SE / presales / design).
- * - SUPER_ADMIN / ADMIN / SALES_ADMIN: branch + all salespeople
- * - SALES_MANAGER: own team executives only
+ * CRM Insights — Hub already allows these roles.
+ * - SUPER_ADMIN / ADMIN / SALES_ADMIN: full filters
+ * - SALES_MANAGER: own team
+ * - SALES_EXECUTIVE: self only
  */
 export function canAccessCrmInsights(role: string): boolean {
   const r = normalizeRole(role);
   return (
     isAdminRole(r) ||
     r === "SALES_ADMIN" ||
+    r === "SALES_MANAGER" ||
+    r === "MANAGER" ||
+    r === "SALES_EXECUTIVE"
+  );
+}
+
+/** People picker (manager / executive). SE has no people expansion. */
+export function canUseInsightsPeopleFilters(role: string): boolean {
+  const r = normalizeRole(role);
+  return (
+    canUseInsightsOrgFilters(r) ||
     r === "SALES_MANAGER" ||
     r === "MANAGER"
   );
