@@ -46,8 +46,14 @@ export type DealRow = {
   /** Locked quote identity on the Booking Token deal (Hub). */
   quoteId?: string | null;
   quoteVersionLabel?: string | null;
+  /** Formatted full project amount (Token/Booking Amount column — not 10%). */
   dealValue: string;
+  /** Full project / quote value (numeric). */
   dealValueAmount: number;
+  /** Hub `tokenAmount` when listingType is token (full project). */
+  tokenAmount?: number | null;
+  /** Hub `bookingAmount` when listingType is booking (full project). */
+  bookingAmount?: number | null;
   preBooking: string;
   /** Cumulative paid toward 10% target. */
   paidAmount: number;

@@ -7,6 +7,7 @@ import {
   CRM_USER_NAME_STORAGE_KEY,
   logout as apiLogout,
 } from "@/lib/auth/api";
+import { clearCrmSessionStorage } from "@/lib/auth/hallway-handoff";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
 import { cn } from "@/lib/cn";
 import ThemeToggle from "./ThemeToggle";
@@ -92,9 +93,7 @@ export default function CrmUserMenu({
         await apiLogout(token);
       }
     } finally {
-      window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
-      window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
-      window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
+      clearCrmSessionStorage();
       redirectToHallwayPortal();
       setLogoutBusy(false);
     }

@@ -3,6 +3,11 @@
 import { CRM_TOKEN_STORAGE_KEY } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
+import {
+  forceSessionExpiredLogout,
+  isStoredTokenExpired,
+  validateStoredSessionOrLogout,
+} from "@/lib/auth/session-expiry";
 import { useLayoutEffect, useState } from "react";
 
 type Props = {
@@ -27,10 +32,16 @@ export default function RequireAuth({ children }: Props) {
       return;
     }
 
+    if (isStoredTokenExpired()) {
+      forceSessionExpiredLogout();
+      return;
+    }
+
     // Do NOT force landingPathByRole here — admins/sales must be able to open
     // /presales-leads via the module switcher without being bounced back to /Leads.
 
     setAllowed(true);
+    void validateStoredSessionOrLogout();
   }, []);
 
   if (!allowed) {

@@ -1250,6 +1250,24 @@ export function buildInsightsPerformanceCardsSearchParams(
 
 /* ── Fetch ────────────────────────────────────────────────────────────── */
 
+export class InsightsApiError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "InsightsApiError";
+    this.status = status;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function isInsightsForbiddenError(err: unknown): boolean {
+  if (err instanceof InsightsApiError && (err.status === 403 || err.status === 401)) {
+    return true;
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /forbidden|access denied|not allowed|no access/i.test(msg);
+}
+
 async function readJson<T>(res: Response, fallback: string): Promise<T> {
   const text = await res.text();
   let json: unknown = null;
@@ -1266,7 +1284,10 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
     const fromBody = [body?.userMessage, body?.error, body?.message]
       .map((v) => (typeof v === "string" ? v.trim() : ""))
       .find((v) => v.length > 0);
-    throw new Error(fromBody || fallback);
+    const message =
+      fromBody ||
+      (res.status === 403 ? "Access forbidden for Insights." : fallback);
+    throw new InsightsApiError(message, res.status);
   }
   return json as T;
 }

@@ -41,6 +41,11 @@ import {
 } from "@/lib/booking-token-deals-fetch";
 import type { BookingDateFilterState } from "@/lib/booking-token-date-filter";
 import type { BookingDealFilterState } from "@/lib/booking-token-deal-filters";
+import { formatQuoteAmount } from "@/lib/crm-quote-links";
+import {
+  bookingTokenProjectAmountColumnHeader,
+  resolveBookingTokenProjectAmount,
+} from "@/lib/booking-token-project-amount";
 
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 40, 50] as const;
 type DealsPageSize = (typeof PAGE_SIZE_OPTIONS)[number];
@@ -74,7 +79,10 @@ type TableColumn = {
   headClassName: string;
 };
 
-function buildTableColumns(showRemaining: boolean): TableColumn[] {
+function buildTableColumns(
+  showRemaining: boolean,
+  tab: BookingTokenTab,
+): TableColumn[] {
   const cols: TableColumn[] = [
     {
       id: "serialNo",
@@ -96,8 +104,8 @@ function buildTableColumns(showRemaining: boolean): TableColumn[] {
     },
     {
       id: "dealValue",
-      header: "Deal Value",
-      width: "108px",
+      header: bookingTokenProjectAmountColumnHeader(tab),
+      width: "118px",
       headClassName: MONEY_HEAD,
     },
     {
@@ -269,8 +277,20 @@ function renderDealCell(
           ) : null}
         </>
       );
-    case "dealValue":
-      return <span className="font-semibold">{row.dealValue}</span>;
+    case "dealValue": {
+      // Full project amount (tokenAmount / bookingAmount) — never tenPercentAmount.
+      const projectAmount = resolveBookingTokenProjectAmount({
+        listingType: row.listingType,
+        tokenAmount: row.tokenAmount,
+        bookingAmount: row.bookingAmount,
+        dealValue: row.dealValueAmount,
+      });
+      return (
+        <span className="font-semibold">
+          {formatQuoteAmount(projectAmount) || row.dealValue}
+        </span>
+      );
+    }
     case "received":
       return row.preBooking;
     case "tenPercent":
@@ -611,8 +631,8 @@ export default function DealsTable({
   );
 
   const tableColumns = useMemo(
-    () => buildTableColumns(showRemainingColumn),
-    [showRemainingColumn],
+    () => buildTableColumns(showRemainingColumn, tab),
+    [showRemainingColumn, tab],
   );
   const columnCount = tableColumns.length;
   const minTableWidth = useMemo(() => tableMinWidth(tableColumns), [tableColumns]);

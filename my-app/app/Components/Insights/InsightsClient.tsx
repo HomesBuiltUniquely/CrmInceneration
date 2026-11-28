@@ -18,6 +18,7 @@ import {
   fetchInsightsQuotesSentMonth,
   fetchInsightsSalesFunnel,
   hasHubConversionTrend,
+  isInsightsForbiddenError,
   passagesTrendWeekScopeFromDateFilter,
   type InsightsTrendGranularity,
   type InsightsDashboard,
@@ -67,6 +68,7 @@ import {
 } from "@/lib/insights-funnel-stage-paths";
 import { filterLeadsByAssigneeScope } from "@/lib/admin-assignee-match";
 import {
+  fetchInsightsSalesExecutiveMyLeads,
   fetchInsightsSalesManagerMyTeamLeads,
 } from "@/lib/insights-sales-role-pool";
 import {
@@ -93,9 +95,11 @@ import {
 import {
   canAccessCrmInsights,
   canUseInsightsOrgFilters,
+  canUseInsightsPeopleFilters,
   isSuperAdminRole,
 } from "@/lib/roleUtils";
 import { collectHierarchyUserAssigneeAliases, hierarchyUserDisplayName } from "@/lib/hierarchy-user-display";
+import { useGlobalNotifier } from "../Shared/GlobalNotifier";
 import QuickAccessSidebar from "../Shared/QuickAccessSidebar";
 import AppTopBar from "../Shared/AppTopBar";
 import { dashboardSidebarSections } from "../Shared/sidebar-data";
@@ -111,6 +115,10 @@ import InsightsDropdownFilter, { type DropdownOption } from "./InsightsDropdownF
 function isSalesManagerRole(role: string): boolean {
   const r = normalizeRole(role);
   return r === "SALES_MANAGER" || r === "MANAGER";
+}
+
+function isSalesExecutiveRole(role: string): boolean {
+  return normalizeRole(role) === "SALES_EXECUTIVE";
 }
 
 type SalesPeopleSelection =
@@ -143,6 +151,7 @@ function salesPeopleSelectValue(sel: SalesPeopleSelection): string {
 }
 
 export default function InsightsClient1() {
+  const { notifyError } = useGlobalNotifier();
   const [dateFilter, setDateFilter] = useState<BookingDateFilterState>(
     DEFAULT_INSIGHTS_DATE_FILTER,
   );
@@ -159,6 +168,8 @@ export default function InsightsClient1() {
   /** Journey heatmap-style team names (display + username). */
   const [smTeamDisplayNames, setSmTeamDisplayNames] = useState<string[]>([]);
   const [smSelfAliases, setSmSelfAliases] = useState<string[]>([]);
+  /** SE self aliases — Hub forces self; FE inventory uses the same. */
+  const [seSelfAliases, setSeSelfAliases] = useState<string[]>([]);
   const [aliasesByUserId, setAliasesByUserId] = useState<Map<number, string[]>>(
     () => new Map(),
   );
@@ -211,6 +222,25 @@ export default function InsightsClient1() {
       html.classList.remove("insights-lock-scroll");
     };
   }, []);
+
+  /** SE: load self aliases only (no people expansion). */
+  useEffect(() => {
+    if (!role || !isSalesExecutiveRole(role)) {
+      setSeSelfAliases([]);
+      return;
+    }
+    const displayName =
+      window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY)?.trim() ?? "";
+    const loginUser =
+      window.localStorage.getItem(CRM_LOGIN_USERNAME_KEY)?.trim() ?? "";
+    setSeSelfAliases(
+      collectHierarchyUserAssigneeAliases({
+        fullName: displayName,
+        name: displayName,
+        username: loginUser || displayName,
+      }),
+    );
+  }, [role]);
 
   /**
    * Load Sales Manager team the same way as My Leads / notifications:
@@ -342,6 +372,7 @@ export default function InsightsClient1() {
   );
 
   const isSalesManager = useMemo(() => isSalesManagerRole(role), [role]);
+  const isSalesExecutive = useMemo(() => isSalesExecutiveRole(role), [role]);
   /** SUPER_ADMIN / ADMIN / SALES_ADMIN — branch + org-wide people. */
   const isOrgAdmin = useMemo(() => canUseInsightsOrgFilters(role), [role]);
   const insightsAllowed = useMemo(
@@ -352,8 +383,13 @@ export default function InsightsClient1() {
     () => (role ? isSuperAdminRole(role) : false),
     [role],
   );
-  /** Branch + full people hierarchy only for org admins. */
+  /** Branch only for org admins. SE / SM: Hub scopes by assignee — no branch picker. */
   const showBranchFilter = isOrgAdmin;
+  /** People picker: Admin (org) + Sales Manager team. Hidden for SE. */
+  const showPeopleFilter = useMemo(
+    () => (role ? canUseInsightsPeopleFilters(role) : false),
+    [role],
+  );
   const showManagerPeopleOptions = isOrgAdmin;
 
   // Non–Super Admin must stay on Current funnel measure.
@@ -512,8 +548,15 @@ export default function InsightsClient1() {
    * Dashboard people scope:
    * - Admin/SA: as selected
    * - Sales Manager: always team (manager = self when "All"); exec pick when selected
+   * - Sales Executive: omit people params (Hub hard-locks to self)
    */
   const dashboardPeopleParams = useMemo(() => {
+    if (isSalesExecutive) {
+      return {
+        salesManagerId: null as number | null,
+        salesExecutiveId: null as number | null,
+      };
+    }
     if (isSalesManager) {
       if (salesPeople.kind === "executive") {
         return {
@@ -530,28 +573,29 @@ export default function InsightsClient1() {
       salesManagerId: salesPeople.kind === "manager" ? salesPeople.id : null,
       salesExecutiveId: salesPeople.kind === "executive" ? salesPeople.id : null,
     };
-  }, [isSalesManager, salesPeople, viewerUserId]);
+  }, [isSalesExecutive, isSalesManager, salesPeople, viewerUserId]);
 
   const effectiveBranchId = showBranchFilter ? branchId : "all";
 
-  const assigneeAliasSet = useMemo(
-    () =>
-      resolveInsightsAssigneeAliases(salesPeople, filterOptions, {
-        forceTeamWhenAll: isSalesManager && salesPeople.kind === "all",
-        teamAliasesWhenAll:
-          isSalesManager && salesPeople.kind === "all"
-            ? smTeamAliasesWhenAll
-            : undefined,
-        aliasesByUserId,
-      }),
-    [
-      salesPeople,
-      filterOptions,
-      isSalesManager,
-      smTeamAliasesWhenAll,
+  const assigneeAliasSet = useMemo(() => {
+    if (isSalesExecutive) return seSelfAliases;
+    return resolveInsightsAssigneeAliases(salesPeople, filterOptions, {
+      forceTeamWhenAll: isSalesManager && salesPeople.kind === "all",
+      teamAliasesWhenAll:
+        isSalesManager && salesPeople.kind === "all"
+          ? smTeamAliasesWhenAll
+          : undefined,
       aliasesByUserId,
-    ],
-  );
+    });
+  }, [
+    isSalesExecutive,
+    seSelfAliases,
+    salesPeople,
+    filterOptions,
+    isSalesManager,
+    smTeamAliasesWhenAll,
+    aliasesByUserId,
+  ]);
 
   const loadFilters = useCallback(async (selectedBranch: string) => {
     try {
@@ -589,14 +633,18 @@ export default function InsightsClient1() {
       setDashboard(data);
     } catch (err) {
       setDashboard(EMPTY_INSIGHTS_DASHBOARD);
-      setError(
-        err instanceof Error ? err.message : "Failed to load insights dashboard.",
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to load insights dashboard.";
+      setError(message);
+      if (isInsightsForbiddenError(err)) {
+        notifyError(message || "Access forbidden for Insights.");
+      }
     } finally {
       setLoading(false);
     }
   }, [
     effectiveBranchId,
+    notifyError,
     dateFilter,
     dashboardPeopleParams,
     teamPeriod,
@@ -711,6 +759,13 @@ export default function InsightsClient1() {
   useEffect(() => {
     if (isSalesManager && branchId !== "all") setBranchId("all");
   }, [isSalesManager, branchId]);
+
+  // SE: no people / branch expansion — keep selection at All.
+  useEffect(() => {
+    if (!isSalesExecutive) return;
+    if (salesPeople.kind !== "all") setSalesPeople({ kind: "all" });
+    if (branchId !== "all") setBranchId("all");
+  }, [isSalesExecutive, salesPeople.kind, branchId]);
 
   useEffect(() => {
     void loadDashboard();
@@ -1160,6 +1215,19 @@ export default function InsightsClient1() {
           const aligned = insightsSalesManagerMilestoneAndTotal(inventory);
           poolRows = aligned.pool;
           quotesSentScopePool = quotesSentScopePoolLocal;
+        } else if (isSalesExecutive) {
+          /** SE: Hub JWT `roleView=my` only — never expand via people filters. */
+          let inventory = filterLeadsForSalesClientInbox(
+            await fetchInsightsSalesExecutiveMyLeads(),
+            "verified",
+          );
+          if (assigneeAliasSetLocal.length > 0) {
+            inventory = filterLeadsByAssigneeScope(inventory, assigneeAliasSetLocal);
+          }
+          quotesSentScopePool = inventory;
+          inventory = filterApiLeadsByInsightsDateRange(inventory, range);
+          const aligned = insightsSalesManagerMilestoneAndTotal(inventory);
+          poolRows = aligned.pool;
         } else {
           // Full sales journey (no date in Hub) then client month/range cut — same as SM accuracy.
           const data = await fetchAdminLeadsHeatmapData(
@@ -1383,9 +1451,11 @@ export default function InsightsClient1() {
     assigneeAliasSet,
     role,
     isSalesManager,
+    isSalesExecutive,
     smScopeReady,
     salesPeople.kind,
     smSelfAliases,
+    seSelfAliases,
     smTeamDisplayNames,
     smTeamAliasesWhenAll,
     viewerUserId,
@@ -1418,8 +1488,8 @@ export default function InsightsClient1() {
           <div className="flex min-h-0 min-w-0 flex-col items-center justify-center gap-3 bg-[#f4f7fb] px-6 text-center">
             <h1 className="text-xl font-bold text-gray-900">Access restricted</h1>
             <p className="max-w-md text-sm text-gray-600">
-              CRM Insights is available for Super Admin, Admin, Sales Admin, and Sales
-              Manager roles only.
+              CRM Insights is available for Super Admin, Admin, Sales Admin, Sales
+              Manager, and Sales Executive roles only.
             </p>
           </div>
         </div>
@@ -1471,16 +1541,18 @@ export default function InsightsClient1() {
                     subtitle="Default: this month · All Time = My Leads full inventory"
                   />
 
-                  <InsightsDropdownFilter
-                    options={salespeopleOptions}
-                    value={salesSelect}
-                    onChange={(val) => setSalesPeople(parseSalesPeopleValue(val))}
-                    placeholder={
-                      isSalesManager ? "All team executives" : "All Salespeople"
-                    }
-                    icon="users"
-                    ariaLabel="Filter by Salespeople"
-                  />
+                  {showPeopleFilter ? (
+                    <InsightsDropdownFilter
+                      options={salespeopleOptions}
+                      value={salesSelect}
+                      onChange={(val) => setSalesPeople(parseSalesPeopleValue(val))}
+                      placeholder={
+                        isSalesManager ? "All team executives" : "All Salespeople"
+                      }
+                      icon="users"
+                      ariaLabel="Filter by Salespeople"
+                    />
+                  ) : null}
 
                   {showBranchFilter ? (
                     <InsightsDropdownFilter

@@ -165,7 +165,6 @@ function DetailsBody({ row }: { row: MeetingRecord }) {
           <section>
             <h2 className="text-[11px] font-bold tracking-[0.08em] text-[#5F6675]">CLIENT</h2>
             <div className="mt-2 grid grid-cols-1 gap-x-3 gap-y-3 sm:grid-cols-3">
-              <Field label="Phone" value={phoneValue(row.phone)} />
               <Field label="Email" value={emailValue(row.customerEmail)} />
               <Field label="Progress" value={<ProgressPill row={row} />} />
               <Field label="Lead budget" value={formatMeetingValue(row.budget)} />
@@ -634,17 +633,6 @@ function textOrDash(value?: string): string {
 
 function initialOf(name: string): string {
   return name.trim().charAt(0).toUpperCase() || "—";
-}
-
-function phoneValue(phone?: string): ReactNode {
-  const text = phone?.trim();
-  if (!text) return "—";
-  const href = `tel:${text.replace(/[^\d+]/g, "")}`;
-  return (
-    <a href={href} className={`text-[14px] font-bold text-[#1B3FA8] underline ${focusRing}`}>
-      {text}
-    </a>
-  );
 }
 
 function emailValue(email?: string): ReactNode {

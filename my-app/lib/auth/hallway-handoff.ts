@@ -10,11 +10,13 @@ import {
   CRM_DESIGNER_NAME_STORAGE_KEY,
   CRM_LOGIN_USERNAME_KEY,
   CRM_ROLE_STORAGE_KEY,
+  CRM_TOKEN_EXPIRES_AT_STORAGE_KEY,
   CRM_TOKEN_STORAGE_KEY,
   CRM_USER_ID_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   landingPathByRole,
   normalizeRole,
+  resolveExpiresAtIso,
 } from "@/lib/auth/api";
 
 export type HallwayHandoffPayload = {
@@ -26,10 +28,17 @@ export type HallwayHandoffPayload = {
   crm_active_module?: string;
   crm_designer_name?: string;
   crm_designer_id?: string;
+  /** Hub login TTL — ISO string preferred. */
+  crm_token_expires_at?: string;
+  expiresAt?: string;
+  issuedAt?: number;
+  expiresInMs?: number;
+  expiresInHours?: number;
 };
 
 const SESSION_KEYS = [
   CRM_TOKEN_STORAGE_KEY,
+  CRM_TOKEN_EXPIRES_AT_STORAGE_KEY,
   CRM_ROLE_STORAGE_KEY,
   CRM_USER_NAME_STORAGE_KEY,
   CRM_LOGIN_USERNAME_KEY,
@@ -85,6 +94,18 @@ export function parseHallwayHandoffPayload(
           : undefined,
       crm_designer_id:
         obj.crm_designer_id != null ? String(obj.crm_designer_id) : undefined,
+      crm_token_expires_at:
+        typeof obj.crm_token_expires_at === "string"
+          ? obj.crm_token_expires_at
+          : typeof obj.expiresAt === "string"
+            ? obj.expiresAt
+            : undefined,
+      expiresAt: typeof obj.expiresAt === "string" ? obj.expiresAt : undefined,
+      issuedAt: typeof obj.issuedAt === "number" ? obj.issuedAt : undefined,
+      expiresInMs:
+        typeof obj.expiresInMs === "number" ? obj.expiresInMs : undefined,
+      expiresInHours:
+        typeof obj.expiresInHours === "number" ? obj.expiresInHours : undefined,
     };
   } catch {
     return null;
@@ -116,6 +137,16 @@ export function applyHallwayHandoffToStorage(
   clearCrmSessionStorage();
 
   localStorage.setItem(CRM_TOKEN_STORAGE_KEY, payload.crm_token);
+
+  const expiresIso = resolveExpiresAtIso({
+    expiresAt: payload.crm_token_expires_at || payload.expiresAt,
+    issuedAt: payload.issuedAt,
+    expiresInMs: payload.expiresInMs,
+    expiresInHours: payload.expiresInHours,
+  });
+  if (expiresIso) {
+    localStorage.setItem(CRM_TOKEN_EXPIRES_AT_STORAGE_KEY, expiresIso);
+  }
 
   const role = normalizeRole(payload.crm_role ?? "");
   if (role) {

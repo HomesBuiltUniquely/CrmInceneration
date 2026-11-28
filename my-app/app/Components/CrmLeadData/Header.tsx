@@ -23,6 +23,7 @@ import {
 } from "@/lib/auth/api";
 import { getCrmAuthHeaders, readStoredCrmToken } from "@/lib/crm-client-auth";
 import { redirectToHallwayPortal } from "@/lib/auth/hallway-portal";
+import { forceSessionExpiredLogout } from "@/lib/auth/session-expiry";
 import {
   appendWorkspaceMilestoneFilterQuery,
   defaultLeadsVerificationStatus,
@@ -331,7 +332,10 @@ export default function Header() {
         if (cancelled) return;
         const status = e instanceof GetMeError ? e.status : 0;
         const msg = e instanceof Error ? e.message : "";
+        const errorCode =
+          e instanceof GetMeError ? e.errorCode.trim().toUpperCase() : "";
         const invalidateSession =
+          errorCode === "SESSION_EXPIRED" ||
           status === 401 ||
           status === 403 ||
           status === 404 ||
@@ -351,13 +355,11 @@ export default function Header() {
   useEffect(() => {
     const onAuthExpired = () => {
       try {
-        window.localStorage.removeItem(CRM_TOKEN_STORAGE_KEY);
-        window.localStorage.removeItem(CRM_ROLE_STORAGE_KEY);
-        window.localStorage.removeItem(CRM_USER_NAME_STORAGE_KEY);
         window.sessionStorage.removeItem(HEADER_PERSIST_KEY);
         window.sessionStorage.removeItem(LEADS_VIEW_PERSIST_KEY);
       } finally {
-        redirectToHallwayPortal();
+        // Clears token + expiresAt, then Hallway (or localhost /login).
+        forceSessionExpiredLogout();
       }
     };
     window.addEventListener("crm:auth-expired", onAuthExpired);
