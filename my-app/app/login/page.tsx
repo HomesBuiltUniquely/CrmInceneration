@@ -21,6 +21,7 @@ import {
   getRoleFromUser,
   landingPathByRole,
   login,
+  persistTokenExpiry,
   unwrapAuthUserPayload,
 } from "@/lib/auth/api";
 import { tryConsumeHallwayHandoffFromUrl } from "@/lib/auth/hallway-handoff";
@@ -29,6 +30,7 @@ import {
   isLocalCrmHost,
   redirectToAuthEntry,
 } from "@/lib/auth/hallway-portal";
+import { consumeAuthFlashMessage } from "@/lib/auth/session-expiry";
 
 /**
  * Localhost: full CRM login form for development.
@@ -66,6 +68,9 @@ export default function LoginPage() {
       return;
     }
 
+    const flash = consumeAuthFlashMessage();
+    if (flash) setError(flash);
+
     setReady(true);
   }, [router]);
 
@@ -74,8 +79,10 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const { token, user } = await login(username, password);
+      const { token, user, expiresAt, issuedAt, expiresInMs, expiresInHours } =
+        await login(username, password);
       localStorage.setItem(CRM_TOKEN_STORAGE_KEY, token);
+      persistTokenExpiry({ expiresAt, issuedAt, expiresInMs, expiresInHours });
       localStorage.setItem(CRM_LOGIN_USERNAME_KEY, username);
       let sessionUser: Record<string, unknown> = user;
       try {

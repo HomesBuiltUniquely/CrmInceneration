@@ -94,6 +94,12 @@ export type BookingTokenDeal = {
   customerName: string;
   customerPhone?: string;
   dealValue: number;
+  /** Full project value when listingType is token; null on booking rows. */
+  tokenAmount?: number | null;
+  /** Full project value when listingType is booking; null on token rows. */
+  bookingAmount?: number | null;
+  /** Alias of full project value (same as dealValue). */
+  quoteAmount?: number | null;
   preBookingAmount: number;
   tenPercentAmount?: number | null;
   remainingAmount?: number | null;

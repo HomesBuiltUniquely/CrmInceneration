@@ -23,6 +23,7 @@ export const HALLWAY_HANDOFF_BOOTSTRAP = `
 
     var keys = [
       "crm_token",
+      "crm_token_expires_at",
       "crm_role",
       "crm_user_name",
       "crm_login_username",
@@ -36,6 +37,25 @@ export const HALLWAY_HANDOFF_BOOTSTRAP = `
     }
 
     localStorage.setItem("crm_token", String(data.crm_token).trim());
+
+    var expiresRaw =
+      (typeof data.crm_token_expires_at === "string" && data.crm_token_expires_at) ||
+      (typeof data.expiresAt === "string" && data.expiresAt) ||
+      "";
+    if (expiresRaw) {
+      localStorage.setItem("crm_token_expires_at", String(expiresRaw).trim());
+    } else {
+      var ttlMs = 86400000;
+      if (typeof data.expiresInMs === "number" && data.expiresInMs > 0) ttlMs = data.expiresInMs;
+      else if (typeof data.expiresInHours === "number" && data.expiresInHours > 0) {
+        ttlMs = data.expiresInHours * 3600000;
+      }
+      var issuedMs = Date.now();
+      if (typeof data.issuedAt === "number" && isFinite(data.issuedAt)) {
+        issuedMs = data.issuedAt < 1e12 ? data.issuedAt * 1000 : data.issuedAt;
+      }
+      localStorage.setItem("crm_token_expires_at", new Date(issuedMs + ttlMs).toISOString());
+    }
 
     var role = typeof data.crm_role === "string"
       ? data.crm_role.trim().toUpperCase().replace(/[\\s-]+/g, "_")

@@ -8,6 +8,7 @@ import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
 import { ActiveModuleProvider } from "./Components/Shared/ActiveModuleContext";
 import ModuleHubHost from "./Components/Shared/ModuleHubHost";
 import BookingCelebrationHost from "./Components/Shared/BookingCelebrationHost";
+import SessionExpiryGuard from "./Components/Shared/SessionExpiryGuard";
 import { MODULE_TILE_PRELOAD_HREFS } from "./Components/Shared/CrmSidebarIcons";
 
 const manrope = Manrope({
@@ -61,6 +62,7 @@ export default function RootLayout({
           {HALLWAY_HANDOFF_BOOTSTRAP}
         </Script>
         <GlobalNotifierProvider>
+          <SessionExpiryGuard />
           <ActiveModuleProvider>
             <ModuleHubHost />
             <BookingCelebrationHost />

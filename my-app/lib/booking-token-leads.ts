@@ -36,6 +36,7 @@ import type {
   CancellationApprovalStatus,
 } from "@/app/Components/BookingToken/types";
 import { displayDash } from "@/lib/booking-token-display-format";
+import { resolveBookingTokenProjectAmount } from "@/lib/booking-token-project-amount";
 
 export const RECENT_LEDGER_ITEM_LIMIT = 5;
 export const RECENT_LEDGER_DEALS_FETCH = 20;
@@ -235,6 +236,21 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     cancellationApprovalStatus === "PENDING" ||
     mapHubBookingStatus(deal.bookingStatus) === "pending_cancellation";
   const bufferFields = resolveBookingBufferFieldsFromDeal(deal);
+  const raw = deal as BookingTokenDeal & Record<string, unknown>;
+  const tokenAmount =
+    readOptionalDealNumber(raw, "tokenAmount", "token_amount");
+  const bookingAmount =
+    readOptionalDealNumber(raw, "bookingAmount", "booking_amount");
+  const quoteAmount =
+    readOptionalDealNumber(raw, "quoteAmount", "quote_amount") ?? deal.dealValue;
+  /** Full project value for Token/Booking Amount columns — never tenPercentAmount. */
+  const projectAmount = resolveBookingTokenProjectAmount({
+    listingType,
+    tokenAmount,
+    bookingAmount,
+    dealValue: deal.dealValue,
+    quoteAmount,
+  });
 
   return {
     id: deal.id,
@@ -252,8 +268,10 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     quoteId: deal.quoteId?.trim() || null,
     quoteVersionLabel:
       readOptionalDealString(deal, "quoteVersionLabel", "quote_version_label") ?? null,
-    dealValue: formatQuoteAmount(deal.dealValue),
-    dealValueAmount: deal.dealValue,
+    dealValue: formatQuoteAmount(projectAmount),
+    dealValueAmount: projectAmount,
+    tokenAmount,
+    bookingAmount,
     preBooking: formatQuoteAmount(deal.preBookingAmount),
     paidAmount: deal.preBookingAmount,
     extraAmountReceived:
@@ -261,7 +279,7 @@ export function bookingTokenDealToDealRow(deal: BookingTokenDeal): DealRow {
     totalAmountReceived:
       readOptionalDealNumber(deal, "totalAmountReceived", "total_amount_received") ?? undefined,
     tenPercentTarget: formatQuoteAmount(deal.tenPercentAmount),
-    tenPercentAmount: deal.tenPercentAmount ?? Math.round(deal.dealValue * 0.1),
+    tenPercentAmount: deal.tenPercentAmount ?? Math.round(projectAmount * 0.1),
     remaining: formatQuoteAmount(remaining),
     remainingAmount: remaining,
     tokenStatus: mapHubTokenStatus(deal.tokenStatus, paymentKind),

@@ -26,7 +26,6 @@ export function MeetingDetailsPopover({
   onViewDetails?: (meeting: SlotMeeting) => void;
 }) {
   const name = blankToEmpty(meeting.customer);
-  const phone = blankToEmpty(meeting.phone);
   const designer = blankToEmpty(meeting.designer);
   const sales = blankToEmpty(meeting.sales);
   const type = meetingTypeKind(meeting.meetingType) === "unset" ? "" : blankToEmpty(meeting.meetingType);
@@ -49,7 +48,6 @@ export function MeetingDetailsPopover({
           <p className="text-[14px] font-bold text-[#0F172A]">{name}</p>
           <p className="mt-0.5 text-[12px] font-semibold text-[#5B6778]">{formatSlotClock(meeting.startMin)}</p>
           <dl className="mt-3 space-y-1.5 text-[13px]">
-            {phone ? <Detail label="Phone" value={phone} /> : null}
             {type ? (
               <div className="flex items-center justify-between gap-2">
                 <dt className="font-normal text-[#5B6778]">Type</dt>

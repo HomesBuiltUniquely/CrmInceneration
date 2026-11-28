@@ -38,6 +38,7 @@ import {
   resolveQuoteVerifyUrl,
   type LeadQuoteOption,
 } from "@/lib/crm-quote-links";
+import { resolveBookingTokenProjectAmount } from "@/lib/booking-token-project-amount";
 import { getLeadDetail } from "@/lib/lead-details-client";
 import { isCrmLeadType } from "@/lib/crm-lead-endpoints";
 import type { CrmLeadType } from "@/lib/leads-filter";
@@ -1499,7 +1500,26 @@ export default function BookingPaymentPanel({ open, mode, deal, onClose, onUpdat
                     label="Booking date"
                     value={formatBookingDateDisplay(deal.bookingDate)}
                   />
-                  <SummaryCard label="Total amount" value={formatQuoteAmount(summary.quoteAmount)} />
+                  <SummaryCard
+                    label={
+                      deal.listingType === "booking"
+                        ? "Booking Amount"
+                        : deal.listingType === "token"
+                          ? "Token Amount"
+                          : "Total amount"
+                    }
+                    value={formatQuoteAmount(
+                      deal
+                        ? resolveBookingTokenProjectAmount({
+                            listingType: deal.listingType,
+                            tokenAmount: deal.tokenAmount,
+                            bookingAmount: deal.bookingAmount,
+                            dealValue: deal.dealValueAmount,
+                            quoteAmount: summary.quoteAmount,
+                          })
+                        : summary.quoteAmount,
+                    )}
+                  />
                   <SummaryCard label="10% target" value={formatQuoteAmount(summary.tenPercentAmount)} />
                   <SummaryCard label="Amount paid" value={formatQuoteAmount(summary.amountReceived)} highlight />
                   {summary.remainingAmount > 0 ? (
