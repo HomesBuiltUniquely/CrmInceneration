@@ -5,6 +5,7 @@ import "./globals.css";
 import { CRM_THEME_STORAGE_KEY } from "@/lib/theme";
 import { HALLWAY_HANDOFF_BOOTSTRAP } from "@/lib/auth/hallway-handoff-bootstrap";
 import { GlobalNotifierProvider } from "./Components/Shared/GlobalNotifier";
+import { CrmNotificationProvider } from "./Components/CrmNotificationProvider";
 import { ActiveModuleProvider } from "./Components/Shared/ActiveModuleContext";
 import ModuleHubHost from "./Components/Shared/ModuleHubHost";
 import BookingCelebrationHost from "./Components/Shared/BookingCelebrationHost";
@@ -61,11 +62,13 @@ export default function RootLayout({
           {HALLWAY_HANDOFF_BOOTSTRAP}
         </Script>
         <GlobalNotifierProvider>
+          <CrmNotificationProvider>
           <ActiveModuleProvider>
             <ModuleHubHost />
             <BookingCelebrationHost />
             {children}
           </ActiveModuleProvider>
+          </CrmNotificationProvider>
         </GlobalNotifierProvider>
       </body>
     </html>

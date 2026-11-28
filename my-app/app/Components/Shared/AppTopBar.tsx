@@ -9,6 +9,8 @@ import {
 import { readStoredCrmToken } from "@/lib/crm-client-auth";
 import { asCrmLeadType } from "@/lib/leads-filter";
 import { loadNotifications } from "@/lib/notification-service";
+import { useCrmNotifications } from "@/app/Components/CrmNotificationProvider";
+import { isCrmInboxV2Client } from "@/lib/crm-inbox-v2";
 import {
   buildAppBreadcrumb,
   isLeadsListPath,
@@ -23,6 +25,7 @@ import { useSmoothRouter } from "@/lib/use-smooth-router";
 const READ_IDS_KEY = "crm_read_notification_ids";
 const DELETED_IDS_KEY = "crm_deleted_notification_ids";
 const NOTIFICATION_POLL_INTERVAL = 30000;
+const inboxV2 = isCrmInboxV2Client();
 
 function getReadIds(username: string): Set<string> {
   try {
@@ -110,7 +113,11 @@ export default function AppTopBar({
     return window.localStorage.getItem(CRM_USER_NAME_STORAGE_KEY) ?? "";
   });
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const crmInbox = useCrmNotifications();
+  const [legacyNotifications, setLegacyNotifications] = useState<NotificationItem[]>([]);
+  const notifications = inboxV2 ? crmInbox.notifications : legacyNotifications;
+  const setNotifications = inboxV2 ? crmInbox.setNotifications : setLegacyNotifications;
+
   const [previousNotificationIds, setPreviousNotificationIds] = useState<Set<string>>(new Set());
   const [bellRinging, setBellRinging] = useState(false);
 
@@ -147,6 +154,10 @@ export default function AppTopBar({
   };
 
   const fetchNotifications = async () => {
+    if (inboxV2) {
+      await crmInbox.refreshInbox();
+      return;
+    }
     const token = readStoredCrmToken();
     if (!token) return;
 
@@ -170,10 +181,26 @@ export default function AppTopBar({
   };
 
   useEffect(() => {
-    fetchNotifications();
+    if (!inboxV2) fetchNotifications();
   }, [role, username]);
 
   useEffect(() => {
+    if (!inboxV2) return;
+    const currentIds = new Set(notifications.map((n) => n.id));
+    const newNotifications = notifications.filter(
+      (n) => !previousNotificationIds.has(n.id) && !n.read,
+    );
+    if (previousNotificationIds.size > 0 && newNotifications.length > 0) {
+      playNotificationSound();
+      setBellRinging(true);
+      setTimeout(() => setBellRinging(false), 700);
+    }
+    setPreviousNotificationIds(currentIds);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- compare against previous id set only when notifications change
+  }, [notifications, inboxV2]);
+
+  useEffect(() => {
+    if (inboxV2) return;
     let intervalId: NodeJS.Timeout | null = null;
 
     intervalId = setInterval(() => {
@@ -193,6 +220,10 @@ export default function AppTopBar({
   }, [role, username, previousNotificationIds]);
 
   const handleMarkAllRead = () => {
+    if (inboxV2) {
+      void crmInbox.markAllRead();
+      return;
+    }
     setNotifications((prev) => {
       const updated = prev.map((n) => ({ ...n, read: true }));
       const readIds = getReadIds(username);
@@ -203,6 +234,10 @@ export default function AppTopBar({
   };
 
   const handleNotificationClick = (id: string) => {
+    if (inboxV2) {
+      void crmInbox.markRead(id);
+      return;
+    }
     setNotifications((prev) => {
       const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
       const readIds = getReadIds(username);
@@ -266,6 +301,21 @@ export default function AppTopBar({
   };
 
   const handleClearAll = (tabType: "all" | "leads" | "meetings" | "bookings") => {
+    if (inboxV2) {
+      if (tabType === "all") {
+        void crmInbox.markAllRead();
+        return;
+      }
+      const toMark = notifications.filter((n) => {
+        const tag = (n.tag || "").toLowerCase();
+        if (tabType === "meetings") return tag !== "booking" && tag !== "lead";
+        if (tabType === "bookings") return tag === "booking";
+        if (tabType === "leads") return tag === "lead";
+        return false;
+      });
+      void Promise.all(toMark.map((n) => crmInbox.markRead(n.id)));
+      return;
+    }
     const tabName =
       tabType === "all"
         ? "all"

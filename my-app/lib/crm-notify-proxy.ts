@@ -36,6 +36,52 @@ function notifyBaseUrl(): string | null {
  * @param path  Upstream path, e.g. `/v1/meetings/scheduled`.
  *              Dynamic segments must already be URI-encoded by the caller.
  */
+export async function proxyNotifyPost(
+  req: NextRequest,
+  path: string,
+  body?: string,
+): Promise<NextResponse> {
+  const base = notifyBaseUrl();
+  if (!base) {
+    const message = "NOTIFY_API_URL is not configured. Set it in .env.local.";
+    return NextResponse.json(
+      { success: false, userMessage: message, error: message },
+      { status: 502 },
+    );
+  }
+  const upstreamUrl = `${base}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: {
+        ...Object.fromEntries(
+          Object.entries(upstreamAuthHeaders(req)).filter(([, v]) => v != null),
+        ),
+        "Content-Type": "application/json",
+        ...(process.env.NOTIFY_API_KEY
+          ? { "x-external-api-key": process.env.NOTIFY_API_KEY }
+          : {}),
+      },
+      body: body ?? (await req.text().catch(() => "")),
+      cache: "no-store",
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "NotifyProject server unreachable";
+    return NextResponse.json(
+      { success: false, userMessage: message, error: message },
+      { status: 502 },
+    );
+  }
+  if (!res.ok) {
+    const payload = await readUpstreamPayload(res);
+    return proxyJsonError(res.status, payload, "Notification service request failed.");
+  }
+  const data: unknown = await res.json().catch(() => ({}));
+  return NextResponse.json(data, { status: res.status });
+}
+
 export async function proxyNotifyGet(
   req: NextRequest,
   path: string,
